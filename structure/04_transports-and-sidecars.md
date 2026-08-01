@@ -439,6 +439,21 @@ combo whose remaining eligible targets use other providers.
 
 ## Transport inventory
 
+Antigravity Gemini replay retains upstream `thoughtSignature` values only for later matching tool
+calls. Session and function-call identities are SHA-256 digests rather than raw model/session/argument
+strings. Each session retains at most 256 calls and 2 MiB, one signature is limited to 64 KiB, and
+the cache retains at most 32 MiB globally. Both calls and sessions use least-recently-used eviction;
+expired sessions are removed on exact access and by a sweep no more than once per minute unless
+budget pressure requires it.
+
+[Decision Log]
+- 목적과 의도: Preserve Gemini interleaved-thinking compatibility without retaining unbounded tool arguments or signatures.
+- 기존 구현 및 제약 조건: The cache had only a 10,240-session count limit; raw canonical arguments were Map keys and every call inside a live session was unbounded.
+- 검토한 주요 대안: Clear the session after every turn; retain raw identities behind a count-only LRU; hash identities and enforce per-call, per-session, and global byte budgets.
+- 선택한 방식: Use fixed-size SHA-256 identities, exact UTF-8 signature accounting, nested LRU limits, and bounded TTL sweeping.
+- 다른 대안 대신 이 방식을 선택한 이유: Clearing per turn breaks multi-step tool replay, while count-only limits still permit a few very large calls to dominate heap.
+- 장점, 단점 및 영향: Ordinary long tool loops retain their newest 256 signatures; older calls in an extreme loop may miss replay and receive the upstream signature error instead of growing memory without bound.
+
 The sections above cover the transports with load-bearing invariants. The rest of the transport
 surface is listed here so a maintainer can find the owner without grepping:
 
