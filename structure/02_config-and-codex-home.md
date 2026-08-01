@@ -40,6 +40,17 @@ the recorded service ownership.
 `atomicWriteFile` uses a temp file named `{path}.ocx.{pid}.{seq}.tmp` (process ID + incrementing
 sequence number) to avoid collisions when concurrent writers (e.g. `ocx stop` and the proxy's own
 shutdown handler) both restore Codex config simultaneously. The temp is renamed atomically into place.
+On Windows, ACL success/timeout memos for that unique temp pathname are released only after rename or
+cleanup proves the temp no longer exists. Stable destination and directory memos remain cached, while
+deleted one-shot names cannot accumulate for the life of the proxy.
+
+[Decision Log]
+- 목적과 의도: Keep Windows ACL hardening fast without retaining every unique atomic-write pathname forever.
+- 기존 구현 및 제약 조건: ACL results were memoized by path, while response-state and tray writers mint a new temp path for every replacement; a residual temp must keep its memo until later cleanup.
+- 검토한 주요 대안: Remove ACL memoization entirely; cap the memo with arbitrary LRU eviction; release only a temp whose rename/unlink has proven it absent.
+- 선택한 방식: Explicitly forget success and timeout memos after proven temp removal, while preserving stable-path and residual-file memos.
+- 다른 대안 대신 이 방식을 선택한 이유: Removing or randomly evicting memos repeats expensive `icacls` work and may lose the residual-file fast path; lifecycle-owned release follows the real file lifetime exactly.
+- 장점, 단점 및 영향: Repeated Windows state writes return memo counts to baseline; cleanup call sites must continue to release a memo whenever they add a new ephemeral hardened path.
 
 Response-state loading performs a bounded recovery pass for interrupted snapshot writes. It only
 matches regular files named `responses-state.json.ocx.<pid>.<sequence>.tmp`, waits at least 15

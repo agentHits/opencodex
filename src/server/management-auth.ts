@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  existsSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -13,7 +14,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { adminApiTokenFilePath } from "../lib/admin-secrets";
-import { hardenSecretDir, hardenSecretPath } from "../lib/windows-secret-acl";
+import { forgetEphemeralSecretPath, hardenSecretDir, hardenSecretPath } from "../lib/windows-secret-acl";
 import type { OcxConfig } from "../types";
 import {
   isAllowedManagementOrigin,
@@ -97,7 +98,7 @@ function createTokenFile(path: string): string {
     closeSync(fd);
     fd = null;
     chmodSync(temporary, 0o600);
-    const temporaryHardened = hardenSecretPath(temporary, { required: true });
+    const temporaryHardened = hardenSecretPath(temporary, { required: true, timeoutMemoKey: path });
     if (!temporaryHardened.ok) {
       throw new Error(
         "management token temporary ACL hardening did not complete; set OPENCODEX_ADMIN_AUTH_TOKEN to use an environment token instead of a file-backed token",
@@ -125,6 +126,7 @@ function createTokenFile(path: string): string {
       try { closeSync(fd); } catch { /* best effort */ }
     }
     removeBestEffort(temporary);
+    if (!existsSync(temporary)) forgetEphemeralSecretPath(temporary);
   }
 }
 

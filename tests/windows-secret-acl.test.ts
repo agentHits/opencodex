@@ -14,10 +14,12 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  forgetEphemeralSecretPath,
   hardenSecretDir,
   hardenSecretPath,
   hardenSecretPathAsync,
   resetHardenedStateForTests,
+  secretPathMemoCountsForTests,
   setAsyncIcaclsRunnerForTests,
   setIcaclsRunnerForTests,
   setNowForTests,
@@ -444,6 +446,40 @@ describe("icacls failure paths (injected seams)", () => {
 
     expect(hardenSecretPath(secretFile(), { required: true })).toEqual({ ok: true });
     expect(steps).toEqual(["grant-owner", "remove-inheritance", "remove-broad"]);
+  });
+
+  test("ephemeral success and timeout memos can be released after cleanup", () => {
+    const successfulTemp = secretFile("successful.tmp");
+    setIcaclsRunnerForTests(() => ok);
+    expect(hardenSecretPath(successfulTemp, { required: true })).toEqual({ ok: true });
+    expect(secretPathMemoCountsForTests()).toEqual({ hardened: 1, timedOut: 0 });
+
+    forgetEphemeralSecretPath(successfulTemp);
+    expect(secretPathMemoCountsForTests()).toEqual({ hardened: 0, timedOut: 0 });
+
+    const timedOutTemp = secretFile("timed-out.tmp");
+    setIcaclsRunnerForTests(() => timeout);
+    expect(hardenSecretPath(timedOutTemp, { required: true }).ok).toBe(false);
+    expect(secretPathMemoCountsForTests()).toEqual({ hardened: 0, timedOut: 1 });
+
+    forgetEphemeralSecretPath(timedOutTemp);
+    expect(secretPathMemoCountsForTests()).toEqual({ hardened: 0, timedOut: 0 });
+  });
+
+  test("forgetting a temp does not erase its stable destination timeout memo", () => {
+    const destination = join(testDir, "config.json");
+    const temporary = secretFile("config.json.ocx.1.tmp");
+    setIcaclsRunnerForTests(() => timeout);
+
+    const result = hardenSecretPath(temporary, {
+      required: true,
+      timeoutMemoKey: destination,
+    });
+    expect(result.ok).toBe(false);
+    expect(secretPathMemoCountsForTests()).toEqual({ hardened: 0, timedOut: 1 });
+
+    forgetEphemeralSecretPath(temporary);
+    expect(secretPathMemoCountsForTests()).toEqual({ hardened: 0, timedOut: 1 });
   });
 
   test("remove:g timeout after owner grant leaves explicit Full Control (#596)", () => {

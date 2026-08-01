@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandUserPath, getConfigDir } from "../config";
 import { durableBunPath } from "../lib/bun-runtime";
-import { hardenSecretDir, hardenSecretPath } from "../lib/windows-secret-acl";
+import { forgetEphemeralSecretPath, hardenSecretDir, hardenSecretPath } from "../lib/windows-secret-acl";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
 
 const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -224,12 +224,13 @@ function replaceOwnedFile(path: string, contents: string | Buffer): void {
   try {
     try { chmodSync(temporary, 0o600); } catch { /* best-effort */ }
     if (process.platform === "win32") {
-      const hardened = hardenSecretPath(temporary, { required: true });
+      const hardened = hardenSecretPath(temporary, { required: true, timeoutMemoKey: path });
       if (!hardened.ok) throw new Error("Windows tray ACL hardening did not complete; refusing to persist executable state.");
     }
     renameSync(temporary, path);
   } finally {
     try { if (existsSync(temporary)) unlinkSync(temporary); } catch { /* best-effort */ }
+    if (!existsSync(temporary)) forgetEphemeralSecretPath(temporary);
   }
 }
 

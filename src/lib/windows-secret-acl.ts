@@ -170,6 +170,25 @@ export function resetHardenedStateForTests(): void {
   timedOutPaths.clear();
 }
 
+/**
+ * Drop path-scoped memo state only after an ephemeral file no longer exists.
+ *
+ * Atomic writers intentionally create a fresh pathname for every replacement. Keeping either a
+ * success or timeout memo for a renamed/unlinked temp turns those unique names into a process-life
+ * string leak on Windows. Stable destination and directory memos are not passed here and retain the
+ * existing fast path.
+ */
+export function forgetEphemeralSecretPath(targetPath: string): void {
+  hardenedPaths.delete(targetPath);
+  timedOutPaths.delete(`required:${targetPath}`);
+  timedOutPaths.delete(`optional:${targetPath}`);
+}
+
+/** Test-only observability for proving ephemeral path memos return to baseline. */
+export function secretPathMemoCountsForTests(): { hardened: number; timedOut: number } {
+  return { hardened: hardenedPaths.size, timedOut: timedOutPaths.size };
+}
+
 function effectivePlatform(): string {
   return platformOverride ?? platform;
 }

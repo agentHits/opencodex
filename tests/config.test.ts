@@ -1,5 +1,16 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  truncateSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -27,7 +38,14 @@ import {
 } from "../src/config";
 
 import * as windowsAcl from "../src/lib/windows-secret-acl";
-import { hardenConfigDir, hardenExistingSecret, renameAtomicFile, saveConfig } from "../src/config";
+import {
+  atomicWriteFile,
+  AtomicWriteResidualTempError,
+  hardenConfigDir,
+  hardenExistingSecret,
+  renameAtomicFile,
+  saveConfig,
+} from "../src/config";
 let testDir = "";
 
 beforeEach(() => {
@@ -87,6 +105,74 @@ function writeAccountNamespaceConfig(
 }
 
 describe("opencodex config defaults", () => {
+  test("atomic replacements release Windows ACL memos for renamed temp paths", () => {
+    const destination = join(testDir, "atomic.json");
+    windowsAcl.setPlatformForTests("win32");
+    windowsAcl.resetHardenedStateForTests();
+    windowsAcl.setIcaclsRunnerForTests(() => ({
+      success: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: "",
+    }));
+    process.env.USERNAME ??= "tester";
+
+    try {
+      for (let index = 0; index < 25; index += 1) {
+        atomicWriteFile(destination, String(index), {
+          write: (target, value) => writeFileSync(target, value, "utf-8"),
+          harden: target => {
+            windowsAcl.hardenSecretPath(target, {
+              required: true,
+              timeoutMemoKey: destination,
+            });
+          },
+          rename: renameSync,
+          truncate: target => truncateSync(target, 0),
+          unlink: unlinkSync,
+        });
+        expect(windowsAcl.secretPathMemoCountsForTests()).toEqual({ hardened: 0, timedOut: 0 });
+      }
+    } finally {
+      windowsAcl.setIcaclsRunnerForTests(null);
+      windowsAcl.setPlatformForTests(null);
+      windowsAcl.resetHardenedStateForTests();
+    }
+  });
+
+  test("atomic write retains the ACL memo while a hardened residual temp remains", () => {
+    const destination = join(testDir, "residual.json");
+    windowsAcl.setPlatformForTests("win32");
+    windowsAcl.resetHardenedStateForTests();
+    windowsAcl.setIcaclsRunnerForTests(() => ({
+      success: true,
+      exitCode: 0,
+      timedOut: false,
+      stdout: "",
+    }));
+    process.env.USERNAME ??= "tester";
+
+    try {
+      expect(() => atomicWriteFile(destination, "secret", {
+        write: (target, value) => writeFileSync(target, value, "utf-8"),
+        harden: target => {
+          windowsAcl.hardenSecretPath(target, {
+            required: true,
+            timeoutMemoKey: destination,
+          });
+        },
+        rename: () => { throw Object.assign(new Error("rename failed"), { code: "EIO" }); },
+        truncate: target => truncateSync(target, 0),
+        unlink: () => { throw Object.assign(new Error("unlink failed"), { code: "EPERM" }); },
+      })).toThrow(AtomicWriteResidualTempError);
+      expect(windowsAcl.secretPathMemoCountsForTests()).toEqual({ hardened: 1, timedOut: 0 });
+    } finally {
+      windowsAcl.setIcaclsRunnerForTests(null);
+      windowsAcl.setPlatformForTests(null);
+      windowsAcl.resetHardenedStateForTests();
+    }
+  });
+
   test("atomic rename retries transient Windows sharing violations", () => {
     const sleeps: number[] = [];
     let attempts = 0;
