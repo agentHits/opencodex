@@ -554,6 +554,94 @@ describe("Responses previous_response_id state", () => {
     }
   });
 
+  test("a single over-cap entry is rejected without evicting an unrelated valid chain", () => {
+    setResponseStateByteCapForTests(1_000);
+    try {
+      const small = buildResponseJSON([
+        { type: "text_delta", text: "ok" },
+        { type: "done" },
+      ], "gpt-5.5");
+      rememberResponseState({ model: "gpt-5.5", input: "small" }, small);
+      const smallBytes = getStoredResponseBytesForTests();
+
+      const oversized = buildResponseJSON([
+        { type: "text_delta", text: "x".repeat(3_000) },
+        { type: "done" },
+      ], "gpt-5.5");
+      rememberResponseState({ model: "gpt-5.5", input: "too large" }, oversized);
+
+      expect(expandPreviousResponseInput({
+        model: "gpt-5.5", previous_response_id: oversized.id, input: "next",
+      })).toEqual({ model: "gpt-5.5", previous_response_id: oversized.id, input: "next" });
+      expect((expandPreviousResponseInput({
+        model: "gpt-5.5", previous_response_id: small.id, input: "next",
+      }) as { input: unknown[] }).input).toHaveLength(3);
+      expect(getStoredResponseBytesForTests()).toBe(smallBytes);
+      expect(responseStateMetrics().totalBytes).toBeLessThanOrEqual(1_000);
+    } finally {
+      setResponseStateByteCapForTests(null);
+    }
+  });
+
+  test("an over-cap replacement removes stale state for the same response id", () => {
+    setResponseStateByteCapForTests(1_000);
+    try {
+      const responseId = "resp_replaced_over_cap";
+      rememberResponseState(
+        { model: "gpt-5.5", input: "small" },
+        { id: responseId, status: "completed", output: [{ type: "message", content: "ok" }] },
+      );
+      expect(responseStateMetrics().count).toBe(1);
+
+      rememberResponseState(
+        { model: "gpt-5.5", input: "replacement" },
+        { id: responseId, status: "completed", output: [{ type: "message", content: "x".repeat(3_000) }] },
+      );
+
+      const next = { model: "gpt-5.5", previous_response_id: responseId, input: "next" };
+      expect(expandPreviousResponseInput(next)).toEqual(next);
+      expect(responseStateMetrics()).toEqual({ count: 0, totalBytes: 0, largestBytes: 0, oldestAgeMs: 0 });
+    } finally {
+      setResponseStateByteCapForTests(null);
+    }
+  });
+
+  test("byte admission counts UTF-8 bytes instead of JavaScript code units", () => {
+    setResponseStateByteCapForTests(1_000);
+    try {
+      const responseId = "resp_multibyte_over_cap";
+      rememberResponseState(
+        { model: "gpt-5.5", input: "한".repeat(400) },
+        { id: responseId, status: "completed", output: [] },
+      );
+
+      const next = { model: "gpt-5.5", previous_response_id: responseId, input: "next" };
+      expect(expandPreviousResponseInput(next)).toEqual(next);
+      expect(getStoredResponseBytesForTests()).toBe(0);
+    } finally {
+      setResponseStateByteCapForTests(null);
+    }
+  });
+
+  test("snapshot loading rejects a single entry above the active byte cap", () => {
+    setResponseStateByteCapForTests(1_000);
+    try {
+      mkdirSync(home, { recursive: true });
+      writeFileSync(join(home, "responses-state.json"), JSON.stringify({
+        version: 2,
+        states: [["resp_snapshot_over_cap", {
+          createdAt: Date.now(),
+          items: [{ role: "user", content: "x".repeat(3_000) }],
+        }]],
+      }));
+
+      expect(previousResponseProviderState("resp_snapshot_over_cap")).toBeUndefined();
+      expect(responseStateMetrics()).toEqual({ count: 0, totalBytes: 0, largestBytes: 0, oldestAgeMs: 0 });
+    } finally {
+      setResponseStateByteCapForTests(null);
+    }
+  });
+
   test("byte accounting survives restart (sizes recomputed on load)", async () => {
     setResponseStateByteCapForTests(4_000);
     try {
@@ -609,7 +697,9 @@ describe("Responses previous_response_id state", () => {
       for (let i = 0; i < 1_050; i++) {
         const body = { model: "cursor/grok-4.5", input: `${bulk}-000${String(i % 10)}`, store: false };
         const json = buildResponseJSON([{ type: "text_delta", text: "ok" }, { type: "done" }], "cursor/grok-4.5");
-        rememberResponseState(body, json, { cursor: { conversationId: `conv_c${i}` } }, { force: true });
+        rememberResponseState(body, json, {
+          cursor: { conversationId: `conv_c${String(i).padStart(4, "0")}` },
+        }, { force: true });
         lastId = json.id as string;
         if (perEntryBytes === 0) perEntryBytes = getStoredResponseBytesForTests();
       }

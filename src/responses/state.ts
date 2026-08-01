@@ -27,7 +27,7 @@ interface StoredResponseState {
   /** v1 Cursor-only metadata, accepted only while loading old snapshots. */
   conversationId?: string;
   cursorCheckpointUsable?: boolean;
-  /** Approximate in-memory size, computed locally at insert time (never trusted from disk). */
+  /** Serialized UTF-8 entry size, computed locally at insert time (never trusted from disk). */
   sizeBytes?: number;
 }
 
@@ -49,21 +49,28 @@ export function getStoredResponseBytesForTests(): number {
   return storedResponseBytes;
 }
 
-/** The ONLY size computation: approximate entry weight from its items payload. */
-function measuredEntry(entry: Omit<StoredResponseState, "sizeBytes">): StoredResponseState {
-  let sizeBytes = 0;
+/** The ONLY size computation: serialized UTF-8 bytes retained by the map entry. */
+function measuredEntry(id: string, entry: Omit<StoredResponseState, "sizeBytes">): StoredResponseState | null {
   try {
-    sizeBytes = JSON.stringify(entry.items).length;
+    const serialized = JSON.stringify([id, entry]);
+    return { ...entry, sizeBytes: Buffer.byteLength(serialized, "utf8") };
   } catch {
-    /* unserializable items: weightless rather than fatal */
+    // A value whose retained size cannot be measured cannot safely enter a byte-bounded store.
+    return null;
   }
-  return { ...entry, sizeBytes };
 }
 
-/** The ONLY insertion point: keeps the byte counter consistent on replacement. */
+/**
+ * The ONLY insertion point: measure before mutating, reject an over-cap candidate without
+ * evicting unrelated valid chains, and remove a stale same-id value before rejecting it.
+ */
 function setEntry(id: string, entry: Omit<StoredResponseState, "sizeBytes">): void {
+  const measured = measuredEntry(id, entry);
+  if (!measured || (measured.sizeBytes ?? 0) > byteCap()) {
+    deleteEntry(id);
+    return;
+  }
   deleteEntry(id);
-  const measured = measuredEntry(entry);
   storedResponseBytes += measured.sizeBytes ?? 0;
   states.set(id, measured);
 }
@@ -326,7 +333,7 @@ function pruneResponses(at = now()): void {
     deleteEntry(oldest);
   }
   // Byte high-water eviction, oldest-first (Map preserves insertion order).
-  while (storedResponseBytes > byteCap() && states.size > 1) {
+  while (storedResponseBytes > byteCap() && states.size > 0) {
     const oldest = states.keys().next().value;
     if (!oldest) break;
     deleteEntry(oldest);
@@ -371,7 +378,7 @@ export function previousResponseProviderState(responseId: string | undefined): O
 export interface ResponseStateMetrics {
   /** Number of retained continuation entries currently in RAM. */
   count: number;
-  /** Sum of serialized item bytes across all entries (the running in-memory byte accounting).
+  /** Sum of serialized map-entry bytes across all entries (the running in-memory byte accounting).
    * Because expanded previous_response_id chains share prefix item references, this is an UPPER
    * bound on true heap (it re-counts shared history), never an under-count — safe as a
    * memory-pressure signal. */

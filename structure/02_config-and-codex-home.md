@@ -57,6 +57,18 @@ are consumed incrementally and at most 512 stale files are attempted per process
 - 다른 대안 대신 이 방식을 선택한 이유: It repairs known remnants without broad authority over unrelated temp files or active writers.
 - 장점, 단점 및 영향: Old dead-PID files are reclaimed automatically; locked or conservatively classified files remain for a later retry.
 
+In-memory continuation entries are measured in serialized UTF-8 bytes before admission. An entry
+larger than the 64 MiB store budget is not retained, and replacing an existing response ID with an
+oversized value removes the stale value without evicting unrelated valid chains.
+
+[Decision Log]
+- 목적과 의도: Make the Responses continuation byte budget a hard invariant even for one image-heavy or malformed entry.
+- 기존 구현 및 제약 조건: Oldest-first pruning stopped when one entry remained, so a single value could exceed the nominal 64 MiB cap; continuation misses are recoverable but unbounded retention is not.
+- 검토한 주요 대안: Keep the newest entry regardless of size; evict all other entries before admitting it; reject the candidate atomically.
+- 선택한 방식: Measure UTF-8 bytes before mutation, reject an over-budget candidate, and remove only a stale entry with the same response ID.
+- 다른 대안 대신 이 방식을 선택한 이유: Evicting unrelated chains cannot make an individually oversized value fit, while retaining it breaks the advertised memory bound.
+- 장점, 단점 및 영향: RAM accounting remains at or below the cap; an oversized continuation becomes a normal previous-response miss and may require the client to resend history.
+
 ## Config surface
 
 `src/types.ts` is the shape and `src/config.ts` is the loader; neither is reproduced here. What
