@@ -302,6 +302,19 @@ pre-compaction checkpoint is not persisted for later carry-forward.
 
 ## OpenRouter provider routing
 
+Cursor's Connect decoder keeps the uint32 outbound wire format, but inbound frames are limited to a
+32 MiB payload. The decoder rejects an oversized declaration as soon as the five-byte header is
+available, carries at most one incomplete bounded frame between HTTP/2 chunks, and treats a nonempty
+remainder at EOF as a transport failure rather than a successful turn.
+
+[Decision Log]
+- 목적과 의도: Prevent a malformed or hostile Cursor stream from driving unbounded pending-buffer growth and repeated whole-buffer copies.
+- 기존 구현 및 제약 조건: The Connect length field permits nearly 4 GiB, and the live transport concatenated every chunk until a full declared frame arrived; incomplete EOF bytes were silently discarded.
+- 검토한 주요 대안: Keep the uint32 maximum in both directions; cap only the accumulated buffer after concatenation; reject oversized headers before payload accumulation and decode chunks incrementally.
+- 선택한 방식: Preserve outbound compatibility while limiting inbound payloads to 32 MiB and carrying only one incomplete frame across chunks.
+- 다른 대안 대신 이 방식을 선택한 이유: Header-time rejection avoids allocating the advertised payload, while incremental completion avoids copying a large remainder together with unrelated following frames.
+- 장점, 단점 및 영향: Normal split and multi-frame streams retain byte order; a legitimate Cursor server response over 32 MiB now fails explicitly instead of consuming unbounded memory.
+
 The canonical OpenRouter `openai-chat` transport may carry optional provider-routing preferences
 from `OcxProviderConfig.openRouterRouting`, with exact model-id replacements in
 `modelOpenRouterRouting`. The adapter maps camel-case config to OpenRouter's request wire

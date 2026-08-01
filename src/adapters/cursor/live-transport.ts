@@ -1,7 +1,12 @@
 import http2 from "node:http2";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { namespacedToolName, type OcxProviderConfig, type OcxUsage } from "../../types";
-import { CONNECT_FLAG_END_STREAM, decodeAvailableConnectFrames, encodeConnectFrame } from "./framing";
+import {
+  CONNECT_FLAG_END_STREAM,
+  ConnectFrameError,
+  decodeConnectStreamChunk,
+  encodeConnectFrame,
+} from "./framing";
 import { activePromptText, prepareCursorRunRequest } from "./protobuf-request";
 import {
   createCursorContextUsageTracker,
@@ -733,9 +738,8 @@ class LiveCursorTransport implements CursorTransport {
         debugProviderDiagnostic("cursor", "first-frame", { latencyMs: this.firstFrameAt - this.turnStartedAt });
       }
       const bytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-      pending = concatBytes(pending, bytes);
       try {
-        const decoded = decodeAvailableConnectFrames(pending);
+        const decoded = decodeConnectStreamChunk(pending, bytes);
         pending = decoded.remainder;
         const frames = decoded.frames;
         for (const frame of frames) {
@@ -792,6 +796,13 @@ class LiveCursorTransport implements CursorTransport {
         expectedClose: this.expectedClose,
         elapsedMs: Date.now() - this.turnStartedAt,
       });
+      if (pending.length > 0 && !this.expectedClose) {
+        settler.settleFail(new ConnectFrameError(
+          "frame_incomplete",
+          `Cursor stream ended with ${pending.length} byte(s) of an incomplete Connect frame`,
+        ));
+        return;
+      }
       // A zero-frame end without an expected close is an unexpected EOF (peer dropped the
       // connection before any response frame) — surfacing it as success would silently
       // swallow the turn (WP4 review blocker 1). With frames, the protobuf event state
@@ -976,13 +987,6 @@ export function isClientToolFrame(message: AgentServerMessage): boolean {
     default:
       return false;
   }
-}
-
-function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a);
-  out.set(b, a.length);
-  return out;
 }
 
 /** Host-only label for Cursor transport diagnostics — never leaks path/query/credentials. */

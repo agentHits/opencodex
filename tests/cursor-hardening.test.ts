@@ -345,5 +345,33 @@ describe("Cursor live transport unexpected EOF", () => {
       expect(failure?.message).toContain("unexpected EOF");
     });
   });
+
+  test("a trailing partial Connect frame fails instead of being silently discarded", async () => {
+    await withDiscoveryServer(stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200, "content-type": "application/connect+proto" });
+      stream.end(Uint8Array.of(0x00, 0x00, 0x00));
+    }, async baseUrl => {
+      const transport = createLiveCursorTransport({
+        provider: { adapter: "cursor", baseUrl, apiKey: "test-token" },
+        firstFrameTimeoutMs: 2_000,
+      });
+      let failure: Error | undefined;
+      try {
+        for await (const _message of transport.run({
+          modelId: "composer-2",
+          conversationId: "cursor_partial_eof_test",
+          system: [],
+          messages: [{ role: "user", content: "hello" }],
+        })) { /* no complete message expected */ }
+      } catch (err) {
+        failure = err instanceof Error ? err : new Error(String(err));
+      } finally {
+        await transport.close?.();
+      }
+      expect(failure).toBeDefined();
+      expect(failure?.message).toContain("incomplete Connect frame");
+    });
+  });
 });
 import { ManagementRequest as Request } from "./helpers/management-auth";

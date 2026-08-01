@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   CONNECT_FLAG_COMPRESSED,
   CONNECT_FLAG_END_STREAM,
+  MAX_INBOUND_CONNECT_FRAME_PAYLOAD_BYTES,
   ConnectFrameError,
   decodeAvailableConnectFrames,
   decodeConnectFrame,
   decodeConnectFrames,
+  decodeConnectStreamChunk,
   encodeConnectFrame,
   isConnectFrameCompressed,
   isConnectFrameEndStream,
@@ -98,6 +100,32 @@ describe("Cursor Connect envelope framing", () => {
     const decoded = decodeAvailableConnectFrames(combined);
     expect(decoded.frames.map(frame => Array.from(frame.payload))).toEqual([[0x01]]);
     expect(Array.from(decoded.remainder)).toEqual(Array.from(partial));
+  });
+
+  test("rejects an oversized declared inbound payload from the five-byte header alone", () => {
+    const declared = MAX_INBOUND_CONNECT_FRAME_PAYLOAD_BYTES + 1;
+    const header = new Uint8Array(5);
+    new DataView(header.buffer).setUint32(1, declared, false);
+
+    expectFrameError(() => decodeAvailableConnectFrames(header), "payload_too_large");
+  });
+
+  test("stream decoder preserves split headers and payloads without changing frame order", () => {
+    const first = encodeConnectFrame(bytes(0x01, 0x02, 0x03));
+    const second = encodeConnectFrame(bytes(0x04), { endStream: true });
+    const combined = new Uint8Array(first.length + second.length);
+    combined.set(first);
+    combined.set(second, first.length);
+
+    const headerPart = decodeConnectStreamChunk(new Uint8Array(), combined.subarray(0, 3));
+    expect(headerPart.frames).toEqual([]);
+    const payloadPart = decodeConnectStreamChunk(headerPart.remainder, combined.subarray(3, 7));
+    expect(payloadPart.frames).toEqual([]);
+    const completed = decodeConnectStreamChunk(payloadPart.remainder, combined.subarray(7));
+
+    expect(completed.remainder.length).toBe(0);
+    expect(completed.frames.map(frame => Array.from(frame.payload))).toEqual([[0x01, 0x02, 0x03], [0x04]]);
+    expect(completed.frames.map(frame => frame.endStream)).toEqual([false, true]);
   });
 
   test("throws payload_too_large before allocating oversized frames", () => {
