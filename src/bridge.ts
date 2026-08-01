@@ -4,6 +4,7 @@ import { encodeCompactionSummary } from "./responses/compaction";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
 import { usageDisplayTotalTokens } from "./usage/totals";
+import { appendToolArguments } from "./lib/tool-argument-bounds";
 
 function uuid(): string {
   return crypto.randomUUID().replace(/-/g, "");
@@ -314,7 +315,8 @@ export function bridgeToResponsesSSE(
       // Full assistant text of a compaction turn (across message boundaries) — becomes the
       // synthetic compaction item's payload on done.
       let compactionText = "";
-      let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; namespace?: string; freeform?: boolean; toolSearch?: boolean; inputEmitted?: string } | null = null;
+      let retainedToolArgumentBytes = 0;
+      let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; argsBytes: number; namespace?: string; freeform?: boolean; toolSearch?: boolean; inputEmitted?: string } | null = null;
       // Open native web-search cell (between begin and end). Holds the output index allocated on
       // begin so the matching done reuses it; closed as `failed` if the stream terminates early.
       let currentWebSearch: { itemId: string; eventId: string; outputIndex: number } | null = null;
@@ -676,12 +678,42 @@ export function bridgeToResponsesSSE(
                 ? { type: "custom_tool_call", id: itemId, call_id: event.id, name: realName, input: "", status: "in_progress" }
                 : { type: "function_call", id: itemId, call_id: event.id, name: realName, arguments: "", status: "in_progress", ...(ns ? { namespace: ns } : {}) };
               emit("response.output_item.added", { output_index: outputIndex, item });
-              currentToolCall = { itemId, outputIndex, callId: event.id, name: realName, args: "", namespace: ns, freeform, toolSearch };
+              currentToolCall = { itemId, outputIndex, callId: event.id, name: realName, args: "", argsBytes: 0, namespace: ns, freeform, toolSearch };
               break;
             }
             case "tool_call_delta": {
               if (currentToolCall) {
-                currentToolCall.args += event.arguments;
+                const appended = appendToolArguments(
+                  currentToolCall.args,
+                  currentToolCall.argsBytes,
+                  retainedToolArgumentBytes,
+                  event.arguments,
+                );
+                if (!appended) {
+                  retainedToolArgumentBytes = Math.max(0, retainedToolArgumentBytes - currentToolCall.argsBytes);
+                  currentToolCall.args = "";
+                  currentToolCall.argsBytes = 0;
+                  currentToolCall.inputEmitted = undefined;
+                  failCurrentToolCall();
+                  const failure = responseError(
+                    502,
+                    "upstream_error",
+                    "upstream tool call arguments exceeded the configured byte limit",
+                  );
+                  emit("response.failed", {
+                    response: {
+                      ...responseSnapshot("failed", finishedItems),
+                      error: failure,
+                      last_error: failure,
+                    },
+                  });
+                  reportTerminal("failed");
+                  terminalEvent = true;
+                  break;
+                }
+                currentToolCall.args = appended.value;
+                currentToolCall.argsBytes = appended.valueBytes;
+                retainedToolArgumentBytes = appended.retainedTurnBytes;
                 if (!currentToolCall.freeform && !currentToolCall.toolSearch) {
                   emit("response.function_call_arguments.delta", {
                     item_id: currentToolCall.itemId, output_index: currentToolCall.outputIndex,
@@ -1041,6 +1073,9 @@ export function buildResponseJSON(
   let currentToolCallId = "";
   let currentToolCallName = "";
   let currentToolCallArgs = "";
+  let currentToolCallArgsBytes = 0;
+  let retainedToolArgumentBytes = 0;
+  let toolArgumentOverflow = false;
   // Web-search citations awaiting the next assistant message (attached as url_citation annotations).
   let pendingWebSources: { url: string; title?: string }[] = [];
 
@@ -1132,6 +1167,7 @@ export function buildResponseJSON(
     currentToolCallId = "";
     currentToolCallName = "";
     currentToolCallArgs = "";
+    currentToolCallArgsBytes = 0;
   };
 
   for (const e of events) {
@@ -1186,9 +1222,34 @@ export function buildResponseJSON(
         currentToolCallId = e.id;
         currentToolCallName = e.name;
         currentToolCallArgs = "";
+        currentToolCallArgsBytes = 0;
         break;
       case "tool_call_delta":
-        currentToolCallArgs += e.arguments;
+        {
+          const appended = appendToolArguments(
+            currentToolCallArgs,
+            currentToolCallArgsBytes,
+            retainedToolArgumentBytes,
+            e.arguments,
+          );
+          if (!appended) {
+            retainedToolArgumentBytes = Math.max(0, retainedToolArgumentBytes - currentToolCallArgsBytes);
+            currentToolCallArgs = "";
+            currentToolCallArgsBytes = 0;
+            flushToolCall("incomplete");
+            errorEvent = {
+              type: "error",
+              message: "upstream tool call arguments exceeded the configured byte limit",
+              status: 502,
+              errorType: "upstream_error",
+            };
+            toolArgumentOverflow = true;
+            break;
+          }
+          currentToolCallArgs = appended.value;
+          currentToolCallArgsBytes = appended.valueBytes;
+          retainedToolArgumentBytes = appended.retainedTurnBytes;
+        }
         break;
       case "tool_call_end":
         if (!toolCallArgumentsUsable(currentToolCallArgs) && currentToolCallId) {
@@ -1249,6 +1310,7 @@ export function buildResponseJSON(
         if (e.stopReason === "max_tokens" || e.stopReason === "content_filter") stopReason = e.stopReason;
         break;
     }
+    if (toolArgumentOverflow) break;
   }
   flushText(cleanDone && !errorEvent && !incompleteEvent ? "final_answer" : undefined);
   flushSummaryReasoning();

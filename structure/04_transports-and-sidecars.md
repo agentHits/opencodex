@@ -374,6 +374,29 @@ adapters advertise the catalog bit only on explicit `true`; cursor keeps its own
 Providers with flaky parallel streaming can be opted out individually. Evidence and provider
 ledger: `devlog/_fin/260709_parallel_tool_calls/`.
 
+## Streamed tool-argument and SSE memory bounds
+
+SSE records decoded by the shared transport parser are capped at 4 MiB. OpenAI Chat's compatible
+line parser applies the same cap to complete and unterminated records. Tool-call arguments retained
+by the OpenAI Chat adapter, Responses bridge, Responses-to-Chat translator, and non-stream Chat
+collector are independently capped at 8 MiB per call and 32 MiB across one turn, measured as UTF-8
+bytes. Final argument snapshots replace their call's prior byte ownership instead of double-counting
+the streamed fragments.
+
+Crossing a bound clears the affected live argument buffers and terminates with a typed 502 upstream
+error. An open Responses function call is finalized as `incomplete`; no arguments-done, completed
+tool item, successful finish reason, or Chat `[DONE]` marker is synthesized after the overflow.
+
+```text
+[Decision Log]
+- 목적과 의도: Bound provider-controlled active-turn memory without presenting a truncated tool call as executable output.
+- 기존 구현 및 제약 조건: Compatible providers can stream arbitrarily many argument fragments or omit an SSE delimiter; the bridge must preserve its sequential tool-call contract and authoritative final snapshots.
+- 검토한 주요 대안: Keep relying on upstream token limits; truncate and complete the call; redesign every adapter around keyed live parallel calls; impose byte ownership at the existing buffering boundaries.
+- 선택한 방식: Enforce shared UTF-8 per-call/per-turn argument budgets plus a shared SSE-record budget, and fail the turn before emitting completion when a budget is exceeded.
+- 다른 대안 대신 이 방식을 선택한 이유: Upstream defaults are inconsistent, truncation produces invalid or dangerous calls, and a parallel event-contract rewrite is unrelated to bounding retained memory.
+- 장점, 단점 및 영향: Malformed providers cannot grow these buffers without bound and clients receive truthful failure semantics; exceptionally large legitimate calls now fail explicitly and must be split upstream.
+```
+
 ## Reasoning display parity (hideThinkingSummary)
 
 `hideThinkingSummary` (request reasoning summary absent/"none" — the routed catalog default) is

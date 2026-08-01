@@ -9,6 +9,7 @@ type Rec = Record<string, unknown>;
 
 import { decodeServerSentEvents } from "../lib/sse-decoder";
 import { classifyError, CYBER_POLICY_ERROR_CODE, isCyberPolicyCode, isCyberPolicyMessage } from "../lib/errors";
+import { appendToolArguments, replaceToolArguments } from "../lib/tool-argument-bounds";
 
 function isRec(v: unknown): v is Rec {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -155,6 +156,8 @@ export function responsesSseToChatCompletionsSse(
   const toolCallIdByIndex = new Map<number, string>();
   const toolNameByIndex = new Map<number, string>();
   const toolArgumentsByIndex = new Map<number, string>();
+  const toolArgumentBytesByIndex = new Map<number, number>();
+  let retainedToolArgumentBytes = 0;
   const emittedToolIndexes = new Set<number>();
   let nextToolIndex = 0;
   let sseIterator: AsyncGenerator<{ event?: string; data: string }> | undefined;
@@ -272,6 +275,40 @@ export function responsesSseToChatCompletionsSse(
         }
         try { controller.close(); } catch { /* already closed */ }
       };
+      const failToolArgumentOverflow = () => {
+        toolArgumentsByIndex.clear();
+        toolArgumentBytesByIndex.clear();
+        retainedToolArgumentBytes = 0;
+        fail("upstream tool call arguments exceeded the configured byte limit", {
+          status: 502,
+          type: "upstream_error",
+        });
+      };
+      const retainToolArguments = (toolIndex: number, replacement: string): boolean => {
+        const currentBytes = toolArgumentBytesByIndex.get(toolIndex) ?? 0;
+        const retained = replaceToolArguments(currentBytes, retainedToolArgumentBytes, replacement);
+        if (!retained) {
+          failToolArgumentOverflow();
+          return false;
+        }
+        toolArgumentsByIndex.set(toolIndex, replacement);
+        toolArgumentBytesByIndex.set(toolIndex, retained.valueBytes);
+        retainedToolArgumentBytes = retained.retainedTurnBytes;
+        return true;
+      };
+      const appendToolArgumentDelta = (toolIndex: number, delta: string): boolean => {
+        const current = toolArgumentsByIndex.get(toolIndex) ?? "";
+        const currentBytes = toolArgumentBytesByIndex.get(toolIndex) ?? 0;
+        const appended = appendToolArguments(current, currentBytes, retainedToolArgumentBytes, delta);
+        if (!appended) {
+          failToolArgumentOverflow();
+          return false;
+        }
+        toolArgumentsByIndex.set(toolIndex, appended.value);
+        toolArgumentBytesByIndex.set(toolIndex, appended.valueBytes);
+        retainedToolArgumentBytes = appended.retainedTurnBytes;
+        return true;
+      };
 
       const handleFrame = (eventName: string, data: Rec) => {
         switch (eventName) {
@@ -304,10 +341,10 @@ export function responsesSseToChatCompletionsSse(
             if (typeof item.id === "string") toolIndexByItemId.set(item.id, toolIndex);
             if (name) toolNameByIndex.set(toolIndex, name);
             if (!toolArgumentsByIndex.has(toolIndex)) {
-              toolArgumentsByIndex.set(
+              if (!retainToolArguments(
                 toolIndex,
                 typeof item.arguments === "string" ? item.arguments : "",
-              );
+              )) break;
             }
             break;
           }
@@ -317,10 +354,7 @@ export function responsesSseToChatCompletionsSse(
             const toolIndex = (itemId ? toolIndexByItemId.get(itemId) : undefined)
               ?? (nextToolIndex > 0 ? nextToolIndex - 1 : 0);
             ensureRole();
-            toolArgumentsByIndex.set(
-              toolIndex,
-              (toolArgumentsByIndex.get(toolIndex) ?? "") + data.delta,
-            );
+            if (!appendToolArgumentDelta(toolIndex, data.delta)) break;
             break;
           }
           case "response.function_call_arguments.done": {
@@ -331,10 +365,10 @@ export function responsesSseToChatCompletionsSse(
             const name = typeof data.name === "string" ? data.name : "";
             if (name) toolNameByIndex.set(toolIndex, name);
             const streamedArgs = toolArgumentsByIndex.get(toolIndex) ?? "";
-            toolArgumentsByIndex.set(
+            if (!retainToolArguments(
               toolIndex,
               resolveFinalArguments(data.arguments, streamedArgs),
-            );
+            )) break;
             break;
           }
           case "response.output_item.done": {
@@ -361,7 +395,7 @@ export function responsesSseToChatCompletionsSse(
               // accumulate them. Emit one complete call here; finish() flushes any item whose
               // done event was omitted, and replace-style clients still get a complete object.
               const args = resolveFinalArguments(item.arguments, streamedArgs);
-              toolArgumentsByIndex.set(toolIndex, args);
+              if (!retainToolArguments(toolIndex, args)) break;
               emitToolCall(toolIndex, callId, finalName, args);
             }
             break;
@@ -546,84 +580,96 @@ export async function collectChatCompletion(
   stream: ReadableStream<Uint8Array>,
   model: string,
 ): Promise<Rec> {
-  const decoder = new TextDecoder();
-  let buffer = "";
   let content = "";
   let reasoning = "";
-  const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
+  const toolCalls = new Map<number, { id: string; name: string; arguments: string; argumentBytes: number }>();
+  let retainedToolArgumentBytes = 0;
   let finishReason = "stop";
   let usage: unknown;
   let streamError: ChatCompletionsStreamError | null = null;
-  const reader = stream.getReader();
   try {
-    for (;;) {
-      let done = false;
-      let value: Uint8Array | undefined;
-      try {
-        ({ done, value } = await reader.read());
-      } catch (err) {
-        if (isChatCompletionsStreamError(err)) throw err;
-        throw new ChatCompletionsStreamError(err instanceof Error ? err.message : String(err));
+    for await (const record of decodeServerSentEvents(stream)) {
+      const data = record.data.trim();
+      if (!data || data === "[DONE]") continue;
+      let parsed: unknown;
+      try { parsed = JSON.parse(data); } catch { continue; }
+      if (!isRec(parsed)) continue;
+      if (isRec(parsed.error)) {
+        const message = typeof parsed.error.message === "string"
+          ? parsed.error.message
+          : "upstream request failed";
+        const type = typeof parsed.error.type === "string" ? parsed.error.type : "server_error";
+        const code = typeof parsed.error.code === "string" ? parsed.error.code : null;
+        const status = code === CYBER_POLICY_ERROR_CODE || isCyberPolicyMessage(message)
+          ? 400
+          : streamErrorStatus(message);
+        streamError = new ChatCompletionsStreamError(message, { status, type, code });
+        continue;
       }
-      if (done) break;
-      if (!value) continue;
-      buffer += decoder.decode(value, { stream: true });
-      let sep: number;
-      while ((sep = buffer.indexOf("\n\n")) !== -1) {
-        const rawFrame = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        for (const line of rawFrame.split("\n")) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6).trim();
-          if (!data || data === "[DONE]") continue;
-          let parsed: unknown;
-          try { parsed = JSON.parse(data); } catch { continue; }
-          if (!isRec(parsed)) continue;
-          if (isRec(parsed.error)) {
-            const message = typeof parsed.error.message === "string"
-              ? parsed.error.message
-              : "upstream request failed";
-            const type = typeof parsed.error.type === "string" ? parsed.error.type : "server_error";
-            const code = typeof parsed.error.code === "string" ? parsed.error.code : null;
-            const status = code === CYBER_POLICY_ERROR_CODE || isCyberPolicyMessage(message)
-              ? 400
-              : streamErrorStatus(message);
-            streamError = new ChatCompletionsStreamError(message, { status, type, code });
-            continue;
-          }
-          if (parsed.usage) usage = parsed.usage;
-          const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
-          const choice = isRec(choices[0]) ? choices[0] : null;
-          if (!choice) continue;
-          if (typeof choice.finish_reason === "string") finishReason = choice.finish_reason;
-          const delta = isRec(choice.delta) ? choice.delta : null;
-          if (!delta) continue;
-          if (typeof delta.content === "string") content += delta.content;
-          if (typeof delta.reasoning_content === "string") reasoning += delta.reasoning_content;
-          if (Array.isArray(delta.tool_calls)) {
-            for (const tc of delta.tool_calls) {
-              if (!isRec(tc)) continue;
-              const index = typeof tc.index === "number" ? tc.index : 0;
-              const current = toolCalls.get(index) ?? { id: "", name: "", arguments: "" };
-              if (typeof tc.id === "string") current.id = tc.id;
-              const fn = isRec(tc.function) ? tc.function : {};
-              // Done-frame final arguments are authoritative last-write-wins snapshots.
-              if (typeof fn.name === "string" && fn.name.length > 0) current.name = fn.name;
-              if (typeof fn.arguments === "string") {
-                if (fn.arguments.startsWith("{") || fn.arguments.startsWith("[") || current.arguments.length === 0) {
-                  current.arguments = fn.arguments;
-                } else {
-                  current.arguments += fn.arguments;
-                }
+      if (parsed.usage) usage = parsed.usage;
+      const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+      const choice = isRec(choices[0]) ? choices[0] : null;
+      if (!choice) continue;
+      if (typeof choice.finish_reason === "string") finishReason = choice.finish_reason;
+      const delta = isRec(choice.delta) ? choice.delta : null;
+      if (!delta) continue;
+      if (typeof delta.content === "string") content += delta.content;
+      if (typeof delta.reasoning_content === "string") reasoning += delta.reasoning_content;
+      if (Array.isArray(delta.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          if (!isRec(tc)) continue;
+          const index = typeof tc.index === "number" ? tc.index : 0;
+          const current = toolCalls.get(index) ?? { id: "", name: "", arguments: "", argumentBytes: 0 };
+          if (typeof tc.id === "string") current.id = tc.id;
+          const fn = isRec(tc.function) ? tc.function : {};
+          // Done-frame final arguments are authoritative last-write-wins snapshots.
+          if (typeof fn.name === "string" && fn.name.length > 0) current.name = fn.name;
+          if (typeof fn.arguments === "string") {
+            const snapshot = fn.arguments.startsWith("{") || fn.arguments.startsWith("[") || current.arguments.length === 0;
+            if (snapshot) {
+              const retained = replaceToolArguments(
+                current.argumentBytes,
+                retainedToolArgumentBytes,
+                fn.arguments,
+              );
+              if (!retained) {
+                toolCalls.clear();
+                retainedToolArgumentBytes = 0;
+                throw new ChatCompletionsStreamError(
+                  "upstream tool call arguments exceeded the configured byte limit",
+                  { status: 502, type: "upstream_error" },
+                );
               }
-              toolCalls.set(index, current);
+              current.arguments = fn.arguments;
+              current.argumentBytes = retained.valueBytes;
+              retainedToolArgumentBytes = retained.retainedTurnBytes;
+            } else {
+              const appended = appendToolArguments(
+                current.arguments,
+                current.argumentBytes,
+                retainedToolArgumentBytes,
+                fn.arguments,
+              );
+              if (!appended) {
+                toolCalls.clear();
+                retainedToolArgumentBytes = 0;
+                throw new ChatCompletionsStreamError(
+                  "upstream tool call arguments exceeded the configured byte limit",
+                  { status: 502, type: "upstream_error" },
+                );
+              }
+              current.arguments = appended.value;
+              current.argumentBytes = appended.valueBytes;
+              retainedToolArgumentBytes = appended.retainedTurnBytes;
             }
           }
+          toolCalls.set(index, current);
         }
       }
     }
-  } finally {
-    reader.releaseLock();
+  } catch (err) {
+    if (isChatCompletionsStreamError(err)) throw err;
+    throw new ChatCompletionsStreamError(err instanceof Error ? err.message : String(err));
   }
   if (streamError) throw streamError;
 

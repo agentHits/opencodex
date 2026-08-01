@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeServerSentEvents } from "../src/lib/sse-decoder";
+import { decodeServerSentEvents, SseRecordTooLargeError } from "../src/lib/sse-decoder";
 
 function chunkedStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -72,5 +72,37 @@ describe("text/event-stream decoder", () => {
 
     expect(records).toEqual([{ event: "custom", data: "payload" }]);
     expect("kind" in records[0]).toBe(false);
+  });
+
+  test("rejects an oversized unterminated record instead of retaining it to EOF", async () => {
+    const read = async () => {
+      for await (const _record of decodeServerSentEvents(
+        chunkedStream(["data: 12345678901234567"]),
+        { maxRecordBytes: 16 },
+      )) { /* drain */ }
+    };
+
+    await expect(read()).rejects.toBeInstanceOf(SseRecordTooLargeError);
+  });
+
+  test("counts multiline data as one bounded SSE record", async () => {
+    const read = async () => {
+      for await (const _record of decodeServerSentEvents(
+        chunkedStream(["data: 12345678\n", "data: 12345678\n\n"]),
+        { maxRecordBytes: 16 },
+      )) { /* drain */ }
+    };
+
+    await expect(read()).rejects.toBeInstanceOf(SseRecordTooLargeError);
+  });
+
+  test("accepts a complete record at the configured raw-line boundary", async () => {
+    const records = [];
+    for await (const record of decodeServerSentEvents(
+      chunkedStream(["data: 1234567890\n\n"]),
+      { maxRecordBytes: 16 },
+    )) records.push(record);
+
+    expect(records).toEqual([{ data: "1234567890" }]);
   });
 });

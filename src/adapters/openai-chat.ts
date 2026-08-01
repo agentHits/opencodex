@@ -10,6 +10,8 @@ import { contentPartsToText } from "./image";
 import { neutralizeIdentity } from "./identity";
 import { buildNonOpenAIToolCatalogNudgeForTools, shouldInjectNonOpenAIToolCatalogNudge } from "./tool-catalog-nudge";
 import { openRouterProviderPayload, resolveOpenRouterRouting } from "../providers/openrouter-routing";
+import { MAX_SSE_RECORD_BYTES } from "../lib/sse-decoder";
+import { appendToolArguments, utf8ByteLength } from "../lib/tool-argument-bounds";
 
 // Providers may opt into stripping one trailing "[...]" group from the wire model id.
 // Z.AI needs this because its OpenAI path rejects glm-5.2[1m] with 400 code 1211;
@@ -693,8 +695,9 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
       // chunks, whole-chunk calls) cannot be represented live without overlapping sequences.
       // Keyed by `index` (OpenAI wire standard), falling back to `id`, falling back to the
       // last-seen call for providers that omit both on continuation chunks.
-      interface PendingToolCall { key: string; id: string; name: string; args: string }
+      interface PendingToolCall { key: string; id: string; name: string; args: string; argsBytes: number }
       const pendingToolCalls: PendingToolCall[] = [];
+      let pendingToolArgumentBytes = 0;
       let toolCallSeq = 0;
       const flushToolCalls = function* (): Generator<AdapterEvent> {
         // Do not treat flushed tool calls as user-facing output for the finish-less EOF
@@ -706,6 +709,7 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
           yield { type: "tool_call_end" };
         }
         pendingToolCalls.length = 0;
+        pendingToolArgumentBytes = 0;
       };
       let pendingUsage: OcxUsage | undefined;
       // Track terminal signals so a socket EOF without any terminator can fail closed instead of
@@ -722,6 +726,17 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
       // Yields adapter events and returns "terminate" for a terminal frame ([DONE] / error) that
       // must end the stream, or "continue" otherwise. Mutates the closure's terminal-signal state.
       const handleDataLine = function* (line: string): Generator<AdapterEvent, "continue" | "terminate"> {
+        if (utf8ByteLength(line) > MAX_SSE_RECORD_BYTES) {
+          pendingToolCalls.length = 0;
+          pendingToolArgumentBytes = 0;
+          yield {
+            type: "error",
+            message: "upstream SSE record exceeded the 4 MiB limit",
+            status: 502,
+            errorType: "upstream_error",
+          };
+          return "terminate";
+        }
         if (!line.startsWith("data: ")) return "continue";
         const payload = line.slice(6).trim();
         if (payload === "[DONE]") {
@@ -803,12 +818,33 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
               // splitting into two calls that share one call_id downstream.
               if (!call && tc.id) call = pendingToolCalls.find(c => c.id === tc.id);
               if (!call) {
-                call = { key: key ?? `seq:${pendingToolCalls.length}`, id: "", name: "", args: "" };
+                call = { key: key ?? `seq:${pendingToolCalls.length}`, id: "", name: "", args: "", argsBytes: 0 };
                 pendingToolCalls.push(call);
               }
               if (tc.id && !call.id) call.id = tc.id;
               if (tc.function?.name && !call.name) call.name = tc.function.name;
-              if (tc.function?.arguments) call.args += tc.function.arguments;
+              if (tc.function?.arguments) {
+                const appended = appendToolArguments(
+                  call.args,
+                  call.argsBytes,
+                  pendingToolArgumentBytes,
+                  tc.function.arguments,
+                );
+                if (!appended) {
+                  pendingToolCalls.length = 0;
+                  pendingToolArgumentBytes = 0;
+                  yield {
+                    type: "error",
+                    message: "upstream tool call arguments exceeded the configured byte limit",
+                    status: 502,
+                    errorType: "upstream_error",
+                  };
+                  return "terminate";
+                }
+                call.args = appended.value;
+                call.argsBytes = appended.valueBytes;
+                pendingToolArgumentBytes = appended.retainedTurnBytes;
+              }
             }
           }
         }
@@ -832,6 +868,17 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
 
           for (const line of lines) {
             if ((yield* handleDataLine(line)) === "terminate") return;
+          }
+          if (utf8ByteLength(buffer) > MAX_SSE_RECORD_BYTES) {
+            pendingToolCalls.length = 0;
+            pendingToolArgumentBytes = 0;
+            yield {
+              type: "error",
+              message: "upstream SSE record exceeded the 4 MiB limit",
+              status: 502,
+              errorType: "upstream_error",
+            };
+            return;
           }
         }
 

@@ -3,6 +3,16 @@ export interface ServerSentEvent {
   data: string;
 }
 
+export const MAX_SSE_RECORD_BYTES = 4 * 1024 * 1024;
+
+export class SseRecordTooLargeError extends Error {
+  readonly code = "sse_record_too_large";
+  constructor(limit: number) {
+    super(`upstream SSE record exceeded the ${limit}-byte limit`);
+    this.name = "SseRecordTooLargeError";
+  }
+}
+
 export type SseRecord =
   | { kind: "event"; event?: string; data: string }
   | { kind: "comment"; comment: string };
@@ -16,21 +26,23 @@ export type SseRecord =
  */
 export function decodeServerSentEvents(
   source: ReadableStream<Uint8Array>,
-  options: { includeComments: true; signal?: AbortSignal },
+  options: { includeComments: true; signal?: AbortSignal; maxRecordBytes?: number },
 ): AsyncGenerator<SseRecord>;
 export function decodeServerSentEvents(
   source: ReadableStream<Uint8Array>,
-  options?: { includeComments?: false; signal?: AbortSignal },
+  options?: { includeComments?: false; signal?: AbortSignal; maxRecordBytes?: number },
 ): AsyncGenerator<ServerSentEvent>;
 export async function* decodeServerSentEvents(
   source: ReadableStream<Uint8Array>,
-  options?: { includeComments?: boolean; signal?: AbortSignal },
+  options?: { includeComments?: boolean; signal?: AbortSignal; maxRecordBytes?: number },
 ): AsyncGenerator<ServerSentEvent | SseRecord> {
   const reader = source.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let event: string | undefined;
   let dataLines: string[] = [];
+  let recordBytes = 0;
+  const maxRecordBytes = options?.maxRecordBytes ?? MAX_SSE_RECORD_BYTES;
   // Prompt cancellation channel: an abort cancels the underlying reader directly, which
   // settles any in-flight read() so a consumer's iterator.return() cannot hang behind an
   // idle upstream (a plain generator return waits for the pending await first).
@@ -49,6 +61,7 @@ export async function* decodeServerSentEvents(
     const record = { ...(event ? { event } : {}), data: dataLines.join("\n") };
     event = undefined;
     dataLines = [];
+    recordBytes = 0;
     return includeComments ? { kind: "event", ...record } : record;
   };
 
@@ -68,7 +81,12 @@ export async function* decodeServerSentEvents(
     if (value.startsWith(" ")) value = value.slice(1);
 
     if (field === "event") event = value;
-    else if (field === "data") dataLines.push(value);
+    else if (field === "data") {
+      const added = Buffer.byteLength(value, "utf8") + (dataLines.length > 0 ? 1 : 0);
+      if (recordBytes + added > maxRecordBytes) throw new SseRecordTooLargeError(maxRecordBytes);
+      recordBytes += added;
+      dataLines.push(value);
+    }
     return undefined;
   };
 
@@ -79,14 +97,21 @@ export async function* decodeServerSentEvents(
 
       let newline: number;
       while ((newline = buffer.indexOf("\n")) >= 0) {
-        const record = acceptLine(buffer.slice(0, newline));
+        const line = buffer.slice(0, newline);
+        if (Buffer.byteLength(line, "utf8") > maxRecordBytes) throw new SseRecordTooLargeError(maxRecordBytes);
+        const record = acceptLine(line);
         buffer = buffer.slice(newline + 1);
         if (record) yield record;
+      }
+
+      if (Buffer.byteLength(buffer, "utf8") > maxRecordBytes) {
+        throw new SseRecordTooLargeError(maxRecordBytes);
       }
 
       if (!done) continue;
       buffer += decoder.decode();
       if (buffer.length > 0) {
+        if (Buffer.byteLength(buffer, "utf8") > maxRecordBytes) throw new SseRecordTooLargeError(maxRecordBytes);
         const record = acceptLine(buffer);
         buffer = "";
         if (record) yield record;
