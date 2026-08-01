@@ -1,7 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { create, fromBinary } from "@bufbuild/protobuf";
-import { handleCursorNativeKv, storeCursorBlob } from "../src/adapters/cursor/native-exec";
+import {
+  createCursorBlobScope,
+  CursorBlobAdmissionError,
+  cursorBlobMetricsForTests,
+  handleCursorNativeKv,
+  releaseCursorBlobScope,
+  setCursorBlobLimitsForTests,
+  storeCursorBlob,
+} from "../src/adapters/cursor/native-exec";
 import {
   CURSOR_EXTERNAL_ROOT_BYTE_LIMIT,
   CURSOR_EXTERNAL_ROOT_BLOB_LIMIT,
@@ -16,7 +24,10 @@ import {
   ConversationTurnStructureSchema,
   GetBlobArgsSchema,
   KvServerMessageSchema,
+  SetBlobArgsSchema,
 } from "../src/adapters/cursor/gen/agent_pb";
+
+afterEach(() => setCursorBlobLimitsForTests(null));
 
 function sha256(data: Uint8Array): Uint8Array {
   return new Uint8Array(createHash("sha256").update(data).digest());
@@ -60,6 +71,82 @@ describe("Cursor blob handshake", () => {
     const id = storeCursorBlob(data);
     expect(id.length).toBe(32);
     expect(Array.from(id)).toEqual(Array.from(sha256(data)));
+  });
+
+  test("rejects a blob above the per-entry byte limit without retaining it", () => {
+    setCursorBlobLimitsForTests({ maxEntryBytes: 4, maxTotalBytes: 8 });
+    expect(() => storeCursorBlob(Uint8Array.of(1, 2, 3, 4, 5)))
+      .toThrow(CursorBlobAdmissionError);
+    expect(cursorBlobMetricsForTests())
+      .toEqual({ count: 0, totalBytes: 0, pinnedEntries: 0, pinnedBytes: 0 });
+  });
+
+  test("unpinned blobs use LRU eviction under the total byte budget", () => {
+    setCursorBlobLimitsForTests({ maxEntryBytes: 4, maxTotalBytes: 8 });
+    const first = storeCursorBlob(Uint8Array.of(1, 1, 1, 1));
+    const second = storeCursorBlob(Uint8Array.of(2, 2, 2, 2));
+    expect(blobData(first)).toEqual(Uint8Array.of(1, 1, 1, 1)); // touch first
+    const third = storeCursorBlob(Uint8Array.of(3, 3, 3, 3));
+
+    expect(blobData(first)).toEqual(Uint8Array.of(1, 1, 1, 1));
+    expect(blobData(second)?.byteLength ?? 0).toBe(0);
+    expect(blobData(third)).toEqual(Uint8Array.of(3, 3, 3, 3));
+    expect(cursorBlobMetricsForTests().totalBytes).toBe(8);
+  });
+
+  test("active request pins prevent eviction and release idempotently", () => {
+    setCursorBlobLimitsForTests({ maxEntryBytes: 4, maxTotalBytes: 8 });
+    const scope = createCursorBlobScope();
+    storeCursorBlob(Uint8Array.of(1, 1, 1, 1), scope);
+    storeCursorBlob(Uint8Array.of(2, 2, 2, 2), scope);
+    expect(cursorBlobMetricsForTests()).toMatchObject({ pinnedEntries: 2, pinnedBytes: 8 });
+    expect(() => storeCursorBlob(Uint8Array.of(3, 3, 3, 3)))
+      .toThrow(CursorBlobAdmissionError);
+
+    releaseCursorBlobScope(scope);
+    releaseCursorBlobScope(scope);
+    expect(cursorBlobMetricsForTests().pinnedBytes).toBe(0);
+    expect(() => storeCursorBlob(Uint8Array.of(3, 3, 3, 3))).not.toThrow();
+    expect(cursorBlobMetricsForTests().totalBytes).toBeLessThanOrEqual(8);
+  });
+
+  test("setBlobArgs returns a protobuf error when admission is refused", () => {
+    setCursorBlobLimitsForTests({ maxEntryBytes: 4, maxTotalBytes: 8 });
+    const reply = fromBinary(AgentClientMessageSchema, handleCursorNativeKv(create(KvServerMessageSchema, {
+      id: 7,
+      message: {
+        case: "setBlobArgs",
+        value: create(SetBlobArgsSchema, {
+          blobId: Uint8Array.of(9),
+          blobData: Uint8Array.of(1, 2, 3, 4, 5),
+        }),
+      },
+    })));
+    expect(reply.message.case).toBe("kvClientMessage");
+    const result = reply.message.value.message;
+    expect(result.case).toBe("setBlobResult");
+    expect(result.value.error?.message).toContain("per-entry limit");
+  });
+
+  test("prepared requests pin advertised blobs until their release callback", () => {
+    const prepared = prepareCursorRunRequest({
+      modelId: "composer-2.5",
+      conversationId: "c-pinned",
+      system: ["system"],
+      messages: [{ role: "user", content: "hello" }],
+    });
+    expect(cursorBlobMetricsForTests().pinnedEntries).toBeGreaterThan(0);
+    prepared.releaseBlobs();
+    prepared.releaseBlobs();
+    expect(cursorBlobMetricsForTests().pinnedEntries).toBe(0);
+
+    encodeCursorRunRequest({
+      modelId: "composer-2.5",
+      conversationId: "c-backcompat-release",
+      system: ["system"],
+      messages: [{ role: "user", content: "hello" }],
+    });
+    expect(cursorBlobMetricsForTests().pinnedEntries).toBe(0);
   });
 
   test("encodeCursorRunRequest sends rootPromptMessagesJson as blob IDs, not inline JSON", () => {
@@ -113,6 +200,11 @@ describe("Cursor blob handshake", () => {
     expect((roots[1] as { role?: string }).role).toBe("user");
     expect(JSON.stringify(roots)).toContain("assistant-209");
     expect(JSON.stringify(roots)).not.toContain("user-0");
+    const discardedRoot = sha256(new TextEncoder().encode(JSON.stringify({
+      role: "user",
+      content: [{ type: "text", text: "user-0" }],
+    })));
+    expect(blobData(discardedRoot)?.byteLength ?? 0).toBe(0);
   });
 
   test("caps external root replay by serialized bytes", () => {

@@ -3,6 +3,7 @@ import { create } from "@bufbuild/protobuf";
 import {
   DiagnosticsErrorSchema,
   DiagnosticsResultSchema,
+  ErrorSchema,
   GetBlobResultSchema,
   KvClientMessageSchema,
   McpErrorSchema,
@@ -77,47 +78,133 @@ export function cursorUnsafeNativeLocalExecEnabled(input: Pick<CursorNativeExecC
  * proxy accumulates every conversation's prompt blobs forever (unbounded memory) and any stale
  * blob stays servable indefinitely — a cross-conversation contamination enabler if Cursor's
  * server-side state ever references old ids (devlog 260702 P0). Continuation requests re-store
- * their blobs on every turn (`rootPromptMessages` → `storeCursorBlob`), so TTL + cap eviction is
- * safe for live sessions: only genuinely abandoned entries age out.
+ * their selected blobs on every turn (`rootPromptMessages` → `storeCursorBlob`). Request scopes pin
+ * advertised ids until terminal settlement, so TTL/LRU byte eviction can reclaim abandoned data
+ * without racing a live server `getBlobArgs` fetch.
  */
 const BLOB_TTL_MS = 15 * 60 * 1000;
 const BLOB_MAX_ENTRIES = 4096;
-const blobs = new Map<string, { data: Uint8Array; storedAt: number }>();
+const BLOB_MAX_ENTRY_BYTES = 16 * 1024 * 1024;
+const BLOB_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+const BLOB_SWEEP_INTERVAL_MS = 60 * 1000;
 
-function evictStaleBlobs(now: number): void {
-  if (blobs.size <= BLOB_MAX_ENTRIES) {
-    // TTL sweep only when the map has any chance of stale entries; Map iterates insertion order.
-    for (const [k, entry] of blobs) {
-      if (now - entry.storedAt <= BLOB_TTL_MS) break;
-      blobs.delete(k);
-    }
-    return;
-  }
-  // Over cap: drop oldest entries first (insertion order approximates recency because re-stores
-  // delete+set to refresh their position).
-  const excess = blobs.size - BLOB_MAX_ENTRIES;
-  let dropped = 0;
-  for (const k of blobs.keys()) {
-    if (dropped >= excess) break;
-    blobs.delete(k);
-    dropped++;
+interface BlobEntry {
+  data: Uint8Array;
+  storedAt: number;
+  pins: number;
+}
+
+interface BlobLimits {
+  maxEntries: number;
+  maxEntryBytes: number;
+  maxTotalBytes: number;
+}
+
+export interface CursorBlobScope {
+  readonly keys: Set<string>;
+  released: boolean;
+}
+
+export class CursorBlobAdmissionError extends Error {
+  readonly code = "cursor_blob_admission_failed";
+  constructor(message: string) {
+    super(message);
+    this.name = "CursorBlobAdmissionError";
   }
 }
 
-function setBlob(k: string, data: Uint8Array): void {
+const DEFAULT_BLOB_LIMITS: BlobLimits = {
+  maxEntries: BLOB_MAX_ENTRIES,
+  maxEntryBytes: BLOB_MAX_ENTRY_BYTES,
+  maxTotalBytes: BLOB_MAX_TOTAL_BYTES,
+};
+const blobs = new Map<string, BlobEntry>();
+let blobBytes = 0;
+let lastBlobSweepAt = 0;
+let blobLimits = { ...DEFAULT_BLOB_LIMITS };
+
+function deleteBlob(k: string): void {
+  const entry = blobs.get(k);
+  if (!entry) return;
+  blobBytes -= entry.data.byteLength;
+  if (blobBytes < 0) blobBytes = 0;
+  blobs.delete(k);
+}
+
+function sweepStaleBlobs(now: number, force = false, protectedKey?: string): void {
+  if (!force && now - lastBlobSweepAt < BLOB_SWEEP_INTERVAL_MS) return;
+  lastBlobSweepAt = now;
+  for (const [k, entry] of blobs) {
+    if (k !== protectedKey && entry.pins === 0 && now - entry.storedAt > BLOB_TTL_MS) deleteBlob(k);
+  }
+}
+
+function ensureBlobCapacity(
+  additionalBytes: number,
+  additionalEntries: number,
+  now: number,
+  protectedKey?: string,
+): boolean {
+  const pressured = blobs.size + additionalEntries > blobLimits.maxEntries
+    || blobBytes + additionalBytes > blobLimits.maxTotalBytes;
+  sweepStaleBlobs(now, pressured, protectedKey);
+  while (
+    blobs.size + additionalEntries > blobLimits.maxEntries
+    || blobBytes + additionalBytes > blobLimits.maxTotalBytes
+  ) {
+    let victim: string | undefined;
+    for (const [k, entry] of blobs) {
+      if (k !== protectedKey && entry.pins === 0) {
+        victim = k;
+        break;
+      }
+    }
+    if (victim === undefined) return false;
+    deleteBlob(victim);
+  }
+  return true;
+}
+
+function setBlob(k: string, data: Uint8Array, contentAddressed = false): { ok: true } | { ok: false; error: string } {
+  if (data.byteLength > blobLimits.maxEntryBytes) {
+    return { ok: false, error: `blob exceeds the ${blobLimits.maxEntryBytes}-byte per-entry limit` };
+  }
   const now = Date.now();
-  blobs.delete(k); // refresh insertion order so live sessions stay newest
-  blobs.set(k, { data, storedAt: now });
-  evictStaleBlobs(now);
+  const existing = blobs.get(k);
+  if (existing && contentAddressed && sameBytes(existing.data, data)) {
+    existing.storedAt = now;
+    blobs.delete(k);
+    blobs.set(k, existing);
+    return { ok: true };
+  }
+  if (existing?.pins) {
+    return { ok: false, error: "blob is pinned by an active Cursor request" };
+  }
+  const additionalBytes = data.byteLength - (existing?.data.byteLength ?? 0);
+  if (!ensureBlobCapacity(Math.max(0, additionalBytes), existing ? 0 : 1, now, k)) {
+    return { ok: false, error: "blob store is full of active request data" };
+  }
+  if (existing) deleteBlob(k);
+  blobs.set(k, { data, storedAt: now, pins: 0 });
+  blobBytes += data.byteLength;
+  return { ok: true };
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 function getBlob(k: string): Uint8Array | undefined {
   const entry = blobs.get(k);
   if (!entry) return undefined;
-  if (Date.now() - entry.storedAt > BLOB_TTL_MS) {
-    blobs.delete(k);
+  if (entry.pins === 0 && Date.now() - entry.storedAt > BLOB_TTL_MS) {
+    deleteBlob(k);
     return undefined;
   }
+  blobs.delete(k);
+  blobs.set(k, entry);
   return entry.data;
 }
 
@@ -130,10 +217,59 @@ function key(bytes: Uint8Array): string {
  * blob id. Cursor's `rootPromptMessagesJson`/turn entries are blob IDS, not inline content — the
  * server fetches the bytes back via `getBlobArgs`. Mirrors jawcode `createBlobId`/`storeCursorBlob`.
  */
-export function storeCursorBlob(data: Uint8Array): Uint8Array {
+export function createCursorBlobScope(): CursorBlobScope {
+  return { keys: new Set<string>(), released: false };
+}
+
+export function releaseCursorBlobScope(scope: CursorBlobScope): void {
+  if (scope.released) return;
+  scope.released = true;
+  for (const k of scope.keys) {
+    const entry = blobs.get(k);
+    if (entry && entry.pins > 0) entry.pins -= 1;
+  }
+  scope.keys.clear();
+  ensureBlobCapacity(0, 0, Date.now());
+}
+
+function pinCursorBlob(k: string, scope: CursorBlobScope): void {
+  if (scope.released || scope.keys.has(k)) return;
+  const entry = blobs.get(k);
+  if (!entry) throw new CursorBlobAdmissionError("Cursor blob disappeared before request pinning");
+  entry.pins += 1;
+  scope.keys.add(k);
+}
+
+export function storeCursorBlob(data: Uint8Array, scope?: CursorBlobScope): Uint8Array {
   const blobId = new Uint8Array(createHash("sha256").update(data).digest());
-  setBlob(key(blobId), data);
+  const blobKey = key(blobId);
+  const stored = setBlob(blobKey, data, true);
+  if (!stored.ok) throw new CursorBlobAdmissionError(`Cursor blob admission failed: ${stored.error}`);
+  if (scope) pinCursorBlob(blobKey, scope);
   return blobId;
+}
+
+export function cursorBlobMetricsForTests(): {
+  count: number;
+  totalBytes: number;
+  pinnedEntries: number;
+  pinnedBytes: number;
+} {
+  let pinnedEntries = 0;
+  let pinnedBytes = 0;
+  for (const entry of blobs.values()) {
+    if (entry.pins === 0) continue;
+    pinnedEntries += 1;
+    pinnedBytes += entry.data.byteLength;
+  }
+  return { count: blobs.size, totalBytes: blobBytes, pinnedEntries, pinnedBytes };
+}
+
+export function setCursorBlobLimitsForTests(overrides: Partial<BlobLimits> | null): void {
+  blobs.clear();
+  blobBytes = 0;
+  lastBlobSweepAt = 0;
+  blobLimits = overrides ? { ...DEFAULT_BLOB_LIMITS, ...overrides } : { ...DEFAULT_BLOB_LIMITS };
 }
 
 export async function handleCursorNativeExec(execMsg: ExecServerMessage, deps: CursorNativeExecContext = {}): Promise<Uint8Array[]> {
@@ -213,13 +349,18 @@ export function handleCursorNativeKv(kvMsg: KvServerMessage): Uint8Array {
     });
   }
   if (kvMsg.message.case === "setBlobArgs") {
-    setBlob(key(kvMsg.message.value.blobId), kvMsg.message.value.blobData);
+    const stored = setBlob(key(kvMsg.message.value.blobId), kvMsg.message.value.blobData);
     return clientBytes({
       message: {
         case: "kvClientMessage",
         value: create(KvClientMessageSchema, {
           id: kvMsg.id,
-          message: { case: "setBlobResult", value: create(SetBlobResultSchema, {}) },
+          message: {
+            case: "setBlobResult",
+            value: create(SetBlobResultSchema, stored.ok ? {} : {
+              error: create(ErrorSchema, { message: `Cursor blob rejected: ${stored.error}` }),
+            }),
+          },
         }),
       },
     });

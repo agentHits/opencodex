@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createLiveCursorTransport, CursorMissingCredentialError, parseConnectEndStreamError, resolveCursorToken } from "../src/adapters/cursor/live-transport";
+import { cursorBlobMetricsForTests, setCursorBlobLimitsForTests } from "../src/adapters/cursor/native-exec";
 import { prepareCursorRunRequest } from "../src/adapters/cursor/protobuf-request";
 
 describe("Cursor live transport", () => {
@@ -53,6 +54,39 @@ describe("Cursor live transport", () => {
 
     await expect(iterator.next()).rejects.toThrow("Cursor MCP preparation failed: fixture discovery failed");
     await transport.close?.();
+  });
+
+  test("releases prepared blob pins when the consumer cancels the async generator", async () => {
+    setCursorBlobLimitsForTests(null);
+    const transport = createLiveCursorTransport({
+      provider: { adapter: "cursor", baseUrl: "https://api2.cursor.sh", apiKey: "test-token" },
+      headers: new Headers(),
+    });
+    const internals = transport as unknown as {
+      open(
+        encoded: Uint8Array,
+        signal: AbortSignal | undefined,
+        state: unknown,
+        push: (message: { type: "heartbeat" }) => void,
+      ): void;
+    };
+    internals.open = (_encoded, _signal, _state, push) => push({ type: "heartbeat" });
+
+    try {
+      const iterator = transport.run({
+        modelId: "composer-2.5",
+        conversationId: "cancel-releases-blobs",
+        system: ["system"],
+        messages: [{ role: "user", content: "hello" }],
+      })[Symbol.asyncIterator]();
+      expect((await iterator.next()).value).toEqual({ type: "heartbeat" });
+      expect(cursorBlobMetricsForTests().pinnedEntries).toBeGreaterThan(0);
+      await iterator.return?.();
+      expect(cursorBlobMetricsForTests().pinnedEntries).toBe(0);
+    } finally {
+      await transport.close?.();
+      setCursorBlobLimitsForTests(null);
+    }
   });
 });
 
@@ -170,7 +204,11 @@ describe("Cursor live transport context estimate wiring (#373)", () => {
     expect(estimate).toBeGreaterThan(0);
     // And it must match what the same payload produces on its own.
     const prepared = prepareCursorRunRequest(baseRequest as never, { estimateInputTokens: true });
-    expect(estimate).toBe(prepared.estimatedInputTokens);
+    try {
+      expect(estimate).toBe(prepared.estimatedInputTokens);
+    } finally {
+      prepared.releaseBlobs();
+    }
   });
 
   test("the estimate is skipped when the conversation carries a checkpoint forward", async () => {

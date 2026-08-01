@@ -6,7 +6,12 @@ import { namespacedToolName } from "../../types";
 import type { CursorRunRequest } from "./types";
 import { isCursorExternalWireModel } from "./discovery";
 import { debugProviderDiagnostic } from "../../lib/debug";
-import { storeCursorBlob } from "./native-exec";
+import {
+  createCursorBlobScope,
+  releaseCursorBlobScope,
+  storeCursorBlob,
+  type CursorBlobScope,
+} from "./native-exec";
 import { estimateTokens } from "../../lib/token-estimate";
 import {
   AgentClientMessageSchema,
@@ -83,12 +88,12 @@ function jsonBlob(value: unknown): { data: Uint8Array; serialized: string } {
 }
 
 type StoredRootBlob = {
-  id: Uint8Array;
+  data: Uint8Array;
   byteLength: number;
   /**
-   * The exact JSON handed to storeCursorBlob(). Retained so a token estimate can read
-   * what the wire actually carries without re-serializing — and without drifting from
-   * it after pruning or truncation (#373).
+   * The exact candidate JSON. Retained so the selected suffix can be stored once and a token
+   * estimate can read what the wire actually carries without re-serializing or drifting after
+   * pruning/truncation (#373).
    */
   serialized: string;
   role: "system" | "user" | "assistant" | "toolResult";
@@ -104,7 +109,7 @@ function storedRootBlob(
 ): StoredRootBlob {
   const { data, serialized } = jsonBlob(value);
   return {
-    id: storeCursorBlob(data),
+    data,
     byteLength: data.byteLength,
     serialized,
     role,
@@ -169,7 +174,7 @@ function assistantRootText(
 // because it travels in the action. Tool results are rendered as user-role text with a marker, and
 // each entry is a SHA-256 blob ID (Cursor fetches the bytes back via getBlobArgs). Mirrors the
 // danger-pi reference buildRootPromptMessagesJson.
-function rootPromptMessages(request: CursorRunRequest): {
+function rootPromptMessages(request: CursorRunRequest, scope: CursorBlobScope): {
   ids: Uint8Array[];
   byteLength: number;
   historyMessageStart: number;
@@ -181,7 +186,7 @@ function rootPromptMessages(request: CursorRunRequest): {
   const messages = request.rawMessages;
   if (!messages?.length) {
     return {
-      ids: entries.map(entry => entry.id),
+      ids: entries.map(entry => storeCursorBlob(entry.data, scope)),
       byteLength: entries.reduce((sum, entry) => sum + entry.byteLength, 0),
       historyMessageStart: 0,
       serialized: entries.map(entry => entry.serialized),
@@ -298,7 +303,9 @@ function rootPromptMessages(request: CursorRunRequest): {
   }
 
   return {
-    ids: selected.map(entry => entry.id),
+    // Store only the selected roots. Pre-storing every candidate retained discarded history until
+    // TTL eviction and made the external replay count/byte budget ineffective as a RAM bound.
+    ids: selected.map(entry => storeCursorBlob(entry.data, scope)),
     byteLength: selected.reduce((sum, entry) => sum + entry.byteLength, 0),
     historyMessageStart,
     serialized: selected.map(entry => entry.serialized),
@@ -345,7 +352,11 @@ function argBytes(value: unknown): Uint8Array {
   }
 }
 
-function toolCallStep(part: Extract<OcxAssistantContentPart, { type: "toolCall" }>, result?: OcxToolResultMessage): Uint8Array {
+function toolCallStep(
+  part: Extract<OcxAssistantContentPart, { type: "toolCall" }>,
+  scope: CursorBlobScope,
+  result?: OcxToolResultMessage,
+): Uint8Array {
   const args: Record<string, Uint8Array> = {};
   for (const [key, value] of Object.entries(part.arguments ?? {})) args[key] = argBytes(value);
   const toolName = namespacedToolName(part.namespace, part.name);
@@ -368,7 +379,7 @@ function toolCallStep(part: Extract<OcxAssistantContentPart, { type: "toolCall" 
         },
       }),
     },
-  })));
+  })), scope);
 }
 
 function toolResultPart(message: OcxToolResultMessage) {
@@ -385,15 +396,15 @@ function toolResultPart(message: OcxToolResultMessage) {
   });
 }
 
-function assistantStep(part: OcxAssistantContentPart): Uint8Array | undefined {
-  if (part.type === "toolCall") return toolCallStep(part);
+function assistantStep(part: OcxAssistantContentPart, scope: CursorBlobScope): Uint8Array | undefined {
+  if (part.type === "toolCall") return toolCallStep(part, scope);
   if (part.type === "thinking") {
     return storeCursorBlob(toBinary(ConversationStepSchema, create(ConversationStepSchema, {
       message: {
         case: "thinkingMessage",
         value: create(ThinkingMessageSchema, { text: part.thinking }),
       },
-    })));
+    })), scope);
   }
   if (part.text.length === 0) return undefined;
   return storeCursorBlob(toBinary(ConversationStepSchema, create(ConversationStepSchema, {
@@ -401,7 +412,7 @@ function assistantStep(part: OcxAssistantContentPart): Uint8Array | undefined {
       case: "assistantMessage",
       value: create(AssistantMessageSchema, { text: part.text }),
     },
-  })));
+  })), scope);
 }
 
 function lastActionIndex(messages: readonly OcxMessage[] | undefined): number {
@@ -414,7 +425,11 @@ function lastActionIndex(messages: readonly OcxMessage[] | undefined): number {
   return -1;
 }
 
-function conversationTurns(request: CursorRunRequest, historyMessageStart = 0): Uint8Array[] {
+function conversationTurns(
+  request: CursorRunRequest,
+  historyMessageStart: number,
+  scope: CursorBlobScope,
+): Uint8Array[] {
   const messages = request.rawMessages;
   if (!messages?.length) return [];
   const end = lastActionIndex(messages);
@@ -426,13 +441,13 @@ function conversationTurns(request: CursorRunRequest, historyMessageStart = 0): 
   const pendingToolCalls = new Map<string, Extract<OcxAssistantContentPart, { type: "toolCall" }>>();
   const flush = () => {
     if (!current) return;
-    for (const part of pendingToolCalls.values()) current.steps.push(toolCallStep(part));
+    for (const part of pendingToolCalls.values()) current.steps.push(toolCallStep(part, scope));
     turns.push(storeCursorBlob(toBinary(ConversationTurnStructureSchema, create(ConversationTurnStructureSchema, {
       turn: {
         case: "agentConversationTurn",
         value: create(AgentConversationTurnStructureSchema, current),
       },
-    }))));
+    })), scope));
     current = undefined;
     pendingToolCalls.clear();
   };
@@ -451,7 +466,7 @@ function conversationTurns(request: CursorRunRequest, historyMessageStart = 0): 
                 case: "assistantMessage",
                 value: create(AssistantMessageSchema, { text: part.text }),
               },
-            }))));
+            })), scope));
           }
           continue;
         }
@@ -459,7 +474,7 @@ function conversationTurns(request: CursorRunRequest, historyMessageStart = 0): 
           pendingToolCalls.set(part.id, part);
           continue;
         }
-        const step = assistantStep(part);
+        const step = assistantStep(part, scope);
         if (step) current.steps.push(step);
       }
       continue;
@@ -473,12 +488,12 @@ function conversationTurns(request: CursorRunRequest, historyMessageStart = 0): 
             case: "assistantMessage",
             value: create(AssistantMessageSchema, { text: `${prefix}\n${contentToText(message.content)}` }),
           },
-        }))));
+        })), scope));
         continue;
       }
       const priorCall = pendingToolCalls.get(message.toolCallId);
       if (priorCall) {
-        current.steps.push(toolCallStep(priorCall, message));
+        current.steps.push(toolCallStep(priorCall, scope, message));
         pendingToolCalls.delete(message.toolCallId);
       } else {
         current.steps.push(storeCursorBlob(toBinary(ConversationStepSchema, create(ConversationStepSchema, {
@@ -486,7 +501,7 @@ function conversationTurns(request: CursorRunRequest, historyMessageStart = 0): 
             case: "assistantMessage",
             value: create(AssistantMessageSchema, { text: toolResultToText(message) }),
           },
-        }))));
+        })), scope));
       }
       continue;
     }
@@ -495,7 +510,7 @@ function conversationTurns(request: CursorRunRequest, historyMessageStart = 0): 
       userMessage: storeCursorBlob(toBinary(UserMessageSchema, create(UserMessageSchema, {
         text: contentText(message),
         messageId: crypto.randomUUID(),
-      }))),
+      })), scope),
       steps: [],
     };
   }
@@ -537,6 +552,8 @@ function modelVisibleToolText(definition: McpToolDefinition): string {
 
 export interface PreparedCursorRunRequest {
   bytes: Uint8Array;
+  /** Release request pins on every terminal path; idempotent for generator cancellation/cleanup races. */
+  releaseBlobs: () => void;
   /** Only present when the caller asked for it; see prepareCursorRunRequest(). */
   estimatedInputTokens?: number;
 }
@@ -555,6 +572,20 @@ export interface PreparedCursorRunRequest {
 export function prepareCursorRunRequest(
   request: CursorRunRequest,
   options?: { estimateInputTokens?: boolean },
+): PreparedCursorRunRequest {
+  const scope = createCursorBlobScope();
+  try {
+    return prepareCursorRunRequestWithScope(request, options, scope);
+  } catch (error) {
+    releaseCursorBlobScope(scope);
+    throw error;
+  }
+}
+
+function prepareCursorRunRequestWithScope(
+  request: CursorRunRequest,
+  options: { estimateInputTokens?: boolean } | undefined,
+  scope: CursorBlobScope,
 ): PreparedCursorRunRequest {
   const rawText = activePromptText(request);
   const lastRole = request.messages.at(-1)?.role;
@@ -585,9 +616,9 @@ export function prepareCursorRunRequest(
           }),
         },
   });
-  const rootPromptMessagesState = rootPromptMessages(request);
+  const rootPromptMessagesState = rootPromptMessages(request, scope);
   const rootPromptMessageIds = rootPromptMessagesState.ids;
-  const turnIds = conversationTurns(request, rootPromptMessagesState.historyMessageStart);
+  const turnIds = conversationTurns(request, rootPromptMessagesState.historyMessageStart, scope);
   // Hoisted out of the mcp_tools spread below so the estimate can read the same
   // filtered definitions the wire carries. Both helpers are pure.
   const visibleTools = cursorToolsForActivePrompt(request.tools, rawText, request.toolChoice);
@@ -661,7 +692,8 @@ export function prepareCursorRunRequest(
     message: { case: "runRequest", value: runRequest },
   });
   const bytes = toBinary(AgentClientMessageSchema, message);
-  if (!options?.estimateInputTokens) return { bytes };
+  const releaseBlobs = () => releaseCursorBlobScope(scope);
+  if (!options?.estimateInputTokens) return { bytes, releaseBlobs };
 
   // Same instances that produced `bytes`, so the estimate cannot count history or
   // tools the payload dropped — the defect that blocked PR #376.
@@ -672,11 +704,17 @@ export function prepareCursorRunRequest(
   ];
   return {
     bytes,
+    releaseBlobs,
     estimatedInputTokens: estimateTokens(modelVisibleParts.join("\n"), request.modelId),
   };
 }
 
 /** Back-compat wrapper: callers that only need the wire bytes. */
 export function encodeCursorRunRequest(request: CursorRunRequest): Uint8Array {
-  return prepareCursorRunRequest(request).bytes;
+  const prepared = prepareCursorRunRequest(request);
+  try {
+    return prepared.bytes;
+  } finally {
+    prepared.releaseBlobs();
+  }
 }

@@ -302,6 +302,21 @@ pre-compaction checkpoint is not persisted for later carry-forward.
 
 ## OpenRouter provider routing
 
+Cursor prompt and conversation blobs use a process-wide content-addressed store capped at 16 MiB
+per blob and 64 MiB total. Blobs referenced by a prepared request are pinned until that request
+finishes, fails, or its async generator is cancelled; admission evicts only expired or
+least-recently-used unpinned entries. External replay candidates are stored only after pruning, so
+dropped history never enters the shared store. A server `setBlobArgs` that cannot fit receives a
+protobuf error instead of a false success acknowledgement.
+
+[Decision Log]
+- 목적과 의도: Bound Cursor blob RAM without evicting data that an active request has already advertised to the server.
+- 기존 구현 및 제약 조건: The store was limited only to 4,096 entries, had no byte limits, and root candidates were stored before replay pruning; naive LRU eviction could break an in-flight blob fetch.
+- 검토한 주요 대안: Count-only eviction; global byte LRU with no pins; request-scoped stores; shared byte LRU with request leases.
+- 선택한 방식: Keep deduplicating content-addressed storage, add per-entry/global bytes, pin every advertised root/step/turn for the request lifetime, and evict only unpinned LRU entries.
+- 다른 대안 대신 이 방식을 선택한 이유: Request-local stores duplicate shared history, while unpinned global eviction can turn a valid request into a mid-stream `Blob not found` failure.
+- 장점, 단점 및 영향: Long-running heap is bounded and active references remain valid; a request whose own unique blobs cannot fit 64 MiB fails preparation explicitly rather than silently dropping state.
+
 The canonical OpenRouter `openai-chat` transport may carry optional provider-routing preferences
 from `OcxProviderConfig.openRouterRouting`, with exact model-id replacements in
 `modelOpenRouterRouting`. The adapter maps camel-case config to OpenRouter's request wire

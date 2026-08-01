@@ -522,44 +522,48 @@ class LiveCursorTransport implements CursorTransport {
     const prepared = prepareCursorRunRequest(request, {
       estimateInputTokens: contextUsage.carryForwardTokens === undefined,
     });
-    state = createCursorProtobufEventState({
-      clientToolNames: clientToolDefs.map(tool => tool.toolName || tool.name),
-      parallelToolCalls: request.parallelToolCalls,
-      toolSchemas,
-      cursorToolNameMap,
-      contextUsage,
-      ...(prepared.estimatedInputTokens !== undefined
-        ? { estimatedInputTokens: prepared.estimatedInputTokens }
-        : {}),
-    });
+    try {
+      state = createCursorProtobufEventState({
+        clientToolNames: clientToolDefs.map(tool => tool.toolName || tool.name),
+        parallelToolCalls: request.parallelToolCalls,
+        toolSchemas,
+        cursorToolNameMap,
+        contextUsage,
+        ...(prepared.estimatedInputTokens !== undefined
+          ? { estimatedInputTokens: prepared.estimatedInputTokens }
+          : {}),
+      });
 
-    this.open(prepared.bytes, signal, state, push, err => {
-      failure = err;
-      wake();
-    }, () => {
-      done = true;
-      wake();
-    });
+      this.open(prepared.bytes, signal, state, push, err => {
+        failure = err;
+        wake();
+      }, () => {
+        done = true;
+        wake();
+      });
 
-    while (!done || queue.length > 0) {
-      while (queue.length > 0) {
-        const message = queue.shift();
-        if (message) yield message;
+      while (!done || queue.length > 0) {
+        while (queue.length > 0) {
+          const message = queue.shift();
+          if (message) yield message;
+        }
+        if (failure) {
+          // A CANCEL is benign only on the client-tool suspend path (expectedClose); an
+          // unexpected server-side NGHTTP2_CANCEL must surface as a real transport error.
+          if (this.expectedClose && isCursorBenignCancelError(failure)) return;
+          throw attachPartialUsage(summarizeFailure(failure), state);
+        }
+        if (done) break;
+        await new Promise<void>(resolve => {
+          notify = resolve;
+        });
       }
       if (failure) {
-        // A CANCEL is benign only on the client-tool suspend path (expectedClose); an
-        // unexpected server-side NGHTTP2_CANCEL must surface as a real transport error.
         if (this.expectedClose && isCursorBenignCancelError(failure)) return;
         throw attachPartialUsage(summarizeFailure(failure), state);
       }
-      if (done) break;
-      await new Promise<void>(resolve => {
-        notify = resolve;
-      });
-    }
-    if (failure) {
-      if (this.expectedClose && isCursorBenignCancelError(failure)) return;
-      throw attachPartialUsage(summarizeFailure(failure), state);
+    } finally {
+      prepared.releaseBlobs();
     }
   }
 
