@@ -1,0 +1,40 @@
+name: Close abandoned author-action PRs
+
+# Scheduled workflows run from the repository default branch. Landing this on
+# dev does not activate it until the workflow is promoted to main.
+on:
+  schedule:
+    - cron: "35 6 * * *"
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: stale-author-prs
+  cancel-in-progress: false
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Warn and close inactive author-action PRs
+        uses: actions/stale@1e223db275d687790206a7acac4d1a11bd6fe629 # v10.4.0
+        with:
+          only-pr-labels: awaiting-author
+          days-before-issue-stale: -1
+          days-before-issue-close: -1
+          days-before-pr-stale: 3
+          days-before-pr-close: 2
+          stale-pr-label: stale
+          remove-pr-stale-when-updated: true
+          ascending: true
+          operations-per-run: 60
+          stale-pr-message: |
+            This pull request has been waiting on author action for three inactive days.
+
+            Resolve the failing admission or CI checks, answer review feedback, and push the required fixes. It will close after two more inactive days. Any meaningful update resets the timer.
+          close-pr-message: |
+            Closing after five inactive days in `awaiting-author`.
+
+            Reopen this PR, or open a clean replacement, after the blocking checks and feedback are resolved. Maintainers are not expected to repair contributor branches.

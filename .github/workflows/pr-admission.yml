@@ -1,0 +1,237 @@
+name: PR admission
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, ready_for_review]
+
+# This workflow runs trusted default-branch code only. It never checks out or
+# executes the pull request head.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-admission-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  admission:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted admission script
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Validate review readiness
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const path = require("node:path");
+            const {
+              assessAdmission,
+              extractLinkedIssueNumbers,
+            } = require(
+              path.join(process.cwd(), ".github", "scripts", "pr-admission.cjs"),
+            );
+
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const marker = "<!-- pr-admission -->";
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number,
+            });
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+
+            let permission = "read";
+            try {
+              const response =
+                await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner,
+                  repo,
+                  username: pr.user.login,
+                });
+              permission = response.data.permission;
+            } catch (error) {
+              core.warning(`Permission lookup failed: ${error.message}`);
+            }
+
+            const issueNumbers = extractLinkedIssueNumbers(pr.body);
+            const linkedIssues = [];
+            for (const issue_number of issueNumbers) {
+              try {
+                const { data: issue } = await github.rest.issues.get({
+                  owner,
+                  repo,
+                  issue_number,
+                });
+                if (!issue.pull_request) {
+                  linkedIssues.push({
+                    number: issue.number,
+                    labels: issue.labels,
+                  });
+                }
+              } catch (error) {
+                core.warning(
+                  `Could not load linked issue #${issue_number}: ${error.message}`,
+                );
+              }
+            }
+
+            const failures = assessAdmission({
+              body: pr.body,
+              changedFiles: files.map((file) => file.filename),
+              linkedIssues,
+              authorHasPushPermission:
+                permission === "admin" ||
+                permission === "maintain" ||
+                permission === "write",
+            });
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name,
+                    color,
+                    description,
+                  });
+                } catch (createError) {
+                  if (createError.status !== 422) throw createError;
+                }
+              }
+            }
+
+            await ensureLabel(
+              "awaiting-author",
+              "d93f0b",
+              "Author action is required before maintainer review",
+            );
+            await ensureLabel(
+              "intake: admitted",
+              "0e8a16",
+              "PR passed the automated contribution intake gate",
+            );
+
+            const currentLabels = new Set(
+              pr.labels.map((label) => label.name),
+            );
+
+            async function addLabel(name) {
+              if (currentLabels.has(name)) return;
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: pull_number,
+                labels: [name],
+              });
+              currentLabels.add(name);
+            }
+
+            async function removeLabel(name) {
+              if (!currentLabels.has(name)) return;
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: pull_number,
+                name,
+              });
+              currentLabels.delete(name);
+            }
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: pull_number, per_page: 100 },
+            );
+            const existing = comments.find(
+              (comment) =>
+                comment.user?.login === "github-actions[bot]" &&
+                comment.body?.includes(marker),
+            );
+
+            async function upsert(body) {
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: pull_number,
+                  body,
+                });
+              }
+            }
+
+            if (failures.length === 0) {
+              await removeLabel("awaiting-author");
+              await addLabel("intake: admitted");
+              if (existing) {
+                await upsert(
+                  `${marker}\n\n✅ **Contribution intake passed.**\n\n` +
+                  "The PR is eligible for CI and maintainer review. Passing intake is not approval.",
+                );
+              }
+              return;
+            }
+
+            await removeLabel("intake: admitted");
+            await addLabel("awaiting-author");
+
+            const sections = failures.map((failure) => {
+              if (failure.code === "missing_attestations") {
+                return [
+                  "### Author responsibility",
+                  "Check every required item in the PR template after actually completing it:",
+                  ...failure.missing.map((item) => `- [ ] ${item}`),
+                ].join("\n");
+              }
+              if (failure.code === "missing_issue") {
+                return [
+                  "### Approved issue required",
+                  "This implementation PR does not reference an issue.",
+                  "Link one with `Closes #123` or `Refs #123`. The issue must carry `approved-for-work` before external implementation begins.",
+                ].join("\n");
+              }
+              return [
+                "### Linked issue is not approved",
+                `None of the linked issues (${failure.issues.map((n) => `#${n}`).join(", ")}) carries \`approved-for-work\`.`,
+                "Ask a maintainer to confirm the scope before continuing implementation.",
+              ].join("\n");
+            });
+
+            await upsert(
+              [
+                marker,
+                "",
+                "⚠️ **This PR is not ready for maintainer review.**",
+                "",
+                ...sections.flatMap((section) => [section, ""]),
+                "The `awaiting-author` label remains until these requirements pass. PRs left in that state for five inactive days may be closed automatically.",
+              ].join("\n"),
+            );
+
+            core.setFailed(
+              `PR admission failed: ${failures.map((f) => f.code).join(", ")}`,
+            );
