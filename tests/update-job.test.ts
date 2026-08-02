@@ -145,9 +145,9 @@ describe("GUI update execution decisions", () => {
     // Old [^\s] path rules terminated at the first space: a Windows profile with
     // a space survived whole, and a POSIX spaced profile half-leaked. These are
     // the exact inputs from the review reproduction.
-    const winSpaced = String.raw`C:\Users\Alice Smith\.npm\_cacache\tmp\entry`;
-    const posixSpaced = "/Users/Alice Smith/.npm/_cacache/tmp";
-    const bunSpaced = String.raw`C:\Users\Alice Smith\.bun\bin\ocx.mjs`;
+    const winSpaced = String.raw`C:\Users\Example User\.npm\_cacache\tmp\entry`;
+    const posixSpaced = "/Users/Example User/.npm/_cacache/tmp";
+    const bunSpaced = String.raw`C:\Users\Example User\.bun\bin\ocx.mjs`;
     const job: UpdateJobState = {
       id: "sanitize-spaced-paths",
       status: "failed",
@@ -164,7 +164,7 @@ describe("GUI update execution decisions", () => {
         `npm failed at ${winSpaced}`,
         `and at ${posixSpaced}`,
         `spawn ${bunSpaced} start failed: EACCES`,
-        "error in /Users/alice/project/file.ts: something went wrong",
+        "error in /Users/example/project/file.ts: something went wrong",
       ],
       error: posixSpaced,
     };
@@ -176,9 +176,9 @@ describe("GUI update execution decisions", () => {
     });
     const saved = readUpdateJob(job.id);
     const persisted = JSON.stringify(saved);
-    expect(persisted).not.toContain("Alice Smith");
-    expect(persisted).not.toContain("AliceSmith");
-    expect(persisted).not.toContain("Alice");
+    expect(persisted).not.toContain("Example User");
+    expect(persisted).not.toContain("ExampleUser");
+    expect(persisted).not.toContain("Example");
     expect(persisted).not.toContain("_cacache");
     expect(persisted).not.toContain(String.raw`.bun\bin`);
     // Non-secret context survives: the error message and the POSIX directory
