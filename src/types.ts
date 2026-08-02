@@ -1,3 +1,5 @@
+import type { KiroOAuthMetadata } from "./oauth/types";
+
 export interface OcxParsedRequest {
   modelId: string;
   previousResponseId?: string;
@@ -23,6 +25,8 @@ export interface OcxParsedRequest {
    * derived from the parent thread id.
    */
   _cursorIsolateConversation?: boolean;
+  /** Account-scoped, non-secret Kiro request metadata selected with the OAuth access token. */
+  _kiroAuthContext?: Pick<KiroOAuthMetadata, "profileArn" | "apiRegion" | "ssoRegion">;
   /** Provider-private continuation metadata resolved from the Responses previous_response_id chain. */
   _providerContinuation?: OcxProviderContinuationState;
   /**
@@ -31,6 +35,8 @@ export interface OcxParsedRequest {
    * executes searches via the gpt-5.4-mini sidecar (see src/web-search). Absent when not requested.
    */
   _webSearch?: Record<string, unknown>;
+  /** Hosted image_generation tool config stashed for the image bridge sidecar (see src/images). */
+  _imageGeneration?: { toolNames: Set<string>; originalTool?: Record<string, unknown> };
   /**
    * True when Codex requested structured output (`text.format` = json_schema/json_object). The
    * web-search tool_result is then rendered as compact JSON instead of markdown prose, so its
@@ -152,6 +158,10 @@ export interface OcxTool {
   loadedFromToolSearch?: boolean;
   /** Synthetic web_search tool: the model's call is executed by the gpt-5.4-mini sidecar, not relayed to Codex. */
   webSearch?: boolean;
+  /** Synthetic image_gen tool: the model's call is executed by the xAI image bridge sidecar, not relayed to Codex. */
+  imageGeneration?: boolean;
+  /** Synthetic video_gen tool: executed by the xAI video bridge sidecar. */
+  videoGeneration?: boolean;
 }
 
 /**
@@ -432,6 +442,11 @@ export interface OcxClaudeCodeConfig {
    * free. Only ocx-*.md files are owned/pruned. Default: enabled.
    */
   injectAgents?: boolean;
+  /**
+   * Optional Claude Code effort pinned in every generated ocx-* subagent
+   * definition. Unset inherits the parent session effort.
+   */
+  subagentEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Claude-originated web-search override. Unset fields inherit the global sidecar settings. */
   webSearchSidecar?: { backend?: "openai" | "anthropic"; model?: string };
   /** Claude-originated vision override. Unset fields inherit the global sidecar settings. */
@@ -440,6 +455,11 @@ export interface OcxClaudeCodeConfig {
   desktopProfile?: OcxClaudeDesktopProfile;
   /** Auto-reconcile Desktop 3P config when provider catalog changes. Default: enabled. */
   desktopAutoApply?: boolean;
+  /**
+   * When false, omit `native/*` rows from Claude Desktop show/export/apply. Default: enabled.
+   * Routing-sidecar alias decoding is unchanged — only the Desktop model list writer.
+   */
+  desktopNativeModels?: boolean;
 }
 
 export type OcxClaudeDesktopFamily = "opus" | "fable" | "sonnet" | "haiku";
@@ -457,6 +477,25 @@ export interface OcxClaudeDesktopProfile {
   appliedFingerprint?: string;
   /** ISO timestamp of the last successful apply. */
   appliedAt?: string;
+}
+
+/**
+ * Opt-in archived-session auto-cleanup policy (issue #42 Phase 3).
+ * Persisted under `OcxConfig.storageCleanupPolicy`. Default `enabled: false`.
+ */
+export interface StorageCleanupPolicy {
+  /** When false/unset, the engine never mutates. Default false. */
+  enabled: boolean;
+  /** Run when archived session bytes exceed this threshold. */
+  trigger: { archivedBytesOver: number };
+  /** Either shrink archives toward a byte floor, or remove the oldest N%. */
+  target: { reduceToBytes?: number } | { removeOldestPercent?: number };
+  schedule: "startup" | "daily" | "weekly" | "manual";
+  /** Default quarantine. Permanent only when explicitly set. */
+  mode: "quarantine" | "permanent";
+  lastRun?: { at: number; freedBytes: number; removed: number };
+  /** Epoch ms when the next scheduled evaluation is due. */
+  nextRun?: number;
 }
 
 /** 사용자가 대시보드에서 직접 추가한 커스텀 모델 정의. */
@@ -477,12 +516,28 @@ export interface OcxCustomModel {
   addedAt?: string;
 }
 
+/**
+ * A generated `ocx_` data-plane key. `key` is the secret itself and never leaves
+ * the server except in the one-time POST /api/keys response; every other surface
+ * sees only the masked prefix.
+ */
+export interface OcxApiKeyEntry {
+  id: string;
+  name: string;
+  key: string;
+  createdAt: string;
+}
+
 export interface OcxConfig {
   port: number;
+  /** Maximum usage-log bytes read for one management snapshot. */
+  managementUsageMaxReadBytes?: number;
   providers: Record<string, OcxProviderConfig>;
   defaultProvider: string;
   /** OpenAI provider-contract migration marker (v2 = single `openai` provider with account mode). */
   openaiProviderTierVersion?: 1 | 2;
+  /** One-time migration marker for Antigravity's static catalog default. */
+  googleAntigravityStaticCatalogVersion?: 1;
   /** Claude Code inbound + launcher settings. */
   claudeCode?: OcxClaudeCodeConfig;
   /**
@@ -502,11 +557,27 @@ export interface OcxConfig {
   subagentModelFallbackPollMs?: number;
   injectionModel?: string;
   /**
+   * Opt in to synchronizing the selected injection model into Codex's native
+   * sub-agent defaults. Only meaningful while `injectionModel` is set.
+   */
+  syncCodexSubagentDefaults?: boolean;
+  /**
    * Optional reasoning effort the delegation prompt tells the agent to pass in spawn_agent calls
    * (`reasoning_effort` argument). Only meaningful while `injectionModel` is set; validated against
    * the Codex ladder (src/reasoning-effort.ts CODEX_REASONING_LEVELS) at the API boundary.
    */
   injectionEffort?: string;
+  /**
+   * Explicit sideband websocket base for realtime/live joins, mirroring upstream's
+   * `experimental_realtime_ws_base_url`. The value is a ROOT (or a recognized
+   * `/realtime`, `/realtime/calls/<id>`, `/live/<id>` endpoint form, which is
+   * stripped back to the root); `/v1` is appended during normalization. Intended
+   * for local development against a fake realtime server — plaintext `http`/`ws`
+   * is accepted only for loopback hosts, and URL userinfo is rejected; both
+   * failures close to the canonical `https://api.openai.com/v1`. Configured by
+   * editing this file; there is deliberately no management-API or GUI surface.
+   */
+  experimentalRealtimeWsBaseUrl?: string;
   /**
    * Model ids the user has EXCLUDED from the Grok Build managed block. Absent or empty
    * means "everything visible", which is the historical behaviour — so an existing
@@ -524,11 +595,12 @@ export interface OcxConfig {
    */
   fastMode?: boolean;
   /**
-   * Windows SSE passthrough stream shape (#314 mitigation).
-   * "auto" (default): eager bounded relay only on runtimes proven to carry the
-   * Bun#32111 fix (none today → legacy tee). "eager-relay": force the new relay
-   * (accepts #32111 crash risk on Bun 1.3.14). "legacy-tee": pin the tee path.
-   * Persisted in config.json because Windows services do not inherit shell env.
+   * Windows/macOS SSE passthrough stream shape (#314 mitigation).
+   * On Windows, "auto" (default) selects eager relay only on a runtime proven
+   * to carry the Bun#32111 fix. On macOS, "auto" always stays on legacy tee and
+   * eager relay is explicit-only. "eager-relay" opts into the new relay (and
+   * accepts #32111 crash risk on Bun 1.3.14); "legacy-tee" pins the tee path.
+   * Persisted in config.json so service users can select the stream shape.
    * See src/lib/bun-stream-caps.ts.
    */
   streamMode?: "auto" | "legacy-tee" | "eager-relay";
@@ -613,8 +685,14 @@ export interface OcxConfig {
   shutdownTimeoutMs?: number;
   /** Advertise supports_websockets so Codex opens the WS endpoint. Default false; set true to opt in. */
   websockets?: boolean;
+  /**
+   * Opt-in auto-cleanup policy for archived Codex sessions (issue #42 Phase 3).
+   * Default OFF (`enabled` false / unset). Never enabled implicitly.
+   * See `src/storage/policy.ts`.
+   */
+  storageCleanupPolicy?: StorageCleanupPolicy;
   /** Generated API keys for external access to the proxy's /v1/responses endpoint. */
-  apiKeys?: Array<{ id: string; name: string; key: string; createdAt: string }>;
+  apiKeys?: OcxApiKeyEntry[];
   /** Auto-start/sync the proxy from the Codex shim before launching Codex. Default true. */
   codexAutoStart?: boolean;
   /** Restore an installed shim after a stable external Codex update replaces it. Default true. */
@@ -628,6 +706,8 @@ export interface OcxConfig {
   syncResumeHistory?: boolean;
   /** Freshness window (ms) for the per-provider live `/models` cache. Defaults to 5 min. */
   modelCacheTtlMs?: number;
+  /** Evictable retained app-state budget in MiB. Default 256; valid 64..4096. */
+  appOwnedMemoryBudgetMb?: number;
   /** Anthropic prompt-cache retention: "short" = 5-min ephemeral (default), "long" = 1-hour extended, "none" = disabled. */
   cacheRetention?: "none" | "short" | "long";
   /** Web-search sidecar: route web_search for non-OpenAI models through a gpt-mini via ChatGPT passthrough. */
@@ -640,12 +720,38 @@ export interface OcxConfig {
   search?: OcxSearchConfig;
   /** Codex multi-account pool. */
   codexAccounts?: CodexAccount[];
+  /** Account ids administratively excluded from future pool selection until resumed. */
+  pausedCodexAccountIds?: string[];
+  /**
+   * Public model-selector namespaces bound to one Codex account. Values are stored account ids;
+   * `"@main"` selects the Codex Desktop/main auth.json account. Account display aliases
+   * are intentionally separate from these selectors.
+   */
+  codexAccountNamespaces?: Record<string, string>;
   /** Active pool account id for next session. undefined = main (passthrough as-is). */
   activeCodexAccountId?: string;
   /** Auto-switch threshold (0-100). Default 80. 0 = disabled. */
   autoSwitchThreshold?: number;
+  /** New-session account rotation strategy for the Codex pool. Default quota (today's behaviour). */
+  accountPoolStrategy?: OcxAccountPoolRotationStrategy;
+  /** Successful new-session binds retained on one round-robin selection. Default 1; range 1..100. */
+  accountPoolStickyLimit?: number;
   /** Consecutive non-2xx upstream responses before switching future new threads. Default 3. 0 = disabled. */
   upstreamFailoverThreshold?: number;
+  /**
+   * Opt-in Anthropic OAuth account pool (#294). Default OFF.
+   * Failover on 429 + sticky affinity; new sessions may pick lowest known 5h usage.
+   * Experimental — see docs and GUI warning before enabling.
+   */
+  anthropicAccountPool?: {
+    enabled?: boolean;
+    /** Usage % threshold for new-session auto-pick. Default 80. 0 = disabled (affinity/active only). */
+    autoSwitchThreshold?: number;
+    /** New-session rotation strategy. Default quota (today's behaviour). */
+    strategy?: OcxAccountPoolRotationStrategy;
+    /** Successful new-session binds retained on one round-robin selection. Default 1; range 1..100. */
+    stickyLimit?: number;
+  };
   /** Virtual `combo/<id>` models spanning concrete provider/model targets (issue #133). */
   combos?: Record<string, OcxComboConfig>;
   /** Background proactive token refresh ("Token Guardian"). Off by default; see OcxTokenGuardianConfig. */
@@ -653,6 +759,8 @@ export interface OcxConfig {
   /** Additional origins allowed for CORS (e.g. ["https://clisu-oracle.tail19a2d7.ts.net"]). Loopback origins are always allowed. */
   corsAllowOrigins?: string[];
 }
+
+export type OcxAccountPoolRotationStrategy = "quota" | "round-robin" | "fill-first";
 
 export type OcxComboStrategy = "failover" | "round-robin";
 export type OcxComboDefaultEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
@@ -714,8 +822,24 @@ export interface OcxTokenGuardianConfig {
 export interface OcxImagesConfig {
   /** Optional custom API-key provider for /v1/images relays. Built-in OpenAI tiers remain automatic. */
   provider?: string;
-  /** Upstream timeout (ms) for one /v1/images relay. Default 300000 — generation is slow. */
+  /** Upstream timeout (ms) for one image generation/edit call (bridge xAI + /v1/images relay). Default 60000 for the bridge; relay may use a higher default (300000). */
   timeoutMs?: number;
+  /** Master switch for the image bridge. Default false — set true to enable paid xAI Grok Imagine generation. */
+  bridgeEnabled?: boolean;
+  /** xAI image model id. Default "grok-imagine-image-quality" (see DEFAULT_MODEL in images/plan.ts). */
+  bridgeModel?: string;
+  /** Max image-generation loop iterations before forced-final. Default 3; clamped to [0, 10]. */
+  maxRounds?: number;
+  /** Max files retained under artifacts/. Oldest deleted when exceeded. Default 200. */
+  artifactsKeepCount?: number;
+  /** Master switch for the video bridge. Default false — must be explicitly opted in. */
+  videoBridgeEnabled?: boolean;
+  /** Model for xAI video generation. Default "grok-imagine-video". */
+  videoBridgeModel?: string;
+  /** Max video-gen rounds before forced-final. Default 2 (video is slower than image). */
+  videoMaxRounds?: number;
+  /** Per-video generation timeout (ms) including polling. Default 300000 (5 min). */
+  videoTimeoutMs?: number;
 }
 
 export interface OcxSearchConfig {
@@ -785,6 +909,10 @@ export interface ResponsesItemIdRepairConfig {
 
 export interface OcxProviderConfig {
   adapter: string;
+  /** Cursor MCP compatibility bounds; positive integers when configured. */
+  mcpMaxTools?: number;
+  mcpMaxSchemaBytes?: number;
+  mcpMaxResultBytes?: number;
   /**
    * Per-model wire override, keyed by the upstream native model id (after namespace
    * and combo resolution). A single gateway can front models that speak different
@@ -804,6 +932,13 @@ export interface OcxProviderConfig {
    */
   responsesPath?: string;
   /**
+   * Responses upstream that stores nothing server-side (DeepSeek documents "the API
+   * is stateless"). Stateful request parameters are dropped, `store` is pinned false,
+   * and orphaned tool results left by a replay miss are repaired rather than
+   * forwarded to an upstream that cannot resolve their pair.
+   */
+  statelessResponses?: boolean;
+  /**
    * Explicit opt-in for non-registry private-network destinations such as localhost, RFC1918,
    * link-local, or unique-local upstreams. Metadata endpoints remain blocked.
    */
@@ -817,6 +952,12 @@ export interface OcxProviderConfig {
    */
   codexAccountMode?: CodexAccountMode;
   apiKey?: string;
+  /**
+   * Key-auth header style for Anthropic-compatible providers.
+   * Defaults to the native Anthropic `x-api-key`; gateways may require
+   * `Authorization: Bearer <key>` instead.
+   */
+  apiKeyTransport?: "x-api-key" | "bearer";
   /**
    * Multi-key pool (API-key twin of OAuth multiauth). `apiKey` always mirrors the ACTIVE
    * entry so routing stays single-key; managed via /api/providers/keys. A legacy bare

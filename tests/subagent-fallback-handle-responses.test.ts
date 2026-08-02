@@ -28,6 +28,7 @@ import {
 } from "../src/codex/subagent-model-fallback";
 import type { CodexAuthContext } from "../src/codex/auth-context";
 import { handleResponses } from "../src/server/responses";
+import { isEagerRelaySseResponse } from "../src/server/relay";
 import type { OcxConfig } from "../src/types";
 import type { RequestLogContext } from "../src/server/request-log";
 import type { ResponsesTerminalStatus } from "../src/bridge";
@@ -296,28 +297,28 @@ describe("subagent fallback without primary auth cooldown failure", () => {
     expect(response.status).not.toBe(429);
   });
 
-  test("final-route auth failure does not leave a primary probe lease", async () => {
+  test("final-route direct auth failure does not acquire a pool probe lease", async () => {
     const now = 1_800_000_000_000;
     Date.now = () => now;
     installPoolCredential("pool-a", "pool_acc", now);
     const cfg: OcxConfig = {
       port: 0,
-      defaultProvider: "openai",
+      defaultProvider: "xai",
       activeCodexAccountId: "pool-a",
       autoSwitchThreshold: 80,
-      subagentModelFallback: ["openai-direct/gpt-5.5"],
+      subagentModelFallback: ["gpt-5.5"],
       providers: {
         openai: {
           adapter: "openai-responses",
           baseUrl: "https://chatgpt.com/backend-api/codex",
           authMode: "forward",
-          codexAccountMode: "pool",
-        },
-        "openai-direct": {
-          adapter: "openai-responses",
-          baseUrl: "https://chatgpt.com/backend-api/codex",
-          authMode: "forward",
           codexAccountMode: "direct",
+        },
+        xai: {
+          adapter: "openai-chat",
+          baseUrl: "https://api.x.ai/v1",
+          authMode: "key",
+          apiKey: "xai-test",
         },
       },
       codexAccounts: [
@@ -328,8 +329,16 @@ describe("subagent fallback without primary auth cooldown failure", () => {
     updateAccountQuota("pool-a", 95, undefined, 20);
     const resetAt = Math.floor((now + 4 * 24 * 60 * 60_000) / 1000);
     recordCodexUpstreamOutcome(cfg, "pool-a", 429, { resetAt, now });
+    const { noteSubagentModelFailure } = await import("../src/codex/subagent-model-fallback");
+    noteSubagentModelFailure("xai/grok-4.5", "429", cfg);
 
-    // Omit authorization so direct-mode final auth fails — primary never leased.
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      throw new Error("must not dispatch");
+    }) as typeof fetch;
+
+    // Omit authorization so the canonical Direct final route fails before dispatch.
     const response = await handleResponses(
       new Request("http://localhost/v1/responses", {
         method: "POST",
@@ -338,7 +347,7 @@ describe("subagent fallback without primary auth cooldown failure", () => {
           "x-openai-subagent": "collab_spawn",
         },
         body: JSON.stringify({
-          model: "gpt-5.6-sol",
+          model: "xai/grok-4.5",
           input: readableAgentInput(),
           stream: false,
         }),
@@ -348,6 +357,7 @@ describe("subagent fallback without primary auth cooldown failure", () => {
     );
 
     expect(response.status).toBe(401);
+    expect(fetchCalls).toBe(0);
     expect(getCodexUpstreamHealth("pool-a")?.probeLeaseId).toBeUndefined();
   });
 });
@@ -940,4 +950,40 @@ describe("native passthrough terminal finalization", () => {
       expect(result.healthBlocked).toBe(false);
     });
   }
+});
+
+describe("darwin explicit eager-relay path selection", () => {
+  const completedSse = `event: response.completed\ndata: ${JSON.stringify({
+    type: "response.completed",
+    response: { id: "r1", status: "completed", output: [] },
+  })}\n\n`;
+
+  async function runDarwinStreamMode(streamMode: "legacy-tee" | "eager-relay"): Promise<Response> {
+    const now = 1_800_000_000_000;
+    Date.now = () => now;
+    installPoolCredential("pool-a", "pool_acc", now);
+    mockSseUpstream(completedSse);
+    return postSpawn(
+      poolNativePlusRoutedConfig({ streamMode, activeCodexAccountId: "pool-a" }),
+      { model: "gpt-5.6-sol", input: readableAgentInput(), stream: true },
+    );
+  }
+
+  test.skipIf(process.platform !== "darwin")(
+    "eager-relay + no rewrite marks the direct handleResponses response as eager",
+    async () => {
+      const response = await runDarwinStreamMode("eager-relay");
+      expect(isEagerRelaySseResponse(response)).toBe(true);
+      expect(await response.text()).toContain("response.completed");
+    },
+  );
+
+  test.skipIf(process.platform !== "darwin")(
+    "legacy-tee + no rewrite does not carry the eager marker",
+    async () => {
+      const response = await runDarwinStreamMode("legacy-tee");
+      expect(isEagerRelaySseResponse(response)).toBe(false);
+      expect(await response.text()).toContain("response.completed");
+    },
+  );
 });

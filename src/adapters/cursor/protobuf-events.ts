@@ -3,12 +3,17 @@ import type { AgentServerMessage, McpArgs, ToolCall } from "./gen/agent_pb";
 import { decodeCursorArgsMap } from "./arg-codec";
 import { normalizeArgKeys } from "./arg-normalize";
 import {
+  cursorShellBridgeArgsValid,
+  cursorShellBridgeDropError,
+  defaultShellBridgeArgNormalizeSchema,
+  isCodexShellBridgeToolName,
   normalizeCursorWireName,
   OCX_RESPONSES_TOOL_PROVIDER,
   resolveShellBridgeAliasKey,
   responsesToolNameFromCursorWire,
 } from "./tool-definitions";
 import type { CursorServerMessage } from "./types";
+import type { TranslatorBudget } from "../../lib/translator-budget";
 
 const DEFAULT_CONTEXT_USAGE_MAX_ENTRIES = 200;
 const DEFAULT_CONTEXT_USAGE_TTL_MS = 60 * 60 * 1_000;
@@ -156,6 +161,7 @@ export interface CursorProtobufEventState {
   toolSchemas?: Map<string, unknown>;
   /** Cursor wire-name → original Responses/Codex tool name for this request. */
   cursorToolNameMap?: Map<string, string>;
+  translatorBudget?: TranslatorBudget;
 }
 
 export function createCursorProtobufEventState(options: {
@@ -170,6 +176,7 @@ export function createCursorProtobufEventState(options: {
    * the checkpoint tracker (#373).
    */
   estimatedInputTokens?: number;
+  translatorBudget?: TranslatorBudget;
 } = {}): CursorProtobufEventState {
   return {
     // Cursor provides no authoritative usage frame; token counts are heuristic estimates from
@@ -182,6 +189,7 @@ export function createCursorProtobufEventState(options: {
     startedClientToolCalls: 0,
     ...(options.toolSchemas ? { toolSchemas: options.toolSchemas } : {}),
     ...(options.cursorToolNameMap ? { cursorToolNameMap: options.cursorToolNameMap } : {}),
+    ...(options.translatorBudget ? { translatorBudget: options.translatorBudget } : {}),
     ...(options.contextUsage?.carryForwardTokens !== undefined ? { contextCarryForwardTokens: options.contextUsage.carryForwardTokens } : {}),
     ...(options.contextUsage?.recordContextTokens ? { recordContextTokens: options.contextUsage.recordContextTokens } : {}),
     ...(typeof options.estimatedInputTokens === "number"
@@ -324,10 +332,18 @@ export function mapSyntheticMcpExecToToolEvents(
     out.push(...commitToolCall(options.state, callId, finalArgs));
     return out;
   }
+  const responsesName = responsesToolNameFromCursorWire(cursorWireName);
+  const normSchema = defaultShellBridgeArgNormalizeSchema(responsesName);
+  const normalizedArgs = JSON.stringify(normalizeArgKeys(decodeCursorArgsMap(args?.args), normSchema));
+  if (!cursorShellBridgeArgsValid(normalizedArgs, responsesName, normSchema)) {
+    if (isCodexShellBridgeToolName(responsesName)) {
+      return [{ type: "error", message: cursorShellBridgeDropError(responsesName) }];
+    }
+  }
   // Stateless fallback (no shared event state): emit a complete, self-contained tool call.
   return [
-    { type: "tool_call_start", id: callId, name: responsesToolNameFromCursorWire(cursorWireName) },
-    { type: "tool_call_delta", arguments: decodeMcpArgs(args) },
+    { type: "tool_call_start", id: callId, name: responsesName },
+    ...(normalizedArgs.length > 2 ? [{ type: "tool_call_delta" as const, arguments: normalizedArgs }] : []),
     { type: "tool_call_end", id: callId },
   ];
 }
@@ -351,6 +367,7 @@ function recordToolCall(state: CursorProtobufEventState, callId: string, cursorW
   // land on the tool Codex actually exposed this turn (#399).
   const mapKey = advertisedName ?? normalizeCursorWireName(cursorWireName);
   state.openToolCalls.set(callId, { name: responsesToolNameFromCursorWire(mapKey, state.cursorToolNameMap), args: "" });
+  state.translatorBudget?.openCall(callId);
   state.startedClientToolCalls++;
   return [];
 }
@@ -361,9 +378,30 @@ function recordToolCall(state: CursorProtobufEventState, callId: string, cursorW
  * recorded in `openToolCalls`. Because each completion emits a whole non-interleaved unit, the bridge
  * (which tracks a single current tool call) serializes parallel Cursor calls correctly.
  */
+function dropShellBridgeCall(state: CursorProtobufEventState, callId: string, toolName: string): CursorServerMessage[] {
+  state.openToolCalls.delete(callId);
+  state.translatorBudget?.closeCall(callId);
+  state.completedToolCalls.add(callId);
+  return [{ type: "error", message: cursorShellBridgeDropError(toolName) }];
+}
+
 function commitToolCall(state: CursorProtobufEventState, callId: string, finalArgs: string): CursorServerMessage[] {
   const open = state.openToolCalls.get(callId);
   if (!open) return [];
+  const schema = toolSchemaForWireName(state, open.name);
+  if (!cursorShellBridgeArgsValid(finalArgs, open.name, schema)) {
+    if (isCodexShellBridgeToolName(open.name)) return dropShellBridgeCall(state, callId, open.name);
+  }
+  if (finalArgs !== open.args) {
+    const previousBytes = Buffer.byteLength(open.args);
+    const reservation = state.translatorBudget?.reserveTransient(
+      Buffer.byteLength(finalArgs),
+      { kind: "tool_args", callId },
+    );
+    open.args = finalArgs;
+    reservation?.commitRetained();
+    state.translatorBudget?.releaseRetained(previousBytes, { kind: "tool_args", callId });
+  }
   const out: CursorServerMessage[] = [{ type: "tool_call_start", id: callId, name: open.name }];
   if (finalArgs.length > 0) out.push({ type: "tool_call_delta", arguments: finalArgs });
   out.push(...endToolCall(state, callId));
@@ -379,12 +417,23 @@ function commitToolCall(state: CursorProtobufEventState, callId: string, finalAr
 function bufferToolArgs(state: CursorProtobufEventState, callId: string, cumulative: string): void {
   const open = state.openToolCalls.get(callId);
   if (!open) return;
-  if (cumulative.length >= open.args.length) open.args = cumulative;
+  if (cumulative.length >= open.args.length) {
+    const encoder = new TextEncoder();
+    const previousBytes = encoder.encode(open.args).byteLength;
+    const reservation = state.translatorBudget?.reserveTransient(
+      encoder.encode(cumulative).byteLength,
+      { kind: "tool_args", callId },
+    );
+    open.args = cumulative;
+    reservation?.commitRetained();
+    state.translatorBudget?.releaseRetained(previousBytes, { kind: "tool_args", callId });
+  }
 }
 
 function endToolCall(state: CursorProtobufEventState, callId: string): CursorServerMessage[] {
   if (!state.openToolCalls.has(callId)) return [];
   state.openToolCalls.delete(callId);
+  state.translatorBudget?.closeCall(callId);
   state.completedToolCalls.add(callId);
   return [{ type: "tool_call_end", id: callId }];
 }

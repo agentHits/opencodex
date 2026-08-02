@@ -1,6 +1,6 @@
 ---
 title: Codex Integration
-description: How opencodex injects itself into Codex, syncs the model catalog, drives the subagent picker, and restores cleanly.
+description: How opencodex injects itself into Codex, syncs the model catalog, installs shims, and restores cleanly.
 ---
 
 opencodex makes Codex route through the proxy by editing two things Codex reads: its config
@@ -36,7 +36,11 @@ The proxy listens on port `10100` by default and serves `POST /v1/responses`,
 Codex's built-in `image_gen` tool does not go through `/v1/responses` — the codex-rs extension
 POSTs `{base_url}/images/generations` (or `/images/edits` when reference images are attached)
 directly, with the same ChatGPT bearer auth it uses for chat. Because the injected `base_url`
-points at opencodex, the proxy relays those calls to the OpenAI upstream:
+points at opencodex, the proxy relays those calls to the OpenAI upstream.
+
+This is separate from the [Image Bridge](/guides/image-bridge/), which only activates when a
+**Responses** turn lists the hosted `image_generation` tool while a non-OpenAI model is selected.
+Standalone `/images/generations` calls never enter that bridge.
 
 - **One mode-aware forward candidate:** Pool selects an eligible main/added account; Direct uses the
   caller OAuth bearer. The configured mode applies consistently to the image request.
@@ -46,10 +50,27 @@ points at opencodex, the proxy relays those calls to the OpenAI upstream:
   `openai-responses` provider whose endpoint implements the OpenAI Images API. Explicit selection
   fails closed and never falls back to a different paid upstream. Registry-managed provider ids
   are not accepted here; omit `images.provider` to use the built-in OpenAI tiers.
+- **Google Antigravity (CCA) fallback:** when neither an OpenAI forward candidate nor a keyed
+  provider is configured, `/v1/images/generations` (not `/images/edits`) falls back to the
+  Antigravity **Cloud Code Assist** endpoint using the `gemini-3.1-flash-image` model. The fallback
+  also fires after OpenAI auth resolution fails (e.g. an expired or missing ChatGPT credential),
+  not only when no OpenAI candidate is configured. This
+  requires `ocx login google-antigravity`; the OAuth token is sent only to the pinned CCA registry
+  host, never to a config-level `baseUrl` override. The response is returned in the same
+  `{created, data:[{b64_json}]}` shape Codex expects.
 - **Neither:** the proxy returns a clear error instead of a generic 404. Routed providers
-  (Cursor, Gemini, Kiro, …) cannot serve image generation; if you don't want the tool offered at
-  all, disable it in Codex with `codex features disable image_generation`
+  (Cursor, Gemini, Kiro, …) cannot serve the `image_generation` tool relay; if you don't want the
+  tool offered at all, disable it in Codex with `codex features disable image_generation`
   (`[features] image_generation = false` in `config.toml`).
+
+The tool declaration still travels with the model's Responses request. For API-key Responses
+providers, opencodex lowers Codex's private `image_gen` namespace to an upstream-safe
+`image_gen__<inner-name>` alias (for example `image_gen__imagegen`). When that usable alias replaces
+the client declaration, opencodex removes a duplicate hosted `image_generation` declaration. It maps
+the function call to the explicit `image_gen` namespace before Codex sees it, and encodes the native
+call again when later history is replayed upstream. This keeps client-side image generation callable
+on public-compatible upstreams that reserve the namespace or reject dotted function names. ChatGPT
+forward mode remains untouched and keeps its native Responses Lite shape.
 
 For an OpenAI-compatible custom gateway, configure a dedicated provider and select it only for
 standalone Images requests:
@@ -74,6 +95,11 @@ standalone Images requests:
 The custom endpoint must accept `POST /v1/images/generations` and `/v1/images/edits` and return the
 OpenAI Images response shape expected by Codex. The provider's configured key replaces any caller
 bearer before the upstream request.
+
+> **Note:** This refers only to the Codex `image_generation` tool (`/images/generations` relay).
+> Gemini models that are image-capable produce inline images natively through the `google` adapter
+> (via `responseModalities: ["TEXT", "IMAGE"]`), independent of this relay — see
+> [Adapters](/reference/adapters/#google).
 
 For a non-loopback `hostname`, Codex must send the generated API auth header. The injector therefore
 uses a dedicated provider instead:
@@ -175,6 +201,22 @@ Add a display name from the CLI (the proxy syncs the catalog right away when liv
 ocx models add deepseek deepseek-v4 --display-name "DeepSeek V4" --context-window 128000
 ```
 
+Remote Codex clients can fetch the same generated catalog over the management API (same
+admission token as other `/api/*` routes):
+
+```bash
+dest="${CODEX_HOME:-$HOME/.codex}/opencodex-catalog.json"
+tmp="$(mktemp "${dest}.XXXXXX")"
+curl -fsS -H "x-opencodex-api-key: $OPENCODEX_ADMIN_AUTH_TOKEN" \
+  "https://proxy.example.com/api/catalog" > "$tmp" \
+  && mv "$tmp" "$dest"
+ocx sync-cache
+```
+
+The response is the raw `opencodex-catalog.json` document (no provider credentials). When
+available, the `x-opencodex-codex-version` header reports the Codex runtime version on the
+server so clients can spot version skew.
+
 You can also set or edit it through the management API (`POST /api/custom-models`,
 `PUT /api/custom-models/<id>` with a `displayName` string) and the web dashboard. A `/` is rejected
 because it would collide with the routed-slug separator.
@@ -219,6 +261,11 @@ If a model is missing from Codex, or the catalog order/visibility looks wrong, c
    independently of other providers.
 5. **Cache and `ocx sync`** — live catalogs are cached for about five minutes (`modelCacheTtlMs`,
    default `300000`). Run `ocx sync` to force a fresh fetch and rewrite the catalog immediately.
+6. **Running Codex `app-server`** — rewriting the on-disk catalog is not enough while a long-lived
+   Codex `app-server` (Desktop / CLI background host) keeps the previous list in memory. `ocx sync`
+   and `ocx sync-cache` warn when those processes are detected. Restart them with
+   `ocx sync --restart-codex` (or stop the matching `app-server` processes yourself), then let Codex
+   recreate them so the new list appears.
 
 :::caution[Other local writers]
 Catalog writes (`opencodex-catalog.json`, `config.toml`) are atomic **inside** opencodex, which only
@@ -248,24 +295,7 @@ it is not; `ocx doctor` reports restart safety (service/shim coverage).
 
 ## The subagent picker
 
-Codex's `spawn_agent` advertises the first **5 picker-visible catalog models** after sorting by
-priority. `subagentModels` accepts up to five ids, either bare native GPT slugs or namespaced
-`provider/model` routes, and gives them priorities 0–4 so they sort first:
-
-```json
-{
-  "subagentModels": [
-    "gpt-5.5",
-    "gpt-5.6-sol",
-    "anthropic/claude-opus-5",
-    "xai/grok-4.5",
-    "cursor/gpt-5.6-terra"
-  ]
-}
-```
-
-Priority ranking: featured (0–4) < other routed (5) < native (9). You can also manage this from the
-[web dashboard](/guides/web-dashboard/).
+Catalog sync makes the selected sub-agent models available to Codex; see [Codex App model picker](/guides/codex-app-models/#subagent-selection) for picker ordering and [Sub-agent Surface](/guides/sub-agent-surface/) for v1/base/v2 delegation and fallback behavior.
 
 ## Codex account warmup
 

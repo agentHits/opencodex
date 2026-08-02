@@ -20,11 +20,13 @@ import {
   isCodexAccountInCooldown,
 } from "./routing";
 import { isCodexAccountUsable } from "./account-usability";
+import { isCodexAccountPaused } from "./account-pause";
 import { slugEquals } from "../providers/slug-codec";
 import { isThreadSpawnRequest } from "../server/effort-policy";
 import { PROVIDER_REGISTRY } from "../providers/registry";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import { routeModel, type RouteResult } from "../router";
+import { sweepExpiredOnWrite } from "../lib/state-store-sweeper";
 export const DEFAULT_SUBAGENT_MODEL_FALLBACK_POLL_MS = 60_000;
 
 type SubagentQuotaPrimeFn = (config: OcxConfig, reason: string) => Promise<void>;
@@ -187,6 +189,7 @@ export function isSubagentModelUnavailable(
   // route (canonical openai defaults to pool even when codexAccountMode is omitted).
   const resolvedAccountId = resolvePoolFallbackAccountId(config, accountId);
   if (!resolvedAccountId) return true;
+  if (isCodexAccountPaused(config, resolvedAccountId)) return true;
   if (!isCodexAccountUsable(config, resolvedAccountId)) return true;
   if (
     isCodexAccountInCooldown(resolvedAccountId, now)
@@ -243,6 +246,17 @@ export function noteSubagentModelFailure(
       reason: "quota_exhausted",
     },
   );
+  sweepExpiredOnWrite(now);
+}
+
+export function sweepExpiredSubagentModelHealth(now = Date.now()): number {
+  let removed = 0;
+  for (const [key, health] of modelHealth) {
+    if (health.unavailableUntil > now) continue;
+    modelHealth.delete(key);
+    removed += 1;
+  }
+  return removed;
 }
 
 export function resetSubagentModelFallbackStateForTests(): void {

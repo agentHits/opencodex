@@ -10,7 +10,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,8 @@ import {
   INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE,
   runProcessTreeCommand,
 } from "../src/update/install-process.mjs";
+import { isRealBunBinary } from "../src/lib/bun-binary-validator.mjs";
+import { npmInvocation } from "../src/update/npm-invocation.mjs";
 import { handoffWindowsTrayForUpdate, planWindowsTrayUpdate } from "../src/update/tray-update-plan.mjs";
 
 const PKG = "@bitkyc08/opencodex";
@@ -33,10 +35,6 @@ function isNodeModulesInstall() {
 
 function isBunGlobalInstall() {
   return /[\\/]\.bun[\\/]/.test(here);
-}
-
-function npmBin() {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
 function currentPackageVersion() {
@@ -121,15 +119,17 @@ function runTrayLifecycle(launcher, action) {
 async function runNpmSelfUpdate() {
   const current = currentPackageVersion();
   const tag = updateTag(current);
-  const npm = npmBin();
-  // Node ≥18.20/20.12 refuses to spawn .cmd/.bat without a shell (CVE-2024-27980
-  // hardening) — spawning "npm.cmd" shell-less throws EINVAL on Windows.
-  const winShell = process.platform === "win32";
-  const latestResult = spawnSync(npm, ["view", `${PKG}@${tag}`, "version"], {
+  const latestInvocation = npmInvocation(["view", `${PKG}@${tag}`, "version"]);
+  const installInvocation = npmInvocation(["install", "-g", `${PKG}@${tag}`]);
+  if (!latestInvocation || !installInvocation) {
+    console.error("opencodex: could not resolve npm from a trusted absolute PATH entry; aborting before stopping the proxy.");
+    process.exit(1);
+  }
+  const latestResult = spawnSync(latestInvocation.file, latestInvocation.args, {
     encoding: "utf8",
     timeout: 12000,
     windowsHide: true,
-    shell: winShell,
+    ...latestInvocation.options,
   });
   const latest = latestResult.status === 0 ? latestResult.stdout.trim() : "";
 
@@ -139,7 +139,7 @@ async function runNpmSelfUpdate() {
     process.exit(0);
   }
 
-  const cacheOwnership = checkNpmCacheOwnership({ npmBin: npm, shell: winShell });
+  const cacheOwnership = checkNpmCacheOwnership();
   if (cacheOwnership.ok === false) {
     console.error(`opencodex: ${formatNpmCacheOwnershipFailure(cacheOwnership)}`);
     process.exit(1);
@@ -236,16 +236,16 @@ async function runNpmSelfUpdate() {
     }
   }
 
-  console.log(`Updating${latest ? ` to v${latest}` : ""}...\n$ ${npm} install -g ${PKG}@${tag}`);
-  const res = await runProcessTreeCommand(npm, ["install", "-g", `${PKG}@${tag}`], {
+  console.log(`Updating${latest ? ` to v${latest}` : ""}...\n$ npm install -g ${PKG}@${tag}`);
+  const res = await runProcessTreeCommand(installInvocation.file, installInvocation.args, {
     stdio: "inherit",
     timeoutMs: NPM_INSTALL_TIMEOUT_MS,
     windowsHide: true,
-    shell: winShell,
+    ...installInvocation.options,
   });
   if (!res.treeExited) {
     console.error("\nopencodex: installer process-tree cleanup could not be confirmed; automatic recovery is unsafe until those processes exit.");
-    console.error(`  The proxy is stopped. Once no '${npm}' installer processes remain, run 'ocx start' or re-run 'ocx update'.${trayBeforeUpdate.restoreOnFailure ? " The Windows tray also remains stopped; run 'ocx tray start' after the installer processes exit." : ""}`);
+    console.error(`  The proxy is stopped. Once no 'npm' installer processes remain, run 'ocx start' or re-run 'ocx update'.${trayBeforeUpdate.restoreOnFailure ? " The Windows tray also remains stopped; run 'ocx tray start' after the installer processes exit." : ""}`);
     process.exit(INSTALLER_TREE_CLEANUP_FAILED_EXIT_CODE);
   }
   if (res.interruptedSignal) {
@@ -285,12 +285,40 @@ async function runNpmSelfUpdate() {
       try {
         const svcArgs = serviceReinstallArgs();
         const svc = spawnSync(process.execPath, svcArgs, { stdio: "inherit", windowsHide: true });
-        if (svc.status !== 0) {
+        let needDirectStart = svc.status !== 0;
+        if (!needDirectStart) {
+          // Exit 0 can still leave stale/missing assets that never bring the proxy
+          // back — match the GUI/CLI fallthrough so /healthz is not left dead.
+          try {
+            const st = spawnSync(process.execPath, [launcher, "status", "--json"], {
+              encoding: "utf8",
+              timeout: 20_000,
+              windowsHide: true,
+            });
+            if (st.status === 0 && typeof st.stdout === "string" && st.stdout.trim()) {
+              const parsed = JSON.parse(st.stdout);
+              const proxyUp = parsed?.proxy?.running === true || parsed?.proxy?.health?.ok === true;
+              const viable = parsed?.startup?.serviceViable === true;
+              if (!proxyUp && !viable) needDirectStart = true;
+            } else {
+              // status failed or empty — fail closed to direct start (match CLI).
+              needDirectStart = true;
+            }
+          } catch {
+            needDirectStart = true;
+          }
+        }
+        if (needDirectStart) {
           // On Windows, schtasks /create requires elevation. The launcher inherits the
           // user's (non-admin) token, so the service reinstall can fail with access
-          // denied. Fall back to a direct detached proxy start so the update never
-          // leaves the user without a running proxy.
-          console.warn("opencodex: service refresh failed — starting the proxy directly instead.");
+          // denied — or exit 0 while leaving a non-viable manager. Fall back to a
+          // direct detached proxy start so the update never leaves the user without
+          // a running proxy.
+          console.warn(
+            svc.status === 0
+              ? "opencodex: service refresh left a non-viable manager — starting the proxy directly instead."
+              : "opencodex: service refresh failed — starting the proxy directly instead.",
+          );
           console.warn("  Run 'ocx service install' as administrator to refresh the background service.");
           const env = { ...process.env };
           delete env.OCX_SERVICE;
@@ -318,7 +346,7 @@ async function runNpmSelfUpdate() {
     : res.error
       ? `could not run: ${res.error.message}`
       : `exit ${res.status ?? "?"}`;
-  console.error(`\nUpdate failed (${npm} ${failure}). Try manually:  ${npm} install -g ${PKG}@${tag}`);
+  console.error(`\nUpdate failed (npm ${failure}). Try manually:  npm install -g ${PKG}@${tag}`);
   process.exit(1);
 }
 
@@ -328,18 +356,14 @@ function bunBinDir() {
   return dirname(require.resolve("bun/package.json"));
 }
 
-// The `bun` package ships a tiny ASCII placeholder at bin/bun.exe until its
-// postinstall downloads the real ~60MB binary. --ignore-scripts / pnpm leave
-// the ~450-byte stub in place, which is NOT executable (ENOEXEC). A size gate
-// cleanly distinguishes the stub from a real binary on every platform.
-const REAL_BUN_MIN_BYTES = 1_000_000;
+const BUN_OVERRIDE_ENV = "OPENCODEX_BUN_PATH";
 
 function findBunBinary(bunDir) {
   // The npm `bun` package ships the binary as bin/bun.exe on every platform;
   // probe bin/bun too for forward compatibility.
   for (const name of ["bun.exe", "bun"]) {
     const p = join(bunDir, "bin", name);
-    if (existsSync(p) && statSync(p).size >= REAL_BUN_MIN_BYTES) return p;
+    if (isRealBunBinary(p)) return p;
   }
   return null;
 }
@@ -358,6 +382,17 @@ function fail(msg) {
 }
 
 function resolveBun() {
+  // Keep direct npm-launcher starts aligned with durable service/shim installs:
+  // a valid explicit runtime must win even when the bundled dependency exists.
+  const override = process.env[BUN_OVERRIDE_ENV]?.trim();
+  if (override) {
+    const overridePath = resolve(override);
+    if (isRealBunBinary(overridePath)) return overridePath;
+    console.error(
+      `opencodex: ${BUN_OVERRIDE_ENV} is missing, unreadable, or not a complete Bun binary; falling back to the bundled runtime.`,
+    );
+  }
+
   let bunDir;
   try {
     bunDir = bunBinDir();
@@ -402,7 +437,25 @@ const bun = resolveBun();
 // signal delivered only to this launcher (Codex app, IDE terminal, service wrapper,
 // or `kill -INT <launcherPid>`) killed the launcher and ORPHANED the Bun proxy —
 // port left bound, pid/runtime-port files left behind, Codex config not restored.
-const child = spawn(bun, [cliPath, ...process.argv.slice(2)], { stdio: "inherit" });
+//
+// Provenance seam for issue #701: THIS launcher runs under Node, which does not
+// auto-load a project `.env`/`.env.local`; the Bun child does, before any opencodex
+// code evaluates. So this is the last point that can still tell a real shell export
+// from a working-directory dotenv value, and we record which Anthropic credential
+// slots already existed. `src/cli/claude.ts` then treats anything present in the Bun
+// child but missing from this list as ambient project pollution rather than user auth,
+// which stopped a project dotenv from silently moving a claude.ai subscriber onto API
+// billing. An EMPTY value is meaningful (the launcher ran and saw no slots) and is
+// distinct from the variable being absent (no launcher at all — change nothing), so
+// this must stay a plain assignment and never be collapsed to a falsy check.
+// Disabling Bun's dotenv wholesale with --no-env-file is NOT an option: config
+// interpolation and provider settings legitimately read the project environment.
+const preBunAnthropicSlots = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+  .filter(name => typeof process.env[name] === "string" && process.env[name] !== "");
+const child = spawn(bun, [cliPath, ...process.argv.slice(2)], {
+  stdio: "inherit",
+  env: { ...process.env, OCX_PRE_BUN_ANTHROPIC_ENV: preBunAnthropicSlots.join(",") },
+});
 
 // Windows has no real POSIX signals (no SIGHUP); forwarding is best-effort there.
 const FORWARDED = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];

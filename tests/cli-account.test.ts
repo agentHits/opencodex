@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { PassThrough, Readable } from "node:stream";
 import { cmdAccount, classifyAccount, formatAccountTable, type AccountDeps } from "../src/cli/account";
 import type { AccountStdin } from "../src/cli/account-api";
@@ -43,6 +43,7 @@ let lastDeletedType: "codex" | "oauth" | "api-key" | null = null;
 let codexAccounts: Array<Record<string, unknown>> = [];
 let oauthAccounts: Array<Record<string, unknown>> = [];
 let oauthActiveId: string | null = "acct_1";
+let oauthLoginStatus: Record<string, unknown> = { loggedIn: false };
 let keyEntries: Array<Record<string, unknown>> = [];
 let keyActiveId: string | null = "key_1";
 let logs: string[] = [];
@@ -285,6 +286,10 @@ async function mockManagementApi(req: Request): Promise<Response> {
     return json({ ok: true, accepted: true });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/oauth/status") {
+    return json(oauthLoginStatus);
+  }
+
   return json({ error: `unhandled mock endpoint: ${req.method} ${url.pathname}` }, 404);
 }
 
@@ -348,6 +353,7 @@ beforeEach(() => {
     { id: "acct_2" },
   ];
   oauthActiveId = "acct_1";
+  oauthLoginStatus = { loggedIn: false };
   keyEntries = [{
     id: "key_1",
     label: "personal",
@@ -574,13 +580,14 @@ describe("ocx account CLI (issue #180 matrix)", () => {
     expect(result.stdout).toContain("needs-reauth");
   });
 
-  test("WP2 regression: use openai main prints next-session and auto-switch override notes", async () => {
+  test("WP2 regression: use openai main explains next-request routing and cache continuity", async () => {
     const result = await run(["use", "openai", "main"]);
 
     expect(result.code).toBe(0);
-    expect(result.stderr).toContain("new Codex sessions");
-    expect(result.stderr).toContain("running threads keep their current account");
-    expect(result.stderr).toContain("auto-switch (threshold 80%) may override this pin");
+    expect(result.stderr).toContain("next request after clearing existing pool affinity");
+    expect(result.stderr).toContain("in-flight requests keep their captured account");
+    expect(result.stderr).toContain("failure recovery may later select another eligible account");
+    expect(result.stderr).toContain("provider-side prompt cache may be cold");
   });
 
   test("WP2 regression: classifyAccount routes a key-overridden OAuth provider to api-key", () => {
@@ -1271,5 +1278,24 @@ describe("ocx account CLI (issue #180 matrix)", () => {
       expect(result.code).toBe(0);
       expect(requests.some(request => request.path === "/api/oauth/login/code")).toBe(false);
     });
+
+  });
+
+  test("39: a login error wins over a retained OAuth credential", async () => {
+    oauthLoginStatus = {
+      loggedIn: true,
+      done: true,
+      error: "The credential was saved, but the provider entry was not written.",
+    };
+    const sleepSpy = spyOn(Bun, "sleep").mockImplementation(async () => {});
+    try {
+      const result = await run(["login", "anthropic"]);
+
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("provider entry was not written");
+      expect(result.stdout).not.toContain("Logged in to anthropic");
+    } finally {
+      sleepSpy.mockRestore();
+    }
   });
 });

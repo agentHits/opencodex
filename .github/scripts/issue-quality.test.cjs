@@ -13,9 +13,13 @@ const {
   shouldReopen,
   shouldEnforceClosure,
   labelForKind,
+  AREA_LABELS,
+  mapAreaFieldToLabels,
+  detectAreaLabels,
   isPlaceholderOnlyValue,
   isPlaceholder,
   isRawPlaceholder,
+  isUnusableVersion,
   countWords,
   hasConcreteDetail,
   rejectsWorkflowDispatchPullRequest,
@@ -362,8 +366,8 @@ describe("validateIssue - feature", () => {
       assert.equal(result.kind, "feature");
       assert.equal(result.valid, false, `Expected terse goal "${goal}" to be invalid`);
       assert.ok(
-        result.reasons.some((r) => r.includes("too vague")),
-        `Expected too vague reason for "${goal}", got: ${result.reasons.join(", ")}`,
+        result.reasons.some((r) => r.includes("too vague") || /missing or empty/i.test(r)),
+        `Expected too vague or empty reason for "${goal}", got: ${result.reasons.join(", ")}`,
       );
     }
   });
@@ -536,6 +540,70 @@ describe("validateIssue - bug", () => {
     assert.equal(result.valid, false);
   });
 
+  it("rejects a bug with Summary filled but Reproduction empty", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+      "### Reproduction",
+      "No response",
+      "### Version",
+      "2.7.42",
+      "### Operating system",
+      "macOS",
+    ].join("\n");
+    const result = validateIssue({ title: "Open Codex Error", body, labels: ["bug"] });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Reproduction is empty/i.test(r)));
+    assert.ok(!result.reasons.some((r) => /Summary is empty/i.test(r)));
+  });
+
+  it("rejects a bug whose Reproduction is only an ellipsis (#598)", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "{\"detail\":\"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.\"}",
+      "### Reproduction",
+      "...",
+      "### Version",
+      "2.7.42",
+      "### Operating system",
+      "mac os",
+    ].join("\n");
+    const result = validateIssue({ title: "Open Codex Error", body, labels: ["bug"] });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Reproduction is empty/i.test(r)));
+  });
+
+  it("rejects a bug with Reproduction filled but Summary empty", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "",
+      "### Reproduction",
+      "1. Run ocx start\n2. Send a request",
+      "### Version",
+      "2.7.42",
+      "### Operating system",
+      "macOS",
+    ].join("\n");
+    const result = validateIssue({ title: "Crash", body, labels: ["bug"] });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Summary is empty/i.test(r)));
+  });
+
   it("accepts a terse real crash report", () => {
     const body = [
       "### Client or integration",
@@ -628,6 +696,202 @@ describe("validateIssue - bug", () => {
     assert.equal(result.kind, "bug");
     assert.equal(result.valid, false);
     assert.ok(result.reasons.some((r) => r.includes("Version")));
+  });
+
+  it("rejects unknown / don't-know Version values (#624)", () => {
+    const versions = [
+      "Unknown",
+      "Uknown",
+      "unkown",
+      "Don't know",
+      "dont know",
+      "idk",
+      "모름",
+      "잘 모름",
+      "?",
+      "???",
+    ];
+    for (const version of versions) {
+      const body = [
+        "### Client or integration",
+        "Codex CLI",
+        "### Area",
+        "CLI",
+        "### Summary",
+        "The OpenCodex proxy keeps dropping the Codex CLI connection mid-request.",
+        "### Reproduction",
+        "1. ocx start --port 10100",
+        "2. Send any Codex CLI request through the proxy",
+        "3. Observe the connection drop",
+        "### Version",
+        version,
+        "### Operating system",
+        "Windows 11",
+      ].join("\n");
+      const result = validateIssue({
+        title: "Unexpected interruption continues to occur",
+        body,
+        labels: ["bug"],
+      });
+      assert.equal(result.kind, "bug");
+      assert.equal(
+        result.valid,
+        false,
+        `Expected unusable Version "${version}" to be invalid, got: ${result.reasons.join("; ")}`,
+      );
+      assert.ok(
+        result.reasons.some((r) => /Version/i.test(r) && /unknown|missing/i.test(r)),
+        `Expected Version unknown/missing reason for "${version}", got: ${result.reasons.join("; ")}`,
+      );
+    }
+  });
+
+  it("rejects issue #624-style low-effort new-form bug", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "CLI로 확인해봤는데 오픈코덱스 프록시가 중간에 자꾸 연결이 끊어져서 그런거라고 합니다.",
+      "",
+      "수정 바랍니다.",
+      "### Reproduction",
+      "예기치않게중단됨",
+      "### Version",
+      "모름",
+      "### Operating system",
+      "윈11",
+      "### Provider and model",
+      "_No response_",
+      "### Logs or error output",
+      "```shell",
+      "",
+      "```",
+    ].join("\n");
+    const result = validateIssue({
+      title: "Unexpected interruption continues to occur",
+      body,
+      labels: ["bug"],
+    });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Version/i.test(r)));
+    assert.ok(result.reasons.some((r) => /Reproduction/i.test(r) && /vague|empty/i.test(r)));
+  });
+
+  it("rejects a new-form bug with a usable Version but placeholder OS", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "Proxy returns 502 when streaming is enabled on Windows.",
+      "### Reproduction",
+      "1. ocx start",
+      "2. Send a streaming /v1/responses request",
+      "### Version",
+      "2.7.42",
+      "### Operating system",
+      "No response",
+    ].join("\n");
+    const result = validateIssue({ title: "Streaming 502", body, labels: ["bug"] });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Operating system/i.test(r)));
+  });
+
+  it("rejects a new-form bug when the Version heading was removed", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "Proxy returns 502 when streaming is enabled on Windows.",
+      "### Reproduction",
+      "1. ocx start",
+      "2. Send a streaming /v1/responses request",
+      "### Operating system",
+      "Windows 11",
+    ].join("\n");
+    const result = validateIssue({ title: "Streaming 502", body, labels: ["bug"] });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Version/i.test(r) && /missing/i.test(r)));
+  });
+
+  it("rejects a new-form bug when the Operating system heading was removed", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "Proxy returns 502 when streaming is enabled on Windows.",
+      "### Reproduction",
+      "1. ocx start",
+      "2. Send a streaming /v1/responses request",
+      "### Version",
+      "2.7.42",
+    ].join("\n");
+    const result = validateIssue({ title: "Streaming 502", body, labels: ["bug"] });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Operating system/i.test(r) && /missing/i.test(r)));
+  });
+
+  it("rejects a new-form bug whose Reproduction is only a vague phrase", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "The OpenCodex proxy keeps dropping the Codex CLI connection mid-request.",
+      "### Reproduction",
+      "Unexpected interruption",
+      "### Version",
+      "2.7.42",
+      "### Operating system",
+      "Windows 11",
+    ].join("\n");
+    const result = validateIssue({
+      title: "Unexpected interruption continues to occur",
+      body,
+      labels: ["bug"],
+    });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Reproduction/i.test(r) && /vague/i.test(r)));
+  });
+
+  it("rejects unknown Operating system stand-ins on the new bug form", () => {
+    const body = [
+      "### Client or integration",
+      "Codex CLI",
+      "### Area",
+      "CLI",
+      "### Summary",
+      "The OpenCodex proxy keeps dropping the Codex CLI connection mid-request.",
+      "### Reproduction",
+      "1. ocx start --port 10100",
+      "2. Send any Codex CLI request through the proxy",
+      "3. Observe the connection drop",
+      "### Version",
+      "2.7.42",
+      "### Operating system",
+      "Unknown",
+    ].join("\n");
+    const result = validateIssue({
+      title: "Unexpected interruption continues to occur",
+      body,
+      labels: ["bug"],
+    });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.some((r) => /Operating system/i.test(r)));
   });
 });
 
@@ -773,6 +1037,16 @@ describe("normalisation", () => {
     assert.equal(clean("not applicable"), "");
     assert.equal(clean("Not applicable."), "");
     assert.equal(clean("Not available!"), "");
+  });
+
+  it("detects unusable Version stand-ins without treating them as generic placeholders", () => {
+    for (const value of ["Unknown", "Uknown", "모름", "idk", "don't know"]) {
+      assert.equal(isUnusableVersion(value), true, value);
+      assert.equal(isPlaceholderOnlyValue(value), false, value);
+    }
+    for (const value of ["2.7.42", "N/A", "No response", "main@abc1234"]) {
+      assert.equal(isUnusableVersion(value), false, value);
+    }
   });
 
   it("does not treat sentences containing placeholder phrases as empty", () => {
@@ -996,6 +1270,95 @@ describe("translated feature headings and soft-pass", () => {
     assert.equal(result.kind, "feature");
     assert.equal(result.softPass, true);
     assert.equal(result.valid, false);
+  });
+
+  it("soft-passes retitled feature reports that drop the [Feature]: prefix", () => {
+    const body = [
+      "### Concrete user workflow that fails",
+      "User pastes an image in Codex App while a text-only routed model is selected and the App blocks upload.",
+      "### Why this matters",
+      "Vision sidecar is advertised but never reached from the App client path.",
+      "### Verification",
+      "Same proxy config works end-to-end in Claude Code with the sidecar describing the image.",
+    ].join("\n");
+    const result = validateIssue({
+      title: "Vision sidecar unusable from Codex App",
+      body,
+      labels: ["enhancement"],
+      storedKind: "feature",
+    });
+    assert.equal(result.kind, "feature");
+    assert.equal(result.softPass, true);
+  });
+
+  it("soft-passes retitled bug reports with substantial non-English structure (#545)", () => {
+    // Maintainer retitle removed `[Bug]:`; Korean structured body has no English
+    // Summary/Reproduction headings but is clearly actionable.
+    const body = [
+      "## 환경",
+      "- opencodex 2.7.41 (launchd, port 10100)",
+      "- Claude Desktop 3P + Anthropic OAuth (Pro/Max)",
+      "- Auto Mode classifier model = `claude-sonnet-5`",
+      "",
+      "## 증상",
+      "Auto Mode classifier requests truncate at outputTokens=64 with max_output_tokens,",
+      "then retry the same payload up to 5 times. Dashboard previously showed 502.",
+      "",
+      "## 재현",
+      "1. `ocx login anthropic` and enable Claude Desktop 3P gateway key mode",
+      "2. Enable Auto Mode and trigger a tool permission classifier turn",
+      "3. Observe five identical 64-token incomplete terminals for one approval",
+      "",
+      "## 증거",
+      "Inbound+outbound correlated captures show max_tokens:64 and stop_sequences preserved.",
+    ].join("\n");
+    const result = validateIssue({
+      title: "Claude Desktop 3P Auto Mode classifier retries after 64-token Anthropic OAuth outputs",
+      body,
+      labels: ["bug", "provider-compatibility"],
+      storedKind: "bug",
+    });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.softPass, true, `Expected soft-pass but got: ${result.reasons.join("; ")}`);
+    assert.equal(result.valid, false);
+  });
+
+  it("does not soft-pass a single arbitrary rich heading (Codex #564)", () => {
+    const result = validateIssue({
+      title: "Something broke after upgrade",
+      body: [
+        "## Notes",
+        "x".repeat(80),
+      ].join("\n"),
+      labels: ["bug"],
+      storedKind: "bug",
+    });
+    assert.equal(result.kind, "bug");
+    assert.equal(result.softPass, false);
+    assert.equal(result.valid, false);
+    assert.match(result.reasons.join(" "), /Summary and Reproduction are empty/);
+  });
+
+  it("does not soft-pass provider reports that only fill mapped metadata headings", () => {
+    const result = validateIssue({
+      title: "Provider X fails on Responses",
+      body: [
+        "### Provider or upstream service",
+        "custom-openai-compatible gateway hosted on our internal mesh",
+        "### OpenCodex version",
+        "2.7.41",
+        "### Endpoint or capability",
+        "`POST /v1/responses` with streaming tool calls",
+        "## Extra notes",
+        "We see intermittent 502s after rotating the upstream API key for this gateway.",
+      ].join("\n"),
+      labels: ["provider-compatibility"],
+      storedKind: "provider-compatibility",
+    });
+    assert.equal(result.kind, "provider-compatibility");
+    assert.equal(result.softPass, false);
+    assert.equal(result.valid, false);
+    assert.match(result.reasons.join(" "), /current behaviour|expected behaviour/i);
   });
 
   it("still rejects empty [Feature]: bodies", () => {
@@ -1288,5 +1651,154 @@ describe("rejectsWorkflowDispatchNonDefaultBranch", () => {
       ),
       null,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Orthogonal area labels
+// ---------------------------------------------------------------------------
+
+describe("mapAreaFieldToLabels", () => {
+  it("maps canonical Area dropdown values", () => {
+    assert.deepEqual(mapAreaFieldToLabels("CLI"), ["cli"]);
+    assert.deepEqual(mapAreaFieldToLabels("Proxy and routing"), ["proxy"]);
+    assert.deepEqual(mapAreaFieldToLabels("Dashboard"), ["gui"]);
+    assert.deepEqual(mapAreaFieldToLabels("Provider adapter"), ["provider"]);
+    assert.deepEqual(mapAreaFieldToLabels("Provider adapters"), ["provider"]);
+    assert.deepEqual(mapAreaFieldToLabels("Authentication and account pool"), ["account-pool"]);
+    assert.deepEqual(mapAreaFieldToLabels("Catalog / models"), ["catalog"]);
+    assert.deepEqual(mapAreaFieldToLabels("Streaming"), ["streaming"]);
+    assert.deepEqual(mapAreaFieldToLabels("Tools / MCP / web search"), ["tools"]);
+    assert.deepEqual(mapAreaFieldToLabels("Installation or packaging"), ["install"]);
+    assert.deepEqual(mapAreaFieldToLabels("Service lifecycle"), ["service"]);
+    assert.deepEqual(mapAreaFieldToLabels("Platform (Windows / macOS / Linux)"), ["platform"]);
+    assert.deepEqual(mapAreaFieldToLabels("Documentation"), []);
+  });
+
+  it("maps legacy Service lifecycle wording and ignores Other / Multiple areas", () => {
+    assert.deepEqual(mapAreaFieldToLabels("Service lifecycle (config injection)"), ["service"]);
+    assert.deepEqual(mapAreaFieldToLabels("Other"), []);
+    assert.deepEqual(mapAreaFieldToLabels("Multiple areas"), []);
+    assert.deepEqual(mapAreaFieldToLabels(""), []);
+    assert.deepEqual(mapAreaFieldToLabels(null), []);
+  });
+
+  it("exposes metadata for every non-documentation area label", () => {
+    for (const name of Object.keys(AREA_LABELS)) {
+      assert.ok(AREA_LABELS[name].color, name);
+      assert.ok(AREA_LABELS[name].description, name);
+    }
+  });
+});
+
+describe("detectAreaLabels", () => {
+  it("applies Area mapping plus orthogonal heuristics", () => {
+    const labels = detectAreaLabels({
+      title: "Pool failover stalls on SSE without terminal frame",
+      body: [
+        "### Area",
+        "Authentication and account pool",
+        "### Summary",
+        "Account pool failover waits forever when the upstream SSE stream ends without a terminal frame.",
+      ].join("\n"),
+      labels: ["bug"],
+    });
+    assert.ok(labels.includes("account-pool"));
+    assert.ok(labels.includes("streaming"));
+  });
+
+  it("adds provider for provider-compatibility form and label", () => {
+    const fromLabel = detectAreaLabels({
+      title: "AgentRouter Anthropic streams can end without terminal SSE frames",
+      body: "### Summary\nStream ends early.",
+      labels: ["provider-compatibility"],
+    });
+    assert.ok(fromLabel.includes("provider"));
+    assert.ok(fromLabel.includes("streaming"));
+
+    const fromHeading = detectAreaLabels({
+      title: "Custom relay rejects tool_calls",
+      body: [
+        "### Provider or upstream service",
+        "Volcengine Ark",
+        "### Current behaviour",
+        "tool_calls with empty content return 400.",
+      ].join("\n"),
+      labels: [],
+    });
+    assert.ok(fromHeading.includes("provider"));
+    assert.ok(fromHeading.includes("tools"));
+  });
+
+  it("runs heuristics for Multiple areas / Other without inventing per-provider labels", () => {
+    const labels = detectAreaLabels({
+      title: "Dashboard ACL hardening blocks management API on Windows",
+      body: [
+        "### Area",
+        "Multiple areas",
+        "### Summary",
+        "Management API fails closed when icacls hardening cannot be verified.",
+      ].join("\n"),
+      labels: ["bug"],
+    });
+    assert.ok(labels.includes("gui"), `got ${labels.join(",")}`);
+    assert.ok(labels.includes("platform"), `got ${labels.join(",")}`);
+    assert.ok(labels.includes("proxy"), `got ${labels.join(",")}`);
+    assert.equal(labels.includes("kiro"), false);
+    assert.equal(labels.includes("gemini"), false);
+    assert.equal(labels.includes("windows"), false);
+  });
+
+  it("does not map Documentation Area onto the documentation kind label", () => {
+    const labels = detectAreaLabels({
+      title: "Codex Auth UI/docs conflate usage-based switching",
+      body: ["### Area", "Documentation", "### Summary", "Docs misdefine new session."].join("\n"),
+      labels: ["enhancement"],
+    });
+    assert.equal(labels.includes("documentation"), false);
+    assert.equal(labels.includes("docs"), false);
+  });
+
+  it("ignores Operating system metadata for platform heuristics", () => {
+    const labels = detectAreaLabels({
+      title: "Dashboard shows empty providers tab",
+      body: [
+        "### Area",
+        "Dashboard",
+        "### Summary",
+        "Providers tab is blank after login.",
+        "### Operating system",
+        "Windows 11",
+        "### Reproduction",
+        "1. Open the dashboard",
+      ].join("\n"),
+      labels: ["bug"],
+    });
+    assert.ok(labels.includes("gui"));
+    assert.equal(labels.includes("platform"), false);
+  });
+
+  it("uses heuristicBody translation text when Area is Other", () => {
+    const labels = detectAreaLabels({
+      title: "问题报告",
+      body: ["### Area", "Other", "### Summary", "原始描述"].join("\n"),
+      heuristicBody: [
+        "### Area",
+        "Other",
+        "### Summary",
+        "Account pool failover fails when refresh token is already used.",
+      ].join("\n"),
+      labels: ["bug"],
+    });
+    assert.ok(labels.includes("account-pool"), `got ${labels.join(",")}`);
+  });
+
+  it("matches truncated streaming wording via truncat stem", () => {
+    const labels = detectAreaLabels({
+      title: "Upstream streaming response truncated mid-turn",
+      body: ["### Area", "Other", "### Summary", "The streaming response was truncated."].join("\n"),
+      labels: ["bug"],
+    });
+    assert.ok(labels.includes("streaming"), `got ${labels.join(",")}`);
   });
 });

@@ -207,6 +207,7 @@ export async function runProcessTreeCommand(
     timeoutMs,
     stdio = "inherit",
     windowsHide = true,
+    windowsVerbatimArguments = false,
     shell = false,
     env = process.env,
     terminationGraceMs = DEFAULT_TERMINATION_GRACE_MS,
@@ -223,6 +224,7 @@ export async function runProcessTreeCommand(
       shell,
       stdio,
       windowsHide,
+      windowsVerbatimArguments,
     });
   } catch (error) {
     return {

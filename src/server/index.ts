@@ -4,6 +4,7 @@ import {
   buildWsErrorFrame,
   selectForwardHeaders,
   sendJsonFrame,
+  buildResponsesWsData,
   sendResponseToWebSocket,
   sendTextFrame,
   type WsData,
@@ -20,10 +21,29 @@ import {
 import { reconcileOAuthProviders } from "../oauth";
 import { invalidateCodexModelsCache } from "../codex/catalog";
 import { startMemoryWatchdog } from "./memory-watchdog";
+import {
+  reconcileLiveStateStores,
+  setLiveStateStoreConfig,
+} from "../lib/state-store-registrations";
+import { startStateStoreSweeper } from "../lib/state-store-sweeper";
+import {
+  configureAppOwnedMemoryBudget,
+  enforceAppOwnedMemoryBudget,
+  resolveAppOwnedMemoryBudgetBytes,
+} from "../lib/app-owned-memory";
+import {
+  registerAppOwnedMemorySweepFallback,
+  registerDefaultAppOwnedMemoryStores,
+  registerDefaultAppOwnedObservedBuffers,
+} from "../lib/app-owned-memory-stores";
+import { setStorageCleanupPolicyLiveSink } from "../storage/policy";
+import { setStorageCleanupPolicyJobLiveApply } from "../storage/policy-job";
+import { scheduleStorageCleanupStartupRun, startStorageCleanupScheduler } from "../storage/policy-scheduler";
 import { runOpenAiTierStartupMigration } from "../providers/openai-tier-startup";
 import { runAlibabaRegionStartupMigration } from "../providers/alibaba-region-startup";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import { providerCodexAccountMode } from "../providers/registry";
+import type { StorageCleanupPolicy } from "../types";
 import {
   CodexAccountCooldownError,
   cooldownErrorMessage,
@@ -34,7 +54,8 @@ export {
   resolveCodexAccountForThread,
 } from "../codex/routing";
 import { formatCodexProviderForLog } from "../codex/routing";
-import { registerCodexWebSocket, unregisterCodexWebSocket, updateCodexWebSocketAuthContext } from "../codex/websocket-registry";
+import { CatalogGatherBusyError } from "../codex/catalog/provider-fetch";
+import { registerCodexWebSocket, tryReserveCodexWebSocket, unregisterCodexWebSocket, updateCodexWebSocketAuthContext } from "../codex/websocket-registry";
 import { resolveGuiFilePath, rootFallbackPayload, serveGuiFile } from "./gui-static";
 export { resolveGuiFilePath, rootFallbackPayload } from "./gui-static";
 export { resolveAdapter } from "./adapter-resolve";
@@ -46,12 +67,16 @@ import {
   registerTurn,
   setServerRef,
   trackStreamLifetime,
+  tryAdmitTurn,
   unregisterTurn,
+  type ActiveTurnLease,
 } from "./lifecycle";
 export {
   drainAndShutdown,
   getActiveTurnCount,
   isDraining,
+  isRecyclingForExit,
+  markRecyclingForExit,
   registerTurn,
   trackStreamLifetime,
   unregisterTurn,
@@ -98,16 +123,19 @@ export {
 import {
   assertServerAuthConfig,
   corsHeaders,
-  hasValidApiAuth,
+  managementCorsHeaders,
   isAllowedRequestOrigin,
+  isAllowedManagementOrigin,
   isApiAuthRequired,
   isLoopbackHostname,
   jsonResponse,
-  requireApiAuth,
-  requireResponsesApiAuth,
+  admissionFields,
+  resolveApiAuth,
+  resolveResponsesApiAuth,
   safeConfigDTO,
   setCorsOrigin,
   withCors,
+  withManagementCors,
 } from "./auth-cors";
 export {
   assertServerAuthConfig,
@@ -129,6 +157,7 @@ import { handleImages } from "./images";
 import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveSidebandUpgrade } from "./live";
 import { handleSearch } from "./search";
 import { fetchAllModels, handleManagementAPI, VERSION } from "./management-api";
+import { initializeManagementAuthState, issueGuiSession, requireManagementAuth } from "./management-auth";
 
 const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
@@ -220,14 +249,18 @@ function attachLiveSidebandUpstream(ws: ServerWebSocket<WsData>): void {
 // Source invariant for tests/passthrough-abort.test.ts after the pure module split:
 // if (isEventStream && upstreamResponse.body) {
 // const repairConfig = route.provider.responsesItemIdRepair;
-// #314 gated shape (win32-no-repair only; default OFF on the bundled known-bad runtime):
-// decideEagerRelay(config.streamMode ?? "auto")
+// const needsClientRewrite = imageGenCallAliases.size > 0
+// #314 gated shape: win32 no-rewrite traffic follows runtime/config policy; darwin no-rewrite
+// traffic requires explicit config-eager opt-in (`auto` always stays tee on darwin). Default OFF
+// on the bundled known-bad runtime; policy lives in 260731_macos_rss_retention phase 100.
+// selectEagerPath(process.platform, needsClientRewrite, config.streamMode ?? "auto")
 // relaySseEagerBounded(upstreamResponse.body, turnAc,
+// new Response(eagerBody,
 // Default shape (tee + background inspection):
 // upstreamResponse.body.tee()
 // const repairedBody = hasResponsesItemIdRepair(repairConfig)
 // process.platform === "win32"
-// && !hasResponsesItemIdRepair(repairConfig)
+// && !needsClientRewrite
 // ? nativeBody
 // relaySseWithFailedTail(repairedBody, upstream)
 // new Response(clientBody
@@ -240,11 +273,14 @@ function attachLiveSidebandUpstream(ws: ServerWebSocket<WsData>): void {
 
 export function startServer(port?: number) {
   const config = runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig()));
+  setLiveStateStoreConfig(config);
   applyProxyEnv(config);
   assertServerAuthConfig(config);
+  const managementAuth = initializeManagementAuthState(config);
   // Refresh OAuth provider presets (models/noReasoningModels) from the registry so a proxy update
   // adding/dropping models reaches existing configs on start — not just fresh installs.
   reconcileOAuthProviders(config);
+  reconcileLiveStateStores();
   // Seed default featured subagent models on first run only (UNSET → defaults). A user-set list,
   // even [], is left alone so GUI removals persist.
   if (config.subagentModels === undefined) {
@@ -288,6 +324,22 @@ export function startServer(port?: number) {
   // #314: warn-only RSS observability (unref'd, idempotent — safe under repeated
   // startServer(0) in tests). Snapshot surfaces via GET /api/system/memory.
   startMemoryWatchdog();
+  registerDefaultAppOwnedMemoryStores();
+  registerDefaultAppOwnedObservedBuffers();
+  registerAppOwnedMemorySweepFallback();
+  configureAppOwnedMemoryBudget(resolveAppOwnedMemoryBudgetBytes(config.appOwnedMemoryBudgetMb));
+  enforceAppOwnedMemoryBudget();
+  startStateStoreSweeper();
+  // Issue #42 Phase 3: opt-in archived auto-cleanup (default OFF). Unref'd hourly
+  // tick for daily/weekly; startup evaluation is fire-and-forget after listen.
+  // Heavy work runs in a Worker via the single-flight job controller.
+  // Keep live config.policy in sync when background runs advance nextRun/lastRun.
+  const applyPolicy = (policy: StorageCleanupPolicy) => {
+    config.storageCleanupPolicy = policy;
+  };
+  setStorageCleanupPolicyLiveSink(applyPolicy);
+  setStorageCleanupPolicyJobLiveApply(applyPolicy);
+  startStorageCleanupScheduler();
 
   const listenPort = port ?? config.port ?? 10100;
   setCorsOrigin(listenPort);
@@ -296,7 +348,8 @@ export function startServer(port?: number) {
   // resolves localhost→127.0.0.1): on Windows `localhost` resolves ::1-first, but the injected URL
   // is 127.0.0.1, so binding literal "localhost" would reintroduce the F4 refusal. Wildcards
   // (0.0.0.0/::) and specific hosts are left untouched so intentional exposure is preserved.
-  const bindHost = /^localhost$/i.test(config.hostname ?? "") ? "127.0.0.1" : (config.hostname ?? "127.0.0.1");
+  const configuredHost = config.hostname?.trim();
+  const bindHost = !configuredHost || /^localhost$/i.test(configuredHost) ? "127.0.0.1" : configuredHost;
 
   // Codex treats empty / non-JSON 503 bodies as "Unknown error" (#452). Keep Retry-After and
   // the server_is_overloaded code so clients can back off, but always return a JSON envelope.
@@ -310,6 +363,31 @@ export function startServer(port?: number) {
     return new Response(response.body, { status: 503, headers });
   }
 
+  function serverBusyResponse(req: Request, resource: string): Response {
+    return withCors(new Response(JSON.stringify({
+      error: { type: "server_error", code: "server_busy", message: `${resource} capacity reached` },
+    }), {
+      status: 503,
+      headers: { "Content-Type": "application/json", "Retry-After": "1" },
+    }), req, config);
+  }
+
+  async function runAdmittedHttpTurn(req: Request, work: (lease: ActiveTurnLease) => Promise<Response>): Promise<Response> {
+    const lease = tryAdmitTurn();
+    if (!lease) return serverBusyResponse(req, "active turns");
+    let response: Response;
+    try {
+      response = await work(lease);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
+    if (!lease.isTransferred()) {
+      lease.release();
+    }
+    return response;
+  }
+
   const server: Server<WsData> = Bun.serve<WsData>({
     port: listenPort,
     hostname: bindHost,
@@ -319,10 +397,17 @@ export function startServer(port?: number) {
       markActivity(`${req.method} ${url.pathname}`);
 
       if (req.method === "OPTIONS") {
-        if (!isAllowedRequestOrigin(req, config)) {
+        const managementPreflight = url.pathname.startsWith("/api/");
+        const allowed = managementPreflight
+          ? isAllowedManagementOrigin(req, config)
+          : isAllowedRequestOrigin(req, config);
+        if (!allowed) {
           return new Response(null, { status: 403, headers: corsHeaders() });
         }
-        return new Response(null, { status: 204, headers: corsHeaders(req, config) });
+        return new Response(null, {
+          status: 204,
+          headers: managementPreflight ? managementCorsHeaders(req, config) : corsHeaders(req, config),
+        });
       }
 
       // Responses WebSocket (phase 120.2). Codex upgrades the same /v1/responses path; auth is
@@ -331,8 +416,10 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireResponsesApiAuth(req, config);
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveResponsesApiAuth(req, config);
+        if (!admission) {
+          return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
+        }
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "WebSocket upgrade blocked: non-local Origin"), req, config);
         }
@@ -344,11 +431,12 @@ export function startServer(port?: number) {
         if (!websocketsEnabled(config)) {
           return withCors(formatErrorResponse(426, "upgrade_required", "Responses WebSocket transport is disabled; use HTTP"), req, config);
         }
+        const websocketLease = tryReserveCodexWebSocket();
+        if (!websocketLease) return serverBusyResponse(req, "Codex WebSockets");
         if (server.upgrade(req, {
-          data: {
-            headers: selectForwardHeaders(req.headers),
-          },
+          data: buildResponsesWsData(selectForwardHeaders(req.headers), admission, websocketLease),
         })) return undefined as unknown as Response;
+        websocketLease.release();
         return withCors(formatErrorResponse(426, "upgrade_required", "WebSocket upgrade failed"), req, config);
       }
 
@@ -358,23 +446,35 @@ export function startServer(port?: number) {
       }
 
       if (url.pathname.startsWith("/api/")) {
-        const apiAuthError = requireApiAuth(req, config, "management");
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const apiAuthError = requireManagementAuth(req, managementAuth, config);
+        if (apiAuthError) return withManagementCors(apiAuthError, req, config);
         const mgmtResponse = await handleManagementAPI(req, url, config);
-        if (mgmtResponse) return withCors(mgmtResponse, req, config);
+        if (mgmtResponse) return withManagementCors(mgmtResponse, req, config);
+        return withManagementCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);
       }
 
       if (url.pathname === "/v1/models" && req.method === "GET") {
         // Model discovery never forwards Authorization upstream, so the broader admission
         // set (Authorization / x-api-key / x-opencodex-api-key) is safe here and required by
         // remote OpenAI-style bearer clients and Claude gateway discovery (anthropic-version).
-        const apiAuthError = requireApiAuth(req, config, "data-plane");
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
-        const goModels = await fetchAllModels(config);
-        const { applyNativeVisibility, buildCatalogEntries, disabledNativeSlugs, exactComboCatalogSlugs, loadCatalogTemplate, nativeOpenAiSlugs, orderForSubagents, filterCatalogVisibleModels, uniqueCatalogModelsForRawPublicList, visibleNativeSlugs } = await import("../codex/catalog");
+        let goModels;
+        try {
+          goModels = await fetchAllModels(config);
+        } catch (error) {
+          if (error instanceof CatalogGatherBusyError) {
+            return withCors(new Response(JSON.stringify({ error: { type: "server_error", code: "catalog_busy", message: error.message } }), {
+              status: 503,
+              headers: { "content-type": "application/json", "Retry-After": "1" },
+            }), req, config);
+          }
+          throw error;
+        }
+        const { applyNativeVisibility, buildCatalogEntries, disabledNativeSlugs, exactComboCatalogSlugs, loadCatalogTemplate, nativeOpenAiSlugs, nativeReasoningEfforts, nativeDefaultReasoningEffort, orderForSubagents, filterCatalogVisibleModels, uniqueCatalogModelsForRawPublicList, visibleNativeSlugs, desktopVisibleNativeSlugs } = await import("../codex/catalog");
         const nativeSlugs = nativeOpenAiSlugs();
         const goEnabled = filterCatalogVisibleModels(goModels, config);
         const goOrdered = orderForSubagents(goEnabled, config.subagentModels);
@@ -392,7 +492,7 @@ export function startServer(port?: number) {
           if (config.claudeCode?.enabled === false) return jsonResponse({ data: [] }, 200, req, config);
           // Build Desktop 3P registry so inbound alias resolution works for subsequent requests.
           buildDesktop3pRegistry(
-            [...visibleNativeSlugs(config)],
+            [...desktopVisibleNativeSlugs(config)],
             goOrdered.map(m => ({ provider: m.provider, id: m.id, contextWindow: m.contextWindow })),
             config.claudeCode?.desktopProfile,
           );
@@ -409,7 +509,7 @@ export function startServer(port?: number) {
             : idsParam === "desktop"
               ? "desktop3p" as const
               : (/^claude-code\//i.test(req.headers.get("user-agent") ?? "") ? "readable" as const : "desktop3p" as const);
-          const data = buildAnthropicModelInfos([...visibleNativeSlugs(config)], goOrdered, resolveAutoContext(config.claudeCode), idStyle, activeDesktop3pAlias);
+          const data = buildAnthropicModelInfos([...desktopVisibleNativeSlugs(config)], goOrdered, resolveAutoContext(config.claudeCode), idStyle, activeDesktop3pAlias);
           return jsonResponse({ data }, 200, req, config);
         }
         if (url.searchParams.has("client_version")) {
@@ -424,9 +524,45 @@ export function startServer(port?: number) {
         }
         // OpenAI list shape: native gpt bare + routed models namespaced "<provider>/<id>"
         // (pure availability list — disabled natives are omitted entirely).
+        // Grok Build discovers models through this endpoint too, and its model picker only
+        // enables /effort for entries that advertise the reasoning ladder in the Grok model
+        // catalog shape (supports_reasoning_effort + reasoning_efforts[]). The Codex catalog
+        // branch above already carries the same ladders, so mirror them here — native rows
+        // from the upstream snapshot, routed rows from the configured provider tiers. The
+        // default uses the same canonical fallback as the Codex catalog resolver
+        // (configured default, then medium, then high, then the first tier). Extra fields
+        // are ignored by plain OpenAI clients.
+        const grokEffortOption = (value: string, isDefault: boolean) => ({
+          value,
+          label: `${value[0].toUpperCase()}${value.slice(1)} Effort`,
+          ...(isDefault ? { default: true } : {}),
+        });
+        const grokEffortFields = (efforts: string[], configuredDefault?: string) => {
+          if (efforts.length === 0) return {};
+          const defaultEffort = configuredDefault && efforts.includes(configuredDefault)
+            ? configuredDefault
+            : efforts.includes("medium") ? "medium" : efforts.includes("high") ? "high" : efforts[0];
+          return {
+            supports_reasoning_effort: true,
+            reasoning_effort: defaultEffort,
+            reasoning_efforts: efforts.map(effort => grokEffortOption(effort, effort === defaultEffort)),
+          };
+        };
         const data = [
-          ...visibleNativeSlugs(config).map(id => ({ id, object: "model", created: 0, owned_by: "openai" })),
-          ...uniqueCatalogModelsForRawPublicList(goOrdered).map(m => ({ id: m.alias ?? `${m.provider}/${m.id}`, object: "model", created: 0, owned_by: m.owned_by ?? m.provider })),
+          ...visibleNativeSlugs(config).map(id => ({
+            id,
+            object: "model",
+            created: 0,
+            owned_by: "openai",
+            ...grokEffortFields(nativeReasoningEfforts(id), nativeDefaultReasoningEffort(id)),
+          })),
+          ...uniqueCatalogModelsForRawPublicList(goOrdered).map(m => ({
+            id: m.alias ?? `${m.provider}/${m.id}`,
+            object: "model",
+            created: 0,
+            owned_by: m.owned_by ?? m.provider,
+            ...grokEffortFields(m.reasoningEfforts ?? [], m.defaultReasoningEffort),
+          })),
         ];
         return jsonResponse({ object: "list", data }, 200, req, config);
       }
@@ -438,28 +574,30 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireResponsesApiAuth(req, config);
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveResponsesApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
-        let response: Response;
-        try {
-          response = await handleResponsesCompact(req, config, logCtx);
-        } catch {
-          response = formatErrorResponse(500, "server_error", "Unexpected compact request failure");
-        }
-        addFinalRequestLog(
-          requestId,
-          start,
-          logCtx,
-          response.status,
-          response.status === 499 ? { closeReason: "client_cancel" } : undefined,
-        );
-        return withCors(response, req, config);
+        const logCtx: RequestLogContext = {
+          model: "unknown",
+          provider: "unknown",
+          ...admissionFields(admission),
+          inboundProtocol: "responses",
+        };
+        return runAdmittedHttpTurn(req, async () => {
+          let response: Response;
+          try {
+            response = await handleResponsesCompact(req, config, logCtx);
+          } catch {
+            response = formatErrorResponse(500, "server_error", "Unexpected compact request failure");
+          }
+          addFinalRequestLog(requestId, start, logCtx, response.status,
+            response.status === 499 ? { closeReason: "client_cancel" } : undefined);
+          return withCors(response, req, config);
+        });
       }
 
       if (
@@ -470,18 +608,54 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireApiAuth(req, config, "data-plane");
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = { model: "image_gen", provider: "unknown" };
+        const logCtx: RequestLogContext = {
+          model: "image_gen",
+          provider: "unknown",
+          ...admissionFields(admission),
+        };
         const endpoint = url.pathname.endsWith("/edits") ? "edits" as const : "generations" as const;
-        const response = await handleImages(req, config, endpoint, logCtx);
-        addFinalRequestLog(requestId, start, logCtx, response.status, response.status === 499 ? { closeReason: "client_cancel" } : undefined);
-        return withCors(response, req, config);
+        return runAdmittedHttpTurn(req, async () => {
+          const response = await handleImages(req, config, endpoint, logCtx);
+          addFinalRequestLog(requestId, start, logCtx, response.status, response.status === 499 ? { closeReason: "client_cancel" } : undefined);
+          return withCors(response, req, config);
+        });
+      }
+
+      if (req.method === "GET" && url.pathname.startsWith("/v1/opencodex/artifacts/")) {
+        const admission = resolveApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
+        if (!isAllowedRequestOrigin(req, config)) {
+          return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
+        }
+        const id = decodeURIComponent(url.pathname.slice("/v1/opencodex/artifacts/".length));
+        const { resolveArtifactPath } = await import("../images/artifacts");
+        const artifactPath = resolveArtifactPath(id);
+        if (!artifactPath) {
+          return withCors(formatErrorResponse(404, "not_found", "artifact not found"), req, config);
+        }
+        const file = Bun.file(artifactPath);
+        const ext = artifactPath.split(".").pop()?.toLowerCase();
+        const contentType =
+          ext === "png" ? "image/png"
+            : ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+              : ext === "webp" ? "image/webp"
+                : ext === "gif" ? "image/gif"
+                  : "application/octet-stream";
+        return withCors(new Response(file, {
+          status: 200,
+          headers: {
+            "content-type": contentType,
+            "cache-control": "private, max-age=3600",
+            "x-content-type-options": "nosniff",
+          },
+        }), req, config);
       }
 
       if (url.pathname === "/v1/alpha/search" && req.method === "POST") {
@@ -489,23 +663,24 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireApiAuth(req, config, "data-plane");
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = { model: "web_search", provider: "unknown" };
-        const response = await handleSearch(req, config, logCtx);
-        addFinalRequestLog(
-          requestId,
-          start,
-          logCtx,
-          response.status,
-          response.status === 499 ? { closeReason: "client_cancel" } : undefined,
-        );
-        return withCors(response, req, config);
+        const logCtx: RequestLogContext = {
+          model: "web_search",
+          provider: "unknown",
+          ...admissionFields(admission),
+        };
+        return runAdmittedHttpTurn(req, async () => {
+          const response = await handleSearch(req, config, logCtx);
+          addFinalRequestLog(requestId, start, logCtx, response.status,
+            response.status === 499 ? { closeReason: "client_cancel" } : undefined);
+          return withCors(response, req, config);
+        });
       }
 
       if (url.pathname === "/v1/responses" && req.method === "POST") {
@@ -513,14 +688,19 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireResponsesApiAuth(req, config);
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveResponsesApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx = { model: "unknown", provider: "unknown" };
+        const logCtx: RequestLogContext = {
+          model: "unknown",
+          provider: "unknown",
+          ...admissionFields(admission),
+          inboundProtocol: "responses",
+        };
         let logged = false;
         const finalizeNativePassthroughLog = (
           status: number,
@@ -530,20 +710,23 @@ export function startServer(port?: number) {
           logged = true;
           addFinalRequestLog(requestId, start, logCtx, status, meta);
         };
-        const response = await handleResponses(req, config, logCtx, {
-          abortSignal: req.signal,
-          onFirstOutput: () => recordFirstOutput(logCtx, start),
-          onNativePassthroughTerminal: status => {
-            finalizeNativePassthroughLog(httpStatusForTerminalStatus(status), {
-              terminalStatus: status,
-              closeReason: "terminal",
-            });
-          },
-          onNativePassthroughCancel: () => {
-            finalizeNativePassthroughLog(499, { closeReason: "client_cancel" });
-          },
+        return runAdmittedHttpTurn(req, async turnAdmissionLease => {
+          const response = await handleResponses(req, config, logCtx, {
+            turnAdmissionLease,
+            abortSignal: req.signal,
+            onFirstOutput: () => recordFirstOutput(logCtx, start),
+            onNativePassthroughTerminal: status => {
+              finalizeNativePassthroughLog(httpStatusForTerminalStatus(status), {
+                terminalStatus: status,
+                closeReason: "terminal",
+              });
+            },
+            onNativePassthroughCancel: () => {
+              finalizeNativePassthroughLog(499, { closeReason: "client_cancel" });
+            },
+          });
+          return withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, config);
         });
-        return withCors(responseWithDeferredRequestLog(response, requestId, start, logCtx), req, config);
       }
 
       // Anthropic Messages inbound (Claude Code). count_tokens FIRST (longer path).
@@ -552,14 +735,14 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        if (!hasValidApiAuth(req, config)) {
+        const admission = resolveApiAuth(req, config);
+        if (!admission) {
           return withCors(anthropicErrorResponse(401, "opencodex API key required", "authentication_error"), req, config);
         }
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(anthropicErrorResponse(403, "cross-origin data-plane request blocked", "permission_error"), req, config);
         }
-        const response = await handleClaudeCountTokens(req, config);
-        return withCors(response, req, config);
+        return runAdmittedHttpTurn(req, async () => withCors(await handleClaudeCountTokens(req, config), req, config));
       }
 
       if (url.pathname === "/v1/messages" && req.method === "POST") {
@@ -567,7 +750,8 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        if (!hasValidApiAuth(req, config)) {
+        const admission = resolveApiAuth(req, config);
+        if (!admission) {
           return withCors(anthropicErrorResponse(401, "opencodex API key required", "authentication_error"), req, config);
         }
         if (!isAllowedRequestOrigin(req, config)) {
@@ -575,12 +759,20 @@ export function startServer(port?: number) {
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
+        const logCtx: RequestLogContext = {
+          model: "unknown",
+          provider: "unknown",
+          ...admissionFields(admission),
+          inboundProtocol: "messages",
+        };
         // Logging is finalized inside handleClaudeMessages (Responses-vocab tap on the
         // pre-translation stream + native passthrough callbacks) — do not re-wrap the
         // translated Anthropic stream here.
-        const response = await handleClaudeMessages(req, config, logCtx, { requestId, start });
-        return withCors(response, req, config);
+        return runAdmittedHttpTurn(req, async turnAdmissionLease => withCors(
+          await handleClaudeMessages(req, config, logCtx, { requestId, start, turnAdmissionLease }),
+          req,
+          config,
+        ));
       }
 
 
@@ -590,16 +782,24 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireResponsesApiAuth(req, config);
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveResponsesApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
-        const response = await handleChatCompletions(req, config, logCtx, { requestId, start });
-        return withCors(response, req, config);
+        const logCtx: RequestLogContext = {
+          model: "unknown",
+          provider: "unknown",
+          ...admissionFields(admission),
+          inboundProtocol: "chat",
+        };
+        return runAdmittedHttpTurn(req, async turnAdmissionLease => withCors(
+          await handleChatCompletions(req, config, logCtx, { requestId, start, turnAdmissionLease }),
+          req,
+          config,
+        ));
       }
 
       // ChatGPT / Codex App voice (GPT‑Live / Frameless Bidi) + OpenAI Realtime call-create.
@@ -613,23 +813,29 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireApiAuth(req, config, "data-plane");
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, config);
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = { model: "gpt-live", provider: "unknown" };
-        const response = await handleLive(req, config, logCtx);
-        addFinalRequestLog(
-          requestId,
-          start,
-          logCtx,
-          response.status,
-          response.status === 499 ? { closeReason: "client_cancel" } : undefined,
-        );
-        return withCors(response, req, config);
+        const logCtx: RequestLogContext = {
+          model: "gpt-live",
+          provider: "unknown",
+          ...admissionFields(admission),
+        };
+        return runAdmittedHttpTurn(req, async () => {
+          const response = await handleLive(req, config, logCtx);
+          addFinalRequestLog(
+            requestId,
+            start,
+            logCtx,
+            response.status,
+            response.status === 499 ? { closeReason: "client_cancel" } : undefined,
+          );
+          return withCors(response, req, config);
+        });
       }
 
       // Voice / Realtime sideband WebSocket: Frameless joins /v1/live/{callId}; Realtime v1 joins
@@ -641,14 +847,18 @@ export function startServer(port?: number) {
         if (isDraining()) {
           return drainingResponse(req);
         }
-        const apiAuthError = requireApiAuth(req, config, "data-plane");
-        if (apiAuthError) return withCors(apiAuthError, req, config);
+        const admission = resolveApiAuth(req, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, config);
         if (!isAllowedRequestOrigin(req, config)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "WebSocket upgrade blocked: non-local Origin"), req, config);
         }
         const start = Date.now();
         const requestId = nextRequestLogId(start);
-        const logCtx: RequestLogContext = { model: "gpt-live", provider: "unknown" };
+        const logCtx: RequestLogContext = {
+          model: "gpt-live",
+          provider: "unknown",
+          ...admissionFields(admission),
+        };
         const resolved = await resolveLiveSidebandUpgrade(req, config, logCtx, liveSidebandTarget);
         if (resolved instanceof Response) {
           addFinalRequestLog(requestId, start, logCtx, resolved.status);
@@ -675,7 +885,10 @@ export function startServer(port?: number) {
         return withCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);
       }
 
-      const guiFile = serveGuiFile(url.pathname);
+      const guiSessionCandidate = req.method === "GET" && (url.pathname === "/" || !url.pathname.includes("."))
+        ? issueGuiSession(req, config, managementAuth)
+        : null;
+      const guiFile = serveGuiFile(url.pathname, undefined, guiSessionCandidate ?? undefined);
       if (guiFile) return guiFile;
       if (url.pathname === "/" && req.method === "GET") {
         return jsonResponse(rootFallbackPayload());
@@ -694,6 +907,11 @@ export function startServer(port?: number) {
           attachLiveSidebandUpstream(ws);
           return;
         }
+        if (!ws.data.admissionLease) {
+          ws.close(1013, "server busy");
+          return;
+        }
+        ws.data.admissionLease.bind(ws);
         registerCodexWebSocket(ws);
       },
       message(ws: ServerWebSocket<WsData>, raw: string | Buffer) {
@@ -762,13 +980,35 @@ export function startServer(port?: number) {
           return;
         }
 
+        const turnAdmissionLease = tryAdmitTurn();
+        if (!turnAdmissionLease) {
+          sendJsonFrame(ws, buildWsErrorFrame(503, {
+            type: "server_error",
+            code: "server_busy",
+            message: "active turns capacity reached",
+            retryable: true,
+          }, new Headers({ "Retry-After": "1" })));
+          if (ws.data.cancel === cancelTurn) ws.data.cancel = undefined;
+          return;
+        }
+
         const payload: Record<string, unknown> = { ...frame };
         delete payload.type;
-        registerTurn(turnAbort);
+        turnAdmissionLease.bindAbortController(turnAbort);
         void (async () => {
           const start = Date.now();
           const requestId = nextRequestLogId(start);
-          const logCtx: RequestLogContext = { model: "unknown", provider: "unknown" };
+          // Resolved once at the handshake — a frame has no request headers left
+          // to re-resolve from. Optional on WsData like every other member, so
+          // narrow rather than assume: an unattributed frame is preferable to a
+          // fabricated attribution.
+          const wsAdmission = ws.data.admission;
+          const logCtx: RequestLogContext = {
+            model: "unknown",
+            provider: "unknown",
+            ...(wsAdmission ? admissionFields(wsAdmission) : {}),
+            inboundProtocol: "responses",
+          };
           let logged = false;
           const finalizeLog = (
             status: number,
@@ -791,6 +1031,7 @@ export function startServer(port?: number) {
             const response = await handleResponses(req, config, logCtx, {
               forceEmptyResponseId: true,
               abortSignal: turnAbort.signal,
+              turnAdmissionLease,
               onFirstOutput: () => recordFirstOutput(logCtx, start),
               onCodexAuthContextResolved: context => updateCodexWebSocketAuthContext(ws, context),
               recordTerminalOutcomes: false,
@@ -831,7 +1072,7 @@ export function startServer(port?: number) {
               /* socket already gone or send dropped */
             }
           } finally {
-            unregisterTurn(turnAbort);
+            turnAdmissionLease.release();
             if (!logged && turnAbort.signal.aborted) finalizeLog(499);
             if (ws.data.cancel === cancelTurn) ws.data.cancel = undefined;
           }
@@ -844,6 +1085,8 @@ export function startServer(port?: number) {
           return;
         }
         unregisterCodexWebSocket(ws);
+        ws.data.admissionLease?.release();
+        ws.data.admissionLease = undefined;
         ws.data.cancel?.(); // RC2: abort the upstream when the client disconnects
       },
     },
@@ -875,6 +1118,9 @@ export function startServer(port?: number) {
       .then(({ primeCodexPoolQuotas }) => primeCodexPoolQuotas(config, "startup"))
       .catch(() => {});
   }
+
+  // Opt-in storage policy (default OFF). Never blocks listen; cancellable on shutdown.
+  scheduleStorageCleanupStartupRun();
 
   return server;
 }

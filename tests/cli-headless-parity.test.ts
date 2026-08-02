@@ -57,6 +57,12 @@ describe("headless GUI parity CLI", () => {
       ["/api/claude-desktop", "ocx claude desktop"],
       ["/api/claude/", "ocx observe"],
       ["/api/codex-auth", "ocx account"],
+      // GUI-only affordance: starring the repo from the sidebar. There is deliberately
+      // no CLI mirror — the headless surface has nothing to gain from a one-click
+      // social action, and inventing `ocx github star` would be a command nobody asked
+      // for. Listed here so the parity sweep stays exhaustive rather than silently
+      // skipping the endpoint.
+      ["/api/github/star", "(none — GUI-only)"],
       ["/api/oauth", "ocx account"],
       ["/api/providers/keys", "ocx account"],
       ["/api/providers", "ocx provider"],
@@ -65,6 +71,7 @@ describe("headless GUI parity CLI", () => {
       ["/api/custom-models", "ocx models"],
       ["/api/model", "ocx models"],
       ["/api/combos", "ocx combo"],
+      ["/api/client-config", "ocx export"],
       ["/api/debug", "ocx debug/observe"],
       ["/api/diagnostics", "ocx system"],
       ["/api/effort", "ocx agent"],
@@ -94,13 +101,25 @@ describe("headless GUI parity CLI", () => {
   test("provider edit reuses the management provider patch", async () => {
     const runtime = fakeRuntime();
     const code = await handleProviderRuntimeCommand("edit", [
-      "ark", "--base-url", "https://example.test/v1", "--enabled", "off", "--live-models", "on", "--json",
+      "ark", "--base-url", "https://example.test/v1", "--api-key-transport", "bearer", "--enabled", "off", "--live-models", "on", "--json",
     ], runtime.deps);
     expect(code).toBe(0);
     expect(runtime.requests).toEqual([{
       path: "/api/providers?name=ark",
       method: "PATCH",
-      body: { baseUrl: "https://example.test/v1", disabled: true, liveModels: true },
+      body: { baseUrl: "https://example.test/v1", apiKeyTransport: "bearer", disabled: true, liveModels: true },
+    }]);
+  });
+
+  test("provider test treats a static catalog as neutral", async () => {
+    const runtime = fakeRuntime(() => ({ applicable: false, reason: "static_catalog", latencyMs: 0 }));
+    const code = await handleProviderRuntimeCommand("test", ["google-antigravity", "--json"], runtime.deps);
+    expect(code).toBe(0);
+    expect(process.exitCode).not.toBe(1);
+    expect(runtime.requests).toEqual([{
+      path: "/api/providers/test?name=google-antigravity",
+      method: "POST",
+      body: null,
     }]);
   });
 
@@ -172,6 +191,36 @@ describe("headless GUI parity CLI", () => {
       expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).codexAutoStart).toBe(false);
       expect(await handleConfigCommand(["set", "port", "-1", "--json"])).not.toBe(0);
       expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).port).toBe(10100);
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("config set and import reject an invalid app-owned memory budget without persisting the normalized default", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-cli-memory-budget-"));
+    const previous = process.env.OPENCODEX_HOME;
+    process.env.OPENCODEX_HOME = home;
+    try {
+      const configPath = join(home, "config.json");
+      const importPath = join(home, "invalid-import.json");
+      const original = JSON.stringify({
+        port: 10100,
+        providers: { openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" } },
+        defaultProvider: "openai",
+        appOwnedMemoryBudgetMb: 128,
+      });
+      writeFileSync(configPath, original);
+      writeFileSync(importPath, JSON.stringify({
+        ...JSON.parse(original),
+        appOwnedMemoryBudgetMb: 4097,
+      }));
+
+      expect(await handleConfigCommand(["set", "appOwnedMemoryBudgetMb", "63", "--json"])).not.toBe(0);
+      expect(readFileSync(configPath, "utf8")).toBe(original);
+      expect(await handleConfigCommand(["import", importPath, "--yes", "--json"])).not.toBe(0);
+      expect(readFileSync(configPath, "utf8")).toBe(original);
     } finally {
       if (previous === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = previous;

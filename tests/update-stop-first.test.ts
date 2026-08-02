@@ -12,8 +12,9 @@ describe("update stops the running proxy before replacing files", () => {
   test("bun/source update path gates on the pid file and spawns 'stop' before the package manager", () => {
     expect(updateSource).toContain('spawnSync(process.execPath, [process.argv[1], "stop"]');
     const stopAt = updateSource.indexOf('[process.argv[1], "stop"]');
-    const updateAt = updateSource.indexOf("const { bin, args: cmdArgs } = updateCommand(installer, tag, latest);");
+    const updateAt = updateSource.indexOf("runProcessTreeCommand(target.bin, target.args");
     expect(stopAt).toBeGreaterThan(-1);
+    expect(updateAt).toBeGreaterThan(-1);
     expect(stopAt).toBeLessThan(updateAt);
     expect(updateSource).toContain("if (serviceWasInstalled || readPid() || readRuntimePort())");
   });
@@ -46,11 +47,28 @@ describe("update stops the running proxy before replacing files", () => {
   test("npm launcher update path stops via its own launcher path before npm install", () => {
     expect(launcherSource).toContain('spawnSync(process.execPath, [launcher, "stop"]');
     const stopAt = launcherSource.indexOf('[launcher, "stop"]');
-    const installAt = launcherSource.indexOf('runProcessTreeCommand(npm, ["install", "-g"');
+    const installAt = launcherSource.indexOf("runProcessTreeCommand(installInvocation.file, installInvocation.args");
     expect(stopAt).toBeGreaterThan(-1);
+    expect(installAt).toBeGreaterThan(-1);
     expect(stopAt).toBeLessThan(installAt);
     expect(launcherSource).toContain('existsSync(join(configDir(), "ocx.pid"))');
     expect(launcherSource).toContain('existsSync(join(configDir(), "runtime-port.json"))');
+  });
+
+  test("Windows npm paths resolve safely before stop and never use shell:true", () => {
+    const updateResolveAt = updateSource.indexOf("const target = updateSpawnTarget(bin, cmdArgs);");
+    const updateStopAt = updateSource.indexOf('[process.argv[1], "stop"]');
+    const launcherResolveAt = launcherSource.indexOf("const installInvocation = npmInvocation(");
+    const launcherStopAt = launcherSource.indexOf('[launcher, "stop"]');
+
+    expect(updateResolveAt).toBeGreaterThan(-1);
+    expect(launcherResolveAt).toBeGreaterThan(-1);
+    expect(updateResolveAt).toBeLessThan(updateStopAt);
+    expect(launcherResolveAt).toBeLessThan(launcherStopAt);
+    expect(updateSource).not.toContain("shell: true");
+    expect(launcherSource).not.toContain("shell: true");
+    expect(updateSource).not.toContain('"npm.cmd"');
+    expect(launcherSource).not.toContain('"npm.cmd"');
   });
 
   test("both paths abort when the stop fails, and reinstall a managed service after success", () => {
@@ -80,8 +98,9 @@ describe("update stops the running proxy before replacing files", () => {
     expect(launcherSource).toContain('name.startsWith("codex-history-backup-") && name.endsWith(".json")');
     expect(launcherSource).toContain("if (historyRestoreIncomplete())");
     const warnAt = launcherSource.indexOf("Codex resume history was NOT restored");
-    const installAt = launcherSource.indexOf('runProcessTreeCommand(npm, ["install", "-g"');
+    const installAt = launcherSource.indexOf("runProcessTreeCommand(installInvocation.file, installInvocation.args");
     expect(warnAt).toBeGreaterThan(-1);
+    expect(installAt).toBeGreaterThan(-1);
     expect(warnAt).toBeLessThan(installAt);
   });
 
@@ -100,21 +119,17 @@ describe("update stops the running proxy before replacing files", () => {
     expect(updateJobSource).not.toContain("const proxyWasActive = isServiceInstalled() || runtimeTrusted");
   });
 
-  test("GUI failure recovery identity-checks the old PID and threads a validated launcher", () => {
+  test("GUI failure recovery identity-checks the old PID and then fails closed", () => {
+    // Policy A (maintainer decision, Wibias recommendation): after a failed
+    // installer stopped the proxy, observation steps stay (identity checks,
+    // healthy-replacement detection) but no recovery package is ever started —
+    // the failed installer may still be mutating the global package tree.
     expect(updateJobSource).toContain("(io.verifyPidIdentityFn ?? verifyPidIdentityFresh)(captured.oldPid)");
-    expect(updateJobSource).toContain("io.recoveryLaunchersFn ?? findNpmRecoveryLaunchers");
-    expect(updateJobSource).toContain("{ ...captured, recoveryLauncher }");
-    expect(updateJobSource).toContain("captured?.recoveryLauncher ?? packageLauncherPath()");
-    expect(updateJobSource).toContain("const readPidForRestart = (context: string)");
-    expect(updateJobSource).toContain("const verifyCurrentPid = io.verifyPidIdentityFn ?? verifyPidIdentityFresh");
-    expect(updateJobSource).toContain("verifyCurrentPid(rawPid) === rawPid");
-    expect(updateJobSource).toContain('if (readPidForRestart("after service port reclaim").refused) return');
-    expect(updateJobSource).toContain('const directPid = readPidForRestart("before direct restart")');
-    expect(updateJobSource).toContain('if (readPidForRestart("after direct port reclaim").refused) return');
-    expect(updateJobSource).toContain("hasTrustedRecoveryPermissions(rootStat)");
-    expect(updateJobSource).toContain("uid === currentUid || uid === 0");
-    expect(updateJobSource).toContain("hasTrustedRecoveryTree(packageRoot)");
-    expect(updateJobSource).toContain("(stat.mode & 0o022) === 0");
+    expect(updateJobSource).toContain("Automatic recovery is disabled");
+    expect(updateJobSource).toContain("ocx service install");
+    expect(updateJobSource).not.toContain("recoveryLaunchersFn");
+    expect(updateJobSource).not.toContain("findNpmRecoveryLaunchers");
+    expect(updateJobSource).not.toContain("recoveryLauncher");
   });
 
   test("GUI recovery waits beyond the nested npm install deadline", () => {
@@ -126,22 +141,16 @@ describe("update stops the running proxy before replacing files", () => {
     const innerMs = Number(innerRaw?.replaceAll("_", ""));
     expect(outerMs).toBeGreaterThanOrEqual(innerMs + 60_000);
     expect(launcherSource).toContain("timeoutMs: NPM_INSTALL_TIMEOUT_MS");
-    expect(launcherSource).toContain("await runProcessTreeCommand(npm");
+    expect(launcherSource).toContain("await runProcessTreeCommand(installInvocation.file");
     expect(updateJobSource).toContain("await runLoggedProcessTreeCommand(job, cmd.bin, cmd.args, UPDATE_TIMEOUT_MS)");
     expect(updateJobSource).toContain("if (result.status !== 0 || !result.treeExited)");
     expect(updateJobSource).toContain("return result.treeExited");
     expect(updateJobSource).toContain("installerFailureAllowsRecovery(check.installer, result)");
     expect(updateJobSource).toContain("if (trayWasRunning && mayRecover)");
     expect(updateJobSource).toContain("The Windows tray also remains stopped");
-    expect(updateJobSource).toContain("candidates.slice(0, MAX_NPM_RECOVERY_CANDIDATES)");
   });
 
-  test("GUI recovery scan imports the worker argument contract from the worker module", () => {
-    expect(updateJobSource).toContain('import { RECOVERY_TREE_SCAN_WORKER_ARG } from "./recovery-tree-scan.mjs"');
-    expect(updateJobSource).not.toContain('const RECOVERY_TREE_SCAN_WORKER_ARG = "__scan-recovery-tree"');
-  });
-
-  test("GUI worker update children use pipe stdio so Windows npm.cmd does not open consoles", () => {
+  test("GUI worker update children use pipe stdio so background updates do not open consoles", () => {
     expect(updateSource).toContain("function updateChildStdio()");
     expect(updateSource).toContain('process.env.OCX_SERVICE === "1"');
     expect(updateSource).toContain('return "pipe"');
@@ -153,7 +162,7 @@ describe("update stops the running proxy before replacing files", () => {
   });
 
   test("Bun/source installer cleanup is tree-aware before shim or service refresh", () => {
-    const installAt = updateSource.indexOf("await runProcessTreeCommand(target.bin, cmdArgs");
+    const installAt = updateSource.indexOf("await runProcessTreeCommand(target.bin, target.args");
     const cleanupGateAt = updateSource.indexOf("if (!r.treeExited)");
     const successAt = updateSource.indexOf("if (r.status === 0)");
     expect(installAt).toBeGreaterThan(-1);

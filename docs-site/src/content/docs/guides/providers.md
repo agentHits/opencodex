@@ -85,10 +85,17 @@ ocx logout <provider>
 | `xai` | `openai-chat` | `https://api.x.ai/v1` | Live-first Grok catalog; `grok-4.5` is the fallback default. |
 | `anthropic` | `anthropic` | `https://api.anthropic.com` | Claude models; live model list fetched from `/v1/models`. |
 | `kimi` | `openai-chat` | `https://api.kimi.com/coding/v1` | Kimi K2.7/K2.6/K2.5 coding models. |
-| `kiro` | `kiro` | `https://runtime.us-east-1.kiro.dev` | Import-first login reuses the installed `kiro-cli` session — requires the Kiro CLI installed (`curl -fsSL https://cli.kiro.dev/install | bash`) and signed in via `kiro-cli login`. |
-| `google-antigravity` | `google` | `https://daily-cloudcode-pa.googleapis.com` | Google OAuth over the Cloud Code Assist wire. |
+| `kiro` | `kiro` | `https://runtime.us-east-1.kiro.dev` | Initial login imports the installed, signed-in `kiro-cli` session (on Unix, install with `curl -fsSL https://cli.kiro.dev/install | bash`; on Windows PowerShell, use `irm 'https://cli.kiro.dev/install.ps1' | iex`; then run `kiro-cli login`). **Add account** logs `kiro-cli` out, starts a fresh browser login that switches the account used by `kiro-cli`, and stores account-scoped profile metadata. Existing OpenCodex accounts are preserved, and cancellation or failure restores the previous `kiro-cli` session. |
+| `google-antigravity` | `google` | `https://daily-cloudcode-pa.googleapis.com` | Google OAuth over the Cloud Code Assist wire. Uses the maintained six-model static catalog because CCA does not expose the generic `/models` endpoint. |
 | `cursor` | `cursor` | `https://api2.cursor.sh` | Experimental PKCE login, live HTTP/2 transport, and account-filtered model discovery. |
 | `github-copilot` | `openai-chat` | `https://api.githubcopilot.com` | Experimental. GitHub device flow + `copilot_internal` exchange (VS Code OAuth client). Requires an active Copilot subscription; not an official third-party API. |
+
+For the canonical Kimi Coding Plan presets (`kimi` account login and `kimi-code` API key),
+opencodex forwards only a caller-supplied stable `prompt_cache_key` to the Chat Completions request;
+it never generates one. Kimi documents a stable session/task key as required to improve Code Plan
+cache hit rates, while requests without a key remain keyless. If an opted-in upstream rejects the
+field, opencodex does not strip it and retry or mutate saved configuration. Other providers remain
+deny-by-default.
 
 You can also start OAuth from the [web dashboard](/guides/web-dashboard/).
 
@@ -96,8 +103,9 @@ You can also start OAuth from the [web dashboard](/guides/web-dashboard/).
 
 OAuth providers whose credentials include a stable account id or email can keep more than one
 login. The Providers page shows those accounts in a dropdown, lets you add another, and switches the
-active account without logging the others out. Identity-less Kimi and Kiro credentials replace their
-active slot, while `chatgpt` is always single-slot because Codex pool accounts have a separate ledger.
+active account without logging the others out. Only identity-less Kimi credentials replace the
+active slot; Kiro accounts are keyed by profile ARN. `chatgpt` is always single-slot because Codex
+pool accounts have a separate ledger.
 Tokens stay in `~/.opencodex/auth.json`; `/api/oauth/accounts` returns masked metadata only.
 
 ### OAuth reliability
@@ -119,7 +127,10 @@ Terminal refresh failures mark the account as needing reauthentication instead o
 **Cooldowns (Codex pool).** Upstream `429` / quota responses set a hard cooldown from
 `Retry-After`, quota `reset` headers (capped), or a short default backoff. Accounts on an explicit
 `Retry-After` cooldown are not probed early; reset-derived cooldowns may receive a paced probe lease
-so recovery can be detected without flooding the provider.
+so recovery can be detected without flooding the provider. Reset-derived native-model cooldowns
+also preserve known independent quota groups: `gpt-5.3-codex-spark` does not prevent the same account
+from trying the shared GPT-5.6 Terra/Luna quota, while models in that shared group still protect one
+another. Explicit `Retry-After` and default cooldowns always remain account-wide.
 
 **Session affinity.** Codex thread→account affinity is process-local (in-memory only; not persisted
 across proxy restarts). On credential failures (`401` / `403`) the account is quarantined for
@@ -142,24 +153,44 @@ and WARN rows that include a recovery Action. When an OAuth provider account nee
 
 ### Kiro credential import
 
-Kiro login expects the Kiro CLI: install it (`curl -fsSL https://cli.kiro.dev/install | bash`)
-and sign in with `kiro-cli login` first. Without a kiro-cli session, `ocx login kiro` falls
+Kiro login expects the Kiro CLI: on Unix, install it with `curl -fsSL https://cli.kiro.dev/install | bash`;
+on Windows PowerShell, use `irm 'https://cli.kiro.dev/install.ps1' | iex`; then sign in with `kiro-cli login`.
+Without a `kiro-cli` session, `ocx login kiro` falls
 back to a pasted access token or the `KIRO_ACCESS_TOKEN` environment variable.
 
-`ocx login kiro` searches the platform Kiro CLI stores and opens SQLite databases read-only. Two
-environment variables make selection explicit without copying credentials into opencodex:
+The `ocx login kiro` import path searches the platform Kiro CLI stores and opens SQLite databases
+read-only. Two environment variables make the source and token row selection explicit:
 
 - `KIROCLI_DB_PATH` selects a nonstandard Kiro CLI SQLite database. The path must already exist;
-  opencodex does not create it or modify the database, WAL, or SHM files.
+  during this import path, opencodex does not create or modify the database, WAL, or SHM files.
 - `KIROCLI_TOKEN_KEY` selects the exact `auth_kv` token key when a database contains multiple
   otherwise ambiguous token rows. A missing selection fails login instead of guessing.
+
+On Windows, import looks for `%LOCALAPPDATA%\Kiro-Cli\data.sqlite3`. Forced/add-account login
+also needs the local CLI binary: opencodex first uses `PATH`, then falls back to
+`%LOCALAPPDATA%\Kiro-Cli\kiro-cli.exe` and `C:\Program Files\Kiro-Cli\kiro-cli.exe`.
+
+After a successful import, opencodex persists the imported credential to
+`~/.opencodex/auth.json`.
 
 Keep these variables and the selected database private. Do not attach database files or raw login
 diagnostics to bug reports.
 
+**Add account** is a separate write workflow: it snapshots the current session, logs `kiro-cli` out,
+and imports the fresh browser login. If the login is cancelled or fails, including while OpenCodex
+persists the credential, rollback replaces the Kiro CLI database and removes its current WAL, SHM,
+and journal sidecars before publishing the previous session snapshot.
+
+Because that rollback is only possible from a snapshot, **Add account** refuses to sign `kiro-cli`
+out when a session store is present but cannot be captured (unreadable file, mismatched schema, or
+an ambiguous token selection), when `KIROCLI_DB_PATH` / `KIRO_CLI_DB_FILE` redirect import reads away
+from the live CLI store, or when an existing primary CLI database has no recognized token row.
+Repair or remove the unreadable database under the normal `kiro-cli` data path, unset those import
+selectors, then retry. Signing in from a machine with no existing `kiro-cli` session is unaffected.
+
 ## 3. API-key catalog
 
-opencodex ships 53 built-in presets: 42 key-based, seven OAuth, three local, and the default
+opencodex ships 66 built-in presets: 55 key-based, seven OAuth, three local, and the default
 ChatGPT-forward preset. The dashboard's **Add provider** picker opens a key provider's dashboard,
 validates the key, and stores it. Notable entries:
 
@@ -176,6 +207,9 @@ validates the key, and stores it. Notable entries:
 | MiniMax · MiniMax (CN) | `https://api.minimax.io/v1` · `https://api.minimaxi.com/v1` |
 | DeepSeek | `https://api.deepseek.com` |
 | Cerebras | `https://api.cerebras.ai/v1` |
+| DeepInfra | `https://api.deepinfra.com/v1/openai` |
+| Hyperbolic | `https://api.hyperbolic.xyz/v1` |
+| Baseten Model APIs | `https://inference.baseten.co/v1` |
 | Together | `https://api.together.xyz/v1` |
 | Fireworks | `https://api.fireworks.ai/inference/v1` |
 | Moonshot (Kimi API) · Kimi (coding) | `https://api.moonshot.ai/v1` · `https://api.kimi.com/coding/v1` |
@@ -186,6 +220,7 @@ validates the key, and stores it. Notable entries:
 | Qwen Cloud | Token plan (default): `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` · Pay as you go: `https://dashscope.aliyuncs.com/compatible-mode/v1` · or Custom |
 | Tencent Cloud Coding Plan | `https://api.lkeap.cloud.tencent.com/coding/v3` |
 | SiliconFlow | `https://api.siliconflow.cn/v1` |
+| Volcengine Ark · Coding Plan · Agent Plan | `https://ark.cn-beijing.volces.com/api/v3` · `https://ark.cn-beijing.volces.com/api/coding/v3` · `https://ark.cn-beijing.volces.com/api/plan/v3` |
 | Xiaomi MiMo | `https://api.xiaomimimo.com/anthropic` |
 | Kilo | `https://api.kilo.ai/api/gateway` |
 | GitLab Duo | `https://cloud.gitlab.com/ai/v1/proxy/openai/v1` |
@@ -194,6 +229,40 @@ validates the key, and stores it. Notable entries:
 
 Most use the `openai-chat` adapter with a bearer key; a few that expose only an Anthropic-compatible
 endpoint (e.g. **Xiaomi MiMo**) use the `anthropic` adapter (`x-api-key`).
+Volcengine Agent Plan uses its native Responses endpoint through `openai-responses`.
+
+> **Three Volcengine billing routes:** `volcengine` is the pay-as-you-go Ark API,
+> `volcengine-coding-plan` consumes Coding Plan quota, and `volcengine-agent-plan` consumes Agent
+> Plan quota. Use the key and endpoint issued for the same product; the ordinary `/api/v3` endpoint
+> can incur pay-as-you-go charges even when a Plan subscription exists.
+> The presets use curated static model catalogs because Ark's `/models` response also includes
+> embedding, image, video, and 3D resources, the Coding gateway returns that same broad catalog,
+> and the Agent Plan gateway has no `/models` resource. Pay-as-you-go defaults to
+> `doubao-seed-2-1-pro-260628`; its curated catalog also includes current DeepSeek and GLM text
+> models. Coding Plan defaults to `ark-code-latest`, while Agent Plan defaults to
+> `deepseek-v4-pro`.
+
+> **Volcengine Plan usage restriction:** Volcengine documents Coding Plan and Agent Plan quota as
+> valid only inside supported AI coding tools, and warns that using a plan key for general API
+> calls may suspend the subscription or ban the account. Routing Codex or Claude Code through
+> opencodex is the documented use; pointing other automation at a plan key is not. The
+> pay-as-you-go `volcengine` route carries no such restriction.
+
+**DeepInfra discovery.** The key-based `deepinfra` OpenAI Chat Completions provider uses the
+`openai-chat` adapter with a Bearer API key. Its registry-owned model-list URL keeps only rows tagged
+`chat`, preserves slash-containing native model ids, and caps live discovery at 512 KiB and 512 raw
+rows. Create keys in [DeepInfra's dashboard](https://deepinfra.com/dash/api_keys).
+
+**Hyperbolic discovery.** The preset reads `/v1/models` with the configured bearer key, preserves
+slash-containing native model ids, and caps live discovery at 256 KiB and 256 raw rows. It covers
+serverless text and vision-language chat only; Hyperbolic's separate image, audio, and GPU endpoints
+are out of scope. Create keys at [Hyperbolic](https://app.hyperbolic.ai).
+
+> **Baseten scope:** The preset covers Baseten's shared [Model APIs](https://docs.baseten.co/inference/model-apis/overview)
+> only. Use a personal [API key](https://docs.baseten.co/organization/api-keys) for local use, or a team key
+> with **Call Model APIs** access for shared/production use. Dedicated Truss `predict` endpoints use different
+> hosts and schemas and are not routed by this preset.
+> Live discovery for this preset is capped at a 1 MiB response and 256 raw model rows.
 
 > **Tencent Cloud Coding Plan usage restriction:** Tencent documents this subscription for
 > interactive coding tools only. General API automation, custom application backends, and
@@ -248,9 +317,11 @@ Gateway** needs your account + gateway ids filled into the URL.
 Cursor is tracked separately as an experimental adapter. `adapter: "cursor"` appears in `ocx init`
 and the dashboard Add Provider picker as an experimental local config entry with Cursor's static
 fallback model catalog metadata. When a Cursor access token is configured, opencodex uses Cursor's
-live HTTP/2 transport. Its v2.7.1 fallback seed includes `gpt-5.6-sol` / `terra` / `luna` (1M context)
-plus `grok-4.5` / `grok-4.5-fast` (500K); live discovery decides which remain visible for the
-account. Cursor server-driven native read/write/delete/ls/grep/shell/fetch execution
+live HTTP/2 transport. Its bundled fallback seed includes `gpt-5.6-sol` / `terra` / `luna` (1M context),
+`grok-4.5` / `grok-4.5-fast` (500K), and `kimi-k3` (262K); live discovery decides which remain
+visible for the account. Cursor serves Kimi K3 only as effort-suffixed wire ids, so
+`cursor/kimi-k3` exposes a `low` / `high` / `max` ladder and defaults to `max`, matching the
+model's documented API default. Cursor server-driven native read/write/delete/ls/grep/shell/fetch execution
 is disabled by default because it bypasses Codex's approval and sandbox path; set
 `unsafeAllowNativeLocalExec: true` on the `providers.cursor` object in `~/.opencodex/config.json`
 only for trusted local experiments (or via **Providers → Cursor → Edit JSON** in the dashboard).

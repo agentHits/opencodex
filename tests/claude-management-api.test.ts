@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import { managementFetch as fetch } from "./helpers/management-auth";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -616,6 +617,95 @@ test("Claude Desktop profile GET, PUT and apply round-trip four-family assignmen
     expect(result.path.startsWith(process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR!)).toBe(true);
     const appliedConfig = JSON.parse(readFileSync(result.path, "utf8")) as { inferenceGatewayBaseUrl: string };
     expect(appliedConfig.inferenceGatewayBaseUrl).toBe(new URL(server.url).origin);
+  } finally {
+    server.stop(true);
+  }
+});
+
+/*
+ * Mechanism guard for #859: the apply route must keep building the alias
+ * registry in the serving process. (The CLI→daemon delegation half is pinned
+ * in tests/claude-desktop-cli.test.ts; this module-global registry is shared
+ * in-process, so this test guards the route, not the delegation.)
+ */
+test("Claude Desktop apply installs the alias registry in the serving process (#859)", async () => {
+  const { resolveDesktop3pAlias, activeDesktop3pAlias } = await import("../src/claude/desktop-3p");
+  // A provider unique to this test: no prior test can have populated its
+  // alias, so resolution proves THIS apply built the registry in-process.
+  const seeded = loadConfig();
+  seeded.providers = {
+    ...seeded.providers,
+    unique859: { adapter: "openai-chat", baseUrl: "http://127.0.0.1:1/v1", apiKey: "k", allowPrivateNetwork: true, models: ["test-model-x"] },
+  };
+  saveConfig(seeded);
+  const server = startServer(0);
+  try {
+    const apply = await fetch(new URL("/api/claude-desktop/apply", server.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "static" }),
+    });
+    expect(apply.status).toBe(200);
+    // Without another /v1/models discovery call, the serving process must now
+    // decode the alias the CLI would have generated.
+    const alias = activeDesktop3pAlias("unique859", "test-model-x");
+    expect(resolveDesktop3pAlias(alias)).toBe("unique859/test-model-x");
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("Claude Desktop apply honors the profile in the request body over daemon-stale config (#859)", async () => {
+  const server = startServer(0);
+  try {
+    const current = await fetch(new URL("/api/claude-desktop", server.url)).then(r => r.json()) as Record<string, any>;
+    const edited = structuredClone(current.profile);
+    edited.assignments["mock/test-model"].family = "sonnet";
+    edited.defaults.sonnet = "mock/test-model";
+    edited.defaults.opus = Object.keys(edited.assignments)
+      .filter(route => edited.assignments[route].family === "opus")
+      .sort()[0] ?? null;
+
+    const apply = await fetch(new URL("/api/claude-desktop/apply", server.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "static", profile: edited }),
+    });
+    expect(apply.status).toBe(200);
+    // The delegated profile wins: persisted state shows sonnet, not the stale opus.
+    expect(loadConfig().claudeCode?.desktopProfile?.assignments["mock/test-model"]?.family).toBe("sonnet");
+    expect(loadConfig().claudeCode?.desktopProfile?.defaults.sonnet).toBe("mock/test-model");
+
+    const badProfile = await fetch(new URL("/api/claude-desktop/apply", server.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "static", profile: { version: 2 } }),
+    });
+    expect(badProfile.status).toBe(400);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("Claude Desktop apply validates the mode body", async () => {
+  const server = startServer(0);
+  try {
+    const bad = await fetch(new URL("/api/claude-desktop/apply", server.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "nonsense" }),
+    });
+    expect(bad.status).toBe(400);
+
+    const hybrid = await fetch(new URL("/api/claude-desktop/apply", server.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "hybrid" }),
+    });
+    expect(hybrid.status).toBe(200);
+    const result = await hybrid.json() as { path: string };
+    const written = JSON.parse(readFileSync(result.path, "utf8")) as { modelDiscoveryEnabled: boolean };
+    expect(written.modelDiscoveryEnabled).toBe(true);
   } finally {
     server.stop(true);
   }

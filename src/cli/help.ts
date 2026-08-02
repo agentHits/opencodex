@@ -30,12 +30,18 @@ const helpEntries: Record<string, HelpEntry> = {
   uninstall: {
     usage: "ocx uninstall",
     summary: "Remove service/shim/config and restore native Codex.",
-    details: ["Alias: ocx remove"],
+    details: [
+      "Alias: ocx remove",
+      "Config cleanup requires ownership metadata created by a fresh install; legacy or shared directories are left in place.",
+    ],
   },
   remove: {
     usage: "ocx remove",
     summary: "Remove service/shim/config and restore native Codex.",
-    details: ["Alias of: ocx uninstall"],
+    details: [
+      "Alias of: ocx uninstall",
+      "Config cleanup requires ownership metadata created by a fresh install; legacy or shared directories are left in place.",
+    ],
   },
   service: {
     usage: "ocx service [install|start|stop|status|uninstall|remove]",
@@ -60,8 +66,22 @@ const helpEntries: Record<string, HelpEntry> = {
     ],
   },
   ensure: { usage: "ocx ensure", summary: "Ensure the proxy is running and Codex config/cache are current." },
-  sync: { usage: "ocx sync", summary: "Fetch provider models and inject them into Codex config." },
-  "sync-cache": { usage: "ocx sync-cache", summary: "Refresh Codex's model cache from the active catalog." },
+  sync: {
+    usage: "ocx sync [--restart-codex]",
+    summary: "Fetch provider models and inject them into Codex config.",
+    details: [
+      "After writing the catalog, warns if long-lived Codex app-server processes are still running.",
+      "--restart-codex sends SIGTERM only to matching app-server / code-mode-host processes (may interrupt active turns).",
+    ],
+  },
+  "sync-cache": {
+    usage: "ocx sync-cache [--restart-codex]",
+    summary: "Refresh Codex's model cache from the active catalog.",
+    details: [
+      "Warns when Codex app-server processes still hold an in-memory model list.",
+      "--restart-codex sends SIGTERM only to matching app-server / code-mode-host processes (may interrupt active turns).",
+    ],
+  },
   status: { usage: "ocx status", summary: "Check proxy server status." },
   doctor: { usage: "ocx doctor", summary: "Diagnose environment/network issues (paths, WSL /mnt, proxy env, ChatGPT reachability)." },
   debug: {
@@ -102,7 +122,7 @@ const helpEntries: Record<string, HelpEntry> = {
       "add-key <provider> [--label <label>]  Add a key read only from piped stdin.",
       "login/reauth/code/cancel  Run browser or manual-code auth from a headless shell.",
       "reset-credits <id|main> [--consume --yes]  Inspect or consume Codex reset credits.",
-      "Codex pool switches apply to new sessions; running threads keep their account.",
+      "Codex pool selection applies to the next request after clearing existing affinity; in-flight requests keep their captured account.",
     ],
   },
   models: {
@@ -149,6 +169,16 @@ const helpEntries: Record<string, HelpEntry> = {
     summary: "Manage OpenCodex admission API keys and inspect external endpoints.",
   },
   "api-key": { usage: "ocx api-key <list|create|remove> ...", summary: "Alias of ocx access key." },
+  export: {
+    usage: "ocx export --client <opencode|pi> [--json] [--out <path>] [--force]",
+    summary: "Print a client config (opencode, Pi) wired to the running proxy.",
+    details: [
+      "--json prints only the config JSON on stdout, so it is safe to redirect to a file.",
+      "--out <path> writes the config there and refuses to replace an existing file without --force.",
+      "The config never contains a key; it references the client's env var, which you export before launching.",
+      "The destination path is printed for merging by hand — ocx never writes your real client config.",
+    ],
+  },
   grok: { usage: "ocx grok <status|exclude|include|set|clear|apply> ...", summary: "Manage and apply the Grok Build model fence." },
   integration: { usage: "ocx integration <claude|grok> ...", summary: "Manage supported client integrations." },
   system: {
@@ -182,6 +212,20 @@ const helpEntries: Record<string, HelpEntry> = {
       "Legacy apply flags remain supported: --static, --hybrid, --discovery-only.",
       "",
       "Claude Code settings: ocx claude config <status|set> ...",
+    ],
+  },
+  opencode: {
+    usage: "ocx opencode [opencode args...]",
+    summary: "Launch opencode wired to the proxy (runtime provider config).",
+    details: [
+      "Ensures the proxy is running, then execs `opencode` with the generated `provider.opencodex`",
+      "block injected through OpenCode's inline runtime layer (`OPENCODE_CONFIG_CONTENT`). Any",
+      "existing inline config in the environment is preserved and only `provider.opencodex` is",
+      "overwritten for this launch.",
+      "Global/project opencode.json may be read to warn about an existing provider.opencodex",
+      "override; on-disk files are never modified.",
+      "Routed models appear in the model picker as opencodex/<provider>/<model>.",
+      "Stop using `ocx opencode` and plain `opencode` behaves exactly as before.",
     ],
   },
   restart: {
@@ -232,8 +276,9 @@ Usage:
   ocx codex-shim <sub>        Auto-start proxy when \`codex\` launches (install|status|uninstall|remove)
   ocx tray <sub>              Windows status tray (install|start|stop|status|uninstall)
   ocx ensure                  Ensure the proxy is running and Codex config/cache are current
-  ocx sync                    Fetch models from providers and inject into Codex config
-  ocx sync-cache              Refresh Codex's model cache from the active catalog
+  ocx sync [--restart-codex]  Fetch models from providers and inject into Codex config
+  ocx sync-cache [--restart-codex]
+                              Refresh Codex's model cache from the active catalog
   ocx status                  Check proxy server status
   ocx doctor                  Diagnose environment/network issues (WSL, proxy, ChatGPT reachability)
   ocx debug <scope>           provider/usage/injection/claude on|off|status|reset
@@ -251,11 +296,13 @@ Usage:
   ocx agent <sub>             Subagents, injection, effort caps, and sidecars
   ocx observe <sub>           Logs, usage, storage, memory, and debug data
   ocx access <sub>            External API keys and endpoint information
+  ocx export --client <id>    Print an opencode/Pi config wired to the running proxy
   ocx grok <sub>              Grok Build model selection and apply
   ocx system <sub>            Runtime settings, startup, sync, and updates
   ocx config <sub>            Validated configuration show/get/set/import/export
   ocx claude [args...]        Launch Claude Code wired to the proxy (model discovery on)
   ocx claude desktop [sub]    Manage and apply Claude Desktop's four-family profile
+  ocx opencode [args...]      Launch opencode wired to the proxy (runtime provider config)
   ocx help [command]          Show help
   ocx --version | -v          Print version
 

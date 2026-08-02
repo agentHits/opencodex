@@ -7,17 +7,16 @@ import {
   confirmRestartAfterUpdateForTests,
   findLiveProxyForUpdate,
   findNpmRecoveryLauncher,
-  findNpmRecoveryLaunchers,
   finishGuiUpdateRestart,
-  formatProxyStartLog,
   installerFailureAllowsRecovery,
   npmSelfUpdateRestartEvidence,
   readUpdateJob,
   recoverFailedGuiUpdateForTests,
   restartCommand,
   restartAfterUpdateForTests,
-  scanTrustedRecoveryTreeForTests,
+  staleActiveUpdateJobReason,
   startUpdateJob,
+  UPDATE_JOB_LEGACY_STALE_MS,
   updateExecutionCommand,
   updateJobPath,
   type UpdateJobState,
@@ -131,7 +130,6 @@ describe("GUI update execution decisions", () => {
     writeFileSync(updateJobPath(), JSON.stringify(job));
     await restartAfterUpdateForTests(job, { port: 10100, hostname: "127.0.0.1" }, {
       serviceInstalledFn: () => false,
-      readPidFn: () => null,
       waitForPort: async () => false,
       spawnStart: () => { throw new Error("must not spawn"); },
     });
@@ -143,217 +141,51 @@ describe("GUI update execution decisions", () => {
     expect(readUpdateJob(job.id)?.command).toContain("ocx.mjs update --tag latest");
   });
 
-  test("recovery start logs label candidates without persisting launcher paths", () => {
-    const retiredLauncher = "/Users/test/.npm-global/lib/node_modules/@bitkyc08/.opencodex-Ab12Cd34/bin/ocx.mjs";
-    const line = formatProxyStartLog("npm", retiredLauncher, 10100);
-
-    expect(line).toBe("Starting npm proxy from validated recovery candidate on port 10100.");
-    expect(line).not.toContain(retiredLauncher);
-    expect(line).not.toContain("/Users/test/");
-  });
-
-  test("finds a validated npm-retired launcher when the current package is partial", async () => {
-    const scopeRoot = join(dir, "global", "@bitkyc08");
-    const currentRoot = join(scopeRoot, "opencodex");
-    const retiredRoot = join(scopeRoot, ".opencodex-Ab12Cd34");
-    for (const [root, name, version] of [
-      [currentRoot, "@bitkyc08/opencodex", "2.7.41"],
-      [retiredRoot, "@bitkyc08/opencodex", "2.7.40"],
-    ] as const) {
-      mkdirSync(join(root, "bin"), { recursive: true });
-      writeFileSync(join(root, "package.json"), JSON.stringify({ name, version }));
-      writeFileSync(join(root, "bin", "ocx.mjs"), "#!/usr/bin/env node\n");
-    }
-
-    expect(await findNpmRecoveryLauncher(join(currentRoot, "bin", "ocx.mjs"), "2.7.40"))
-      .toBe(realpathSync(join(retiredRoot, "bin", "ocx.mjs")));
-  });
-
-  test("rejects an npm-retired launcher with the wrong package identity", async () => {
-    const scopeRoot = join(dir, "global", "@bitkyc08");
-    const currentRoot = join(scopeRoot, "opencodex");
-    const retiredRoot = join(scopeRoot, ".opencodex-Ab12Cd34");
-    mkdirSync(join(retiredRoot, "bin"), { recursive: true });
-    writeFileSync(join(retiredRoot, "package.json"), JSON.stringify({
-      name: "untrusted-package",
-      version: "2.7.40",
-    }));
-    writeFileSync(join(retiredRoot, "bin", "ocx.mjs"), "#!/usr/bin/env node\n");
-
-    expect(await findNpmRecoveryLauncher(join(currentRoot, "bin", "ocx.mjs"), "2.7.40")).toBeNull();
-  });
-
-  test("rejects a recovery package with an untrusted-writable imported file", async () => {
-    if (process.getuid?.() === undefined) return;
-    const scopeRoot = join(dir, "global", "@bitkyc08");
-    const currentRoot = join(scopeRoot, "opencodex");
-    mkdirSync(join(currentRoot, "bin"), { recursive: true });
-    mkdirSync(join(currentRoot, "src"), { recursive: true });
-    writeFileSync(join(currentRoot, "package.json"), JSON.stringify({
-      name: "@bitkyc08/opencodex",
-      version: "2.7.40",
-    }));
-    writeFileSync(join(currentRoot, "bin", "ocx.mjs"), 'import "../src/runtime.mjs";\n');
-    const imported = join(currentRoot, "src", "runtime.mjs");
-    writeFileSync(imported, "process.exit(0);\n");
-    chmodSync(imported, 0o666);
-    let probed = false;
-
-    expect(await findNpmRecoveryLaunchers(
-      join(currentRoot, "bin", "ocx.mjs"),
-      "2.7.40",
-      async () => {
-        probed = true;
-        return true;
-      },
-    )).toEqual([]);
-    expect(probed).toBe(false);
-  });
-
-  test("rejects a recovery package below an untrusted-writable path component", async () => {
-    if (process.getuid?.() === undefined) return;
-    const unsafeParent = join(dir, "world-writable-global");
-    const scopeRoot = join(unsafeParent, "@bitkyc08");
-    const currentRoot = join(scopeRoot, "opencodex");
-    mkdirSync(join(currentRoot, "bin"), { recursive: true });
-    writeFileSync(join(currentRoot, "package.json"), JSON.stringify({
-      name: "@bitkyc08/opencodex",
-      version: "2.7.40",
-    }));
-    writeFileSync(join(currentRoot, "bin", "ocx.mjs"), "process.exit(0);\n");
-    chmodSync(unsafeParent, 0o777);
-    let probed = false;
-
-    expect(await findNpmRecoveryLaunchers(
-      join(currentRoot, "bin", "ocx.mjs"),
-      "2.7.40",
-      async () => {
-        probed = true;
-        return true;
-      },
-    )).toEqual([]);
-    expect(probed).toBe(false);
-  });
-
-  test("allows npm-generated symlinks that resolve inside a trusted recovery package", async () => {
-    if (process.platform === "win32") return;
-    const scopeRoot = join(dir, "global", "@bitkyc08");
-    const currentRoot = join(scopeRoot, "opencodex");
-    const dependencyBin = join(currentRoot, "node_modules", "bun", "bin", "bun.exe");
-    const generatedBin = join(currentRoot, "node_modules", ".bin", "bun");
-    mkdirSync(join(currentRoot, "bin"), { recursive: true });
-    mkdirSync(join(currentRoot, "node_modules", ".bin"), { recursive: true });
-    mkdirSync(join(currentRoot, "node_modules", "bun", "bin"), { recursive: true });
-    writeFileSync(join(currentRoot, "package.json"), JSON.stringify({
-      name: "@bitkyc08/opencodex",
-      version: "2.7.40",
-    }));
-    writeFileSync(join(currentRoot, "bin", "ocx.mjs"), "process.exit(0);\n");
-    writeFileSync(dependencyBin, "#!/usr/bin/env node\n");
-    symlinkSync("../bun/bin/bun.exe", generatedBin);
-
-    const launcher = realpathSync(join(currentRoot, "bin", "ocx.mjs"));
-    expect(await findNpmRecoveryLaunchers(
-      launcher,
-      "2.7.40",
-      async candidate => candidate === launcher,
-    )).toEqual([launcher]);
-  });
-
-  test("rejects a recovery package symlink that leaves the candidate tree", async () => {
-    if (process.platform === "win32") return;
-    const scopeRoot = join(dir, "global", "@bitkyc08");
-    const currentRoot = join(scopeRoot, "opencodex");
-    const externalBin = join(dir, "external-tool");
-    mkdirSync(join(currentRoot, "bin"), { recursive: true });
-    mkdirSync(join(currentRoot, "node_modules", ".bin"), { recursive: true });
-    writeFileSync(join(currentRoot, "package.json"), JSON.stringify({
-      name: "@bitkyc08/opencodex",
-      version: "2.7.40",
-    }));
-    writeFileSync(join(currentRoot, "bin", "ocx.mjs"), "process.exit(0);\n");
-    writeFileSync(externalBin, "#!/usr/bin/env node\n");
-    symlinkSync(externalBin, join(currentRoot, "node_modules", ".bin", "external-tool"));
-    let probed = false;
-
-    expect(await findNpmRecoveryLaunchers(
-      join(currentRoot, "bin", "ocx.mjs"),
-      "2.7.40",
-      async () => {
-        probed = true;
-        return true;
-      },
-    )).toEqual([]);
-    expect(probed).toBe(false);
-  });
-
-  test("skips a matching current package whose complete launcher runtime cannot load", async () => {
-    const scopeRoot = join(dir, "global", "@bitkyc08");
-    const currentRoot = join(scopeRoot, "opencodex");
-    const retiredRoot = join(scopeRoot, ".opencodex-Ab12Cd34");
-    for (const root of [currentRoot, retiredRoot]) {
-      mkdirSync(join(root, "bin"), { recursive: true });
-      writeFileSync(join(root, "package.json"), JSON.stringify({
-        name: "@bitkyc08/opencodex",
-        version: "2.7.40",
-      }));
-    }
-    writeFileSync(join(currentRoot, "bin", "ocx.mjs"), 'import "../src/cli/index.ts";\n');
-    writeFileSync(join(retiredRoot, "bin", "ocx.mjs"), "process.exit(0);\n");
-
-    expect(await findNpmRecoveryLaunchers(join(currentRoot, "bin", "ocx.mjs"), "2.7.40"))
-      .toEqual([realpathSync(join(retiredRoot, "bin", "ocx.mjs"))]);
-  });
-
-  test("bounds npm recovery candidates before running launcher probes", async () => {
-    const scopeRoot = join(dir, "global", "@bitkyc08");
-    const currentRoot = join(scopeRoot, "opencodex");
-    const retiredRoots = [
-      join(scopeRoot, ".opencodex-Ab12Cd34"),
-      join(scopeRoot, ".opencodex-Ef56Gh78"),
-      join(scopeRoot, ".opencodex-Ij90Kl12"),
-    ];
-    for (const root of [currentRoot, ...retiredRoots]) {
-      mkdirSync(join(root, "bin"), { recursive: true });
-      writeFileSync(join(root, "package.json"), JSON.stringify({
-        name: "@bitkyc08/opencodex",
-        version: "2.7.40",
-      }));
-      writeFileSync(join(root, "bin", "ocx.mjs"), "process.exit(0);\n");
-    }
-    const probed: string[] = [];
-
-    const launchers = await findNpmRecoveryLaunchers(
-      join(currentRoot, "bin", "ocx.mjs"),
-      "2.7.40",
-      async launcher => {
-        probed.push(launcher);
-        return true;
-      },
-    );
-
-    expect(probed).toHaveLength(2);
-    expect(launchers).toEqual(probed);
-    expect(launchers[0]).toBe(realpathSync(join(currentRoot, "bin", "ocx.mjs")));
-  });
-
-  test("fails closed when the recovery-tree worker exceeds its hard deadline", () => {
-    const blockingScan = join(dir, "blocking-recovery-tree-scan.mjs");
-    writeFileSync(blockingScan, [
-      "process.on('SIGTERM', () => {});",
-      "setInterval(() => {}, 60_000);",
-      "",
-    ].join("\n"));
-
-    const startedAt = Date.now();
-    const result = scanTrustedRecoveryTreeForTests(join(dir, "candidate"), {
-      scanScript: blockingScan,
-      timeoutMs: 250,
+  test("sanitizer redacts space-containing profile paths (Wibias reproduction)", async () => {
+    // Old [^\s] path rules terminated at the first space: a Windows profile with
+    // a space survived whole, and a POSIX spaced profile half-leaked. These are
+    // the exact inputs from the review reproduction.
+    const winSpaced = String.raw`C:\Users\Alice Smith\.npm\_cacache\tmp\entry`;
+    const posixSpaced = "/Users/Alice Smith/.npm/_cacache/tmp";
+    const bunSpaced = String.raw`C:\Users\Alice Smith\.bun\bin\ocx.mjs`;
+    const job: UpdateJobState = {
+      id: "sanitize-spaced-paths",
+      status: "failed",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: `node ${winSpaced} update`,
+      releaseNotesUrl: "",
+      log: [
+        `npm failed at ${winSpaced}`,
+        `and at ${posixSpaced}`,
+        `spawn ${bunSpaced} start failed: EACCES`,
+        "error in /Users/alice/project/file.ts: something went wrong",
+      ],
+      error: posixSpaced,
+    };
+    writeFileSync(updateJobPath(), JSON.stringify(job));
+    await restartAfterUpdateForTests(job, { port: 10100, hostname: "127.0.0.1" }, {
+      serviceInstalledFn: () => false,
+      waitForPort: async () => false,
+      spawnStart: () => { throw new Error("must not spawn"); },
     });
-
-    expect(result).toBe(false);
-    expect(Date.now() - startedAt).toBeLessThan(2_000);
-  }, 5_000);
+    const saved = readUpdateJob(job.id);
+    const persisted = JSON.stringify(saved);
+    expect(persisted).not.toContain("Alice Smith");
+    expect(persisted).not.toContain("AliceSmith");
+    expect(persisted).not.toContain("Alice");
+    expect(persisted).not.toContain("_cacache");
+    expect(persisted).not.toContain(String.raw`.bun\bin`);
+    // Non-secret context survives: the error message and the POSIX directory
+    // structure below the redacted username stay readable.
+    expect(saved?.log.some(line => line.includes("spawn ocx.mjs start failed: EACCES"))).toBe(true);
+    expect(saved?.log.some(line => line.includes("/Users/[redacted]/project/file.ts: something went wrong"))).toBe(true);
+  });
 
   test("only recovers after a clean installer exit", () => {
     expect(installerFailureAllowsRecovery("npm", {
@@ -390,8 +222,8 @@ describe("GUI update execution decisions", () => {
   test("restart waits on the captured pre-update port unconditionally and pins the spawn to it", async () => {
     // The stop-first update flow clears pid/runtime state before restartAfterUpdate runs,
     // so the wait must fire even with no readable pid — driven here via the io seam.
-    const waited: Array<{ port: number; hostname: string; opts?: { killOcxHolders?: boolean; onlyKillPids?: number[] } }> = [];
-    const spawned: Array<{ port?: number; launcher?: string }> = [];
+    const waited: Array<{ port: number; hostname: string; opts?: { killOcxHolders?: boolean; onlyKillPids?: number[]; killAllOcxOnPort?: boolean } }> = [];
+    const spawned: Array<{ port?: number }> = [];
     const job: UpdateJobState = {
       id: "restart-io",
       status: "restarting",
@@ -405,13 +237,10 @@ describe("GUI update execution decisions", () => {
       command: "",
       log: [],
     };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-    await restartAfterUpdateForTests(job, {
-      port: 12345,
-      hostname: "127.0.0.1",
-      recoveryLauncher: "/retired/bin/ocx.mjs",
-    }, {
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    await restartAfterUpdateForTests(job, { port: 12345, hostname: "127.0.0.1" }, {
       serviceInstalledFn: () => false, // drive the proxy-mode branch regardless of host state
+      listListenPidsFn: () => [],
       waitForPort: async (port, hostname, opts) => {
         waited.push({
           port,
@@ -419,24 +248,25 @@ describe("GUI update execution decisions", () => {
           opts: {
             killOcxHolders: opts?.killOcxHolders,
             onlyKillPids: opts?.onlyKillPids,
+            killAllOcxOnPort: (opts as { killAllOcxOnPort?: boolean } | undefined)?.killAllOcxOnPort,
           },
         });
         return true;
       },
-      spawnStart: (_job, _installer, port, launcher) => {
-        spawned.push({ port, launcher });
+      spawnStart: (_job, _installer, port) => {
+        spawned.push({ port });
       },
     });
     expect(waited).toEqual([{
       port: 12345,
       hostname: "127.0.0.1",
-      opts: { killOcxHolders: false, onlyKillPids: [] },
+      opts: { killOcxHolders: true, onlyKillPids: [], killAllOcxOnPort: true },
     }]);
-    expect(spawned).toEqual([{ port: 12345, launcher: "/retired/bin/ocx.mjs" }]);
+    expect(spawned).toEqual([{ port: 12345 }]);
   });
 
-  test("restart reclaim allowlists only the trusted oldPid", async () => {
-    const optsSeen: Array<{ killOcxHolders?: boolean; onlyKillPids?: number[] }> = [];
+  test("restart reclaim allowlists the trusted oldPid and kills any ocx on the port", async () => {
+    const optsSeen: Array<{ killOcxHolders?: boolean; onlyKillPids?: number[]; killAllOcxOnPort?: boolean }> = [];
     const job: UpdateJobState = {
       id: "restart-oldpid",
       status: "restarting",
@@ -453,130 +283,51 @@ describe("GUI update execution decisions", () => {
     writeFileSync(updateJobPath(), JSON.stringify(job));
     await restartAfterUpdateForTests(job, { port: 10100, hostname: "127.0.0.1", oldPid: 4242 }, {
       serviceInstalledFn: () => false,
+      listListenPidsFn: () => [],
       waitForPort: async (_port, _hostname, opts) => {
         optsSeen.push({
           killOcxHolders: opts?.killOcxHolders,
           onlyKillPids: opts?.onlyKillPids,
+          killAllOcxOnPort: (opts as { killAllOcxOnPort?: boolean } | undefined)?.killAllOcxOnPort,
         });
         return true;
       },
       spawnStart: () => {},
     });
-    expect(optsSeen).toEqual([{ killOcxHolders: true, onlyKillPids: [4242] }]);
+    expect(optsSeen).toEqual([{ killOcxHolders: true, onlyKillPids: [4242], killAllOcxOnPort: true }]);
   });
 
-  test("service restart leaves a replacement PID untouched when it appears during port reclaim", async () => {
-    let pidReads = 0;
+  test("restart reclaim also allowlists leftover ocx listeners on the captured port", async () => {
+    const optsSeen: number[][] = [];
     const job: UpdateJobState = {
-      id: "restart-replacement-pid",
+      id: "restart-leftover-ocx",
       status: "restarting",
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      currentVersion: "2.7.40",
-      latestVersion: "2.7.41",
+      currentVersion: "2.7.39",
+      latestVersion: "2.7.40",
       channel: "latest",
       installer: "npm",
       restart: true,
       command: "",
-      releaseNotesUrl: "",
       log: [],
     };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-    await restartAfterUpdateForTests(job, {
-      port: 10100,
-      hostname: "127.0.0.1",
-      oldPid: 111,
-      recoveryLauncher: "/retired/bin/ocx.mjs",
-    }, {
-      serviceInstalledFn: () => true,
-      readPidFn: () => (++pidReads === 1 ? 111 : 222),
-      verifyPidIdentityFn: pid => pid,
-      waitForPort: async () => true,
-      runService: () => { throw new Error("must not reinstall over a replacement PID"); },
-      spawnStart: () => { throw new Error("must not start over a replacement PID"); },
-    });
-    expect(pidReads).toBe(2);
-    expect(readUpdateJob(job.id)?.log.some(line =>
-      line.includes("different identity-checked proxy PID") && line.includes("leaving it untouched"),
-    )).toBe(true);
-  });
-
-  test("direct restart leaves a replacement PID untouched when it appears during port reclaim", async () => {
-    let pidReads = 0;
-    const job: UpdateJobState = {
-      id: "restart-direct-replacement-pid",
-      status: "restarting",
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      currentVersion: "2.7.40",
-      latestVersion: "2.7.41",
-      channel: "latest",
-      installer: "npm",
-      restart: true,
-      command: "",
-      releaseNotesUrl: "",
-      log: [],
-    };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-    await restartAfterUpdateForTests(job, {
-      port: 10100,
-      hostname: "127.0.0.1",
-      oldPid: 111,
-      recoveryLauncher: "/retired/bin/ocx.mjs",
-    }, {
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    await restartAfterUpdateForTests(job, { port: 19111, hostname: "127.0.0.1", oldPid: 100 }, {
       serviceInstalledFn: () => false,
-      readPidFn: () => (++pidReads < 3 ? null : 222),
-      verifyPidIdentityFn: pid => pid,
-      waitForPort: async () => true,
-      spawnStart: () => { throw new Error("must not start over a replacement PID"); },
-    });
-    expect(pidReads).toBe(3);
-    expect(readUpdateJob(job.id)?.log.some(line =>
-      line.includes("different identity-checked proxy PID") && line.includes("leaving it untouched"),
-    )).toBe(true);
-  });
-
-  test("direct restart treats an unverified pidfile PID as absent", async () => {
-    const verified: number[] = [];
-    let spawned = 0;
-    const job: UpdateJobState = {
-      id: "restart-unverified-pid",
-      status: "restarting",
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      currentVersion: "2.7.40",
-      latestVersion: "2.7.41",
-      channel: "latest",
-      installer: "npm",
-      restart: true,
-      command: "",
-      releaseNotesUrl: "",
-      log: [],
-    };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-    await restartAfterUpdateForTests(job, {
-      port: 10100,
-      hostname: "127.0.0.1",
-      oldPid: 111,
-      recoveryLauncher: "/retired/bin/ocx.mjs",
-    }, {
-      serviceInstalledFn: () => false,
-      readPidFn: () => 222,
-      verifyPidIdentityFn: pid => {
-        verified.push(pid);
-        return null;
+      // Simulate a respawned bun child that is not the pre-update PID.
+      listListenPidsFn: () => [100, 200],
+      verifyOcxFn: (pid) => (pid === 100 || pid === 200 ? pid : null),
+      waitForPort: async (_port, _hostname, opts) => {
+        optsSeen.push([...(opts?.onlyKillPids ?? [])].sort((a, b) => a - b));
+        return true;
       },
-      waitForPort: async () => true,
-      spawnStart: () => { spawned += 1; },
+      spawnStart: () => {},
     });
-    expect(verified).toEqual([222, 222, 222]);
-    expect(spawned).toBe(1);
-    const log = readUpdateJob(job.id)?.log ?? [];
-    expect(log.some(line => line.includes("Stopping current proxy PID"))).toBe(false);
-    expect(log.some(line => line.includes("different identity-checked proxy PID"))).toBe(false);
+    expect(optsSeen).toEqual([[100, 200]]);
   });
 
-  test("restart refuses to spawn when the captured port never becomes free", async () => {
+  test("restart refuses to spawn when a live holder still owns the captured port", async () => {
     const spawned: Array<{ port?: number }> = [];
     const job: UpdateJobState = {
       id: "restart-busy",
@@ -591,17 +342,48 @@ describe("GUI update execution decisions", () => {
       command: "",
       log: [],
     };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-    await restartAfterUpdateForTests(job, { port: 10100, hostname: "127.0.0.1" }, {
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    await restartAfterUpdateForTests(job, { port: 10100, hostname: "127.0.0.1", oldPid: 100 }, {
       serviceInstalledFn: () => false,
       waitForPort: async () => false,
+      listListenPidsFn: () => [555],
+      isAliveFn: pid => pid === 555,
       spawnStart: (_job, _installer, port) => {
         spawned.push({ port });
       },
     });
     expect(spawned).toEqual([]);
     const saved = readUpdateJob(job.id);
-    expect(saved?.log.some(line => line.includes("still busy") && line.includes("not starting on another port"))).toBe(true);
+    expect(saved?.log.some(line => line.includes("Live holder(s) remain"))).toBe(true);
+  });
+
+  test("restart attempts pinned start when reclaim times out with only dead holders", async () => {
+    const spawned: Array<{ port?: number }> = [];
+    const job: UpdateJobState = {
+      id: "restart-busy-dead",
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.39",
+      latestVersion: "2.7.40",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    await restartAfterUpdateForTests(job, { port: 10100, hostname: "127.0.0.1", oldPid: 100 }, {
+      serviceInstalledFn: () => false,
+      waitForPort: async () => false,
+      listListenPidsFn: () => [100],
+      isAliveFn: () => false,
+      spawnStart: (_job, _installer, port) => {
+        spawned.push({ port });
+      },
+    });
+    expect(spawned).toEqual([{ port: 10100 }]);
+    expect(readUpdateJob(job.id)?.log.some(line => line.includes("waiting for ghost LISTEN rows to clear before pinned start"))).toBe(true);
   });
 
   test("service restart waits on the captured port and clears OCX_BAKE_PORT after install", async () => {
@@ -630,6 +412,13 @@ describe("GUI update execution decisions", () => {
         hostname: "127.0.0.1",
       }, {
         serviceInstalledFn: () => true,
+        serviceViableFn: () => true,
+        // The service-recovery gate now asks the port before skipping the direct-start
+        // fallback. This test is about the OCX_BAKE_PORT lifecycle, not the recovery
+        // decision, so answer the probe rather than letting it reach a real socket:
+        // without it the run falls through to the direct-start path, calls waitFn a
+        // second time, and times out on the ghost-LISTEN wait.
+        probeProxy: async () => true,
         waitForPort: async (port, hostname) => {
           waited.push({ port, hostname: hostname ?? "" });
           expect(process.env.OCX_BAKE_PORT).toBeUndefined();
@@ -652,48 +441,6 @@ describe("GUI update execution decisions", () => {
     }
   });
 
-  test("retired recovery launchers never persist their path in an installed service", async () => {
-    const spawned: Array<{ port?: number; launcher?: string }> = [];
-    const job: UpdateJobState = {
-      id: "restart-retired-direct",
-      status: "restarting",
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      currentVersion: "2.7.40",
-      latestVersion: "2.7.41",
-      channel: "latest",
-      installer: "npm",
-      restart: true,
-      command: "",
-      releaseNotesUrl: "",
-      log: [],
-    };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-
-    const startedPid = await restartAfterUpdateForTests(job, {
-      port: 10100,
-      hostname: "127.0.0.1",
-      recoveryLauncher: "/scope/.opencodex-Ab12Cd34/bin/ocx.mjs",
-    }, {
-      serviceInstalledFn: () => true,
-      waitForPort: async () => true,
-      runService: () => { throw new Error("must not persist a temporary recovery path"); },
-      spawnStart: (_job, _installer, port, launcher) => {
-        spawned.push({ port, launcher });
-        return 222;
-      },
-    });
-
-    expect(startedPid).toBe(222);
-    expect(spawned).toEqual([{
-      port: 10100,
-      launcher: "/scope/.opencodex-Ab12Cd34/bin/ocx.mjs",
-    }]);
-    expect(readUpdateJob(job.id)?.log.some(line =>
-      line.includes("temporary") && line.includes("installed service stopped"),
-    )).toBe(true);
-  });
-
   test("service reinstall failure falls back to a direct proxy start", async () => {
     const spawned: Array<{ port: number }> = [];
     const job: UpdateJobState = {
@@ -709,17 +456,105 @@ describe("GUI update execution decisions", () => {
       command: "",
       log: [],
     };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-    await restartAfterUpdateForTests(job, { port: 19999, hostname: "127.0.0.1" }, {
-      serviceInstalledFn: () => true,
-      waitForPort: async () => true,
-      runService: () => ({ status: 1 }),
-      spawnStart: (_job, _installer, port) => {
-        spawned.push({ port: port ?? 0 });
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    const prevService = process.env.OCX_SERVICE;
+    delete process.env.OCX_SERVICE;
+    try {
+      await restartAfterUpdateForTests(job, { port: 19999, hostname: "127.0.0.1" }, {
+        serviceInstalledFn: () => true,
+        serviceViableFn: () => false,
+        waitForPort: async () => true,
+        runService: () => ({ status: 1 }),
+        spawnStart: (_job, _installer, port) => {
+          spawned.push({ port: port ?? 0 });
+        },
+      });
+      // The fallback must fire: direct proxy start instead of throwing.
+      expect(spawned).toEqual([{ port: 19999 }]);
+    } finally {
+      if (prevService === undefined) delete process.env.OCX_SERVICE;
+      else process.env.OCX_SERVICE = prevService;
+    }
+  });
+
+  test("service reinstall exit 0 with non-viable assets falls back to direct start", async () => {
+    const spawned: Array<{ port: number }> = [];
+    const job: UpdateJobState = {
+      id: "svc-stale-fallback",
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.42",
+      latestVersion: "2.7.43",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    const prevService = process.env.OCX_SERVICE;
+    delete process.env.OCX_SERVICE;
+    try {
+      await restartAfterUpdateForTests(job, { port: 19100, hostname: "127.0.0.1" }, {
+        serviceInstalledFn: () => true,
+        // Installed but stale/missing assets — the status line users see after a dead update.
+        serviceViableFn: () => false,
+        waitForPort: async () => true,
+        runService: () => ({ status: 0 }),
+        spawnStart: (_job, _installer, port) => {
+          spawned.push({ port: port ?? 0 });
+        },
+      });
+      expect(spawned).toEqual([{ port: 19100 }]);
+      expect(readUpdateJob(job.id)?.log.some(line =>
+        line.includes("not viable") && line.includes("direct proxy start"),
+      )).toBe(true);
+    } finally {
+      if (prevService === undefined) delete process.env.OCX_SERVICE;
+      else process.env.OCX_SERVICE = prevService;
+    }
+  });
+
+  test("dashboard update recovery does not require a Background Service", async () => {
+    let now = 0;
+    let restartCalls = 0;
+    const job: UpdateJobState = {
+      id: "no-bg-service-recovery",
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.42",
+      latestVersion: "2.7.43",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      releaseNotesUrl: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    const ok = await finishGuiUpdateRestart(
+      job,
+      { port: 10100, hostname: "127.0.0.1", oldPid: 501 },
+      "npm",
+      {
+        // No Background Service installed — interactive dashboard update must still recover.
+        serviceInstalledFn: () => false,
+        serviceViableFn: () => false,
+        waitForPort: async () => true,
+        spawnStart: () => { restartCalls += 1; },
+        probeProxy: async () => restartCalls > 0,
+        probeProxyIdentity: async () => (
+          restartCalls > 0 ? { pid: 777, version: "2.7.43" } : null
+        ),
+        now: () => now,
+        sleepMs: async (ms) => { now += ms; },
       },
-    });
-    // The fallback must fire: direct proxy start instead of throwing.
-    expect(spawned).toEqual([{ port: 19999 }]);
+    );
+    expect(ok).toBe(true);
+    expect(restartCalls).toBe(1);
+    expect(readUpdateJob(job.id)?.log.some(line => line.includes("skipping redundant restart"))).toBe(false);
   });
 
   test("pre-update liveness retries a transient miss before classifying the proxy inactive", async () => {
@@ -751,7 +586,7 @@ describe("GUI update execution decisions", () => {
       ),
     });
     expect(probes).toBe(3);
-    expect(live).toEqual({ pid: 111, port: 16543, hostname: "127.0.0.1" });
+    expect(live).toEqual({ pid: 111, port: 16543, hostname: "127.0.0.1", source: "runtime" });
   });
 
   test("failed install leaves an already-healthy proxy untouched", async () => {
@@ -909,7 +744,6 @@ describe("GUI update execution decisions", () => {
         ),
         verifyPidIdentityFn: () => null,
         sleepMs: async () => {},
-        recoveryLaunchersFn: () => { throw new Error("must not resolve a launcher"); },
         restartAfterUpdateFn: async () => { restartCalls += 1; },
       },
     );
@@ -919,207 +753,14 @@ describe("GUI update execution decisions", () => {
     expect(readUpdateJob(job.id)?.log.some(line => line.includes("replacement proxy became healthy"))).toBe(true);
   });
 
-  test("failed install restores through the retired launcher after the old PID loses identity", async () => {
-    let now = 0;
-    let restarted = false;
-    let recoveryLauncher: string | undefined;
-    const job: UpdateJobState = {
-      id: "failed-install-recovery",
-      status: "running",
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      currentVersion: "2.7.40",
-      latestVersion: "2.7.41",
-      channel: "latest",
-      installer: "npm",
-      restart: true,
-      command: "",
-      releaseNotesUrl: "",
-      log: [],
-    };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-    const recovery = await recoverFailedGuiUpdateForTests(
-      job,
-      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
-      true,
-      {
-        probeProxyIdentity: async () => null,
-        verifyPidIdentityFn: () => null,
-        recoveryLaunchersFn: () => ["/retired/bin/ocx.mjs"],
-        probeProxy: async () => restarted,
-        restartAfterUpdateFn: async (_job, captured) => {
-          recoveryLauncher = captured?.recoveryLauncher;
-          restarted = true;
-        },
-        now: () => now,
-        sleepMs: async (ms) => { now += ms; },
-      },
-    );
-    expect(recovery).toBe("restarted");
-    expect(recoveryLauncher).toBe("/retired/bin/ocx.mjs");
-    expect(readUpdateJob(job.id)?.log.some(line => line.includes("update itself still failed"))).toBe(true);
-  });
-
-  test("failed install stops an unhealthy recovery process before trying the next package", async () => {
-    let now = 0;
-    let activePid: number | null = null;
-    const attempted: Array<string | undefined> = [];
-    const killed: number[] = [];
-    const runningPids = new Set<number>();
-    const job: UpdateJobState = {
-      id: "failed-install-recovery-fallback",
-      status: "running",
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      currentVersion: "2.7.40",
-      latestVersion: "2.7.41",
-      channel: "latest",
-      installer: "npm",
-      restart: true,
-      command: "",
-      releaseNotesUrl: "",
-      log: [],
-    };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-
-    const recovery = await recoverFailedGuiUpdateForTests(
-      job,
-      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
-      true,
-      {
-        probeProxyIdentity: async () => null,
-        serviceInstalledFn: () => false,
-        readPidFn: () => activePid,
-        verifyPidIdentityFn: pid => runningPids.has(pid) ? pid : null,
-        recoveryLaunchersFn: () => ["/current/bin/ocx.mjs", "/retired/bin/ocx.mjs"],
-        probeProxy: async () => activePid === 333 && runningPids.has(333),
-        waitForPort: async () => true,
-        spawnStart: (_job, _installer, _port, launcher) => {
-          attempted.push(launcher);
-          activePid = launcher === "/current/bin/ocx.mjs" ? 222 : 333;
-          runningPids.add(activePid);
-          const startedPid = activePid;
-          return {
-            pid: startedPid,
-            sameGeneration: () => runningPids.has(startedPid),
-          };
-        },
-        killProxyFn: pid => {
-          killed.push(pid);
-          runningPids.delete(pid);
-          if (activePid === pid) activePid = null;
-        },
-        now: () => now,
-        sleepMs: async (ms) => { now += ms; },
-      },
-    );
-
-    expect(recovery).toBe("restarted");
-    expect(attempted).toEqual(["/current/bin/ocx.mjs", "/retired/bin/ocx.mjs"]);
-    expect(killed).toEqual([222]);
-    expect(runningPids.has(222)).toBe(false);
-    expect(runningPids.has(333)).toBe(true);
-    expect(readUpdateJob(job.id)?.log.some(line => line.includes("trying candidate 2 of 2"))).toBe(true);
-  });
-
-  test("failed install stops trying candidates when a started PID has no OpenCodex identity", async () => {
-    let now = 0;
-    const attempted: Array<string | undefined> = [];
-    const killed: number[] = [];
-    const job: UpdateJobState = {
-      id: "failed-install-unverified-pid",
-      status: "running",
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      currentVersion: "2.7.40",
-      latestVersion: "2.7.41",
-      channel: "latest",
-      installer: "npm",
-      restart: true,
-      command: "",
-      releaseNotesUrl: "",
-      log: [],
-    };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-
-    const recovery = await recoverFailedGuiUpdateForTests(
-      job,
-      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
-      true,
-      {
-        probeProxyIdentity: async () => null,
-        verifyPidIdentityFn: () => null,
-        recoveryLaunchersFn: () => ["/current/bin/ocx.mjs", "/retired/bin/ocx.mjs"],
-        probeProxy: async () => false,
-        restartAfterUpdateFn: async (_job, captured) => {
-          attempted.push(captured?.recoveryLauncher);
-          return { pid: 222, sameGeneration: () => true };
-        },
-        killProxyFn: pid => { killed.push(pid); },
-        now: () => now,
-        sleepMs: async (ms) => { now += ms; },
-      },
-    );
-
-    expect(recovery).toBe("failed");
-    expect(attempted).toEqual(["/current/bin/ocx.mjs"]);
-    expect(killed).toEqual([]);
-    expect(readUpdateJob(job.id)?.log.some(line =>
-      line.includes("without a matching OpenCodex identity"),
-    )).toBe(true);
-  });
-
-  test("failed install never kills a reused PID after the spawned process generation exits", async () => {
-    let now = 0;
-    const attempted: Array<string | undefined> = [];
-    const killed: number[] = [];
-    const job: UpdateJobState = {
-      id: "failed-install-reused-generation",
-      status: "running",
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      currentVersion: "2.7.40",
-      latestVersion: "2.7.41",
-      channel: "latest",
-      installer: "npm",
-      restart: true,
-      command: "",
-      releaseNotesUrl: "",
-      log: [],
-    };
-    writeFileSync(updateJobPath(), JSON.stringify(job));
-
-    const recovery = await recoverFailedGuiUpdateForTests(
-      job,
-      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
-      true,
-      {
-        probeProxyIdentity: async () => null,
-        verifyPidIdentityFn: pid => pid === 222 ? pid : null,
-        recoveryLaunchersFn: () => ["/current/bin/ocx.mjs", "/retired/bin/ocx.mjs"],
-        probeProxy: async () => false,
-        restartAfterUpdateFn: async (_job, captured) => {
-          attempted.push(captured?.recoveryLauncher);
-          return { pid: 222, sameGeneration: () => false };
-        },
-        killProxyFn: pid => { killed.push(pid); },
-        now: () => now,
-        sleepMs: async (ms) => { now += ms; },
-      },
-    );
-
-    expect(recovery).toBe("failed");
-    expect(attempted).toEqual(["/current/bin/ocx.mjs"]);
-    expect(killed).toEqual([]);
-    expect(readUpdateJob(job.id)?.log.some(line =>
-      line.includes("no longer matches the spawned process generation"),
-    )).toBe(true);
-  });
-
-  test("failed install reports remediation when no runnable recovery package remains", async () => {
+  test("failed install fails closed with a manual recovery instruction and never starts a recovery package", async () => {
+    // Policy A (maintainer decision, Wibias recommendation): after a failed
+    // installer stopped the proxy, no recovery candidate is ever started — the
+    // installer may still be mutating the global package tree. The job stays
+    // failed and the log names the manual path.
     let restartCalls = 0;
     const job: UpdateJobState = {
-      id: "failed-install-no-candidate",
+      id: "failed-install-fail-closed",
       status: "running",
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1133,7 +774,6 @@ describe("GUI update execution decisions", () => {
       log: [],
     };
     writeFileSync(updateJobPath(), JSON.stringify(job));
-
     const recovery = await recoverFailedGuiUpdateForTests(
       job,
       { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
@@ -1142,17 +782,20 @@ describe("GUI update execution decisions", () => {
         probeProxyIdentity: async () => null,
         verifyPidIdentityFn: () => null,
         sleepMs: async () => {},
-        recoveryLaunchersFn: () => [],
         restartAfterUpdateFn: async () => { restartCalls += 1; },
       },
     );
-
     expect(recovery).toBe("failed");
     expect(restartCalls).toBe(0);
     const log = readUpdateJob(job.id)?.log ?? [];
-    expect(log.some(line => line.includes("Could not find a runnable current or npm-retired launcher"))).toBe(true);
-    expect(log.some(line => line.includes("ocx start --port 10100"))).toBe(true);
+    expect(log.some(line => line.includes("Automatic recovery is disabled"))).toBe(true);
+    expect(log.some(line => line.includes("ocx service install") && line.includes("ocx start --port 10100"))).toBe(true);
   });
+
+
+
+
+
 
   test("restart confirmation fails when the proxy never becomes healthy", async () => {
     let now = 0;
@@ -1238,6 +881,87 @@ describe("GUI update execution decisions", () => {
     expect(readUpdateJob(job.id)?.log.some(line => line.includes("stayed healthy for 15s after restart"))).toBe(true);
   });
 
+  test("restart confirmation makes a final health probe at the arrival deadline", async () => {
+    let now = 0;
+    const job: UpdateJobState = {
+      id: "restart-health-deadline",
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.42",
+      latestVersion: "2.7.43",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      releaseNotesUrl: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+
+    const ok = await confirmRestartAfterUpdateForTests(
+      job,
+      { port: 10100, hostname: "127.0.0.1" },
+      {
+        probeProxy: async () => now >= 30_000,
+        now: () => now,
+        sleepMs: async (ms) => { now += ms; },
+      },
+    );
+
+    expect(ok).toBe(true);
+    expect(now).toBe(45_000);
+  });
+
+  test("npm finish accepts a replacement that becomes healthy after the old cutoff", async () => {
+    let now = 0;
+    let restartCalls = 0;
+    const job: UpdateJobState = {
+      id: "npm-late-self-restart",
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.42",
+      latestVersion: "2.7.43",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      releaseNotesUrl: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+
+    const ok = await finishGuiUpdateRestart(
+      job,
+      { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
+      "npm",
+      {
+        serviceInstalledFn: () => true,
+        // Soft-probe path only runs when a live listen owner exists.
+        listListenPidsFn: () => [222],
+        isAliveFn: () => true,
+        probeProxy: async () => now >= 15_250,
+        probeProxyIdentity: async () => (
+          now >= 15_250 ? { pid: 222, version: "2.7.43" } : null
+        ),
+        now: () => now,
+        sleepMs: async (ms) => { now += ms; },
+        restartAfterUpdateFn: async () => { restartCalls += 1; },
+      },
+    );
+
+    expect(ok).toBe(true);
+    expect(restartCalls).toBe(0);
+    expect(now).toBe(30_250);
+    expect(readUpdateJob(job.id)?.log.some(line =>
+      line.includes("stayed healthy for 15s after restart"),
+    )).toBe(true);
+    expect(readUpdateJob(job.id)?.log.some(line =>
+      line.includes("skipping redundant restart") && line.includes("pid changed"),
+    )).toBe(true);
+  });
+
   test("npm finish skips redundant restart when service self-update left a replaced healthy proxy", async () => {
     let now = 0;
     let restartCalls = 0;
@@ -1262,6 +986,8 @@ describe("GUI update execution decisions", () => {
       "npm",
       {
         serviceInstalledFn: () => true,
+        listListenPidsFn: () => [222],
+        isAliveFn: () => true,
         probeProxy: async () => true,
         probeProxyIdentity: async () => ({ pid: 222, version: "2.7.41" }),
         now: () => now,
@@ -1300,6 +1026,8 @@ describe("GUI update execution decisions", () => {
       "npm",
       {
         serviceInstalledFn: () => true,
+        listListenPidsFn: () => [111],
+        isAliveFn: pid => pid === 111,
         // Soft probe stays healthy (old process). Explicit restart is a no-op.
         probeProxy: async () => true,
         probeProxyIdentity: async () => ({ pid: 111, version: "2.7.40" }),
@@ -1349,6 +1077,8 @@ describe("GUI update execution decisions", () => {
       "npm",
       {
         serviceInstalledFn: () => true,
+        listListenPidsFn: () => [livePid],
+        isAliveFn: () => true,
         probeProxy: async () => true,
         probeProxyIdentity: async () => ({ pid: livePid, version: liveVersion }),
         now: () => now,
@@ -1369,7 +1099,7 @@ describe("GUI update execution decisions", () => {
     )).toBe(true);
   });
 
-  test("npm finish fails when port reclaim leaves the pre-update proxy healthy", async () => {
+  test("npm finish fails when port reclaim leaves a live pre-update holder", async () => {
     let now = 0;
     const job: UpdateJobState = {
       id: "npm-reclaim-stale",
@@ -1391,11 +1121,13 @@ describe("GUI update execution decisions", () => {
       { port: 10100, hostname: "127.0.0.1", oldPid: 111 },
       "npm",
       {
-        // Direct path: reclaim failure returns without spawning a replacement.
+        // Live holder after reclaim timeout — must not spawn a second listener.
         serviceInstalledFn: () => false,
         waitForPort: async () => false,
+        listListenPidsFn: () => [111],
+        isAliveFn: pid => pid === 111,
         spawnStart: () => {
-          throw new Error("must not spawn when reclaim failed");
+          throw new Error("must not spawn when a live holder remains");
         },
         probeProxy: async () => true,
         probeProxyIdentity: async () => ({ pid: 111, version: "2.7.40" }),
@@ -1408,10 +1140,7 @@ describe("GUI update execution decisions", () => {
       status: "failed",
       restarted: false,
     });
-    expect(readUpdateJob(job.id)?.error).toContain("still the pre-update PID");
-    expect(readUpdateJob(job.id)?.log.some(line =>
-      line.includes("still busy") && line.includes("not starting on another port"),
-    )).toBe(true);
+    expect(readUpdateJob(job.id)?.log.some(line => line.includes("Live holder(s) remain"))).toBe(true);
   });
 
   test("npm finish skips the soft probe for direct installs and restarts immediately", async () => {
@@ -1478,6 +1207,7 @@ describe("GUI update execution decisions", () => {
     writeFileSync(updateJobPath(), JSON.stringify(job));
     const ok = await finishGuiUpdateRestart(job, { port: 10100, hostname: "127.0.0.1" }, "npm", {
       serviceInstalledFn: () => true,
+      listListenPidsFn: () => [],
       // Soft probe times out (proxy down after npm update); confirm after explicit restart succeeds.
       probeProxy: async () => restartCalls > 0,
       probeProxyIdentity: async () => (
@@ -1495,6 +1225,39 @@ describe("GUI update execution decisions", () => {
     expect(readUpdateJob(job.id)?.log.some(line =>
       line.includes("performing explicit restart"),
     )).toBe(true);
+  });
+
+  test("npm finish probes /healthz when listener scan fails instead of assuming no listener", async () => {
+    let now = 0;
+    let restartCalls = 0;
+    const job: UpdateJobState = {
+      id: "npm-scan-fail-probe",
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      releaseNotesUrl: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    const ok = await finishGuiUpdateRestart(job, { port: 10100, hostname: "127.0.0.1", oldPid: 111 }, "npm", {
+      serviceInstalledFn: () => true,
+      scanListenPidsFn: () => ({ ok: false, error: "lsof/netstat unavailable" }),
+      probeProxy: async () => true,
+      probeProxyIdentity: async () => ({ pid: 222, version: "2.7.41" }),
+      now: () => now,
+      sleepMs: async (ms) => { now += ms; },
+      restartAfterUpdateFn: async () => { restartCalls += 1; },
+    });
+    expect(ok).toBe(true);
+    expect(restartCalls).toBe(0);
+    expect(readUpdateJob(job.id)?.log.some(line => line.includes("Listener scan inconclusive"))).toBe(true);
+    expect(readUpdateJob(job.id)?.log.some(line => line.includes("skipping redundant restart"))).toBe(true);
   });
 
   test("bun finish always runs explicit restart even if a proxy is already healthy", async () => {
@@ -1572,6 +1335,85 @@ describe("GUI update execution decisions", () => {
 
     expect(() => startUpdateJob("latest", true)).toThrow("already running");
   });
+
+  test("stale detection trusts a live PID and recovers dead or legacy workers", () => {
+    const now = Date.now();
+    const active = { status: "running" as const, pid: 321, updatedAt: new Date(0).toISOString() };
+    expect(staleActiveUpdateJobReason(active, now, () => true)).toBeNull();
+    expect(staleActiveUpdateJobReason(active, now, () => false)).toContain("PID 321");
+    expect(staleActiveUpdateJobReason({
+      status: "restarting",
+      updatedAt: new Date(now - UPDATE_JOB_LEGACY_STALE_MS).toISOString(),
+    }, now)).toContain("no worker PID");
+    expect(staleActiveUpdateJobReason({
+      status: "running",
+      updatedAt: new Date(now - UPDATE_JOB_LEGACY_STALE_MS + 1).toISOString(),
+    }, now)).toBeNull();
+  });
+
+  test("recovers a dead worker and persists the replacement worker PID", () => {
+    const now = Date.now();
+    const oldJob: UpdateJobState = {
+      id: "dead-worker",
+      status: "running",
+      startedAt: new Date(now - 60_000).toISOString(),
+      updatedAt: new Date(now - 60_000).toISOString(),
+      currentVersion: "2.7.40",
+      latestVersion: "2.7.41",
+      channel: "latest",
+      installer: "bun",
+      restart: true,
+      command: "bun add -g @bitkyc08/opencodex@2.7.41",
+      releaseNotesUrl: "https://github.com/lidge-jun/opencodex/releases/latest",
+      log: [],
+      pid: 777,
+    };
+    writeFileSync(updateJobPath(), `${JSON.stringify(oldJob)}\n`);
+    let unrefCalled = false;
+
+    const started = startUpdateJob("latest", true, {
+      nowMs: () => now,
+      isProcessAliveFn: () => false,
+      checkForUpdateFn: () => ({
+        currentVersion: "2.7.40",
+        latestVersion: "2.7.41",
+        channel: "latest",
+        installer: "bun",
+        updateAvailable: true,
+        canUpdate: true,
+        command: "bun add -g @bitkyc08/opencodex@2.7.41",
+        releaseNotesUrl: "https://github.com/lidge-jun/opencodex/releases/latest",
+      }),
+      spawnWorkerFn: () => ({
+        pid: 888,
+        unref: () => { unrefCalled = true; },
+        once: () => undefined,
+      }),
+    });
+
+    expect(started.pid).toBe(888);
+    expect(readUpdateJob(started.id)?.pid).toBe(888);
+    expect(readUpdateJob(started.id)?.log.at(-1)).toContain("PID 888");
+    expect(unrefCalled).toBe(true);
+  });
+
+  test("records a failed job when spawning the worker throws", () => {
+    expect(() => startUpdateJob("latest", false, {
+      checkForUpdateFn: () => ({
+        currentVersion: "2.7.40",
+        latestVersion: "2.7.41",
+        channel: "latest",
+        installer: "bun",
+        updateAvailable: true,
+        canUpdate: true,
+        command: "bun add -g @bitkyc08/opencodex@2.7.41",
+        releaseNotesUrl: "https://github.com/lidge-jun/opencodex/releases/latest",
+      }),
+      spawnWorkerFn: () => { throw new Error("spawn denied"); },
+    })).toThrow("Could not start update worker");
+    expect(readUpdateJob()?.status).toBe("failed");
+    expect(readUpdateJob()?.error).toContain("spawn denied");
+  });
 });
 
 describe("immutable update target (WP160)", () => {
@@ -1586,6 +1428,7 @@ describe("immutable update target (WP160)", () => {
 
   test("bun worker execution pins the resolved version through updateExecutionCommand", () => {
     const cmd = updateExecutionCommand("bun", "latest", "/pkg/bin/ocx.mjs", "2.7.24");
+    expect(cmd.bin).toBe(process.platform === "win32" ? process.execPath : "bun");
     expect(cmd.args).toEqual(["add", "-g", "@bitkyc08/opencodex@2.7.24"]);
     expect(cmd.display).toContain("@2.7.24");
   });
@@ -1632,5 +1475,83 @@ describe("immutable update target (WP160)", () => {
     expect(source).toContain("Integrity pre-flight skipped");
     // The bun lane pins the resolved version through updateExecutionCommand.
     expect(source).toContain("updateExecutionCommand(check.installer, channel, undefined, check.latestVersion)");
+  });
+});
+
+/**
+ * `isServiceViable()` answers registration, not service: `launchctl list` reports a
+ * job that bound nothing, and `schtasks` reports a task whose child exited at once.
+ * Returning early on it skipped the direct-start fallback that exists so a dashboard
+ * update never leaves the proxy dead.
+ */
+describe("service recovery is health-gated, not viability-gated", () => {
+  function healthGateJob(id: string): UpdateJobState {
+    const job: UpdateJobState = {
+      id,
+      status: "restarting",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: "2.7.26",
+      latestVersion: "2.7.28",
+      channel: "latest",
+      installer: "npm",
+      restart: true,
+      command: "",
+      log: [],
+    };
+    writeFileSync(updateJobPath(job.id), JSON.stringify(job));
+    return job;
+  }
+
+  async function runGate(
+    id: string,
+    io: Parameters<typeof restartAfterUpdateForTests>[2],
+  ): Promise<number[]> {
+    const spawned: number[] = [];
+    let now = 0;
+    const prevService = process.env.OCX_SERVICE;
+    delete process.env.OCX_SERVICE;
+    try {
+      await restartAfterUpdateForTests(healthGateJob(id), { port: 18765, hostname: "127.0.0.1" }, {
+        serviceInstalledFn: () => true,
+        runService: () => ({ status: 0 }),
+        waitForPort: async () => true,
+        spawnStart: (_job, _installer, port) => { spawned.push(port ?? 0); },
+        sleepMs: async ms => { now += ms; },
+        now: () => now,
+        ...io,
+      });
+    } finally {
+      if (prevService === undefined) delete process.env.OCX_SERVICE;
+      else process.env.OCX_SERVICE = prevService;
+    }
+    return spawned;
+  }
+
+  // The regression: viable=true, service registered, nothing listening.
+  test("falls through to a direct start when a viable service never serves", async () => {
+    const spawned = await runGate("svc-health-dead", {
+      serviceViableFn: () => true,
+      probeProxy: async () => false,
+      serviceHealthTimeoutMs: 1_000,
+    });
+    expect(spawned).toEqual([18765]);
+  });
+
+  test("returns without a direct start when the service does serve", async () => {
+    const spawned = await runGate("svc-health-live", {
+      serviceViableFn: () => true,
+      probeProxy: async () => true,
+    });
+    expect(spawned).toEqual([]);
+  });
+
+  test("still falls back when the service is not viable at all", async () => {
+    const spawned = await runGate("svc-health-nonviable", {
+      serviceViableFn: () => false,
+      probeProxy: async () => false,
+      serviceHealthTimeoutMs: 1_000,
+    });
+    expect(spawned).toEqual([18765]);
   });
 });

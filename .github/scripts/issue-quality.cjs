@@ -25,19 +25,29 @@ function unwrapSingleEnclosingFence(text) {
   return match[2];
 }
 
-function isPlaceholderOnlyValue(raw) {
-  if (typeof raw !== "string") return false;
+/**
+ * Shared strip/trim/unwrap used by placeholder and unusable-stand-in matchers.
+ * Returns null when the value is absent after normalisation.
+ */
+function normalizeRawSectionValue(raw) {
+  if (typeof raw !== "string") return null;
   let value = raw.replace(/<!--[\s\S]*?-->/g, "").trim();
-  if (!value) return false;
+  if (!value) return null;
 
-  // A lone fenced block whose entire body is a placeholder is still placeholder
-  // text (e.g. ```text\nN/A\n```), not a real example.
+  // A lone fenced block whose entire body is a stand-in is still a stand-in
+  // (e.g. ```text\nN/A\n```), not a real example.
   const unwrapped = unwrapSingleEnclosingFence(value);
   if (unwrapped !== null) {
     value = unwrapped.trim();
-    if (!value) return false;
+    if (!value) return null;
   }
 
+  return value;
+}
+
+function isPlaceholderOnlyValue(raw) {
+  const value = normalizeRawSectionValue(raw);
+  if (value === null) return false;
   return PLACEHOLDER_ONLY_RE.test(value);
 }
 
@@ -150,10 +160,11 @@ function resolveSection(body, headings) {
 }
 
 /**
- * True when the body has at least one non-empty h2–h4 section with enough
- * detail. Used for soft-pass only — unstructured length alone is not enough.
+ * True when the body has multiple non-empty h2–h4 sections with enough detail.
+ * Soft-pass only — unstructured length alone is not enough, and a single
+ * arbitrary heading must not bypass the quality gate (Codex on #564).
  */
-function hasSubstantialStructuredContent(body, minSectionLen = 40) {
+function hasSubstantialStructuredContent(body, minSectionLen = 40, minRichSections = 2) {
   if (typeof body !== "string") return false;
   const lines = body.split("\n");
   let capturing = false;
@@ -173,7 +184,7 @@ function hasSubstantialStructuredContent(body, minSectionLen = 40) {
     if (capturing) bucket.push(line);
   }
   if (capturing) flush();
-  return richSections >= 1;
+  return richSections >= minRichSections;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,11 +251,282 @@ const KIND_TO_LABEL = {
 };
 
 /**
+ * Orthogonal product-area labels (additive beside kind/process labels).
+ * Colors/descriptions are used when the workflow ensures labels exist.
+ */
+const AREA_LABELS = {
+  provider: {
+    color: "1D76DB",
+    description: "Provider adapters, OpenAI-compat presets, upstream API quirks",
+  },
+  "account-pool": {
+    color: "5319E7",
+    description: "OAuth, credentials, Codex pool, quota, failover, plans",
+  },
+  catalog: {
+    color: "006B75",
+    description: "Model catalog, slugs, visibility, routed entries",
+  },
+  gui: {
+    color: "D93F0B",
+    description: "Dashboard, tray, settings UI",
+  },
+  cli: {
+    color: "FBCA04",
+    description: "CLI, config inject, packaging flags",
+  },
+  proxy: {
+    color: "0E8A16",
+    description: "HTTP proxy, routing, reverse-proxy / management auth",
+  },
+  platform: {
+    color: "BFDADC",
+    description: "OS/service/tray/ACL (Windows-heavy, not Windows-only)",
+  },
+  streaming: {
+    color: "C5DEF5",
+    description: "SSE, WebSocket, terminal stream frames",
+  },
+  tools: {
+    color: "F9D0C4",
+    description: "tool_calls, MCP, web-search / sidecar tools",
+  },
+  install: {
+    color: "EDEDED",
+    description: "Installation or packaging",
+  },
+  service: {
+    color: "EDEDED",
+    description: "Service lifecycle (WinSW/launchd/scheduler)",
+  },
+};
+
+/** Canonical Area dropdown text → area label(s). Keys are lowercased. */
+const AREA_FIELD_TO_LABELS = {
+  cli: ["cli"],
+  "proxy and routing": ["proxy"],
+  dashboard: ["gui"],
+  "provider adapter": ["provider"],
+  "provider adapters": ["provider"],
+  "authentication and account pool": ["account-pool"],
+  "catalog / models": ["catalog"],
+  streaming: ["streaming"],
+  "tools / mcp / web search": ["tools"],
+  "installation or packaging": ["install"],
+  "service lifecycle": ["service"],
+  "service lifecycle (config injection)": ["service"],
+  "platform (windows / macos / linux)": ["platform"],
+  // Do not map to kind label `documentation` — that collides with labelBasedKind
+  // when a feature/bug form picks Area: Documentation. Docs form already seeds
+  // the kind label; Area selection alone does not add an area tag.
+  documentation: [],
+  // No dedicated label; heuristics still run in detectAreaLabels.
+  "multiple areas": [],
+  other: [],
+};
+
+/** Body headings used for area heuristics (excludes Environment / OS metadata). */
+const AREA_HEURISTIC_BODY_HEADINGS = [
+  "Summary",
+  "Reproduction",
+  "What are you trying to accomplish?",
+  "What prevents this today?",
+  "What should OpenCodex do?",
+  "Example usage or interface",
+  "Current behaviour",
+  "Expected behaviour",
+  "Minimal redacted request or reproduction",
+  "What is wrong or missing?",
+  "Documentation problem type",
+  "Documentation location",
+];
+
+/**
+ * Heuristic rules. `scope: "title"` avoids false hits from template Environment /
+ * OS fields in the body; `scope: "full"` is for distinctive technical tokens.
+ */
+const AREA_HEURISTICS = [
+  {
+    label: "account-pool",
+    scope: "full",
+    re: /\b(oauth|reauth|needsreauth|account pool|codex.?auth|auto[- ]?switch|account failover|refresh token|plan_type|chatgpt[- ]account|reset credit)\b/i,
+  },
+  {
+    label: "account-pool",
+    scope: "title",
+    re: /\b(quota|failover|pool account|account switch)\b/i,
+  },
+  {
+    label: "catalog",
+    scope: "full",
+    re: /\b(model catalog|opencodex-catalog|model list|model visibility|virtual model|routed (catalog|entries|slug)|model slug)\b/i,
+  },
+  {
+    label: "catalog",
+    scope: "title",
+    re: /\bcatalog\b/i,
+  },
+  {
+    label: "gui",
+    scope: "title",
+    re: /\b(dashboard|\bgui\b|tray|sidebar|settings (page|tab|ui))\b/i,
+  },
+  {
+    label: "cli",
+    scope: "title",
+    re: /\b(ocx\b|config\.toml|config inject)\b/i,
+  },
+  {
+    label: "proxy",
+    scope: "full",
+    re: /\b(reverse[- ]proxy|management api|admin[- ]token|\/api\/\*|bind(s)? the (old )?port)\b/i,
+  },
+  {
+    label: "proxy",
+    scope: "title",
+    re: /\b(reverse[- ]proxy|management api|admin[- ]token)\b/i,
+  },
+  {
+    label: "platform",
+    scope: "full",
+    re: /\b(winsw|launchd|schtasks|icacls|windows-latest|tray host|scheduler backend)\b/i,
+  },
+  {
+    label: "platform",
+    scope: "title",
+    re: /\b(\[windows\]|\[macos\]|windows|macos|darwin|win32|wsl)\b/i,
+  },
+  {
+    label: "streaming",
+    scope: "full",
+    re: /\b(sse|websocket|\bws\b|stream(ing)?\b.{0,40}\btruncat\w*|stream(ing)?\b.{0,40}\bterminal\b|terminal (sse )?frame|without a terminal)\b/i,
+  },
+  {
+    label: "tools",
+    scope: "full",
+    re: /\b(tool_calls?|tool[- ]calls?|\bmcp\b|web[- ]search|tool[- ]recall)\b/i,
+  },
+  {
+    label: "install",
+    scope: "full",
+    re: /\b(npm (global )?install|packaging|release asset|npx ocx)\b/i,
+  },
+  {
+    label: "service",
+    scope: "full",
+    re: /\b(ocx service|winsw|scheduler backend|launchd service)\b/i,
+  },
+  {
+    label: "provider",
+    scope: "full",
+    re: /\b(provider adapter|openai[- ]compatible|provider[- ]compat|adapter quirk|built[- ]in provider|provider preset)\b/i,
+  },
+  {
+    label: "provider",
+    scope: "title",
+    re: /\b(\[provider\]|provider compat|openai[- ]compatible)\b/i,
+  },
+];
+
+/**
  * Map a detected issue kind to its triage label. Returns null when unknown.
  */
 function labelForKind(kind) {
   if (!kind || typeof kind !== "string") return null;
   return KIND_TO_LABEL[kind] || null;
+}
+
+/**
+ * Map a template Area dropdown value to orthogonal area label names.
+ * Returns [] for Other / Multiple areas / unknown / empty.
+ *
+ * @param {unknown} areaText
+ * @returns {string[]}
+ */
+function mapAreaFieldToLabels(areaText) {
+  if (typeof areaText !== "string") return [];
+  const key = areaText.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!key) return [];
+  return AREA_FIELD_TO_LABELS[key] ? [...AREA_FIELD_TO_LABELS[key]] : [];
+}
+
+/**
+ * Build heuristic text from title-relevant semantic sections only — never from
+ * Operating system / Version / Checks metadata that every template includes.
+ *
+ * @param {string} body
+ * @returns {string}
+ */
+function bodyForAreaHeuristics(body) {
+  if (typeof body !== "string" || !body.trim()) return "";
+  const parts = [];
+  for (const heading of AREA_HEURISTIC_BODY_HEADINGS) {
+    const section = extractSection(body, heading);
+    if (section) parts.push(section);
+  }
+  return parts.join("\n\n");
+}
+
+/**
+ * Conservative title/body heuristics for orthogonal area labels.
+ *
+ * @param {string} title
+ * @param {string} body semantic body text (already filtered)
+ * @returns {string[]}
+ */
+function heuristicAreaLabels(title, body) {
+  const titleText = title || "";
+  const fullText = `${titleText}\n${body || ""}`;
+  const seen = new Set();
+  const out = [];
+  for (const { label, re, scope } of AREA_HEURISTICS) {
+    const text = scope === "title" ? titleText : fullText;
+    if (!re.test(text) || seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  return out;
+}
+
+/**
+ * Detect additive product-area labels from Area field, form defaults, and
+ * title/body heuristics. Never invents per-provider labels.
+ *
+ * @param {{
+ *   title?: string,
+ *   body?: string,
+ *   labels?: string[],
+ *   heuristicBody?: string,
+ * }} issue
+ *   `body` is the source form (for Area / provider headings).
+ *   `heuristicBody` may include English translation text for heuristics only.
+ * @returns {string[]}
+ */
+function detectAreaLabels(issue) {
+  const title = typeof issue?.title === "string" ? issue.title : "";
+  const body = typeof issue?.body === "string" ? issue.body : "";
+  const labels = Array.isArray(issue?.labels) ? issue.labels : [];
+  const heuristicSource = typeof issue?.heuristicBody === "string" ? issue.heuristicBody : body;
+
+  const areaSection = extractSection(body, "Area");
+  const fromArea = mapAreaFieldToLabels(areaSection);
+  const fromHeur = heuristicAreaLabels(title, bodyForAreaHeuristics(heuristicSource));
+  const fromForm = [];
+  if (labels.includes("provider-compatibility")) fromForm.push("provider");
+  // Provider-compat form uses this heading instead of Area.
+  if (extractSection(body, "Provider or upstream service") !== null) {
+    fromForm.push("provider");
+  }
+
+  const seen = new Set();
+  const out = [];
+  for (const label of [...fromArea, ...fromForm, ...fromHeur]) {
+    if (!label || seen.has(label)) continue;
+    if (!AREA_LABELS[label]) continue;
+    seen.add(label);
+    out.push(label);
+  }
+  return out;
 }
 
 function countHeadings(body, headings) {
@@ -373,7 +655,10 @@ function detectIssueKind(issue) {
 // ---------------------------------------------------------------------------
 
 function isEmpty(text) {
-  return clean(text).length === 0;
+  const c = clean(text);
+  if (c.length === 0) return true;
+  // Stand-ins like "...", "…", "---" are not actionable report content.
+  return /^[\p{P}\p{S}\s]+$/u.test(c);
 }
 
 function allSameCanonical(sections) {
@@ -392,6 +677,20 @@ function allRepeatTitle(sections, title) {
 
 function isPlaceholder(text) {
   return isPlaceholderOnlyValue(text);
+}
+
+/**
+ * True when Version is an "I don't know" stand-in rather than an install id.
+ * Kept separate from PLACEHOLDER_ONLY_RE so legacy N/A / No response soft-pass
+ * behaviour is unchanged.
+ */
+const UNUSABLE_VERSION_RE =
+  /^[\s_*~`]*(?:unknown|unkown|uknown|don'?t\s+know|do\s+not\s+know|idk|dunno|not\s+sure|unsure|\?+|모름|잘\s*모름|모르겠(?:습니다|음)?|不明|わからない|分からない|不知道|不清楚|keine\s+ahnung|wei[sß]{1,2}\s+nicht)[\s_*~`]*[.!?]*$/i;
+
+function isUnusableVersion(raw) {
+  const value = normalizeRawSectionValue(raw);
+  if (value === null) return false;
+  return UNUSABLE_VERSION_RE.test(value);
 }
 
 const CJK_RE =
@@ -427,6 +726,16 @@ function isTooTerseFeatureSection(text) {
   if (words >= 8) return false;
   if (words >= 6 && hasConcreteDetail(text)) return false;
   return true;
+}
+
+/**
+ * Bug Reproduction needs steps or concrete signals. A title-like phrase with
+ * no commands, paths, digits, or product keywords is not actionable.
+ */
+function isTooTerseBugReproduction(text) {
+  if (isEmpty(text) || isPlaceholder(text)) return false;
+  if (hasConcreteDetail(text)) return false;
+  return countWords(text) < 12;
 }
 
 /**
@@ -541,7 +850,6 @@ function validateIssue(issue) {
   const reasons = [];
   const guidance = [];
   let softPass = false;
-  const titleLower = title.toLowerCase();
 
   if (!kind) {
     const failure = untemplatedIssueFailure(issue);
@@ -578,9 +886,11 @@ function validateIssue(issue) {
       goal !== null || blocker !== null || behaviour !== null || example !== null;
 
     if (emptyCore.length > 0) {
+      // Soft-pass rich non-template bodies once kind is already feature (title
+      // prefix, enhancement label, or stored kind). Do not require the title to
+      // keep a `[Feature]:` prefix — maintainer retitles must not re-arm closure.
       const canSoftPass =
         !mappedHeadingPresent &&
-        titleLower.startsWith("[feature]:") &&
         hasSubstantialStructuredContent(body);
       if (canSoftPass) {
         softPass = true;
@@ -623,12 +933,18 @@ function validateIssue(issue) {
     const repro = extractSection(body, "Reproduction");
     const version = extractSection(body, "Version");
     const os = extractSection(body, "Operating system") ?? extractSection(body, "OS");
+    // New Bug report template always includes Client or integration.
+    const isNewBugForm = extractSection(body, "Client or integration") !== null;
 
     if (isEmpty(summary) && isEmpty(repro)) {
+      // Soft-pass substantial non-English / freeform structured reports once
+      // kind is already bug (label, stored kind, or prior `[Bug]:` detection).
+      // Requiring the title to keep a `[Bug]:` prefix caused #545: a maintainer
+      // retitle of an already detailed report was treated as empty Summary/
+      // Reproduction and auto-closed.
       const canSoftPass =
         summary === null &&
         repro === null &&
-        titleLower.startsWith("[bug]:") &&
         hasSubstantialStructuredContent(body);
       if (canSoftPass) {
         softPass = true;
@@ -636,16 +952,65 @@ function validateIssue(issue) {
         reasons.push("Both Summary and Reproduction are empty.");
         guidance.push("Describe what happened and how to reproduce it.");
       }
+    } else {
+      // Each mapped field is required on its own — a filled Summary with an
+      // empty / ellipsis Reproduction (e.g. #598) must not pass.
+      if (isEmpty(summary)) {
+        reasons.push("Summary is empty.");
+        guidance.push("Describe what happened (the symptom or error).");
+      }
+      if (isEmpty(repro)) {
+        reasons.push("Reproduction is empty.");
+        guidance.push("List the exact steps to reproduce the problem.");
+      } else if (!softPass && isTooTerseBugReproduction(repro)) {
+        reasons.push("Reproduction is too vague to act on.");
+        guidance.push("List exact steps, commands, and the observed failure — not only a short phrase.");
+      }
     }
 
-    // Required environment fields removed after submission.
-    // Only fire when the headings exist in the body (new form). Legacy bug
-    // reports never had Version or OS fields, so null means absent, not removed.
-    // Skip when the raw value is a "No response" placeholder -- the old form had
-    // both fields as optional, so legacy issues legitimately contain those headings
-    // with the GitHub placeholder. Only close when the field was actively cleared.
-    if (!softPass && version !== null && os !== null && isEmpty(version) && isEmpty(os) &&
-        !isRawPlaceholder(version) && !isRawPlaceholder(os)) {
+    // Version "Unknown" / "모름" / "idk" is never actionable, on any form.
+    if (!softPass && version !== null && isUnusableVersion(version)) {
+      reasons.push("Version is missing or unknown.");
+      guidance.push("Report the installed `@bitkyc08/opencodex` version (for example `2.7.42`) or a commit SHA from `ocx --version`.");
+    } else if (
+      !softPass &&
+      isNewBugForm &&
+      (version === null || isEmpty(version) || isRawPlaceholder(version))
+    ) {
+      // New form requires Version (including when the heading was removed).
+      // Legacy N/A / No response soft-pass stays only for bodies without
+      // Client or integration.
+      reasons.push("Version is missing.");
+      guidance.push("Add your OpenCodex version so we can reproduce the environment.");
+    }
+
+    if (!softPass && isNewBugForm && os !== null && isUnusableVersion(os)) {
+      reasons.push("Operating system is missing or unknown.");
+      guidance.push("Add your OS name and version (for example Windows 11 24H2).");
+    } else if (
+      !softPass &&
+      isNewBugForm &&
+      (os === null || isEmpty(os) || isRawPlaceholder(os))
+    ) {
+      reasons.push("Operating system is missing.");
+      guidance.push("Add your OS name and version (for example Windows 11 24H2).");
+    }
+
+    // Required environment fields removed after submission on bodies that are
+    // not the new form (no Client or integration). Legacy reports never had
+    // Version or OS fields, so null means absent, not removed. Skip when the
+    // raw value is a "No response" placeholder — the old form had both fields
+    // as optional. Only close when the field was actively cleared.
+    if (
+      !softPass &&
+      !isNewBugForm &&
+      version !== null &&
+      os !== null &&
+      isEmpty(version) &&
+      isEmpty(os) &&
+      !isRawPlaceholder(version) &&
+      !isRawPlaceholder(os)
+    ) {
       reasons.push("Version and Operating system are both missing.");
       guidance.push("Add your OpenCodex version and OS so we can reproduce the environment.");
     }
@@ -687,27 +1052,39 @@ function validateIssue(issue) {
     if (version !== null && isRawPlaceholder(version) === false && isEmpty(version)) emptyCore.push("OpenCodex version");
     if (endpoint !== null && isEmpty(endpoint)) emptyCore.push("endpoint or capability");
     if (emptyCore.length > 0) {
-      reasons.push(`Required sections are missing or empty: ${emptyCore.join(", ")}.`);
-      guidance.push("Describe both the current and expected behaviour.");
+      // Same soft-pass as bug/feature: label- or maintainer-scoped provider
+      // reports often use non-English structured headings after a retitle.
+      const mappedHeadingPresent =
+        current !== null || expected !== null || repro !== null || response !== null || docs !== null ||
+        provider !== null || version !== null || endpoint !== null;
+      const canSoftPass =
+        !mappedHeadingPresent &&
+        hasSubstantialStructuredContent(body);
+      if (canSoftPass) {
+        softPass = true;
+      } else {
+        reasons.push(`Required sections are missing or empty: ${emptyCore.join(", ")}.`);
+        guidance.push("Describe both the current and expected behaviour.");
+      }
     }
 
-    if (!isEmpty(current) && !isEmpty(expected) && canonicalise(current) === canonicalise(expected)) {
+    if (!softPass && !isEmpty(current) && !isEmpty(expected) && canonicalise(current) === canonicalise(expected)) {
       reasons.push("Current and expected behaviour are effectively identical.");
       guidance.push("Explain the difference between what happens now and what should happen.");
     }
 
     const allSections = [current, expected, repro, response].filter((s) => !isEmpty(s));
-    if (allSections.length >= 2 && allRepeatTitle(allSections, title)) {
+    if (!softPass && allSections.length >= 2 && allRepeatTitle(allSections, title)) {
       reasons.push("All sections merely repeat the issue title.");
       guidance.push("Add specific detail in each section.");
     }
 
-    if (isEmpty(repro) && isEmpty(response)) {
+    if (!softPass && isEmpty(repro) && isEmpty(response)) {
       reasons.push("Both the request/reproduction and the actual response/error are absent.");
       guidance.push("Include at least a minimal redacted request or the actual error output.");
     }
 
-    if (isEmpty(docs)) {
+    if (!softPass && isEmpty(docs)) {
       reasons.push("Upstream documentation is empty without stating that no public specification exists.");
       guidance.push("Add a URL to the provider specification, or state that no public spec exists.");
     }
@@ -841,10 +1218,17 @@ module.exports = {
   isPlaceholderOnlyValue,
   isPlaceholder,
   isRawPlaceholder,
+  isUnusableVersion,
   countWords,
   hasConcreteDetail,
   labelForKind,
   KIND_TO_LABEL,
+  AREA_LABELS,
+  AREA_FIELD_TO_LABELS,
+  mapAreaFieldToLabels,
+  bodyForAreaHeuristics,
+  heuristicAreaLabels,
+  detectAreaLabels,
   hasSubstantialStructuredContent,
   rejectsWorkflowDispatchPullRequest,
   rejectsWorkflowDispatchNonDefaultBranch,

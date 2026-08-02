@@ -31,9 +31,9 @@ function nativeTemplate(): Record<string, unknown> {
 
 const EXPECTED_KEY_PROVIDER_IDS = [
   "anthropic-apikey", "openai-apikey", "umans", "opencode-go", "neuralwatt", "openrouter", "orcarouter", "bizrouter", "groq", "google", "google-vertex", "azure-openai",
-  "deepseek", "cerebras", "together", "fireworks", "firepass", "moonshot",
+  "deepseek", "cerebras", "deepinfra", "hyperbolic", "baseten", "together", "fireworks", "firepass", "moonshot",
   "huggingface", "nvidia", "venice", "zai", "zhipu-bigmodel", "nanogpt", "synthetic", "siliconflow", "qwen-cloud", "tencent-coding-plan",
-  "qianfan", "alibaba", "alibaba-token-plan", "alibaba-token-plan-intl", "parallel", "zenmux", "litellm", "ollama-cloud", "mistral",
+  "volcengine", "volcengine-coding-plan", "volcengine-agent-plan", "qianfan", "alibaba", "alibaba-token-plan", "alibaba-token-plan-intl", "parallel", "zenmux", "litellm", "ollama-cloud", "mistral",
   "minimax", "minimax-cn", "kimi-code", "opencode-zen", "vercel-ai-gateway",
   "opencode-free", "xiaomi", "kilo", "mimo-free", "cloudflare-ai-gateway", "cloudflare-workers-ai", "gitlab-duo",
 ];
@@ -252,6 +252,11 @@ describe("provider registry parity", () => {
       label: "Alibaba Coding Plan",
       baseUrl: "https://coding-intl.dashscope.aliyuncs.com/v1",
     });
+    expect(PROVIDER_REGISTRY.find(entry => entry.id === "alibaba")?.baseUrlChoices).toEqual([
+      { id: "intl", label: "International", baseUrl: "https://coding-intl.dashscope.aliyuncs.com/v1" },
+      { id: "china", label: "China", baseUrl: "https://coding.dashscope.aliyuncs.com/v1" },
+      { id: "custom", label: "Custom" },
+    ]);
     expect(KEY_LOGIN_PROVIDERS["alibaba-token-plan"]).toMatchObject({
       label: "Alibaba Token Plan (Beijing)",
       adapter: "openai-chat",
@@ -374,6 +379,13 @@ describe("provider registry parity", () => {
         expect(entry?.[field]).toContain("kimi-for-coding");
       }
       expect(entry?.modelSuffixBracketStrip).toBe(true);
+      expect(entry?.promptCacheKey).toBe(true);
+      // Key-pool 429 rotation rebuilds the provider from the persisted config (not the routed
+      // one), so the flag must survive seeding/enrichment, not just the router's registry backfill.
+      expect(providerConfigSeed(entry!).promptCacheKey).toBe(true);
+      const enriched: OcxProviderConfig = { adapter: "openai-chat", baseUrl: entry!.baseUrl };
+      enrichProviderFromCatalog(providerId, enriched);
+      expect(enriched.promptCacheKey).toBe(true);
       expect(entry?.noReasoningModels).not.toContain("k3");
       expect(entry?.noReasoningModels).not.toContain("k3[1m]");
       expect(entry?.modelReasoningEfforts?.k3).toEqual(["low", "high", "max"]);
@@ -472,7 +484,7 @@ describe("provider registry parity", () => {
   test("base URL override permission is registry-only and limited to opted-in providers", () => {
     const optedIn = PROVIDER_REGISTRY.filter(entry => entry.allowBaseUrlOverride);
 
-    expect(optedIn.map(entry => entry.id)).toEqual(["ollama", "vllm", "lm-studio", "qwen-cloud", "alibaba-token-plan-intl", "litellm"]);
+    expect(optedIn.map(entry => entry.id)).toEqual(["ollama", "vllm", "lm-studio", "qwen-cloud", "alibaba", "alibaba-token-plan-intl", "litellm"]);
     for (const entry of optedIn) {
       expect(providerConfigSeed(entry)).not.toHaveProperty("allowBaseUrlOverride");
     }
@@ -601,6 +613,10 @@ describe("provider registry parity", () => {
     expect(OAUTH_PROVIDERS.xai.providerConfig.modelContextWindows?.["grok-4.5"]).toBe(500_000);
     expect(OAUTH_PROVIDERS.xai.providerConfig.modelReasoningEfforts?.["grok-4.5"]).toEqual(["low", "medium", "high"]);
     expect(OAUTH_PROVIDERS.xai.providerConfig.noVisionModels).toContain("grok-build-0.1");
+    const antigravityRegistry = PROVIDER_REGISTRY.find(entry => entry.id === "google-antigravity");
+    expect(antigravityRegistry?.liveModels).toBe(false);
+    expect(providerConfigSeed(antigravityRegistry!).liveModels).toBe(false);
+    expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.liveModels).toBe(false);
     expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.defaultModel).toBe("gemini-3.6-flash");
     // Collapsed picker: base models only, no effort-suffix variants.
     expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.models).toContain("gemini-3.6-flash");
@@ -608,7 +624,8 @@ describe("provider registry parity", () => {
     expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.models).toContain("claude-sonnet-4-6");
     expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.models).toContain("claude-opus-4-6-thinking");
     expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.models).toContain("gpt-oss-120b-medium");
-    expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.models).toHaveLength(5);
+    expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.models).toContain("gemini-3.1-flash-image");
+    expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.models).toHaveLength(6);
     // Effort ladders on collapsed base models.
     expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.modelReasoningEfforts?.["gemini-3.6-flash"]).toEqual(["low", "medium", "high"]);
     expect(OAUTH_PROVIDERS["google-antigravity"].providerConfig.modelReasoningEfforts?.["gemini-3.1-pro"]).toEqual(["low", "high"]);

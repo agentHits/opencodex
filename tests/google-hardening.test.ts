@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { createGoogleAdapter } from "../src/adapters/google";
+import { createGoogleAdapter as createGoogleAdapterProduction } from "../src/adapters/google";
 import { getDebugLogEntries, resetDebugLogBufferForTests } from "../src/lib/debug-log-buffer";
 import { resetDebugSettingsForTests, setDebugSettings } from "../src/lib/debug-settings";
 import { PROVIDER_REGISTRY } from "../src/providers/registry";
 import type { AdapterEvent, OcxParsedRequest, OcxProviderConfig } from "../src/types";
+import { withTestTranslatorBudget } from "./helpers/translator-budget";
+
+const createGoogleAdapter = (...args: Parameters<typeof createGoogleAdapterProduction>) =>
+  withTestTranslatorBudget(createGoogleAdapterProduction(...args));
 
 function parsed(stream = false): OcxParsedRequest {
   return {
@@ -249,6 +253,32 @@ describe("google provider hardening", () => {
         { type: "error", message: "google response contained no candidates" },
       ]);
     }
+  });
+
+  test("non-streaming responses reject oversized Content-Length before buffering", async () => {
+    const adapter = createGoogleAdapter(provider());
+    const oversized = new Response("{}", {
+      status: 200,
+      headers: { "content-length": String(101 * 1024 * 1024) },
+    });
+
+    const events = await adapter.parseResponse!(oversized);
+
+    expect(events).toEqual([{ type: "error", message: expect.stringContaining("google response too large") }]);
+    expect(events[0].type).toBe("error");
+  });
+
+  test("non-streaming responses accept Content-Length under the cap", async () => {
+    const adapter = createGoogleAdapter(provider());
+    const body = { candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] };
+    const response = new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-length": String(JSON.stringify(body).length) },
+    });
+
+    const events = await adapter.parseResponse!(response);
+    expect(events.some(e => e.type === "done")).toBe(true);
+    expect(events.some(e => e.type === "error")).toBe(false);
   });
 
   test("sends Gemini Flash thinkingLevel only for direct AI Studio requests", async () => {

@@ -22,14 +22,17 @@ import { getConfigDir } from "../config";
 import { durableBunPath } from "../lib/bun-runtime";
 import { isProcessAlive } from "../lib/process-control";
 import { serviceApiTokenFilePath } from "../lib/service-secrets";
+import { recordOwnedConfigPath } from "../lib/config-ownership";
 import { windowsEnvIndirectBatchValue } from "../lib/win-paths";
 import { isWslRuntime, wslAutomountRoot } from "./home";
+import { truncateRetainedUtf8 } from "../lib/admission";
 
 const SHIM_MARKER = "opencodex codex autostart shim";
 const CODEX_SHIM_PROBE_BYTES = 16 * 1024;
 export const CODEX_SHIM_REPLACEMENT_STABLE_MS = 100;
 export const CODEX_SHIM_STATE_MAX_BYTES = 1024 * 1024;
 const CODEX_SHIM_RESTORE_LOCK_STALE_MS = 30_000;
+const MAX_DIAGNOSTIC_VALUE_BYTES = 8 * 1024;
 let lastShimDiscoveryError: string | null = null;
 /** Last human-readable reason discovery returned null (exposed for doctor/tests). */
 export function lastCodexDiscoveryError(): string | null {
@@ -308,10 +311,12 @@ export function findCodexOnPath(deps: CodexPathScanDeps = {}): string | null {
   }
 
   if (skippedInterop) {
-    lastShimDiscoveryError =
+    lastShimDiscoveryError = truncateRetainedUtf8(
       `Found a Windows codex at ${skippedInterop} via WSL PATH interop, but no Linux-side codex. ` +
       "Refusing to shim a Windows launcher from WSL (a WSL shim breaks Windows invocations). " +
-      "Install codex inside WSL (npm i -g @openai/codex), or run 'ocx ensure' from Windows to shim the Windows side.";
+      "Install codex inside WSL (npm i -g @openai/codex), or run 'ocx ensure' from Windows to shim the Windows side.",
+      MAX_DIAGNOSTIC_VALUE_BYTES,
+    );
   }
   return null;
 }
@@ -323,9 +328,11 @@ function findWindowsCodexTargets(): ShimFileState[] | null {
     if (existsSync(exe) && !isShim(exe)) {
       try {
         if (!lstatSync(exe).isDirectory()) {
-          lastShimDiscoveryError =
+          lastShimDiscoveryError = truncateRetainedUtf8(
             `Found codex.exe at ${exe}. Refusing to rename a real .exe because exact codex.exe invocations would break; ` +
-            "install a codex.cmd/codex.ps1 launcher or use `ocx service install` for autostart.";
+            "install a codex.cmd/codex.ps1 launcher or use `ocx service install` for autostart.",
+            MAX_DIAGNOSTIC_VALUE_BYTES,
+          );
           return null;
         }
       } catch { /* keep scanning */ }
@@ -582,8 +589,10 @@ function statePath(): string {
 }
 
 function writeState(state: ShimState): void {
+  const path = statePath();
+  recordOwnedConfigPath(getConfigDir(), path);
   if (!existsSync(getConfigDir())) mkdirSync(getConfigDir(), { recursive: true });
-  writeFileSync(statePath(), JSON.stringify(state, null, 2) + "\n", "utf8");
+  writeFileSync(path, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
 /** Git-Bash accepts `C:/...` but not backslashed paths inside sh scripts. */

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,12 +21,23 @@ import {
 import {
   CodexCredentialGenerationConflictError,
   CodexCredentialRefreshLockTimeoutError,
+  CodexCredentialRefreshBusyError,
+  CodexCredentialRefreshStaleError,
   getCodexAccountCredential,
+  getValidCodexToken,
+  readCodexAccountRecord,
   removeCodexAccountCredential,
   saveCodexAccountCredential,
 } from "../src/codex/account-store";
+import { ConfigMutationLockError, getConfigPath } from "../src/config";
 import { MAIN_CODEX_ACCOUNT_ID } from "../src/codex/main-account";
-import { clearAccountNeedsReauth, isAccountNeedsReauth } from "../src/codex/auth-api";
+import {
+  clearAccountNeedsReauth,
+  clearAccountQuota,
+  handleCodexAuthAPI,
+  isAccountNeedsReauth,
+} from "../src/codex/auth-api";
+import { __resetGuardianState, guardianSweep } from "../src/oauth/token-guardian";
 import {
   CODEX_THREAD_AFFINITY_IDLE_TTL_MS,
   CODEX_QUOTA_PROBE_INTERVAL_MS,
@@ -35,12 +46,17 @@ import {
   recordCodexUpstreamOutcome,
 } from "../src/codex/routing";
 import type { OcxConfig, OcxProviderConfig } from "../src/types";
+import { setIcaclsRunnerForTests } from "../src/lib/windows-secret-acl";
 
 let testDir: string;
 let previousOpencodexHome: string | undefined;
 let previousCodexHome: string | undefined;
 
 beforeEach(() => {
+  // This suite validates refresh admission and auth-context outcomes. Real icacls
+  // processes are covered elsewhere and can retain temp-dir handles long enough
+  // to obscure those assertions under Windows isolated-test load.
+  setIcaclsRunnerForTests(() => ({ success: true, exitCode: 0, timedOut: false, stdout: "" }));
   testDir = mkdtempSync(join(tmpdir(), "ocx-auth-ctx-"));
   previousOpencodexHome = process.env.OPENCODEX_HOME;
   process.env.OPENCODEX_HOME = testDir;
@@ -50,14 +66,19 @@ beforeEach(() => {
   process.env.CODEX_HOME = testDir;
   clearThreadAccountMap();
   clearCodexUpstreamHealth();
+  clearAccountQuota();
+  __resetGuardianState();
   clearAccountNeedsReauth("pool-a");
   clearAccountNeedsReauth("pool-b");
 });
 
 afterEach(() => {
+  setIcaclsRunnerForTests(null);
   rmSync(testDir, { recursive: true, force: true });
   clearThreadAccountMap();
   clearCodexUpstreamHealth();
+  clearAccountQuota();
+  __resetGuardianState();
   clearAccountNeedsReauth("pool-a");
   clearAccountNeedsReauth("pool-b");
   if (previousOpencodexHome === undefined) delete process.env.OPENCODEX_HOME;
@@ -80,6 +101,66 @@ function config(): OcxConfig {
       { id: "pool-a", email: "pool@example.test", isMain: false, chatgptAccountId: "pool_acc" },
     ],
   };
+}
+
+function guardianConfig(): OcxConfig {
+  const cfg = config();
+  cfg.defaultProvider = "openai";
+  cfg.providers = {
+    openai: {
+      adapter: "openai-responses",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      authMode: "forward",
+      codexAccountMode: "pool",
+      refreshPolicy: "proactive",
+    },
+  };
+  cfg.tokenGuardian = {
+    enabled: true,
+    tickSeconds: 60,
+    leadSeconds: 0,
+    failureBackoffBaseSeconds: 1,
+    failureBackoffMaxSeconds: 60,
+  };
+  writeFileSync(getConfigPath(), JSON.stringify(cfg));
+  return cfg;
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error("condition did not become true");
+}
+
+async function occupyCodexRefreshCapacity(): Promise<{
+  pending: Promise<unknown>[];
+  release: () => void;
+  fetches: () => number;
+}> {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches += 1;
+    await gate;
+    return Response.json({ access_token: "capacity-fresh", expires_in: 3600 });
+  }) as typeof fetch;
+  const pending: Promise<unknown>[] = [];
+  for (let index = 0; index < 32; index += 1) {
+    const id = `capacity-${index}`;
+    saveCodexAccountCredential(id, {
+      accessToken: `old-${index}`,
+      refreshToken: `refresh-${index}`,
+      expiresAt: 0,
+      chatgptAccountId: `account-${index}`,
+    });
+    pending.push(getValidCodexToken(id));
+  }
+  await waitFor(() => fetches === 32);
+  for (let index = 0; index < 32; index += 1) removeCodexAccountCredential(`capacity-${index}`);
+  return { pending, release, fetches: () => fetches };
 }
 
 const forwardProvider: OcxProviderConfig = {
@@ -165,6 +246,37 @@ describe("Codex auth context", () => {
       "pool",
       { excludeAccountId: "pool-a" },
     )).rejects.toBeInstanceOf(CodexPoolAuthenticationError);
+  });
+
+  test("pause excludes new auth selection without invalidating an in-flight context", async () => {
+    const cfg = config();
+    cfg.codexAccounts?.push({
+      id: "pool-b",
+      email: "pool-b@example.test",
+      isMain: false,
+      chatgptAccountId: "pool_b_acc",
+    });
+    saveCodexAccountCredential("pool-a", {
+      accessToken: "pool_a_token",
+      refreshToken: "pool_a_refresh",
+      expiresAt: Date.now() + 5 * 60_000,
+      chatgptAccountId: "pool_a_acc",
+    });
+    saveCodexAccountCredential("pool-b", {
+      accessToken: "pool_b_token",
+      refreshToken: "pool_b_refresh",
+      expiresAt: Date.now() + 5 * 60_000,
+      chatgptAccountId: "pool_b_acc",
+    });
+
+    const captured = await resolveCodexAuthContext(new Headers(), cfg, "pool");
+    expect(captured).toMatchObject({ kind: "pool", accountId: "pool-a" });
+
+    cfg.pausedCodexAccountIds = ["pool-a"];
+
+    expect(isCodexAuthContextUsable(captured, cfg)).toBe(true);
+    await expect(resolveCodexAuthContext(new Headers(), cfg, "pool"))
+      .resolves.toMatchObject({ kind: "pool", accountId: "pool-b" });
   });
 
   test("selected pool headers replace inbound main auth", () => {
@@ -257,6 +369,160 @@ describe("Codex auth context", () => {
     }
   });
 
+  test("reset-derived native cooldowns stay within their confirmed quota group", async () => {
+    const originalNow = Date.now;
+    const now = 1_800_000_000_000;
+    const cfg = config();
+    const headers = new Headers({ authorization: "Bearer main_token" });
+    saveCodexAccountCredential("pool-a", {
+      accessToken: "pool_token",
+      refreshToken: "pool_refresh",
+      expiresAt: now + 24 * 60 * 60_000,
+      chatgptAccountId: "pool_acc",
+    });
+    try {
+      Date.now = () => now;
+      const resetAt = Math.floor((now + 4 * 24 * 60 * 60_000) / 1000);
+      recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
+        now,
+        resetAt,
+        modelId: "gpt-5.3-codex-spark",
+      });
+
+      // Spark owns a separate quota, so Terra can use the same account.
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-terra" }))
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
+        .rejects.toBeInstanceOf(CodexAccountCooldownError);
+
+      recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
+        now,
+        resetAt,
+        modelId: "gpt-5.6-terra",
+      });
+
+      // Terra and Luna stay in the shared native quota group, while Spark keeps
+      // its independent cooldown instead of being overwritten by Terra's 429.
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-luna" }))
+        .rejects.toBeInstanceOf(CodexAccountCooldownError);
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
+        .rejects.toBeInstanceOf(CodexAccountCooldownError);
+
+      // An explicit retry directive is still account-wide, regardless of the
+      // originating model's otherwise independent quota group.
+      recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
+        now,
+        retryAfter: "60",
+        modelId: "gpt-5.3-codex-spark",
+      });
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-terra" }))
+        .rejects.toBeInstanceOf(CodexAccountCooldownError);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("a scoped cooldown uses another account without moving the independent native scope", async () => {
+    const originalNow = Date.now;
+    const now = 1_800_000_000_000;
+    const cfg = config();
+    cfg.codexAccounts?.push({
+      id: "pool-b",
+      email: "pool-b@example.test",
+      isMain: false,
+      chatgptAccountId: "pool_b_acc",
+    });
+    const headers = new Headers({
+      authorization: "Bearer main_token",
+      "x-codex-parent-thread-id": "independent-scope-thread",
+    });
+    for (const accountId of ["pool-a", "pool-b"]) {
+      saveCodexAccountCredential(accountId, {
+        accessToken: `${accountId}-token`,
+        refreshToken: `${accountId}-refresh`,
+        expiresAt: now + 24 * 60 * 60_000,
+        chatgptAccountId: `${accountId}-acc`,
+      });
+    }
+    try {
+      Date.now = () => now;
+      // Establish the shared-scope binding first. The Spark fallback below must
+      // create a second binding rather than replacing this one.
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-terra" }))
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
+
+      recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
+        now,
+        resetAt: Math.floor((now + 4 * 24 * 60 * 60_000) / 1_000),
+        modelId: "gpt-5.3-codex-spark",
+      });
+
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-b" });
+      expect(cfg.activeCodexAccountId).toBe("pool-a");
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-terra" }))
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
+      // This second Spark request proves routing retained the peer choice for
+      // the Spark affinity instead of relying on an auth-layer substitution.
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-b" });
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("a successful Spark recovery probe leaves the shared native cooldown intact", async () => {
+    const originalNow = Date.now;
+    const now = 1_800_000_000_000;
+    const cfg = config();
+    const headers = new Headers({ authorization: "Bearer main_token" });
+    saveCodexAccountCredential("pool-a", {
+      accessToken: "pool_token",
+      refreshToken: "pool_refresh",
+      expiresAt: now + 24 * 60 * 60_000,
+      chatgptAccountId: "pool_acc",
+    });
+    try {
+      Date.now = () => now;
+      const resetAt = Math.floor((now + 4 * 24 * 60 * 60_000) / 1_000);
+      recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
+        now,
+        resetAt,
+        modelId: "gpt-5.3-codex-spark",
+      });
+      recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
+        now,
+        resetAt,
+        modelId: "gpt-5.6-terra",
+      });
+
+      const probeAt = now + CODEX_QUOTA_PROBE_INTERVAL_MS;
+      Date.now = () => probeAt;
+      const sparkProbe = await resolveCodexAuthContext(headers, cfg, "pool", {
+        modelId: "gpt-5.3-codex-spark",
+      });
+      expect(sparkProbe).toMatchObject({
+        kind: "pool",
+        probeQuotaScope: "spark",
+      });
+
+      recordCodexUpstreamOutcome(cfg, "pool-a", 200, {
+        now: probeAt + 1,
+        modelId: "gpt-5.3-codex-spark",
+        probeLeaseId: (sparkProbe as { probeLeaseId?: string }).probeLeaseId,
+        probeQuotaScope: (sparkProbe as { probeQuotaScope?: "spark" }).probeQuotaScope,
+      });
+
+      Date.now = () => probeAt + 1;
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-luna" }))
+        .resolves.toMatchObject({ kind: "pool", probeQuotaScope: "shared" });
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("expired thread affinity fails closed instead of falling back to main auth", async () => {
     const now = 1_800_000_000_000;
     saveCodexAccountCredential("pool-a", {
@@ -331,10 +597,220 @@ describe("Codex auth context", () => {
     }
   });
 
-  test("reauth marking is reserved for real token failures", () => {
+  test("Codex transient refresh errors are classified as retryable", () => {
     expect(shouldMarkAccountNeedsReauthForCodexAuthFailure(new CodexCredentialGenerationConflictError())).toBe(false);
     expect(shouldMarkAccountNeedsReauthForCodexAuthFailure(new CodexCredentialRefreshLockTimeoutError())).toBe(false);
+    expect(shouldMarkAccountNeedsReauthForCodexAuthFailure(new CodexCredentialRefreshBusyError())).toBe(false);
+    expect(shouldMarkAccountNeedsReauthForCodexAuthFailure(new CodexCredentialRefreshStaleError())).toBe(false);
+    expect(shouldMarkAccountNeedsReauthForCodexAuthFailure(new ConfigMutationLockError("busy"))).toBe(false);
     expect(shouldMarkAccountNeedsReauthForCodexAuthFailure(new Error("bad token"))).toBe(true);
+  });
+
+  test("busy and stale Codex refresh failures do not mark the auth-context account for reauth", async () => {
+    const originalFetch = globalThis.fetch;
+    let releaseBusy!: () => void;
+    const busyGate = new Promise<void>(resolve => { releaseBusy = resolve; });
+    let busyFetches = 0;
+    globalThis.fetch = (async () => {
+      busyFetches += 1;
+      await busyGate;
+      return Response.json({ access_token: "busy-fresh", expires_in: 3600 });
+    }) as typeof fetch;
+
+    const admitted: Promise<unknown>[] = [];
+    let clock: ReturnType<typeof spyOn> | undefined;
+    try {
+      for (let index = 0; index < 32; index += 1) {
+        const id = `busy-${index}`;
+        saveCodexAccountCredential(id, {
+          accessToken: `old-${index}`,
+          refreshToken: `refresh-${index}`,
+          expiresAt: 0,
+          chatgptAccountId: `account-${index}`,
+        });
+        admitted.push(getValidCodexToken(id));
+      }
+      await Promise.resolve();
+      expect(busyFetches).toBe(32);
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "pool-old",
+        refreshToken: "pool-refresh",
+        expiresAt: 0,
+        chatgptAccountId: "pool_acc",
+      });
+
+      const busyError = await resolveCodexAuthContext(new Headers(), config(), "pool").catch(error => error);
+      expect(busyError).toBeInstanceOf(CodexAuthContextError);
+      expect((busyError as Error).cause).toBeInstanceOf(CodexCredentialRefreshBusyError);
+      expect(isAccountNeedsReauth("pool-a")).toBe(false);
+
+      releaseBusy();
+      await Promise.all(admitted);
+
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "stale-old",
+        refreshToken: "stale-refresh",
+        expiresAt: 0,
+        chatgptAccountId: "pool_acc",
+      });
+      let staleFetches = 0;
+      globalThis.fetch = (async (_input, init) => {
+        staleFetches += 1;
+        if (staleFetches === 1) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+          });
+        }
+        return Response.json({ access_token: "stale-replacement", expires_in: 3600 });
+      }) as typeof fetch;
+
+      const staleOwner = resolveCodexAuthContext(new Headers(), config(), "pool");
+      while (staleFetches === 0) await Promise.resolve();
+      clock = spyOn(Date, "now").mockReturnValue(Date.now() + 120_001);
+      const replacement = resolveCodexAuthContext(new Headers(), config(), "pool");
+      const staleError = await staleOwner.catch(error => error);
+      expect(staleError).toBeInstanceOf(CodexAuthContextError);
+      expect((staleError as Error).cause).toBeInstanceOf(CodexCredentialRefreshStaleError);
+      expect(isAccountNeedsReauth("pool-a")).toBe(false);
+      await expect(replacement).resolves.toMatchObject({ accessToken: "stale-replacement" });
+      expect(isAccountNeedsReauth("pool-a")).toBe(false);
+    } finally {
+      clock?.mockRestore();
+      releaseBusy();
+      await Promise.allSettled(admitted);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("guardian and quota consumers back off and retry a busy credential refresh without reauth", async () => {
+    const originalFetch = globalThis.fetch;
+    const now = Date.now();
+    const capacity = await occupyCodexRefreshCapacity();
+    const cfg = guardianConfig();
+    saveCodexAccountCredential("pool-a", {
+      accessToken: "pool-old",
+      refreshToken: "pool-refresh",
+      expiresAt: 0,
+      chatgptAccountId: "pool_acc",
+    });
+
+    try {
+      const guardian = await guardianSweep(now);
+      expect(guardian.skippedBackoff).toContain("codex:pool-a");
+      expect(guardian.failed).not.toContain("codex:pool-a");
+      expect(readCodexAccountRecord("pool-a")?.lastCodexValidationStatus).not.toBe("failed");
+      expect(isAccountNeedsReauth("pool-a")).toBe(false);
+
+      const request = new Request("http://localhost/api/codex-auth/accounts?refresh=1");
+      const response = await handleCodexAuthAPI(request, new URL(request.url), cfg);
+      expect(response?.status).toBe(200);
+      const body = await response?.json() as { accounts: Array<{ id: string; needsReauth: boolean; quotaProbeSkipped?: boolean }> };
+      expect(body.accounts.find(account => account.id === "pool-a")).toMatchObject({
+        needsReauth: false,
+        quotaProbeSkipped: true,
+      });
+
+      capacity.release();
+      await Promise.allSettled(capacity.pending);
+      globalThis.fetch = (async () => Response.json({ access_token: "retry-fresh", expires_in: 3600 })) as typeof fetch;
+      const retry = await guardianSweep(now + 1_001);
+      expect(retry.refreshed).toContain("codex:pool-a");
+      expect(retry.skippedBackoff).not.toContain("codex:pool-a");
+    } finally {
+      capacity.release();
+      await Promise.allSettled(capacity.pending);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("guardian and quota consumers back off and retry a stale credential refresh without reauth", async () => {
+    const originalFetch = globalThis.fetch;
+    const now = Date.now();
+    const cfg = guardianConfig();
+    saveCodexAccountCredential("pool-a", {
+      accessToken: "stale-old",
+      refreshToken: "stale-refresh",
+      expiresAt: 0,
+      chatgptAccountId: "pool_acc",
+    });
+    let refreshFetches = 0;
+    let releaseReplacement!: () => void;
+    const replacementGate = new Promise<void>(resolve => { releaseReplacement = resolve; });
+    let clock: ReturnType<typeof spyOn> | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      refreshFetches += 1;
+      if (refreshFetches === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        });
+      }
+      if (refreshFetches === 2) await replacementGate;
+      return Response.json({ access_token: "replacement-fresh", expires_in: 3600 });
+    }) as typeof fetch;
+
+    try {
+      const request = new Request("http://localhost/api/codex-auth/accounts?refresh=1");
+      const quotaPending = handleCodexAuthAPI(request, new URL(request.url), cfg);
+      await waitFor(() => refreshFetches === 1);
+      const guardianPending = guardianSweep(now);
+      await Promise.resolve();
+
+      clock = spyOn(Date, "now").mockReturnValue(Date.now() + 120_001);
+      const replacement = getValidCodexToken("pool-a");
+      const [guardian, response] = await Promise.all([guardianPending, quotaPending]);
+      releaseReplacement();
+      await expect(replacement).resolves.toMatchObject({ accessToken: "replacement-fresh" });
+
+      expect(guardian.skippedBackoff).toContain("codex:pool-a");
+      expect(guardian.failed).not.toContain("codex:pool-a");
+      expect(readCodexAccountRecord("pool-a")?.lastCodexValidationStatus).not.toBe("failed");
+      expect(isAccountNeedsReauth("pool-a")).toBe(false);
+      expect(response?.status).toBe(200);
+      const body = await response?.json() as { accounts: Array<{ id: string; needsReauth: boolean; quotaProbeSkipped?: boolean }> };
+      expect(body.accounts.find(account => account.id === "pool-a")).toMatchObject({
+        needsReauth: false,
+        quotaProbeSkipped: true,
+      });
+
+      clock.mockRestore();
+      clock = undefined;
+      saveCodexAccountCredential("pool-a", {
+        accessToken: "retry-old",
+        refreshToken: "retry-refresh",
+        expiresAt: 0,
+        chatgptAccountId: "pool_acc",
+      });
+      const retry = await guardianSweep(now + 1_001);
+      expect(retry.refreshed).toContain("codex:pool-a");
+      expect(retry.skippedBackoff).not.toContain("codex:pool-a");
+    } finally {
+      releaseReplacement();
+      clock?.mockRestore();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test.each([
+    ["busy", new CodexCredentialRefreshBusyError()],
+    ["stale", new CodexCredentialRefreshStaleError()],
+  ])("login returns a retryable response for a %s credential refresh failure", async (_kind, refreshError) => {
+    const oauth = await import("../src/oauth");
+    const startLogin = spyOn(oauth, "startLoginFlow").mockRejectedValue(refreshError);
+    const cfg = config();
+    try {
+      const request = new Request("http://localhost/api/codex-auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "pool-a", reauth: true }),
+      });
+      const response = await handleCodexAuthAPI(request, new URL(request.url), cfg);
+      expect(response?.status).toBe(503);
+      expect(response?.headers.get("Retry-After")).toBe("1");
+      expect(await response?.json()).toEqual({ error: "server_busy", code: "server_busy" });
+      expect(isAccountNeedsReauth("pool-a")).toBe(false);
+    } finally {
+      startLogin.mockRestore();
+    }
   });
 
   test("runtime provider metadata is applied only to forward provider copies", () => {
@@ -422,6 +898,20 @@ describe("cooldown error surface", () => {
     // proxy binds a non-loopback hostname.
     expect(message).not.toContain("acct_9f3c21");
     expect(message).toContain("account-…3c21");
+  });
+
+  test("message identifies a model-scoped cooldown without implying an account-wide block", () => {
+    const err = new CodexAccountCooldownError(
+      "acct_9f3c21",
+      Date.parse("2026-07-26T10:00:00.000Z"),
+      "reset-derived",
+      "spark",
+    );
+
+    const message = cooldownErrorMessage(err);
+
+    expect(message).toContain("Spark quota is cooling down");
+    expect(message).not.toContain("Selected Codex account (account-…3c21) is cooling down");
   });
 
   test("the main login renders as the alias users actually type", () => {

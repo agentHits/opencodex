@@ -1,6 +1,7 @@
 import type { AdapterFetchContext, AdapterRequest, ProviderAdapter } from "./base";
 import { debugDroppedFrame } from "../lib/debug";
 import { createHash } from "node:crypto";
+import { createImageBudget, materializeInlineImage, MAX_ENCODED_BYTES_PER_IMAGE, artifactHttpUrl } from "../images/artifacts";
 import type {
   AdapterEvent,
   OcxAssistantMessage,
@@ -22,6 +23,11 @@ import { compileGoogleWireBody } from "./google-wire-compiler";
 import { neutralizeIdentity } from "./identity";
 import { antigravityUsesReplayCache, applyAntigravityReplay, clearAntigravityReplay, observeAntigravityReplay } from "./google-antigravity-replay";
 import { resolveAntigravityEffortWireModel } from "../providers/antigravity-models";
+import {
+  isTranslatorBudgetExceededError,
+  retainTranslatedEventBatch,
+  type TranslatorBudget,
+} from "../lib/translator-budget";
 import { buildNonOpenAIToolCatalogNudgeForTools } from "./tool-catalog-nudge";
 import { mapReasoningEffort } from "../reasoning-effort";
 
@@ -233,6 +239,38 @@ function usageFromGemini(usage: Record<string, number> | undefined): OcxUsage | 
   };
 }
 
+/**
+ * Cap on the buffered non-streaming response body (100 MiB), matching
+ * IMAGES_RESPONSE_MAX_BYTES in src/server/images.ts. Enforced by streaming the
+ * body with a hard byte cap before JSON.parse — Content-Length alone is not
+ * trusted (missing/lying headers must still reject oversized payloads).
+ * Streaming SSE responses also cap each data frame before JSON.parse.
+ */
+const MAX_RESPONSE_BYTES = 100 * 1024 * 1024;
+const MAX_SSE_FRAME_BYTES = MAX_RESPONSE_BYTES;
+
+// Note: imagen-* models use a different API surface (prediction/image-generation
+// schema) and must NOT be treated as responseModalities-capable Gemini models.
+// Explicit allowlist only — never `/gemini/ && /image/` (resurrects media-gen IDs).
+const IMAGE_CAPABLE_MODELS = new Set([
+  "gemini-3.1-flash-image",
+  "gemini-2.0-flash-preview-image-generation",
+  "gemini-3-pro-image-preview",
+]);
+
+function isImageCapableModel(modelId: string): boolean {
+  return IMAGE_CAPABLE_MODELS.has(modelId);
+}
+
+/**
+ * Model-visible markdown link for a materialized artifact. Uses the authenticated
+ * opaque HTTP route so remote/container clients can fetch the image without host
+ * filesystem paths leaking into the transcript.
+ */
+function artifactMarkdownUrl(filePath: string): string {
+  return artifactHttpUrl(filePath).replace(/([()])/g, "\\$1");
+}
+
 export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapter {
   // Per-request closure: resolveAdapter builds a fresh adapter per request (server.ts), so buildRequest
   // can stash the CCA model/session for parseStream's reasoning-replay observation.
@@ -272,6 +310,9 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         ? mapReasoningEffort(provider, parsed.modelId, parsed.options.reasoning)
         : undefined;
       if (directFlashThinking) generationConfig.thinkingConfig = { thinkingLevel: directFlashThinking };
+      if (!generationConfig.thinkingConfig && isImageCapableModel(parsed.modelId)) {
+        generationConfig.responseModalities = ["TEXT", "IMAGE"];
+      }
       if (Object.keys(generationConfig).length > 0) body.generationConfig = generationConfig;
 
       const method = parsed.stream ? "streamGenerateContent" : "generateContent";
@@ -372,24 +413,34 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
       return { url, method: "POST", headers, body: JSON.stringify(compiled.body) };
     },
 
-    async *parseStream(response: Response): AsyncGenerator<AdapterEvent> {
+    async *parseStream(response: Response, budget: TranslatorBudget): AsyncGenerator<AdapterEvent> {
       if (!response.body) {
         yield { type: "error", message: "No response body" };
         return;
       }
+      // Streaming responses are processed incrementally (SSE chunks), so the full body
+      // is never buffered — no Content-Length pre-check is needed here. Per-image size
+      // protection is enforced on each chunk via MAX_ENCODED_BYTES_PER_IMAGE before
+      // materializeInlineImage is called (see the inline.data check below).
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      const budgetEncoder = new TextEncoder();
       let buffer = "";
+      let bufferBytes = 0;
       let pendingUsage: OcxUsage | undefined;
       let toolCallsStarted = 0;
       let lastFinishReason: string | undefined;
       let sawAnyFrame = false;
       let sawTerminalSignal = false;
 
-      const handleDataLine = function* (line: string): Generator<AdapterEvent, "continue" | "content" | "terminate"> {
+      const handleDataLine = async function* (line: string): AsyncGenerator<AdapterEvent, "continue" | "content" | "terminate"> {
         const payload = line.slice(5).trim();
         if (!payload) return "continue";
+        if (payload.length > MAX_SSE_FRAME_BYTES) {
+          yield { type: "error", message: `upstream SSE data frame exceeds ${MAX_SSE_FRAME_BYTES} bytes` };
+          return "terminate";
+        }
         let emittedContentEvent = false;
 
         let chunk: Record<string, unknown>;
@@ -452,6 +503,21 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
               emittedContentEvent = true;
               yield { type: "text_delta", text: part.text };
             }
+            const inline = (part as { inlineData?: { mimeType?: string; data?: string } }).inlineData;
+            if (inline && typeof inline.data === "string") {
+              if (inline.data.length > MAX_ENCODED_BYTES_PER_IMAGE) {
+                yield { type: "error", message: "inline image exceeds per-image size cap" };
+              } else {
+                try {
+                  const filePath = await materializeInlineImage(inline.data, imageBudget);
+                  const escapedPath = artifactMarkdownUrl(filePath);
+                  emittedContentEvent = true;
+                  yield { type: "text_delta", text: `\n![image](${escapedPath})\n` };
+                } catch {
+                  yield { type: "error", message: "failed to materialize inline image" };
+                }
+              }
+            }
             if (part.functionCall) {
               const id = `call_${crypto.randomUUID().slice(0, 8)}`;
               toolCallsStarted++;
@@ -464,15 +530,34 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         }
         return emittedContentEvent ? "content" : "continue";
       };
+      const imageBudget = createImageBudget();
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          const nextBuffer = buffer + decoder.decode(value, { stream: true });
+          const nextBufferBytes = budgetEncoder.encode(nextBuffer).byteLength;
+          const appendReservation = budget.reserveTransient(nextBufferBytes, { kind: "live_transient" });
+          buffer = nextBuffer;
+          appendReservation.commitRetained();
+          budget.releaseRetained(bufferBytes, { kind: "live_transient" });
+          bufferBytes = nextBufferBytes;
+          // Cap incomplete frames before waiting for a newline — otherwise a single
+          // unterminated data: payload can grow without bound.
+          if (buffer.length > MAX_SSE_FRAME_BYTES) {
+            yield { type: "error", message: `upstream SSE data frame exceeds ${MAX_SSE_FRAME_BYTES} bytes` };
+            try { await reader.cancel(); } catch { /* ignore */ }
+            return;
+          }
 
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
+          const residualBytes = budgetEncoder.encode(buffer).byteLength;
+          const residualReservation = budget.reserveTransient(residualBytes, { kind: "live_transient" });
+          residualReservation.commitRetained();
+          budget.releaseRetained(bufferBytes, { kind: "live_transient" });
+          bufferBytes = residualBytes;
 
           let sawLiveness = false;
           let sawContentEvent = false;
@@ -520,23 +605,99 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
           usage: pendingUsage,
           ...(stopReason ? { stopReason } : {}),
         };
+      } catch (error) {
+        if (!isTranslatorBudgetExceededError(error)) throw error;
+        try { await reader.cancel(error); } catch { /* already closed */ }
+        yield {
+          type: "error",
+          status: 502,
+          errorType: "upstream_error",
+          code: "translation_buffer_limit",
+          message: "upstream translation buffer exceeded the safe limit",
+        };
       } finally {
+        budget.releaseRetained(bufferBytes, { kind: "live_transient" });
         reader.releaseLock();
       }
     },
 
-    async parseResponse(response: Response): Promise<AdapterEvent[]> {
-      const raw = await response.json() as Record<string, unknown>;
+    async parseResponse(response: Response, budget: TranslatorBudget): Promise<AdapterEvent[]> {
+      // Reject oversized responses before JSON parse. Prefer Content-Length when
+      // present and truthful; always stream-read with a hard byte cap so a missing
+      // or lying Content-Length cannot force a full in-memory buffer + parse.
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+        try { await response.body?.cancel(); } catch { /* ignore */ }
+        return [{ type: "error", message: `google response too large (content-length ${contentLength} exceeds ${MAX_RESPONSE_BYTES} bytes)` }];
+      }
+      let rawText: string;
+      let rawTextBytes = 0;
+      try {
+        const reader = response.body?.getReader();
+        if (!reader) return [{ type: "error", message: "google response had no body" }];
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > MAX_RESPONSE_BYTES) {
+              await reader.cancel().catch(() => {});
+              return [{ type: "error", message: `google response too large (exceeded ${MAX_RESPONSE_BYTES} bytes)` }];
+            }
+            budget.chargeRetained(value.byteLength, { kind: "retained_collectors" });
+            chunks.push(value);
+          }
+        } finally {
+          try { await reader.cancel(); } catch { /* ignore */ }
+          reader.releaseLock();
+        }
+        const bytesReservation = budget.reserveTransient(total, { kind: "retained_collectors" });
+        const bytes = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        bytesReservation.commitRetained();
+        budget.releaseRetained(total, { kind: "retained_collectors" });
+        rawText = new TextDecoder().decode(bytes);
+        rawTextBytes = new TextEncoder().encode(rawText).byteLength;
+        const textReservation = budget.reserveTransient(rawTextBytes, { kind: "retained_collectors" });
+        textReservation.commitRetained();
+        budget.releaseRetained(total, { kind: "retained_collectors" });
+      } catch (err) {
+        return [{ type: "error", message: err instanceof Error ? err.message : "failed to read google response body" }];
+      }
+      let raw: Record<string, unknown>;
+      let rawBytes = 0;
+      try {
+        raw = JSON.parse(rawText) as Record<string, unknown>;
+        rawBytes = new TextEncoder().encode(JSON.stringify(raw)).byteLength;
+        const rawReservation = budget.reserveTransient(rawBytes, { kind: "retained_collectors" });
+        rawReservation.commitRetained();
+        budget.releaseRetained(rawTextBytes, { kind: "retained_collectors" });
+      } catch {
+        budget.releaseRetained(rawTextBytes, { kind: "retained_collectors" });
+        return [{ type: "error", message: "google response was not valid JSON" }];
+      }
+      const finish = (events: AdapterEvent[]): AdapterEvent[] => {
+        retainTranslatedEventBatch(events, budget);
+        budget.releaseRetained(rawBytes, { kind: "retained_collectors" });
+        rawBytes = 0;
+        return events;
+      };
       if (raw.error) {
         const err = raw.error as { message?: string };
-        return [{ type: "error", message: err.message ?? "upstream error" }];
+        return finish([{ type: "error", message: err.message ?? "upstream error" }]);
       }
       // Antigravity (CCA) nests the standard Gemini payload under `response`; unwrap it.
       let json = raw;
       if (provider.googleMode === "cloud-code-assist") {
         const wrapped = raw.response;
         if (!wrapped || typeof wrapped !== "object" || Array.isArray(wrapped)) {
-          return [{ type: "error", message: "google-antigravity response missing response wrapper" }];
+          return finish([{ type: "error", message: "google-antigravity response missing response wrapper" }]);
         }
         json = wrapped as Record<string, unknown>;
       }
@@ -544,9 +705,10 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
 
       const candidates = json.candidates as { content?: { parts?: { text?: string; functionCall?: { name: string; args: unknown } }[] }; finishReason?: string }[] | undefined;
       if (!candidates?.length) {
-        return [{ type: "error", message: "google response contained no candidates" }];
+        return finish([{ type: "error", message: "google response contained no candidates" }]);
       }
       let toolCallsStarted = 0;
+      const imageBudget = createImageBudget();
       if (candidates?.[0]?.content?.parts) {
         // Non-streaming CCA: observe thoughtSignatures for the next turn, same as the stream path.
         if (provider.googleMode === "cloud-code-assist" && antigravityModel && antigravitySession) {
@@ -554,6 +716,20 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         }
         for (const part of candidates[0].content.parts) {
           if (part.text) events.push({ type: "text_delta", text: part.text });
+          const inline = (part as { inlineData?: { mimeType?: string; data?: string } }).inlineData;
+          if (inline && typeof inline.data === "string") {
+            if (inline.data.length > MAX_ENCODED_BYTES_PER_IMAGE) {
+              events.push({ type: "error", message: "inline image exceeds per-image size cap" });
+            } else {
+              try {
+                const filePath = await materializeInlineImage(inline.data, imageBudget);
+                const escapedPath = artifactMarkdownUrl(filePath);
+                events.push({ type: "text_delta", text: `\n![image](${escapedPath})\n` });
+              } catch {
+                events.push({ type: "error", message: "failed to materialize inline image" });
+              }
+            }
+          }
           if (part.functionCall) {
             const id = `call_${crypto.randomUUID().slice(0, 8)}`;
             toolCallsStarted++;
@@ -568,7 +744,7 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
       // (MAX_TOKENS / MALFORMED_FUNCTION_CALL) surfaces an error instead of a silent done.
       if ((provider.googleMode === "vertex" || provider.googleMode === "cloud-code-assist")
         && toolCallsStarted > 0 && isVertexTruncationReason(candidates?.[0]?.finishReason)) {
-        return [{ type: "error", message: vertexTruncationErrorMessage(candidates?.[0]?.finishReason) }];
+        return finish([{ type: "error", message: vertexTruncationErrorMessage(candidates?.[0]?.finishReason) }]);
       }
 
       const usage = json.usageMetadata as Record<string, number> | undefined;
@@ -576,7 +752,7 @@ export function createGoogleAdapter(provider: OcxProviderConfig): ProviderAdapte
         type: "done",
         usage: usageFromGemini(usage),
       });
-      return events;
+      return finish(events);
     },
   };
 }
