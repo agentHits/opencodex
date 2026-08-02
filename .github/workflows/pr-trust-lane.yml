@@ -1,0 +1,172 @@
+name: PR trust lane
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, ready_for_review]
+
+# Trusted default-branch script only; no PR-head checkout or execution.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-trust-lane-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  trust-lane:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted trust-lane script
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Enforce first-contribution limits
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const path = require("node:path");
+            const { extractLinkedIssueNumbers } = require(
+              path.join(process.cwd(), ".github", "scripts", "pr-admission.cjs"),
+            );
+            const {
+              assessTrustLane,
+              isImplementationPath,
+            } = require(
+              path.join(process.cwd(), ".github", "scripts", "pr-trust-lane.cjs"),
+            );
+
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const marker = "<!-- pr-trust-lane -->";
+            const blockedLabel = "intake: trust-lane-blocked";
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number, per_page: 100,
+            });
+
+            let permission = "read";
+            try {
+              const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner, repo, username: pr.user.login,
+              });
+              permission = response.data.permission;
+            } catch (error) {
+              core.warning(`Permission lookup failed: ${error.message}`);
+            }
+            const authorHasPushPermission = ["admin", "maintain", "write"].includes(permission);
+
+            const linkedIssues = [];
+            for (const issue_number of extractLinkedIssueNumbers(pr.body)) {
+              try {
+                const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number });
+                if (!issue.pull_request) linkedIssues.push({ number: issue.number, labels: issue.labels });
+              } catch (error) {
+                core.warning(`Could not load issue #${issue_number}: ${error.message}`);
+              }
+            }
+
+            const open = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "open", per_page: 100,
+            });
+            const otherOpenImplementationPrs = [];
+            for (const candidate of open) {
+              if (candidate.number === pull_number || candidate.user?.login !== pr.user.login) continue;
+              const candidateFiles = await github.paginate(github.rest.pulls.listFiles, {
+                owner, repo, pull_number candidate.number, per_page: 100,
+              });
+              if (candidateFiles.some((file) => isImplementationPath(file.filename))) {
+                otherOpenImplementationPrs.push(candidate.number);
+              }
+            }
+
+            const failures = assessTrustLane({
+              authorAssociation: pr.author_association,
+              authorHasPushPermission,
+              files,
+              linkedIssues,
+              otherOpenImplementationPrs,
+            });
+
+            async function ensureLabel() {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: blockedLabel });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: blockedLabel,
+                    color: "b60205",
+                    description: "First-contribution limits require maintainer approval",
+                  });
+                } catch (createError) {
+                  if (createError.status !== 422) throw createError;
+                }
+              }
+            }
+
+            async function setBlocked(blocked) {
+              const labels = new Set(pr.labels.map((label) => label.name));
+              if (blocked && !labels.has(blockedLabel)) {
+                await ensureLabel();
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: pull_number, labels: [blockedLabel],
+                });
+              } else if (!blocked && labels.has(blockedLabel)) {
+                await github.rest.issues.removeLabel({
+                  owner, repo, issue_number pull_number, name: blockedLabel,
+                });
+              }
+            }
+
+            async function upsert(body) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: pull_number, per_page: 100,
+              });
+              const existing = comments.find(
+                (comment) => comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker),
+              );
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
+              }
+            }
+
+            if (failures.length === 0) {
+              await setBlocked(false);
+              await upsert(`${marker}\n\n✅ **Contributor trust-lane requirements passed.**`);
+              return;
+            }
+
+            await setBlocked(true);
+            const lines = failures.flatMap((failure) => {
+              if (failure.code === "active_pr_limit") {
+                return [
+                  "### One active implementation PR",
+                  `Close or finish ${failure.pullRequests.map((n) => `#${n}`).join(", ")} before opening another implementation PR.`,
+                  "",
+                ];
+              }
+              if (failure.code === "first_pr_too_large") {
+                return [
+                  "### First contribution is too large",
+                  `This PR changes ${failure.changedLines} lines; the first-contribution ceiling is ${failure.maximum}. Split it, or obtain \`large-change-approved\` on the linked issue before implementation.`,
+                  "",
+                ];
+              }
+              return [
+                "### Maintainer sponsorship required",
+                `Restricted paths: ${failure.paths.map((p) => `\`${p}\``.),.join(", ")}. The linked issue needs \`maintainer-sponsored\` before a first-time contributor changes these surfaces.`,
+                "",
+              ];
+            });
+            await upsert([marker, "", "⚠️ **First-contribution limits blocked this PR.**", "", ...lines].join("\n"));
+            core.setFailed(`Trust lane failed: ${failures.map((f) => f.code).join(", ")}`);
