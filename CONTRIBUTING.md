@@ -3,6 +3,7 @@
 Thanks for helping with opencodex.
 
 - Start with the canonical guide: [Contributing](https://opencodex.me/contributing/)
+- Pull-request quality contract: [Review readiness and author responsibility](https://opencodex.me/contributing/pr-quality/)
 - Public user docs live in [`docs-site/`](./docs-site)
 - Current maintainer invariants live in [`structure/`](./structure)
 - Maintainer roles and merge policy live in [`MAINTAINERS.md`](./MAINTAINERS.md)
@@ -30,6 +31,20 @@ contributing guide above instead of duplicating instructions here.
 Source development requires the `bun` CLI on your `PATH`. The published npm package bundles its own
 Bun runtime for end users, but contributor commands such as `bun install`, `bun run test`, and
 `bun run prepush` run from your local Bun installation.
+
+## Pull request contract
+
+A ready-for-review PR is the author's claim that the change is complete, understood, tested, and suitable for merging. Opening a PR does not transfer responsibility for the branch to maintainers.
+
+- External implementation PRs reference an issue labeled `approved-for-work` before implementation begins.
+- Human review starts only after automated intake, trust-lane, hygiene, CI, and CodeRabbit gates pass and the PR is labeled `awaiting-maintainer`.
+- Authors own CI failures, missing tests, merge conflicts, and review fixes. Maintainers identify problems; they are not required to implement or debug the fixes for contributors.
+- Behavior changes include focused regression tests. Claims such as “tested” or “CI” without named commands and results are not evidence.
+- First-time contributors may have one active implementation PR, are limited to 500 changed lines unless the linked issue has `large-change-approved`, and need `maintainer-sponsored` for authentication, workflow, release, or dependency surfaces.
+- A substantial review round is a maintainer change request on a distinct head revision. After two unsuccessful rounds, maintainers may close a PR that still needs architectural repair, repeatedly reintroduces defects, or shows that the author cannot own the implementation.
+- PRs labeled `awaiting-author` warn after three inactive days and close after two more. PRs labeled `awaiting-maintainer` are not stale-closed.
+
+Standard closure labels are `close: no-approved-issue`, `close: not-review-ready`, `close: abandoned`, `close: excessive-review-churn`, `close: scope-too-large`, `close: wrong-direction`, and `close: insufficient-tests`. Reopening requires resolving the stated reason; otherwise submit a clean replacement PR.
 
 ## Pre-push hook
 

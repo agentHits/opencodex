@@ -24,12 +24,12 @@ see [The retired `dev2-go` line](#the-retired-dev2-go-line).
 - The **`enforce-target`** CI check rejects pull requests whose head
   ancestry sits on the **`main`** tip while far behind **`dev`**, and rejects
   empty, thin, or malformed descriptions; authors with repository push
-  permission skip the ancestry heuristic only. As with the approval requirement
-  above, this is enforced by convention until branch protection is configured
-  (see the note under the change log).
-- A pull request requires approval from at least one maintainer and successful required CI checks
-  before merge.
+  permission skip the ancestry heuristic only.
+- Human code review begins only when the PR carries `awaiting-maintainer`. Red, pending, or intake-blocked PRs remain the author's responsibility and do not consume maintainer code-review time.
+- A pull request requires approval from at least one maintainer and successful required CI checks before merge.
 - Authors do not approve their own pull requests.
+- Maintainers identify defects and architectural problems; they are not expected to repair contributor branches, write missing tests, resolve routine CI failures, or translate every automated finding into step-by-step patches.
+- A substantial review round is one actionable `CHANGES_REQUESTED` review by a maintainer on a distinct head SHA. Multiple reviews of one revision count once. After two unsuccessful rounds, a maintainer may close the PR when architectural correction remains necessary, defects recur, or the author cannot explain and maintain the implementation.
 - Authentication, credential handling, GitHub Actions, release automation, dependency installation,
   and other security-boundary changes require explicit security review.
 - A new or promoted provider preset is a credential-destination change. Before merge it needs the
@@ -41,11 +41,27 @@ see [The retired `dev2-go` line](#the-retired-dev2-go-line).
   with the service is disclosed, not disqualifying, and it does not lower the evidence bar. When the
   evidence is incomplete, prefer an inert `src/providers/free-directory.ts` reference row over a
   canonical registry entry.
-- Security-sensitive and release-related changes should be reviewed by both maintainers when
-  practical.
-- Direct pushes are reserved for maintainer-owned integration work, urgent repairs, or incident
-  recovery. The same CI and documentation requirements still apply.
+- Security-sensitive and release-related changes should be reviewed by both maintainers when practical.
+- Direct pushes are reserved for maintainer-owned integration work, urgent repairs, or incident recovery. The same CI and documentation requirements still apply.
 - Promotion from `dev` to `main` and npm releases is maintainer-controlled.
+
+## Pull request disposition
+
+Use one standardized closure label and a concise comment naming the reopening condition:
+
+| Label | Use when |
+| --- | --- |
+| `close: no-approved-issue` | External implementation began without agreed scope |
+| `close: not-review-ready` | The PR was presented as complete but basic readiness requirements remain unmet |
+| `close: abandoned` | Author action remained outstanding beyond the inactivity window |
+| `close: excessive-review-churn` | Two substantial rounds did not produce a reviewable implementation |
+| `close: scope-too-large` | The change cannot be reviewed safely as one PR |
+| `close: wrong-direction` | The implementation conflicts with project architecture or direction |
+| `close: insufficient-tests` | Changed behavior lacks credible regression coverage |
+
+Do not stale-close `awaiting-maintainer` PRs. Do not keep a fundamentally broken PR open merely because maintainers already invested time in it; that is sunk-cost reasoning. The author may return with a clean replacement after resolving the disposition.
+
+Repository rulesets and merge-queue settings are configured by an owner or administrator after the synthetic rollout in [`.github/CONTRIBUTION_FIREWALL_ROLLOUT.md`](./.github/CONTRIBUTION_FIREWALL_ROLLOUT.md).
 
 ## The retired `dev2-go` line
 
@@ -93,18 +109,13 @@ Adding or removing a maintainer requires:
   should go through a reviewed pull request.
 
   Scope covers issue and pull-request triage, `dev` integration, and
-  provider/CI maintenance. (This entry originally also described carrying
-  merged `dev` work onto `dev2-go`; that duty ended when the line was retired
-  on 2026-07-30.) Security-boundary ownership in `.github/CODEOWNERS` is
-  deliberately unchanged: authentication, credential handling, GitHub Actions,
-  and release automation keep the two owners already listed for those paths, so
-  this addition does not widen the review surface for them.
+  provider/CI maintenance. Security-boundary ownership in `.github/CODEOWNERS`
+  remains stricter for authentication, credential handling, GitHub Actions, and
+  release automation.
 
-  CODEOWNERS requests reviews rather than enforcing them — no branch protection
-  rule is configured on this repository, so code-owner approval is a convention
-  here, not a gate. The same is true of the approval requirement in the review
-  and merge policy above. Widening the security boundary, or enforcing either
-  of these through branch protection, is a separate decision.
+  CODEOWNERS requests reviews rather than enforcing them until the project owner
+  enables the documented ruleset. Widening the security boundary or changing
+  bypass permissions remains a separate owner decision.
 
 ## Security reports
 

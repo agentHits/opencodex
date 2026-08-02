@@ -1,48 +1,42 @@
-name: Issue quality tests
+name: Issue and PR policy tests
 
 on:
   pull_request:
     paths:
       - ".github/ISSUE_TEMPLATE/**"
-      - ".github/scripts/issue-quality.cjs"
-      - ".github/scripts/issue-quality.test.cjs"
-      - ".github/scripts/pr-quality.cjs"
-      - ".github/scripts/pr-quality.test.cjs"
-      - ".github/scripts/pr-labeler.cjs"
-      - ".github/scripts/pr-labeler.test.cjs"
-      - ".github/scripts/enforce-pr-target.test.cjs"
-      - ".github/scripts/issue-translation.cjs"
-      - ".github/scripts/issue-translation.test.cjs"
-      - ".github/scripts/issue-triage.cjs"
-      - ".github/scripts/issue-triage.test.cjs"
-      - ".github/scripts/parse-issue-translation-response.cjs"
-      - ".github/scripts/parse-issue-translation-response.test.cjs"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+      - ".github/scripts/*.cjs"
       - ".github/workflows/enforce-issue-quality.yml"
       - ".github/workflows/enforce-pr-target.yml"
+      - ".github/workflows/pr-admission.yml"
+      - ".github/workflows/pr-readiness.yml"
+      - ".github/workflows/pr-trust-lane.yml"
+      - ".github/workflows/pr-hygiene.yml"
+      - ".github/workflows/pr-review-lifecycle.yml"
       - ".github/workflows/pr-labeler.yml"
       - ".github/workflows/issue-triage.yml"
       - ".github/workflows/issue-quality-tests.yml"
+      - ".coderabbit.yaml"
+      - "CONTRIBUTING.md"
+      - "MAINTAINERS.md"
   push:
     paths:
       - ".github/ISSUE_TEMPLATE/**"
-      - ".github/scripts/issue-quality.cjs"
-      - ".github/scripts/issue-quality.test.cjs"
-      - ".github/scripts/pr-quality.cjs"
-      - ".github/scripts/pr-quality.test.cjs"
-      - ".github/scripts/pr-labeler.cjs"
-      - ".github/scripts/pr-labeler.test.cjs"
-      - ".github/scripts/enforce-pr-target.test.cjs"
-      - ".github/scripts/issue-translation.cjs"
-      - ".github/scripts/issue-translation.test.cjs"
-      - ".github/scripts/issue-triage.cjs"
-      - ".github/scripts/issue-triage.test.cjs"
-      - ".github/scripts/parse-issue-translation-response.cjs"
-      - ".github/scripts/parse-issue-translation-response.test.cjs"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+      - ".github/scripts/*.cjs"
       - ".github/workflows/enforce-issue-quality.yml"
       - ".github/workflows/enforce-pr-target.yml"
+      - ".github/workflows/pr-admission.yml"
+      - ".github/workflows/pr-readiness.yml"
+      - ".github/workflows/pr-trust-lane.yml"
+      - ".github/workflows/pr-hygiene.yml"
+      - ".github/workflows/pr-review-lifecycle.yml"
       - ".github/workflows/pr-labeler.yml"
       - ".github/workflows/issue-triage.yml"
       - ".github/workflows/issue-quality-tests.yml"
+      - ".coderabbit.yaml"
+      - "CONTRIBUTING.md"
+      - "MAINTAINERS.md"
 
 permissions:
   contents: read
@@ -61,6 +55,11 @@ jobs:
         run: |
           node --test .github/scripts/issue-quality.test.cjs
           node --test .github/scripts/pr-quality.test.cjs
+          node --test .github/scripts/pr-admission.test.cjs
+          node --test .github/scripts/pr-readiness.test.cjs
+          node --test .github/scripts/pr-trust-lane.test.cjs
+          node --test .github/scripts/pr-hygiene.test.cjs
+          node --test .github/scripts/pr-review-lifecycle.test.cjs
           node --test .github/scripts/pr-labeler.test.cjs
           node --test .github/scripts/enforce-pr-target.test.cjs
           node --test .github/scripts/issue-translation.test.cjs
@@ -78,16 +77,13 @@ jobs:
             let ok = true;
             for (const file of files) {
               const raw = fs.readFileSync(path.join(dir, file), 'utf8');
-              // Minimal YAML validation: check for required keys and valid types.
               if (!raw.includes('name:')) { console.error(file + ': missing name'); ok = false; }
               if (!raw.includes('description:')) { console.error(file + ': missing description'); ok = false; }
               if (!raw.includes('body:')) { console.error(file + ': missing body'); ok = false; }
-              // Check element types.
               const types = [...raw.matchAll(/type:\s*(\w+)/g)].map(m => m[1]);
               for (const t of types) {
                 if (!VALID_TYPES.has(t)) { console.error(file + ': unsupported element type: ' + t); ok = false; }
               }
-              // Check unique IDs.
               const ids = [...raw.matchAll(/id:\s*([\w-]+)/g)].map(m => m[1]);
               const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
               if (dupes.length) { console.error(file + ': duplicate IDs: ' + dupes.join(', ')); ok = false; }
