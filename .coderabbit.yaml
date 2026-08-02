@@ -11,15 +11,41 @@ tone_instructions: >-
 
 reviews:
   profile: assertive
+  request_changes_workflow: true
+  review_status: true
   high_level_summary: true
   auto_review:
     enabled: true
-    drafts: false
+    drafts: true
     # Default branch (main) is included automatically; these are additional
     # base branches (anchored regex).
     base_branches:
       - "^dev$"
       - "^preview$"
+  pre_merge_checks:
+    override_requested_reviewers_only: true
+    description:
+      mode: error
+    issue_assessment:
+      mode: error
+    custom_checks:
+      - name: Regression evidence
+        mode: error
+        instructions: >-
+          Fail when runtime or dashboard behavior changes without a focused
+          regression test, unless the PR gives a technically credible reason
+          automated coverage is impossible and supplies concrete manual evidence.
+      - name: Scope discipline
+        mode: error
+        instructions: >-
+          Fail when the PR includes unrelated cleanup, broad formatting churn,
+          accidental generated files, or lockfile changes unrelated to the
+          stated issue and implementation.
+      - name: Validation evidence
+        mode: error
+        instructions: >-
+          Fail when validation is described only as "tested", "CI", or another
+          unverifiable claim. Require named commands or checks and their results.
   path_instructions:
     - path: "src/**"
       instructions: >-

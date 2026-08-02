@@ -1,0 +1,214 @@
+name: PR readiness
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, ready_for_review, converted_to_draft]
+  status:
+  check_run:
+    types: [created, rerequested, completed, requested_action]
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+
+# Trusted default-branch code only. The PR head is never checked out or executed.
+permissions:
+  contents: write
+  checks: read
+  statuses: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-readiness-${{ github.event.pull_request.number || github.event.check_run.head_sha || github.event.sha || 'sweep' }}
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    name: reconcile
+    if: github.event_name != 'check_run' || github.event.check_run.name != 'PR readiness / reconcile'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted readiness script
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Reconcile review readiness
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const path = require("node:path");
+            const { assessReadiness } = require(
+              path.join(process.cwd(), ".github", "scripts", "pr-readiness.cjs"),
+            );
+
+            const { owner, repo } = context.repo;
+            const marker = "<!-- pr-readiness -->";
+            const managedLabels = [
+              "awaiting-author",
+              "awaiting-maintainer",
+              "intake: validating",
+              "intake: auto-drafted",
+            ];
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                try {
+                  await github.rest.issues.createLabel({
+                    owner, repo, name, color, description,
+                  });
+                } catch (createError) {
+                  if (createError.status !== 422) throw createError;
+                }
+              }
+            }
+
+            await ensureLabel("awaiting-author", "d93f0b", "Author action is required before maintainer review");
+            await ensureLabel("awaiting-maintainer", "1d76db", "All automated gates passed; maintainer review is next");
+            await ensureLabel("intake: validating", "fbca04", "Automated checks are still running");
+            await ensureLabel("intake: auto-drafted", "c5def5", "Workflow converted this PR to draft and may restore it");
+
+            async function associatedPrNumbers(sha) {
+              if (!sha) return [];
+              const response = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner, repo, commit_sha: sha,
+              });
+              return response.data.filter((pr) => pr.state === "open").map((pr) => pr.number);
+            }
+
+            let numbers = [];
+            if (context.eventName === "pull_request_target") {
+              numbers = [context.payload.pull_request.number];
+            } else if (context.eventName === "status") {
+              numbers = await associatedPrNumbers(context.payload.sha);
+            } else if (context.eventName === "check_run") {
+              numbers = (context.payload.check_run.pull_requests || []).map((pr) => pr.number);
+              if (numbers.length === 0) {
+                numbers = await associatedPrNumbers(context.payload.check_run.head_sha);
+              }
+            } else {
+              const open = await github.paginate(github.rest.pulls.list, {
+                owner, repo, state: "open", per_page: 100,
+              });
+              numbers = open.map((pr) => pr.number);
+            }
+
+            numbers = [...new Set(numbers)];
+            core.info(`Reconciling PRs: ${numbers.join(", ") || "none"}`);
+
+            async function convertToDraft(nodeId) {
+              await github.graphql(
+                `mutation($id: ID!) {
+                  convertPullRequestToDraft(input: { pullRequestId: $id }) {
+                    pullRequest { id isDraft }
+                  }
+                }`,
+                { id: nodeId },
+              );
+            }
+
+            async function markReady(nodeId) {
+              await github.graphql(
+                `mutation($id: ID!) {
+                  markPullRequestReadyForReview(input: { pullRequestId: $id }) {
+                    pullRequest { id isDraft }
+                  }
+                }`,
+                { id: nodeId },
+              );
+            }
+
+            for (const pull_number of numbers) {
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+              const labels = new Set(pr.labels.map((label) => label.name));
+
+              const combined = await github.rest.repos.getCombinedStatusForRef({
+                owner, repo, ref: pr.head.sha,
+              });
+              const checkRuns = await github.paginate(github.rest.checks.listForRef, {
+                owner, repo, ref: pr.head.sha, filter: "latest", per_page: 100,
+              });
+
+              const result = assessReadiness({
+                admissionPassed: labels.has("intake: admitted"),
+                statuses: combined.data.statuses,
+                checkRuns,
+              });
+
+              async function add(name) {
+                if (labels.has(name)) return;
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: pull_number, labels: [name],
+                });
+                labels.add(name);
+              }
+
+              async function remove(name) {
+                if (!labels.has(name)) return;
+                await github.rest.issues.removeLabel({
+                  owner, repo, issue_number: pull_number, name,
+                });
+                labels.delete(name);
+              }
+
+              async function upsertComment(body) {
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: pull_number, per_page: 100,
+                });
+                const existing = comments.find(
+                  (comment) => comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker),
+                );
+                if (existing) {
+                  await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+                } else {
+                  await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
+                }
+              }
+
+              if (result.state === "maintainer") {
+                await remove("awaiting-author");
+                await remove("intake: validating");
+                await add("awaiting-maintainer");
+                if (labels.has("intake: auto-drafted") && pr.draft) {
+                  await markReady(pr.node_id);
+                }
+                await remove("intake: auto-drafted");
+                await upsertComment(
+                  `${marker}\n\n✅ **Automated review-readiness gates passed.**\n\nThis PR is now waiting on a maintainer. Passing these gates is not approval.`,
+                );
+                continue;
+              }
+
+              await remove("awaiting-maintainer");
+              if (!pr.draft) {
+                try {
+                  await convertToDraft(pr.node_id);
+                  await add("intake: auto-drafted");
+                } catch (error) {
+                  core.warning(`Could not convert PR #${pull_number} to draft: ${error.message}`);
+                }
+              }
+
+              if (result.state === "validating") {
+                await remove("awaiting-author");
+                await add("intake: validating");
+                const detail = result.pending.length > 0
+                  ? `Pending: ${result.pending.map((name) => `\`${name}\``).join(", ")}.`
+                  : "No repository checks have reported yet.";
+                await upsertComment(`${marker}\n\n⏳ **Automated checks are still running.**\n\n${detail}`);
+                continue;
+              }
+
+              await remove("intake: validating");
+              await add("awaiting-author");
+              await upsertComment(
+                `${marker}\n\n⚠️ **Author action is required.**\n\n` +
+                `Failing gates: ${result.failed.map((name) => `\`${name}\``).join(", ")}. ` +
+                "Fix the failures on this branch; maintainers are not expected to repair contributor branches.",
+              );
+              core.setFailed(`PR #${pull_number} is waiting on author action: ${result.failed.join(", ")}`);
+            }
