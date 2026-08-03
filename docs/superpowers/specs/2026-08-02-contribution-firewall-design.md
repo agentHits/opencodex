@@ -12,7 +12,7 @@ Low-effort implementation pull requests currently transfer the cost of validatio
 
 Add a second intake layer that evaluates outcomes rather than attempting to detect AI-generated code.
 
-1. Implementation PRs from contributors without repository push permission must reference an issue labeled `approved-for-work`.
+1. Implementation PRs from contributors without repository push permission must reference an open issue labeled `approved-for-work`.
 2. Every PR author must check a concrete responsibility attestation.
 3. Failed intake applies `awaiting-author`; passed intake applies `intake: admitted`.
 4. A scheduled workflow warns after three inactive days in `awaiting-author` and closes after two more.
@@ -21,7 +21,7 @@ Add a second intake layer that evaluates outcomes rather than attempting to dete
 
 ## Scope classification
 
-An approved issue is required when any changed path is under `src/`, `gui/`, `scripts/`, `tests/`, `bin/`, or `packages/`, or when the PR changes `package.json`, `bun.lock`, or `tsconfig.json`.
+An approved issue is required when any changed path is under `src/`, `gui/`, `scripts/`, `tests/`, `bin/`, or `packages/`, or when the PR changes `package.json`, `bun.lock`, `bunfig.toml`, or `tsconfig.json`.
 
 Documentation-only and repository-policy changes remain exempt so typo fixes and governance work do not require ceremonial issues.
 
@@ -30,6 +30,8 @@ Documentation-only and repository-policy changes remain exempt so typo fixes and
 `pr-admission.yml` uses `pull_request_target`, checks out only `.github/scripts` from the repository default branch, and never executes the PR head. It reads file metadata, PR text, linked issues, labels, and collaborator permission through GitHub APIs. It receives only the minimum write permissions needed to maintain PR labels and one bot comment.
 
 The scheduled stale workflow is default-branch-only and uses an immutable action SHA.
+
+Linked-issue lookups are capped so untrusted PR text cannot exhaust the API allowance, and transient lookup failures abort before admission labels are mutated. A manual `workflow_dispatch` re-run lets a maintainer re-evaluate a PR after its linked issue gains `approved-for-work`; dispatch is restricted to the repository default branch.
 
 ## Author responsibility contract
 
