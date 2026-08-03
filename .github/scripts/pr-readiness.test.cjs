@@ -2,7 +2,11 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const { assessReadiness, classifyCheckRuns } = require("./pr-readiness.cjs");
+const {
+  admissionCheckPending,
+  assessReadiness,
+  classifyCheckRuns,
+} = require("./pr-readiness.cjs");
 
 describe("assessReadiness", () => {
   it("keeps failed admission in author-action state", () => {
@@ -10,6 +14,25 @@ describe("assessReadiness", () => {
       assessReadiness({ admissionPassed: false }),
       { state: "author_action", failed: ["PR admission"], pending: [] },
     );
+  });
+
+  it("keeps PR validating while the admission check is still running", () => {
+    const result = assessReadiness({
+      admissionPassed: false,
+      checkRuns: [{ name: "PR admission / admission", status: "in_progress" }],
+    });
+    assert.equal(result.state, "validating");
+    assert.deepEqual(result.pending, ["PR admission"]);
+  });
+
+  it("returns author action when admission completed with a failure", () => {
+    const result = assessReadiness({
+      admissionPassed: false,
+      checkRuns: [
+        { name: "PR admission / admission", status: "completed", conclusion: "failure" },
+      ],
+    });
+    assert.equal(result.state, "author_action");
   });
 
   it("keeps PR validating while checks are pending", () => {
@@ -70,5 +93,29 @@ describe("classifyCheckRuns", () => {
       { name: "b", status: "completed", conclusion: "timed_out" },
     ]);
     assert.deepEqual(result.failed, ["a", "b"]);
+  });
+});
+
+describe("admissionCheckPending", () => {
+  it("treats an in-progress admission check as pending", () => {
+    assert.equal(
+      admissionCheckPending([
+        { name: "PR admission / admission", status: "in_progress" },
+      ]),
+      true,
+    );
+  });
+
+  it("treats a completed admission check as not pending", () => {
+    assert.equal(
+      admissionCheckPending([
+        { name: "PR admission / admission", status: "completed", conclusion: "failure" },
+      ]),
+      false,
+    );
+  });
+
+  it("is false when no admission check is present", () => {
+    assert.equal(admissionCheckPending([]), false);
   });
 });
