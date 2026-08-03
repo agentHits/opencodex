@@ -9,13 +9,48 @@ const BLOCKING_CONCLUSIONS = new Set([
   "stale",
   "startup_failure",
 ]);
+// GitHub Actions reports the job name as the check-run name, so the reconcile
+// job's own runs surface as "reconcile". Both the display and job-name forms
+// are matched so an in-progress reconcile run can never block readiness.
 const IGNORED_NAMES = new Set([
+  "reconcile",
   "PR readiness / reconcile",
   "PR readiness",
+]);
+// Admission state is conveyed by the `intake: admitted` label; admission check
+// runs must not count as post-admission evidence, or a PR whose only check is
+// a successful admission run would be declared maintainer-ready before
+// CodeRabbit or CI ever report.
+const ADMISSION_NAMES = new Set([
+  "admission",
+  "PR admission / admission",
 ]);
 
 function normalizeName(value) {
   return String(value || "").trim();
+}
+
+function isManagedCheckName(name) {
+  return IGNORED_NAMES.has(name) || ADMISSION_NAMES.has(name);
+}
+
+// The Checks API's `latest` filter returns the newest run per check suite, not
+// per check name, so repeated invocations on an unchanged head SHA coexist.
+// Keep only the newest run per check name before classifying.
+function latestByCheckName(checkRuns) {
+  const latest = new Map();
+  for (const check of checkRuns || []) {
+    const name = normalizeName(check.name);
+    if (!name) continue;
+    const existing = latest.get(name);
+    if (
+      !existing ||
+      String(check.started_at || "") >= String(existing.started_at || "")
+    ) {
+      latest.set(name, check);
+    }
+  }
+  return [...latest.values()];
 }
 
 function classifyStatuses(statuses) {
@@ -25,7 +60,7 @@ function classifyStatuses(statuses) {
 
   for (const status of statuses || []) {
     const name = normalizeName(status.context);
-    if (!name || IGNORED_NAMES.has(name)) continue;
+    if (!name || isManagedCheckName(name)) continue;
     observed += 1;
     if (status.state === "pending") pending.push(name);
     else if (status.state !== "success") failed.push(name);
@@ -39,9 +74,9 @@ function classifyCheckRuns(checkRuns) {
   const failed = [];
   let observed = 0;
 
-  for (const check of checkRuns || []) {
+  for (const check of latestByCheckName(checkRuns)) {
     const name = normalizeName(check.name);
-    if (!name || IGNORED_NAMES.has(name)) continue;
+    if (!name || isManagedCheckName(name)) continue;
     observed += 1;
     if (check.status !== "completed") {
       pending.push(name);
@@ -56,8 +91,8 @@ function classifyCheckRuns(checkRuns) {
 }
 
 function admissionCheckPending(checkRuns) {
-  const admission = (checkRuns || []).find(
-    (check) => normalizeName(check.name) === "PR admission / admission",
+  const admission = latestByCheckName(checkRuns).find(
+    (check) => ADMISSION_NAMES.has(normalizeName(check.name)),
   );
   return Boolean(admission && admission.status !== "completed");
 }
@@ -93,9 +128,11 @@ function assessReadiness({ admissionPassed, statuses = [], checkRuns = [] }) {
 
 module.exports = {
   ACCEPTABLE_CONCLUSIONS,
+  ADMISSION_NAMES,
   BLOCKING_CONCLUSIONS,
   admissionCheckPending,
   assessReadiness,
   classifyCheckRuns,
   classifyStatuses,
+  latestByCheckName,
 };

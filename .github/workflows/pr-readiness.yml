@@ -14,13 +14,13 @@ on:
 permissions: {}
 
 concurrency:
-  group: pr-readiness-${{ github.event.pull_request.number || github.event.check_run.head_sha || github.event.sha || 'sweep' }}
+  group: pr-readiness-${{ github.event.pull_request.head.sha || github.event.check_run.head_sha || github.event.sha || 'sweep' }}
   cancel-in-progress: true
 
 jobs:
   reconcile:
     name: reconcile
-    if: github.event_name != 'check_run' || github.event.check_run.name != 'PR readiness / reconcile'
+    if: github.event_name != 'check_run' || (github.event.check_run.name != 'reconcile' && github.event.check_run.name != 'PR readiness / reconcile')
     runs-on: ubuntu-latest
     # contents: write is required for the draft/ready GraphQL mutations; checks
     # and statuses are read for readiness classification; issues/pull-requests
@@ -169,6 +169,13 @@ jobs:
               }
 
               if (result.state === "maintainer") {
+                if (pr.draft && !labels.has("intake: auto-drafted")) {
+                  // Author-controlled draft: all gates pass, but the author has
+                  // not asked for review. Do not queue it for maintainers.
+                  await remove("awaiting-author");
+                  await remove("intake: validating");
+                  continue;
+                }
                 await remove("awaiting-author");
                 await remove("intake: validating");
                 await add("awaiting-maintainer");
@@ -184,10 +191,11 @@ jobs:
 
               await remove("awaiting-maintainer");
               if (!pr.draft) {
+                await add("intake: auto-drafted");
                 try {
                   await convertToDraft(pr.node_id);
-                  await add("intake: auto-drafted");
                 } catch (error) {
+                  await remove("intake: auto-drafted");
                   core.warning(`Could not convert PR #${pull_number} to draft: ${error.message}`);
                 }
               }
