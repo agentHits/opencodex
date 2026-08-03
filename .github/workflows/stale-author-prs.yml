@@ -6,9 +6,8 @@ on:
   schedule:
     - cron: "35 6 * * *"
 
-permissions:
-  issues: write
-  pull-requests: write
+# Least privilege: no default permissions; the stale job grants only what it needs.
+permissions: {}
 
 concurrency:
   group: stale-author-prs
@@ -17,6 +16,12 @@ concurrency:
 jobs:
   stale:
     runs-on: ubuntu-latest
+    # actions/stale persists processed state through the Actions cache, and PR
+    # labels/comments/closure go through the shared issues API on PR numbers.
+    permissions:
+      actions: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Warn and close inactive author-action PRs
         uses: actions/stale@1e223db275d687790206a7acac4d1a11bd6fe629 # v10.4.0
@@ -26,7 +31,10 @@ jobs:
           days-before-issue-close: -1
           days-before-pr-stale: 3
           days-before-pr-close: 2
-          stale-pr-label: stale
+          stale-pr-label: awaiting-author-stale
+          # Never un-stale issues: this workflow owns PR labels only, and the
+          # issue stale workflow manages the shared `stale` label for issues.
+          remove-issue-stale-when-updated: false
           remove-pr-stale-when-updated: true
           ascending: true
           operations-per-run: 60

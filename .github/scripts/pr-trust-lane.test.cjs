@@ -6,6 +6,7 @@ const {
   MAX_FIRST_TIME_CHANGED_LINES,
   assessTrustLane,
   isFirstTimeContributor,
+  isImplementationPath,
   isRestrictedPath,
 } = require("./pr-trust-lane.cjs");
 
@@ -23,6 +24,33 @@ describe("first-time classification", () => {
     assert.equal(isRestrictedPath("package.json"), true);
     assert.equal(isRestrictedPath("src/router.ts"), false);
   });
+
+  it("restricts the repository's real auth and credential paths", () => {
+    for (const p of [
+      "src/codex/auth-api.ts",
+      "src/codex/auth-context.ts",
+      "src/cli/account-auth.ts",
+      "src/lib/admin-secrets.ts",
+      "src/lib/service-secrets.ts",
+      "src/server/auth-cors.ts",
+      "src/server/management-auth.ts",
+      "src/server/management-api.ts",
+      "src/oauth/store.ts",
+    ]) {
+      assert.equal(isRestrictedPath(p), true, p);
+    }
+    assert.equal(isRestrictedPath("src/auth/oauth.ts"), false);
+  });
+
+  it("restricts release and packaging scripts", () => {
+    assert.equal(isRestrictedPath("scripts/release-notes.ts"), true);
+    assert.equal(isRestrictedPath("scripts/prepare-package.ts"), true);
+    assert.equal(isRestrictedPath("scripts/test.ts"), false);
+  });
+
+  it("classifies bunfig.toml as an implementation file", () => {
+    assert.equal(isImplementationPath("bunfig.toml"), true);
+  });
 });
 
 describe("assessTrustLane", () => {
@@ -32,9 +60,20 @@ describe("assessTrustLane", () => {
     const failures = assessTrustLane({
       authorAssociation: "FIRST_TIME_CONTRIBUTOR",
       files: smallRuntimeChange,
-      otherOpenImplementationPrs: [812],
+      otherOpenImplementationPrs: [{ number: 812, created_at: "2026-07-01T00:00:00Z" }],
+      currentPr: { number: 42, created_at: "2026-08-01T00:00:00Z" },
     });
     assert.deepEqual(failures[0], { code: "active_pr_limit", pullRequests: [812] });
+  });
+
+  it("keeps the oldest implementation PR eligible", () => {
+    const failures = assessTrustLane({
+      authorAssociation: "FIRST_TIME_CONTRIBUTOR",
+      files: smallRuntimeChange,
+      otherOpenImplementationPrs: [{ number: 812, created_at: "2026-08-01T00:00:00Z" }],
+      currentPr: { number: 42, created_at: "2026-07-01T00:00:00Z" },
+    });
+    assert.deepEqual(failures, []);
   });
 
   it("rejects oversized first implementation PRs without approval", () => {
@@ -49,9 +88,18 @@ describe("assessTrustLane", () => {
     const failures = assessTrustLane({
       authorAssociation: "FIRST_TIMER",
       files: [{ filename: "src/router.ts", additions: 700, deletions: 0 }],
-      linkedIssues: [{ labels: [{ name: "large-change-approved" }] }],
+      linkedIssues: [{ labels: [{ name: "large-change-approved" }], state: "open" }],
     });
     assert.deepEqual(failures, []);
+  });
+
+  it("rejects approval labels on closed issues", () => {
+    const failures = assessTrustLane({
+      authorAssociation: "FIRST_TIMER",
+      files: [{ filename: "src/router.ts", additions: 700, deletions: 0 }],
+      linkedIssues: [{ labels: [{ name: "large-change-approved" }], state: "closed" }],
+    });
+    assert.equal(failures[0].code, "first_pr_too_large");
   });
 
   it("requires sponsorship for restricted surfaces", () => {
@@ -66,9 +114,18 @@ describe("assessTrustLane", () => {
     const failures = assessTrustLane({
       authorAssociation: "NONE",
       files: [{ filename: "src/oauth/provider.ts", additions: 10, deletions: 2 }],
-      linkedIssues: [{ labels: ["maintainer-sponsored"] }],
+      linkedIssues: [{ labels: ["maintainer-sponsored"], state: "open" }],
     });
     assert.deepEqual(failures, []);
+  });
+
+  it("classifies renamed sources as restricted implementation paths", () => {
+    const failures = assessTrustLane({
+      authorAssociation: "NONE",
+      files: [{ filename: "docs/moved.md", additions: 10, deletions: 2 }],
+      changedFiles: ["docs/moved.md", "src/oauth/store.ts"],
+    });
+    assert.equal(failures[0].code, "restricted_surface");
   });
 
   it("does not restrict established contributors, maintainers, or docs-only PRs", () => {

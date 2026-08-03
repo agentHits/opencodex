@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const {
@@ -10,7 +12,11 @@ const {
   needsApprovedIssue,
 } = require("./pr-admission.cjs");
 
-function completeBody(extra = "") {
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function completeBody() {
   return [
     "## Summary",
     "A complete explanation of the change and why it is needed.",
@@ -21,7 +27,6 @@ function completeBody(extra = "") {
     "## Author responsibility",
     ...REQUIRED_ATTESTATIONS.map((label) => `- [x] ${label}`),
     "",
-    extra,
   ].join("\n");
 }
 
@@ -57,6 +62,7 @@ describe("needsApprovedIssue", () => {
     assert.equal(needsApprovedIssue(["src/router.ts"]), true);
     assert.equal(needsApprovedIssue(["gui/src/App.tsx"]), true);
     assert.equal(needsApprovedIssue(["package.json"]), true);
+    assert.equal(needsApprovedIssue(["bunfig.toml"]), true);
   });
 
   it("does not require one for documentation-only changes", () => {
@@ -82,7 +88,7 @@ describe("assessAdmission", () => {
     const failures = assessAdmission({
       body: completeBody(),
       changedFiles: ["src/router.ts"],
-      linkedIssues: [{ number: 123, labels: ["bug"] }],
+      linkedIssues: [{ number: 123, labels: ["bug"], state: "open" }],
     });
 
     assert.deepEqual(failures, [
@@ -95,11 +101,25 @@ describe("assessAdmission", () => {
       body: completeBody(),
       changedFiles: ["src/router.ts"],
       linkedIssues: [
-        { number: 123, labels: [{ name: "approved-for-work" }] },
+        { number: 123, labels: [{ name: "approved-for-work" }], state: "open" },
       ],
     });
 
     assert.deepEqual(failures, []);
+  });
+
+  it("rejects closed issues even when they carry the approval label", () => {
+    const failures = assessAdmission({
+      body: completeBody(),
+      changedFiles: ["src/router.ts"],
+      linkedIssues: [
+        { number: 123, labels: [{ name: "approved-for-work" }], state: "closed" },
+      ],
+    });
+
+    assert.deepEqual(failures, [
+      { code: "issue_not_approved", issues: [123] },
+    ]);
   });
 
   it("allows maintainers to perform integration work without an issue", () => {
@@ -122,5 +142,21 @@ describe("assessAdmission", () => {
     });
 
     assert.equal(failures[0].code, "missing_attestations");
+  });
+});
+
+describe("template parity", () => {
+  it("keeps the PR template attestations in sync with REQUIRED_ATTESTATIONS", () => {
+    const template = fs.readFileSync(
+      path.join(__dirname, "..", "PULL_REQUEST_TEMPLATE.md"),
+      "utf8",
+    );
+    for (const label of REQUIRED_ATTESTATIONS) {
+      const pattern = new RegExp(
+        `^\\s*[-*+]\\s+\\[[ xX]\\]\\s+${escapeRegExp(label)}\\s*$`,
+        "m",
+      );
+      assert.match(template, pattern);
+    }
   });
 });
