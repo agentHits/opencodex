@@ -6,12 +6,8 @@ on:
   schedule:
     - cron: "35 6 * * *"
 
-permissions:
-  # actions/stale persists processed state through the Actions cache, and PR
-  # labels/comments/closure go through the shared issues API on PR numbers.
-  actions: write
-  issues: write
-  pull-requests: write
+# Least privilege: no default permissions; the stale job grants only what it needs.
+permissions: {}
 
 concurrency:
   group: stale-author-prs
@@ -20,6 +16,12 @@ concurrency:
 jobs:
   stale:
     runs-on: ubuntu-latest
+    # actions/stale persists processed state through the Actions cache, and PR
+    # labels/comments/closure go through the shared issues API on PR numbers.
+    permissions:
+      actions: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Warn and close inactive author-action PRs
         uses: actions/stale@1e223db275d687790206a7acac4d1a11bd6fe629 # v10.4.0
