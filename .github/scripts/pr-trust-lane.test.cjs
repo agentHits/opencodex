@@ -25,6 +25,29 @@ describe("first-time classification", () => {
     assert.equal(isRestrictedPath("src/router.ts"), false);
   });
 
+  it("restricts the repository's real auth and credential paths", () => {
+    for (const p of [
+      "src/codex/auth-api.ts",
+      "src/codex/auth-context.ts",
+      "src/cli/account-auth.ts",
+      "src/lib/admin-secrets.ts",
+      "src/lib/service-secrets.ts",
+      "src/server/auth-cors.ts",
+      "src/server/management-auth.ts",
+      "src/server/management-api.ts",
+      "src/oauth/store.ts",
+    ]) {
+      assert.equal(isRestrictedPath(p), true, p);
+    }
+    assert.equal(isRestrictedPath("src/auth/oauth.ts"), false);
+  });
+
+  it("restricts release and packaging scripts", () => {
+    assert.equal(isRestrictedPath("scripts/release-notes.ts"), true);
+    assert.equal(isRestrictedPath("scripts/prepare-package.ts"), true);
+    assert.equal(isRestrictedPath("scripts/test.ts"), false);
+  });
+
   it("classifies bunfig.toml as an implementation file", () => {
     assert.equal(isImplementationPath("bunfig.toml"), true);
   });
@@ -37,9 +60,20 @@ describe("assessTrustLane", () => {
     const failures = assessTrustLane({
       authorAssociation: "FIRST_TIME_CONTRIBUTOR",
       files: smallRuntimeChange,
-      otherOpenImplementationPrs: [812],
+      otherOpenImplementationPrs: [{ number: 812, created_at: "2026-07-01T00:00:00Z" }],
+      currentPr: { number: 42, created_at: "2026-08-01T00:00:00Z" },
     });
     assert.deepEqual(failures[0], { code: "active_pr_limit", pullRequests: [812] });
+  });
+
+  it("keeps the oldest implementation PR eligible", () => {
+    const failures = assessTrustLane({
+      authorAssociation: "FIRST_TIME_CONTRIBUTOR",
+      files: smallRuntimeChange,
+      otherOpenImplementationPrs: [{ number: 812, created_at: "2026-08-01T00:00:00Z" }],
+      currentPr: { number: 42, created_at: "2026-07-01T00:00:00Z" },
+    });
+    assert.deepEqual(failures, []);
   });
 
   it("rejects oversized first implementation PRs without approval", () => {
@@ -89,7 +123,7 @@ describe("assessTrustLane", () => {
     const failures = assessTrustLane({
       authorAssociation: "NONE",
       files: [{ filename: "docs/moved.md", additions: 10, deletions: 2 }],
-      changedFiles: ["docs/moved.md", "src/auth/oauth.ts"],
+      changedFiles: ["docs/moved.md", "src/oauth/store.ts"],
     });
     assert.equal(failures[0].code, "restricted_surface");
   });

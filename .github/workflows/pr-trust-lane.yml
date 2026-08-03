@@ -125,7 +125,10 @@ jobs:
                 owner, repo, pull_number: candidate.number, per_page: 100,
               });
               if (candidateFiles.some((file) => isImplementationPath(file.filename))) {
-                otherOpenImplementationPrs.push(candidate.number);
+                otherOpenImplementationPrs.push({
+                  number: candidate.number,
+                  created_at: candidate.created_at,
+                });
               }
             }
 
@@ -139,6 +142,7 @@ jobs:
               changedFiles,
               linkedIssues,
               otherOpenImplementationPrs,
+              currentPr: { number: pull_number, created_at: pr.created_at },
             });
 
             async function ensureLabel() {
