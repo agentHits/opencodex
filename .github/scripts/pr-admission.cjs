@@ -12,6 +12,7 @@ const IMPLEMENTATION_PREFIXES = [
 const IMPLEMENTATION_FILES = new Set([
   "package.json",
   "bun.lock",
+  "bunfig.toml",
   "tsconfig.json",
 ]);
 
@@ -65,6 +66,7 @@ function needsApprovedIssue(changedFiles) {
 }
 
 function issueIsApproved(issue) {
+  if (issue.state !== "open") return false;
   return issue.labels.some((label) => {
     const name = typeof label === "string" ? label : label?.name;
     return name === "approved-for-work";
