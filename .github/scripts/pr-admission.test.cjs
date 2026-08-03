@@ -10,7 +10,7 @@ const {
   needsApprovedIssue,
 } = require("./pr-admission.cjs");
 
-function completeBody(extra = "") {
+function completeBody() {
   return [
     "## Summary",
     "A complete explanation of the change and why it is needed.",
@@ -21,7 +21,6 @@ function completeBody(extra = "") {
     "## Author responsibility",
     ...REQUIRED_ATTESTATIONS.map((label) => `- [x] ${label}`),
     "",
-    extra,
   ].join("\n");
 }
 
