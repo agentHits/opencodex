@@ -12,3 +12,5 @@ This layer closes the policy gaps that automation alone cannot solve.
 - Contributor policy explicitly assigns branch repair, CI failures, and review fixes to the author.
 - CODEOWNERS expands review routing for adapters, providers, Codex integration, and server behavior while keeping authentication and automation under the stricter existing owners.
 - Repository rulesets and merge queue remain an owner/admin action documented in an exact rollout checklist.
+
+The lifecycle workflow does not manage `awaiting-author` / `awaiting-maintainer`; those labels remain gate-owned by the readiness layer so the two workflows cannot fight over the same state. Approvals clear the `review: round-*` and `review: limit-reached` labels.
