@@ -10,3 +10,5 @@ First-time contributors get a deliberately narrow lane until the repository has 
 - Documentation-only work, established contributors, and repository collaborators are exempt.
 
 The workflow uses PR metadata and GitHub APIs only. It does not inspect whether code was written by AI and does not execute untrusted code.
+
+Renamed files are classified on both sides (`filename` and `previous_filename`), approval labels (`large-change-approved`, `maintainer-sponsored`) count only on open issues, and a `workflow_dispatch` re-run restricted to the repository default branch lets a maintainer re-evaluate a PR after an issue gains an approval label.
