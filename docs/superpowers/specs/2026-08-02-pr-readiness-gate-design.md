@@ -13,6 +13,8 @@ Prevent human review from starting while admission, CI, or CodeRabbit is incompl
 - `awaiting-maintainer`: every observed check and CodeRabbit status passed.
 - `intake: auto-drafted`: the workflow owns the draft transition and may restore ready-for-review when gates pass.
 
+While the admission check is still running, a PR without `intake: admitted` is classified as `intake: validating` rather than `awaiting-author`, so concurrent admission and readiness runs cannot mislabel a compliant PR or start its inactivity timer.
+
 ## Safety
 
 The workflow uses `pull_request_target` and default-branch scripts only. It never checks out or executes PR-head code. `status` and `check_run` events reconcile quickly; a 15-minute schedule repairs missed events.

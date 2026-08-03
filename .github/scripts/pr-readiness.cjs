@@ -55,8 +55,22 @@ function classifyCheckRuns(checkRuns) {
   return { pending, failed, observed };
 }
 
+function admissionCheckPending(checkRuns) {
+  const admission = (checkRuns || []).find(
+    (check) => normalizeName(check.name) === "PR admission / admission",
+  );
+  return Boolean(admission && admission.status !== "completed");
+}
+
 function assessReadiness({ admissionPassed, statuses = [], checkRuns = [] }) {
   if (!admissionPassed) {
+    if (admissionCheckPending(checkRuns)) {
+      return {
+        state: "validating",
+        failed: [],
+        pending: ["PR admission"],
+      };
+    }
     return {
       state: "author_action",
       failed: ["PR admission"],
@@ -80,6 +94,7 @@ function assessReadiness({ admissionPassed, statuses = [], checkRuns = [] }) {
 module.exports = {
   ACCEPTABLE_CONCLUSIONS,
   BLOCKING_CONCLUSIONS,
+  admissionCheckPending,
   assessReadiness,
   classifyCheckRuns,
   classifyStatuses,
