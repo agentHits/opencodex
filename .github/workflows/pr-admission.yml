@@ -37,6 +37,9 @@ jobs:
             } = require(
               path.join(process.cwd(), ".github", "scripts", "pr-admission.cjs"),
             );
+            const { authorHasPushPermission } = require(
+              path.join(process.cwd(), ".github", "scripts", "pr-quality.cjs"),
+            );
 
             const { owner, repo } = context.repo;
             const pull_number = context.payload.pull_request.number;
@@ -94,10 +97,7 @@ jobs:
               body: pr.body,
               changedFiles: files.map((file) => file.filename),
               linkedIssues,
-              authorHasPushPermission:
-                permission === "admin" ||
-                permission === "maintain" ||
-                permission === "write",
+              authorHasPushPermission: authorHasPushPermission(permission),
             });
 
             async function ensureLabel(name, color, description) {
