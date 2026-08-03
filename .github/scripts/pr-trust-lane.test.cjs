@@ -6,6 +6,7 @@ const {
   MAX_FIRST_TIME_CHANGED_LINES,
   assessTrustLane,
   isFirstTimeContributor,
+  isImplementationPath,
   isRestrictedPath,
 } = require("./pr-trust-lane.cjs");
 
@@ -22,6 +23,10 @@ describe("first-time classification", () => {
     assert.equal(isRestrictedPath("src/oauth/provider.ts"), true);
     assert.equal(isRestrictedPath("package.json"), true);
     assert.equal(isRestrictedPath("src/router.ts"), false);
+  });
+
+  it("classifies bunfig.toml as an implementation file", () => {
+    assert.equal(isImplementationPath("bunfig.toml"), true);
   });
 });
 
@@ -49,9 +54,18 @@ describe("assessTrustLane", () => {
     const failures = assessTrustLane({
       authorAssociation: "FIRST_TIMER",
       files: [{ filename: "src/router.ts", additions: 700, deletions: 0 }],
-      linkedIssues: [{ labels: [{ name: "large-change-approved" }] }],
+      linkedIssues: [{ labels: [{ name: "large-change-approved" }], state: "open" }],
     });
     assert.deepEqual(failures, []);
+  });
+
+  it("rejects approval labels on closed issues", () => {
+    const failures = assessTrustLane({
+      authorAssociation: "FIRST_TIMER",
+      files: [{ filename: "src/router.ts", additions: 700, deletions: 0 }],
+      linkedIssues: [{ labels: [{ name: "large-change-approved" }], state: "closed" }],
+    });
+    assert.equal(failures[0].code, "first_pr_too_large");
   });
 
   it("requires sponsorship for restricted surfaces", () => {
@@ -66,9 +80,18 @@ describe("assessTrustLane", () => {
     const failures = assessTrustLane({
       authorAssociation: "NONE",
       files: [{ filename: "src/oauth/provider.ts", additions: 10, deletions: 2 }],
-      linkedIssues: [{ labels: ["maintainer-sponsored"] }],
+      linkedIssues: [{ labels: ["maintainer-sponsored"], state: "open" }],
     });
     assert.deepEqual(failures, []);
+  });
+
+  it("classifies renamed sources as restricted implementation paths", () => {
+    const failures = assessTrustLane({
+      authorAssociation: "NONE",
+      files: [{ filename: "docs/moved.md", additions: 10, deletions: 2 }],
+      changedFiles: ["docs/moved.md", "src/auth/oauth.ts"],
+    });
+    assert.equal(failures[0].code, "restricted_surface");
   });
 
   it("does not restrict established contributors, maintainers, or docs-only PRs", () => {

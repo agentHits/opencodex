@@ -17,7 +17,7 @@ const RESTRICTED_FILES = new Set([
   "bun.lock",
 ]);
 const IMPLEMENTATION_PREFIXES = ["src/", "gui/", "scripts/", "tests/", "bin/", "packages/", ".github/workflows/"];
-const IMPLEMENTATION_FILES = new Set(["package.json", "bun.lock", "tsconfig.json"]);
+const IMPLEMENTATION_FILES = new Set(["package.json", "bun.lock", "bunfig.toml", "tsconfig.json"]);
 
 function isFirstTimeContributor(authorAssociation) {
   return FIRST_TIME_ASSOCIATIONS.has(String(authorAssociation || "").toUpperCase());
@@ -40,9 +40,10 @@ function changedLines(files) {
 
 function linkedIssueHasLabel(linkedIssues, labelName) {
   return (linkedIssues || []).some((issue) =>
-    (issue.labels || []).some((label) =>
-      (typeof label === "string" ? label : label?.name) === labelName,
-    ),
+    issue.state === "open" &&
+      (issue.labels || []).some((label) =>
+        (typeof label === "string" ? label : label?.name) === labelName,
+      ),
   );
 }
 
@@ -50,11 +51,13 @@ function assessTrustLane({
   authorAssociation,
   authorHasPushPermission = false,
   files = [],
+  changedFiles,
   linkedIssues = [],
   otherOpenImplementationPrs = [],
 }) {
   if (authorHasPushPermission || !isFirstTimeContributor(authorAssociation)) return [];
-  if (!files.some((file) => isImplementationPath(file.filename))) return [];
+  const paths = changedFiles ?? (files || []).map((file) => file.filename);
+  if (!paths.some(isImplementationPath)) return [];
 
   const failures = [];
   if (otherOpenImplementationPrs.length > 0) {
@@ -76,9 +79,7 @@ function assessTrustLane({
     });
   }
 
-  const restricted = files
-    .map((file) => file.filename)
-    .filter(isRestrictedPath);
+  const restricted = paths.filter(isRestrictedPath);
   if (
     restricted.length > 0 &&
     !linkedIssueHasLabel(linkedIssues, "maintainer-sponsored")
