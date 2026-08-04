@@ -163,6 +163,7 @@ import { cancelBodyOnAbort } from "../../lib/abort";
 import {
   createResponsesItemIdPayloadRewrite,
   hasResponsesItemIdRepair,
+  repairResponsesJsonItemIds,
 } from "../responses-item-id-repair";
 import {
   createImageGenCallRestoreRewrite,
@@ -2247,7 +2248,13 @@ async function handleResponsesInner(
         && providerModelResponsesUpstreamStreaming(route.providerName, route.provider, route.modelId) === false
         && route.provider.adapter === "openai-responses") {
         try {
-          const completed = JSON.parse(clientJson) as Record<string, unknown>;
+          let completed = JSON.parse(clientJson) as Record<string, unknown>;
+          // #938: bounded-JSON paths bypass the SSE repair branch, so the same
+          // client-facing id normalization is applied here (raw record already
+          // happened above, before any normalization).
+          if (hasResponsesItemIdRepair(route.provider.responsesItemIdRepair)) {
+            completed = repairResponsesJsonItemIds(completed, route.provider.responsesItemIdRepair!, translatorBudget);
+          }
           const sseHeaders = sanitizePassthroughHeaders(headers);
           sseHeaders.set("content-type", "text/event-stream");
           sseHeaders.set("cache-control", "no-store");
@@ -2260,7 +2267,24 @@ async function handleResponsesInner(
           // Non-JSON despite content-type: fall through to the plain relay.
         }
       }
-      return new Response(clientJson, {
+      // #938: WS turns reframe this JSON into events in the bridge — normalize
+      // ids here so both bounded-JSON paths agree (raw record already happened).
+      const outboundJson = options.inboundTransport === "websocket"
+        && providerModelResponsesUpstreamStreaming(route.providerName, route.provider, route.modelId) === false
+        && hasResponsesItemIdRepair(route.provider.responsesItemIdRepair)
+        ? (() => {
+          try {
+            return JSON.stringify(repairResponsesJsonItemIds(
+              JSON.parse(clientJson) as Record<string, unknown>,
+              route.provider.responsesItemIdRepair!,
+              translatorBudget,
+            ));
+          } catch {
+            return clientJson;
+          }
+        })()
+        : clientJson;
+      return new Response(outboundJson, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
         headers,
