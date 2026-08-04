@@ -313,7 +313,7 @@ export function normalizeUsageEntryForTest(entry: PersistedUsageEntry): Persiste
   return normalizeUsageEntry(entry);
 }
 
-function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
+export function normalizeUsageEntry(entry: PersistedUsageEntry): PersistedUsageEntry {
   const attempts = normalizedAttempts(entry.attempts);
   return {
     requestId: entry.requestId,
