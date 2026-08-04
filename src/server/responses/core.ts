@@ -2243,6 +2243,7 @@ async function handleResponsesInner(
       // terminal → [DONE]) so Codex commits the turn instead of hanging on a
       // stream that never closes. Non-streaming clients keep the plain JSON.
       if (clientRequestedStream === true
+        && options.inboundTransport !== "websocket"
         && providerModelResponsesUpstreamStreaming(route.providerName, route.provider, route.modelId) === false
         && route.provider.adapter === "openai-responses") {
         try {
