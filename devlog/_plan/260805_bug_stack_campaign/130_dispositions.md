@@ -9,7 +9,26 @@ ambiguous cases go back to the user first.
 
 | Item | Action | Evidence to cite in the close comment |
 |------|--------|----------------------------------------|
-| #806 | close | `d52b387db` is an ancestor of `origin/dev` (verified `git merge-base --is-ancestor`); GUI/CLI/docs wording split shipped (`gui/src/i18n/en.ts:1296-1315`) |
+| #806 | **closed 2026-08-05** | `d52b387db` is an ancestor of `origin/dev` (verified `git merge-base --is-ancestor`); GUI/CLI/docs wording split shipped (`gui/src/i18n/en.ts:1296-1315`) |
+
+## Campaign output map (2026-08-05)
+
+| Issue | Successor PR | CI |
+|------:|--------------|----|
+| (400 incident) | #1020 | green |
+| #914 | #1023 | green |
+| #893 | #1025 | green |
+| #875 | #1026 | green |
+| #938 | #1027 | green |
+| #992 | #1028 | green |
+| #1007 | #1029 | green |
+| #1001 | #1030 | green |
+| #907 | #1031 | green (+ jawcode `63aefba` on `codex/gpt-5.6-price-cut-refresh`) |
+| #993 | #1032 | green |
+| #959 | #1033 | green (adopts #961; body says Closes #961) |
+
+Merges are the maintainer's call. Supersede closes below wait for their
+landings and user confirmation.
 
 ## Verification-needed issues — campaign verdicts
 
