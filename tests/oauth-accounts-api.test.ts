@@ -178,7 +178,6 @@ describe("multiauth accounts API", () => {
 
   test("POST import validates provider and accounts payload", async () => {
     const originalFetch = globalThis.fetch;
-    // Mock network fetch for OAuth token endpoint so test does not wait for network timeout
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (urlStr.includes("oauth2.googleapis.com/token")) {
@@ -206,6 +205,14 @@ describe("multiauth accounts API", () => {
         body: JSON.stringify({ provider: "google-antigravity", accounts: [] }),
       });
       expect(emptyAccounts.status).toBe(400);
+
+      const tooManyAccounts = await fetch(new URL("/api/oauth/accounts/import", server.url), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "google-antigravity", accounts: Array(101).fill({ refresh_token: "1//foo" }) }),
+      });
+      expect(tooManyAccounts.status).toBe(400);
+      const tooManyJson = await tooManyAccounts.json() as { error: string };
+      expect(tooManyJson.error).toContain("exceeds maximum limit");
 
       const invalidTokenAndNonObject = await fetch(new URL("/api/oauth/accounts/import", server.url), {
         method: "POST", headers: { "Content-Type": "application/json" },

@@ -952,10 +952,10 @@ export const ja: Record<TKey, string> = {
   "pws.noModels": "このプロバイダーで検出されたモデルはありません。",
   "pws.noModelMatch": "フィルタに一致するモデルがありません。",
   "pws.adapterBaseRequired": "アダプターとベース URL は必須です。",
-  "pws.addAccount":
+  "pws.addAccount": "アカウントを追加",
   "pws.importJson": "JSON をインポート",
   "pws.importJsonCockpit": "JSON をインポート (Cockpit)",
-  "pws.importResultSummary": "{imported} 件のアカウントをインポートしました（失敗: {failed} 件）。", "アカウントを追加",
+  "pws.importResultSummary": "{imported} 件のアカウントをインポートしました（失敗: {failed} 件）。",
   "pws.addKey": "API キーを追加",
   "pws.apiKeys": "API キー",
   "pws.authMode": "認証モード",

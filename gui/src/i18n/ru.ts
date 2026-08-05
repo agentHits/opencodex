@@ -994,10 +994,10 @@ export const ru: Record<TKey, string> = {
   "pws.noModels": "Для этого провайдера модели не обнаружены.",
   "pws.noModelMatch": "Нет моделей, соответствующих фильтру.",
   "pws.adapterBaseRequired": "Укажите адаптер и базовый URL.",
-  "pws.addAccount":
+  "pws.addAccount": "Добавить аккаунт",
   "pws.importJson": "Импортировать JSON",
   "pws.importJsonCockpit": "Импорт JSON (Cockpit)",
-  "pws.importResultSummary": "Импортировано аккаунтов: {imported}, ошибок: {failed}.", "Добавить аккаунт",
+  "pws.importResultSummary": "Импортировано аккаунтов: {imported}, ошибок: {failed}.",
   "pws.addKey": "Добавить API-ключ",
   "pws.apiKeys": "API-ключи",
   "pws.authMode": "Режим аутентификации",

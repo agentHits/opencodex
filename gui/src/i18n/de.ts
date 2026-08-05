@@ -1453,10 +1453,10 @@ export const de: Record<TKey, string> = {
   "pws.noModels": "Keine Modelle für diesen Provider gefunden.",
  "pws.noModelMatch": "Keine Modelle entsprechen dem Filter.",
   "pws.adapterBaseRequired": "Adapter und Basis-URL sind erforderlich.",
-  "pws.addAccount":
+  "pws.addAccount": "Konto hinzufügen",
   "pws.importJson": "JSON importieren",
   "pws.importJsonCockpit": "JSON importieren (Cockpit)",
-  "pws.importResultSummary": "{imported} Konto/en importiert, {failed} fehlgeschlagen.", "Konto hinzufügen",
+  "pws.importResultSummary": "{imported} Konto/en importiert, {failed} fehlgeschlagen.",
   "pws.addKey": "API-Schlüssel hinzufügen",
   "pws.apiKeys": "API-Schlüssel",
   "pws.authMode": "Auth-Modus",

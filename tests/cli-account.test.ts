@@ -1376,5 +1376,20 @@ describe("ocx account CLI (issue #180 matrix)", () => {
     const jsonOutput = await run(["import", "google-antigravity", '[{"email":"user@gmail.com","refresh_token":"1//abc"}]', "--json"]);
     expect(jsonOutput.code).toBe(0);
     expect(jsonOutput.stdout).toContain('"importedCount": 1');
+
+    // Test file-based JSON import
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const filePath = join(tmpdir(), `test-import-${Date.now()}.json`);
+    writeFileSync(filePath, '[{"email":"fileuser@gmail.com","refresh_token":"1//file"}]');
+    try {
+      const fileOk = await run(["import", "google-antigravity", filePath]);
+      expect(fileOk.code).toBe(0);
+      expect(fileOk.stdout).toContain("google-antigravity: imported 1 account(s) successfully");
+      expect(fileOk.stdout).toContain("✓ fileuser@gmail.com");
+    } finally {
+      try { unlinkSync(filePath); } catch {}
+    }
   });
 });

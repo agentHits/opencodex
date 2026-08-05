@@ -398,6 +398,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       return jsonResponse({ error: "account import is currently only supported for google-antigravity" }, 400);
     }
     if (accountEntriesRaw.length === 0) return jsonResponse({ error: "no valid accounts array provided" }, 400);
+    if (accountEntriesRaw.length > 100) return jsonResponse({ error: "batch import exceeds maximum limit of 100 accounts" }, 400);
 
     const { saveCredential, getAccountSet } = await import("../../oauth/store");
     const { refreshAntigravityToken } = await import("../../oauth/google-antigravity");
@@ -431,9 +432,14 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       try {
         const creds = await refreshAntigravityToken(refreshToken);
         if (inputEmail && !creds.email) creds.email = inputEmail;
+        const identity = creds.accountId ?? creds.email;
+        if (!identity) {
+          results.push({ email: inputEmail, status: "failed", error: "account identity required (email or accountId)" });
+          failedCount++;
+          continue;
+        }
         await saveCredential(provider, creds, { preserveIdentityless: true });
         const set = getAccountSet(provider);
-        const identity = creds.accountId ?? creds.email;
         const activeAcc = set?.accounts.find(a => (a.credential.accountId ?? a.credential.email) === identity);
         results.push({ email: creds.email ?? inputEmail, accountId: activeAcc?.id, status: "imported" });
         importedCount++;
