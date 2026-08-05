@@ -27,6 +27,23 @@ ambiguous cases go back to the user first.
 | #993 | #1032 | see 140 |
 | #959 | #1033 | `51c4be686` (adopted #961; #961 closed manually) |
 | (review follow-up) | #1038 | `4cfdc7168` |
+| (review follow-up) | #1040 | `391291013` |
+
+`#1032` landed as `dddc674ca`. All thirteen campaign PRs are merged and every
+merge commit is an ancestor of `origin/dev`.
+
+Both follow-ups came out of adversarial review of the merged stack. #1038
+closed the first round of redaction and lifecycle-identity gaps. #1040 ran
+fifteen further rounds against `redactSecretString`, where every round found a
+credential hidden inside whatever the previous round had chosen to preserve —
+a quoted value, a delimiter, a closing tag, a multipart boundary, a serialized
+sibling. The fix that held was to stop preserving anything: a credential value
+now runs to a boundary the input cannot move, in every framing.
+
+The residual there — confusable coverage is a hand-maintained table rather
+than a UTS #39 skeleton — is recorded as a DRAFT SECURITY ADVISORY rather than
+a public issue, because it describes a redaction weakness rather than a
+shipped fix: `GHSA-8ffg-jp74-rmm2`. Reachability is low and is analyzed there.
 
 Full closeout record, including the two audit rounds that produced #1038:
 `140_closeout_supersede_and_merge.md`.
