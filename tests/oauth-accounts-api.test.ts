@@ -175,6 +175,29 @@ describe("multiauth accounts API", () => {
     }
   });
 
+  test("pool config GET and PUT work for google-antigravity", async () => {
+    const server = startServer(0);
+    try {
+      const getRes = await fetch(new URL("/api/oauth/accounts/pool?provider=google-antigravity", server.url));
+      expect(getRes.status).toBe(200);
+      const getJson = await getRes.json() as { provider: string; enabled: boolean };
+      expect(getJson.provider).toBe("google-antigravity");
+      expect(getJson.enabled).toBe(false);
+
+      const putRes = await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "google-antigravity", enabled: true, autoSwitchThreshold: 85 }),
+      });
+      expect(putRes.status).toBe(200);
+      const putJson = await putRes.json() as { ok: boolean; enabled: boolean; autoSwitchThreshold: number };
+      expect(putJson.ok).toBe(true);
+      expect(putJson.enabled).toBe(true);
+      expect(putJson.autoSwitchThreshold).toBe(85);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("DELETE removes one account; active removal promotes the other", async () => {
     const server = startServer(0);
     try {

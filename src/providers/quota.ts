@@ -568,7 +568,7 @@ export interface ProviderAccountQuota {
 
 /** Providers whose per-account quota can be probed. Extend as other OAuth APIs are covered. */
 export function supportsPerAccountQuota(provider: string): boolean {
-  return provider === "anthropic";
+  return provider === "anthropic" || provider === "google-antigravity";
 }
 
 function accountCacheKey(provider: string, accountId: string): string {
@@ -673,6 +673,56 @@ async function getTokenForAccountQuotaProbe(provider: string, accountId: string)
   return getValidAccessTokenForAccount(provider, accountId);
 }
 
+async function fetchAntigravityQuotaWithToken(
+  accessToken: string,
+  projectId: string,
+  baseUrl = "https://daily-cloudcode-pa.googleapis.com",
+): Promise<ProviderQuota | null> {
+  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1internal:fetchAvailableModels`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": antigravityUserAgent(),
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ project: projectId }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) return null;
+  const body = asRecord(await response.json().catch(() => null));
+  const models = asRecord(body?.models);
+  if (!models) return null;
+
+  const windows = new Map<string, ProviderQuotaWindow>();
+  for (const [modelId, rawModelInfo] of Object.entries(models)) {
+    const modelInfo = asRecord(rawModelInfo);
+    if (!modelInfo) continue;
+    for (const quotaInfo of quotaInfoEntries(modelInfo)) {
+      const label = classifyAntigravityFamily(modelId, modelInfo, quotaInfo);
+      if (!label || windows.has(label)) continue;
+      const percent = antigravityUsedPercent(quotaInfo);
+      if (percent === undefined) continue;
+      windows.set(label, {
+        label,
+        percent,
+        ...(normalizeResetAt(quotaInfo.resetTime) !== undefined ? { resetAt: normalizeResetAt(quotaInfo.resetTime) } : {}),
+      });
+    }
+  }
+
+  const customWindows = ["Gem", "Cla"].flatMap(label => {
+    const window = windows.get(label);
+    return window ? [window] : [];
+  });
+  if (customWindows.length === 0) return null;
+
+  return {
+    customWindows,
+    updatedAt: Date.now(),
+  };
+}
+
 async function fetchAccountQuota(
   provider: string,
   accountId: string,
@@ -688,7 +738,13 @@ async function fetchAccountQuota(
   const probe = (async (): Promise<AccountQuotaCacheEntry> => {
     try {
       const token = await getTokenForAccountQuotaProbe(provider, accountId);
-      const quota = await fetchAnthropicUsageQuota(token);
+      let quota: ProviderQuota | null = null;
+      if (provider === "anthropic") {
+        quota = await fetchAnthropicUsageQuota(token);
+      } else if (provider === "google-antigravity") {
+        const cred = getAccountCredential(provider, accountId);
+        quota = cred?.projectId ? await fetchAntigravityQuotaWithToken(token, cred.projectId) : null;
+      }
       if (!quota) {
         // Preserve last-good bars and mark unavailable; advance TTL so failures
         // negative-cache instead of re-probing on every GUI poll.

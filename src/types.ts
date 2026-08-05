@@ -783,6 +783,12 @@ export interface OcxConfig {
    * Failover on 429 + sticky affinity; new sessions may pick lowest known 5h usage.
    * Experimental — see docs and GUI warning before enabling.
    */
+  googleAntigravityAccountPool?: {
+    enabled?: boolean;
+    autoSwitchThreshold?: number;
+    strategy?: OcxAccountPoolRotationStrategy;
+    stickyLimit?: number;
+  };
   anthropicAccountPool?: {
     enabled?: boolean;
     /** Usage % threshold for new-session auto-pick. Default 80. 0 = disabled (affinity/active only). */

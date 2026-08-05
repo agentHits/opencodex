@@ -289,8 +289,10 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
   // Opt-in Anthropic OAuth account pool (#294): enable/threshold/strategy + clear cooldown.
   if (url.pathname === "/api/oauth/accounts/pool" && req.method === "GET") {
     const provider = (url.searchParams.get("provider") ?? "").trim().toLowerCase();
-    if (provider !== "anthropic") return jsonResponse({ error: "pool config is only supported for anthropic" }, 400);
-    const pool = config.anthropicAccountPool ?? {};
+    if (provider !== "anthropic" && provider !== "google-antigravity") {
+      return jsonResponse({ error: "pool config is only supported for anthropic and google-antigravity" }, 400);
+    }
+    const pool = provider === "google-antigravity" ? (config.googleAntigravityAccountPool ?? {}) : (config.anthropicAccountPool ?? {});
     return jsonResponse({
       provider,
       enabled: pool.enabled === true,
@@ -313,8 +315,11 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       stickyLimit?: unknown;
     };
     const provider = typeof body.provider === "string" ? body.provider.trim().toLowerCase() : "";
-    if (provider !== "anthropic") return jsonResponse({ error: "pool config is only supported for anthropic" }, 400);
-    let enabled = config.anthropicAccountPool?.enabled === true;
+    if (provider !== "anthropic" && provider !== "google-antigravity") {
+      return jsonResponse({ error: "pool config is only supported for anthropic and google-antigravity" }, 400);
+    }
+    const poolKey = provider === "google-antigravity" ? "googleAntigravityAccountPool" : "anthropicAccountPool";
+    let enabled = config[poolKey]?.enabled === true;
     if (body.enabled !== undefined) {
       if (typeof body.enabled !== "boolean") return jsonResponse({ error: "enabled must be a boolean" }, 400);
       enabled = body.enabled;
@@ -347,12 +352,14 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       }
       stickyLimit = parsed;
     }
-    config.anthropicAccountPool = {
+    const poolObj = {
       enabled,
       autoSwitchThreshold: threshold,
       ...(strategy !== undefined ? { strategy } : {}),
       ...(stickyLimit !== undefined ? { stickyLimit } : {}),
     };
+    if (provider === "google-antigravity") config.googleAntigravityAccountPool = poolObj;
+    else config.anthropicAccountPool = poolObj;
     saveConfigPreservingClaudeCode(config);
     reconcileLiveStateStores();
     return jsonResponse({
@@ -369,7 +376,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const body = await readManagementJsonBodyOr(req, {}) as { provider?: unknown; accountId?: unknown };
     const provider = typeof body.provider === "string" ? body.provider.trim().toLowerCase() : "";
     const accountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
-    if (provider !== "anthropic") return jsonResponse({ error: "clear-cooldown is only supported for anthropic" }, 400);
+    if (provider !== "anthropic" && provider !== "google-antigravity") return jsonResponse({ error: "clear-cooldown is supported for anthropic and google-antigravity" }, 400);
     if (!accountId) return jsonResponse({ error: "missing accountId" }, 400);
     const { clearAnthropicAccountCooldown } = await import("../../oauth/anthropic-routing");
     const cleared = clearAnthropicAccountCooldown(accountId);
