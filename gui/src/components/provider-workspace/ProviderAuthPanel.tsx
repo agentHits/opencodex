@@ -312,7 +312,8 @@ export default function ProviderAuthPanel({
                         let parsed: unknown;
                         try {
                           parsed = JSON.parse(text);
-                        } catch {
+                        } catch (err) {
+                        void err;
                           setImportResult({ imported: 0, failed: 1 });
                           return;
                         }
@@ -334,7 +335,8 @@ export default function ProviderAuthPanel({
                         } else {
                           setImportResult({ imported: 0, failed: 1 });
                         }
-                      } catch {
+                      } catch (err) {
+                        void err;
                         setImportResult({ imported: 0, failed: 1 });
                       } finally {
                         setImportBusy(false);

@@ -1389,7 +1389,11 @@ describe("ocx account CLI (issue #180 matrix)", () => {
       expect(fileOk.stdout).toContain("google-antigravity: imported 1 account(s) successfully");
       expect(fileOk.stdout).toContain("✓ fileuser@gmail.com");
     } finally {
-      try { unlinkSync(filePath); } catch {}
+      try {
+        unlinkSync(filePath);
+      } catch (err) {
+        void err;
+      }
     }
   });
 });
