@@ -51,6 +51,10 @@ export default function ProviderAuthPanel({
   const [addingKey, setAddingKey] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
+  const [importingJson, setImportingJson] = useState(false);
+  const [importJsonText, setImportJsonText] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; failed: number } | null>(null);
   const [reserveQuotaSlots, setReserveQuotaSlots] = useState(false);
   const deviceCodeCopy = useCopyFeedback<string>();
 
@@ -278,11 +282,89 @@ export default function ProviderAuthPanel({
             {accountLoadState === "ready" && loggedIn && accounts.length === 0 && (
               <div className="pwi-auth-state pwi-auth-state--empty">{t("pws.noAccounts")}</div>
             )}
-            {loggedIn && (
-              <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
-                onClick={() => void authHandlers.onLogin(item.name, true)} disabled={busy || Boolean(switchingAccountId)}>
-                {t("pws.addAccount")}
-              </button>
+            {importingJson ? (
+              <div className="pwi-auth-add-key" style={{ marginTop: 8, flexDirection: "column", alignItems: "stretch" }}>
+                <textarea
+                  className="input"
+                  rows={4}
+                  value={importJsonText}
+                  onChange={e => setImportJsonText(e.target.value)}
+                  placeholder="[{\"email\":\"user@gmail.com\",\"refresh_token\":\"1//...\"}]"
+                  disabled={importBusy}
+                  style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}
+                />
+                {importResult && (
+                  <div className="muted faint" style={{ fontSize: 12, marginTop: 4 }}>
+                    Imported {importResult.imported} account(s), {importResult.failed} failed.
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={importBusy || !importJsonText.trim()}
+                    onClick={async () => {
+                      const text = importJsonText.trim();
+                      if (!text) return;
+                      setImportBusy(true);
+                      setImportResult(null);
+                      try {
+                        let parsed: unknown;
+                        try {
+                          parsed = JSON.parse(text);
+                        } catch {
+                          setImportResult({ imported: 0, failed: 1 });
+                          return;
+                        }
+                        const res = await fetch(`${apiBase}/api/oauth/accounts/import`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            provider: item.name,
+                            accounts: Array.isArray(parsed) ? parsed : (parsed as { accounts?: unknown })?.accounts ?? parsed,
+                          }),
+                        });
+                        if (res.ok) {
+                          const data = (await res.json()) as { importedCount?: number; failedCount?: number };
+                          setImportResult({ imported: data.importedCount ?? 0, failed: data.failedCount ?? 0 });
+                          if ((data.importedCount ?? 0) > 0) {
+                            setImportJsonText("");
+                            void authHandlers.onRetryAccounts?.(item.name);
+                          }
+                        } else {
+                          setImportResult({ imported: 0, failed: 1 });
+                        }
+                      } catch {
+                        setImportResult({ imported: 0, failed: 1 });
+                      } finally {
+                        setImportBusy(false);
+                      }
+                    }}
+                  >
+                    {importBusy ? t("pws.saving") : "Import JSON"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => { setImportingJson(false); setImportJsonText(""); setImportResult(null); }}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                {loggedIn && (
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => void authHandlers.onLogin(item.name, true)} disabled={busy || Boolean(switchingAccountId)}>
+                    {t("pws.addAccount")}
+                  </button>
+                )}
+                <button type="button" className="btn btn-ghost btn-sm"
+                  onClick={() => setImportingJson(true)} disabled={busy || Boolean(switchingAccountId)}>
+                  Import JSON (Cockpit)
+                </button>
+              </div>
             )}
           </>
         )}

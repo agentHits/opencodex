@@ -376,6 +376,82 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     return jsonResponse({ ok: true, cleared });
   }
 
+  if (url.pathname === "/api/oauth/accounts/import" && req.method === "POST") {
+    const rawBody = await readManagementJsonBodyOr(req, null);
+    let provider = (url.searchParams.get("provider") ?? "").trim().toLowerCase();
+    let accountEntries: Array<Record<string, unknown>> = [];
+
+    if (Array.isArray(rawBody)) {
+      accountEntries = rawBody.filter(isPlainRecord) as Array<Record<string, unknown>>;
+    } else if (isPlainRecord(rawBody)) {
+      if (typeof rawBody.provider === "string" && rawBody.provider.trim()) {
+        provider = rawBody.provider.trim().toLowerCase();
+      }
+      if (Array.isArray(rawBody.accounts)) {
+        accountEntries = rawBody.accounts.filter(isPlainRecord) as Array<Record<string, unknown>>;
+      }
+    }
+
+    if (!provider) provider = "google-antigravity";
+    if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
+    if (accountEntries.length === 0) return jsonResponse({ error: "no valid accounts array provided" }, 400);
+
+    const { saveCredential, getAccountSet } = await import("../../oauth/store");
+    const { refreshAntigravityToken } = await import("../../oauth/google-antigravity");
+    const { clearProviderQuotaCache, clearAccountQuotaCache } = await import("../../providers/quota");
+
+    const results: Array<{ email?: string; accountId?: string; status: "imported" | "failed"; error?: string }> = [];
+    let importedCount = 0;
+    let failedCount = 0;
+
+    for (const entry of accountEntries) {
+      const refreshToken = (
+        (typeof entry.refresh_token === "string" ? entry.refresh_token : "")
+        || (typeof entry.refreshToken === "string" ? entry.refreshToken : "")
+        || (typeof entry.refresh === "string" ? entry.refresh : "")
+      ).trim();
+      const inputEmail = typeof entry.email === "string" ? entry.email.trim().toLowerCase() : undefined;
+
+      if (!refreshToken) {
+        results.push({ email: inputEmail, status: "failed", error: "missing refresh token" });
+        failedCount++;
+        continue;
+      }
+
+      try {
+        if (provider === "google-antigravity") {
+          const creds = await refreshAntigravityToken(refreshToken);
+          if (inputEmail && !creds.email) creds.email = inputEmail;
+          await saveCredential(provider, creds, { preserveIdentityless: true });
+          const set = getAccountSet(provider);
+          const identity = creds.accountId ?? creds.email;
+          const activeAcc = set?.accounts.find(a => (a.credential.accountId ?? a.credential.email) === identity);
+          results.push({ email: creds.email ?? inputEmail, accountId: activeAcc?.id, status: "imported" });
+          importedCount++;
+        } else {
+          results.push({ email: inputEmail, status: "failed", error: `account import not supported for provider ${provider}` });
+          failedCount++;
+        }
+      } catch (err) {
+        results.push({ email: inputEmail, status: "failed", error: err instanceof Error ? err.message : String(err) });
+        failedCount++;
+      }
+    }
+
+    reconcileLiveStateStores();
+    clearProviderQuotaCache();
+    clearAccountQuotaCache(provider);
+
+    return jsonResponse({
+      ok: importedCount > 0,
+      provider,
+      importedCount,
+      failedCount,
+      totalCount: accountEntries.length,
+      results,
+    });
+  }
+
   if (url.pathname === "/api/oauth/accounts/alias" && req.method === "PUT") {
     const body = await readManagementJsonBodyOr(req, {}) as { provider?: unknown; accountId?: unknown; alias?: unknown };
     const provider = typeof body.provider === "string" ? body.provider.trim().toLowerCase() : "";

@@ -175,6 +175,38 @@ describe("multiauth accounts API", () => {
     }
   });
 
+
+  test("POST import validates provider and accounts payload", async () => {
+    const server = startServer(0);
+    try {
+      const badProvider = await fetch(new URL("/api/oauth/accounts/import", server.url), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "not-a-provider", accounts: [{ refresh_token: "1//foo" }] }),
+      });
+      expect(badProvider.status).toBe(400);
+
+      const emptyAccounts = await fetch(new URL("/api/oauth/accounts/import", server.url), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "google-antigravity", accounts: [] }),
+      });
+      expect(emptyAccounts.status).toBe(400);
+
+      const invalidToken = await fetch(new URL("/api/oauth/accounts/import", server.url), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([
+          { email: "bad@example.com", refresh_token: "invalid-token" }
+        ]),
+      });
+      expect(invalidToken.status).toBe(200);
+      const resJson = await invalidToken.json() as { ok: boolean; failedCount: number; results: Array<{ status: string }> };
+      expect(resJson.ok).toBe(false);
+      expect(resJson.failedCount).toBe(1);
+      expect(resJson.results[0]?.status).toBe("failed");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("DELETE removes one account; active removal promotes the other", async () => {
     const server = startServer(0);
     try {

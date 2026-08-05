@@ -2,7 +2,7 @@
 import { loadConfig } from "../config";
 import { providerCodexAccountMode } from "../providers/registry";
 import type { OcxConfig } from "../types";
-import { cmdAddKey, cmdAlias, cmdAutoSwitch, cmdClearCooldown, cmdRefresh, cmdRemove } from "./account-extended";
+import { cmdAddKey, cmdAlias, cmdAutoSwitch, cmdClearCooldown, cmdImport, cmdRefresh, cmdRemove } from "./account-extended";
 import { apiError, apiJson, classifyAccount, fetchRows, proxyUnreachable, resolveBaseUrl, type AccountDeps, type AccountRow, type AccountType, type ApiResult }
   from "./account-api";
 
@@ -25,6 +25,7 @@ const ACCOUNT_USAGE = `Usage:
   ocx account remove <provider> <account-or-key-id|main> --yes [--json]
   ocx account clear-cooldown <provider> <account-id|main> [--json]
   ocx account add-key <provider> [--label <label>] [--json]
+  ocx account import <provider> <file-or-json> [--json]
   ocx account login <provider> [--id <account-id>] [--reauth] [--code -] [--no-wait] [--json]
   ocx account code <provider> [--flow <flow-id>] [--json]   (reads the code from stdin)
   ocx account cancel <provider> [--flow <flow-id>] [--json]
@@ -263,6 +264,7 @@ export async function cmdAccount(args: string[], deps: AccountDeps = {}): Promis
     if (sub === "remove") return await cmdRemove(rest, deps);
     if (sub === "clear-cooldown") return await cmdClearCooldown(rest, deps);
     if (sub === "add-key") return await cmdAddKey(rest, deps);
+    if (sub === "import") return await cmdImport(rest, deps);
     if (sub === "main") {
       const { cmdNativeMainAccount } = await import("./account-main");
       return await cmdNativeMainAccount(rest, deps);

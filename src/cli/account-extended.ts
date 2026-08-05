@@ -348,3 +348,63 @@ export async function cmdAlias(args: string[], deps: AccountDeps): Promise<numbe
   else console.log(alias ? `${name}: ${requestedId} is now “${alias}”` : `${name}: cleared alias for ${requestedId}`);
   return 0;
 }
+
+
+export async function cmdImport(args: string[], deps: AccountDeps): Promise<number> {
+  const wantsJson = flag(args, "--json");
+  const name = args.shift();
+  const input = args.shift();
+  if (!name || !input || args.length) return usage();
+
+  const classified = configAndType(deps, name);
+  if ("error" in classified) return usage(`Error: ${classified.error}`);
+  if (classified.type !== "oauth") {
+    return usage("Error: account import only applies to OAuth providers (such as google-antigravity)");
+  }
+
+  let jsonText = input;
+  const { existsSync, readFileSync } = await import("node:fs");
+  if (existsSync(input)) {
+    try {
+      jsonText = readFileSync(input, "utf8");
+    } catch (err) {
+      return usage(`Error reading file "${input}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (err) {
+    return usage(`Error parsing JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const baseUrl = await resolveBaseUrl(deps);
+  if (!baseUrl) return proxyUnreachable();
+
+  const response = await apiJson(deps, baseUrl, "POST", "/api/oauth/accounts/import", {
+    provider: name,
+    accounts: Array.isArray(parsed) ? parsed : (parsed as { accounts?: unknown })?.accounts ?? parsed,
+  });
+
+  if (response.status === 0) return proxyUnreachable();
+  if (response.status !== 200) return apiError(response.json, `failed to import accounts for ${name}`);
+
+  if (wantsJson) {
+    console.log(JSON.stringify(response.json, null, 2));
+  } else {
+    const imp = response.json.importedCount ?? 0;
+    const fail = response.json.failedCount ?? 0;
+    console.log(`${name}: imported ${imp} account(s) successfully (${fail} failed)`);
+    if (Array.isArray(response.json.results)) {
+      for (const res of response.json.results) {
+        if (res.status === "imported") {
+          console.log(`  ✓ ${res.email ?? res.accountId}`);
+        } else {
+          console.log(`  ✗ ${res.email ?? "account"}: ${res.error}`);
+        }
+      }
+    }
+  }
+  return 0;
+}
