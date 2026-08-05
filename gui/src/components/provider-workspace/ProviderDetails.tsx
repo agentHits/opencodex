@@ -269,7 +269,7 @@ export default function ProviderDetails({
           />
         )}
         {tab === "usage" && (
-          <ProviderUsage item={item} usageTotals={usageTotals} quotaReport={quotaReport} modelUsage={modelUsage} />
+          <ProviderUsage item={item} usageTotals={usageTotals} quotaReport={quotaReport} modelUsage={modelUsage} accounts={accounts} />
         )}
         {tab === "accounts" && (
           <ProviderAuthPanel

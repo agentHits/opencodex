@@ -8,13 +8,14 @@ import QuotaBars from "../QuotaBars";
 import type { WorkspaceItem } from "../../provider-workspace/catalog";
 import { formatRelativeTime, relativeTimeLabelsFromT, formatRequestCount, formatTokenCount, formatCostUsd } from "../../provider-workspace/usage";
 import { accountQuotaFromReport, formatQuotaSourceLabel, type ProviderQuotaReportView } from "../../provider-workspace/report";
-import type { ProviderUsageTotals, ProviderModelUsageRow } from "./types";
+import type { ProviderUsageTotals, ProviderModelUsageRow, OAuthAccountRow } from "./types";
 
-export default function ProviderUsage({ item, usageTotals, quotaReport, modelUsage }: {
+export default function ProviderUsage({ item, usageTotals, quotaReport, modelUsage, accounts }: {
   item: WorkspaceItem;
   usageTotals?: ProviderUsageTotals;
   quotaReport?: ProviderQuotaReportView;
   modelUsage?: ProviderModelUsageRow[];
+  accounts?: OAuthAccountRow[];
 }) {
   const t = useT();
   const { locale } = useI18n();
@@ -22,6 +23,12 @@ export default function ProviderUsage({ item, usageTotals, quotaReport, modelUsa
   const hasUsage = usageTotals?.requests !== undefined;
   const quota = accountQuotaFromReport(quotaReport);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("all");
+
+  const selectedAccount = useMemo(() => {
+    if (!accounts?.length || selectedAccountId === "all") return null;
+    return accounts.find(a => a.id === selectedAccountId) ?? null;
+  }, [accounts, selectedAccountId]);
   void item;
 
   const sortedModels = useMemo(() => {
@@ -45,7 +52,37 @@ export default function ProviderUsage({ item, usageTotals, quotaReport, modelUsa
   return (
     <div className="pws-section">
       <div className="pws-usage-block">
-        <h3 className="pws-section-title">{t("pws.usageLast30d")}</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+          <h3 className="pws-section-title" style={{ margin: 0 }}>{t("pws.usageLast30d")}</h3>
+          {accounts && accounts.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label htmlFor="pws-account-filter" className="muted faint" style={{ fontSize: 13 }}>
+                {t("pws.usageAccountSelector")}:
+              </label>
+              <select
+                id="pws-account-filter"
+                className="select select-sm"
+                value={selectedAccountId}
+                onChange={e => setSelectedAccountId(e.target.value)}
+              >
+                <option value="all">{t("pws.allAccountsCombined")}</option>
+                {accounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.email ?? acc.alias ?? acc.id} {acc.active ? `(${t("prov.accountActive")})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+        {selectedAccount && (
+          <div style={{ marginTop: 8 }}>
+            <span className="badge badge-primary">
+              {selectedAccount.email ?? selectedAccount.alias ?? selectedAccount.id}
+              {selectedAccount.active ? ` · ${t("prov.accountActive")}` : ""}
+            </span>
+          </div>
+        )}
         {hasUsage ? (
           <>
             <div className="pws-usage-metrics pws-usage-metrics-3" role="group" aria-label={t("pws.usageLast30d")}>
