@@ -334,7 +334,8 @@ export const zh: Record<TKey, string> = {
   "prov.removeConfirm": "移除提供方 \"{name}\"？其模型将从 Codex 选择器中消失。",
   "prov.hasApiKey": "已配置 API 密钥",
   "prov.hasHeaders": "已配置自定义请求头",
-  "prov.accounts": "账户（{n}）",
+  "prov.accounts":
+  "prov.expiresAt": "到期时间: {date}", "账户（{n}）",
   "prov.accountsAria": "展开/收起 {name} 账户",
   "prov.accountActive": "使用中",
   "prov.accountReauth": "需重新登录",

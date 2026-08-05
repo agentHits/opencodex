@@ -337,7 +337,8 @@ export const ko: Record<TKey, string> = {
   "prov.removeConfirm": "프로바이더 \"{name}\" 을(를) 삭제할까요? 해당 모델이 Codex 선택기에서 사라집니다.",
   "prov.hasApiKey": "API 키 설정됨",
   "prov.hasHeaders": "커스텀 헤더 설정됨",
-  "prov.accounts": "계정 ({n})",
+  "prov.accounts":
+  "prov.expiresAt": "만료일: {date}", "계정 ({n})",
   "prov.accountsAria": "{name} 계정 목록 열기/닫기",
   "prov.accountActive": "활성",
   "prov.accountReauth": "재로그인",

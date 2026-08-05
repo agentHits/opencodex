@@ -195,6 +195,7 @@ function poolAccountDto(
   const quota = quotaForPlan(quotaResult.quota, account.plan);
   const needsReauth = !hasCredential || quotaResult.needsReauth || isAccountNeedsReauth(account.id);
   const health = projectCodexAccountHealth({ accountId: account.id, needsReauth });
+  const cred = getCodexAccountCredential(account.id);
   return {
     id: account.id,
     email: maskEmail(account.email) ?? account.email,
@@ -206,6 +207,7 @@ function poolAccountDto(
     quota: quota ? { ...quota } : null,
     needsReauth,
     hasCredential,
+    ...(cred?.expiresAt ? { expiresAt: cred.expiresAt } : {}),
     ...(quotaResult.quotaProbeSkipped ? { quotaProbeSkipped: true as const } : {}),
     ...oauthAccountHealthFields("codex", account.id, health),
   };
@@ -647,6 +649,7 @@ export interface CodexAuthAccountDto {
   quota: (StoredAccountQuota | (Omit<StoredAccountQuota, "updatedAt"> & { updatedAt: number })) | null;
   needsReauth?: boolean;
   hasCredential: boolean;
+  expiresAt?: number;
   health: OAuthAccountHealth;
   healthLabel: OAuthHealthLabel;
   healthSummary: string;

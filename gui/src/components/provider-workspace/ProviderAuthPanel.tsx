@@ -217,7 +217,16 @@ export default function ProviderAuthPanel({
                       <span className={`pwi-auth-dot ${showReauth ? "pwi-auth-dot--warn" : account.active ? "pwi-auth-dot--ok" : "pwi-auth-dot--off"}`} aria-hidden="true" />
                       <span className="pwi-auth-row-copy">
                         <span className="pwi-auth-row-label">{label}</span>
-                        <span className="pwi-auth-row-secondary">{[account.email, `${t("prov.accountId")}: ${maskedId}`].filter(Boolean).join(" · ")}</span>
+                        <span className="pwi-auth-row-secondary">{(() => {
+                          const parts = [account.email, `${t("prov.accountId")}: ${maskedId}`];
+                          if (typeof account.expiresAt === "number" && account.expiresAt > 0) {
+                            const expDate = new Date(account.expiresAt);
+                            if (!Number.isNaN(expDate.getTime())) {
+                              parts.push(t("prov.expiresAt", { date: expDate.toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" }) }));
+                            }
+                          }
+                          return parts.filter(Boolean).join(" · ");
+                        })()}</span>
                         {healthSummary && (
                           <span className="pwi-auth-row-secondary faint">{healthSummary}</span>
                         )}

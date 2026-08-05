@@ -345,7 +345,8 @@ export const en = {
   "prov.removeConfirm": "Remove provider \"{name}\"? Its models disappear from Codex's picker.",
   "prov.hasApiKey": "api key configured",
   "prov.hasHeaders": "custom headers configured",
-  "prov.accounts": "Accounts ({n})",
+  "prov.accounts":
+  "prov.expiresAt": "Expires: {date}", "Accounts ({n})",
   "prov.accountsAria": "Toggle {name} accounts",
   "prov.accountActive": "Active",
   "prov.accountReauth": "Re-login",

@@ -334,7 +334,8 @@ export const ja: Record<TKey, string> = {
   "prov.removeConfirm": "プロバイダー \"{name}\" を削除しますか? そのモデルは Codex のピッカーから消えます。",
   "prov.hasApiKey": "API キー設定済み",
   "prov.hasHeaders": "カスタムヘッダー設定済み",
-  "prov.accounts": "アカウント ({n})",
+  "prov.accounts":
+  "prov.expiresAt": "有効期限: {date}", "アカウント ({n})",
   "prov.accountsAria": "{name} のアカウントを切り替え",
   "prov.accountActive": "アクティブ",
   "prov.accountReauth": "再ログイン",

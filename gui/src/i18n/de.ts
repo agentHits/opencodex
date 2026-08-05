@@ -328,7 +328,8 @@ export const de: Record<TKey, string> = {
   "prov.removeConfirm": "Anbieter \"{name}\" entfernen? Seine Modelle verschwinden aus Codex’ Auswahl.",
   "prov.hasApiKey": "API-Schlüssel konfiguriert",
   "prov.hasHeaders": "benutzerdefinierte Header konfiguriert",
-  "prov.accounts": "Konten ({n})",
+  "prov.accounts":
+  "prov.expiresAt": "Läuft ab: {date}", "Konten ({n})",
   "prov.accountsAria": "{name}-Konten umschalten",
   "prov.accountActive": "Aktiv",
   "prov.accountReauth": "Erneut anmelden",

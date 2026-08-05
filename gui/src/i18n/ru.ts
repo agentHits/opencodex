@@ -339,7 +339,8 @@ export const ru: Record<TKey, string> = {
   "prov.removeConfirm": "Удалить провайдера \"{name}\"? Его модели исчезнут из селектора моделей Codex.",
   "prov.hasApiKey": "API-ключ настроен",
   "prov.hasHeaders": "настроены пользовательские заголовки",
-  "prov.accounts": "Аккаунты ({n})",
+  "prov.accounts":
+  "prov.expiresAt": "Истекает: {date}", "Аккаунты ({n})",
   "prov.accountsAria": "Показать или скрыть аккаунты {name}",
   "prov.accountActive": "Активен",
   "prov.accountReauth": "Повторный вход",

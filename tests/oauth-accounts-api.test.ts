@@ -64,6 +64,7 @@ describe("multiauth accounts API", () => {
       const emails = body.accounts.map(a => a.email ?? "");
       expect(emails.some(e => e.includes("first@example.com"))).toBe(false); // masked
       expect(body.accounts.find(a => a.id === "aaaa1111")?.active).toBe(true);
+      expect(body.accounts.find(a => a.id === "aaaa1111")?.expiresAt).toBe(9999999999999);
       const raw = JSON.stringify(body);
       expect(raw.includes("t1")).toBe(false); // no tokens
     } finally {

@@ -1,4 +1,4 @@
-import { useT } from "../i18n/shared";
+import { useT, useI18n } from "../i18n/shared";
 import { IconAlert, IconPause, IconPlay, IconX } from "../icons";
 import { displayAccountId } from "../lib/privacy";
 import type { CodexAccountEntry } from "./codex-account-pool-types";
@@ -49,6 +49,7 @@ export function CodexAccountPoolCards({
   doctorCopyOutcomeFor?: (accountId: string) => "copied" | "unavailable" | null;
 }) {
   const t = useT();
+  const { locale } = useI18n();
   const isNext = (account: CodexAccountEntry) => !account.paused && activeId === account.id;
 
   return (
@@ -125,7 +126,16 @@ export function CodexAccountPoolCards({
               <IconX width={14} />
             </button>
           </div>
-          <div className="card-sub">{a.email}{a.plan ? ` · ${a.plan}` : ""} · {t("prov.accountId")}: {displayAccountId(a.id)}</div>
+          <div className="card-sub">{(() => {
+            const parts = [a.email, a.plan ? a.plan : "", `${t("prov.accountId")}: ${displayAccountId(a.id)}`].filter(Boolean);
+            if (typeof a.expiresAt === "number" && a.expiresAt > 0) {
+              const expDate = new Date(a.expiresAt);
+              if (!Number.isNaN(expDate.getTime())) {
+                parts.push(t("prov.expiresAt", { date: expDate.toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" }) }));
+              }
+            }
+            return parts.join(" · ");
+          })()}</div>
           {healthSummary && (
             <div className="card-sub faint">{healthSummary}</div>
           )}
@@ -156,6 +166,7 @@ export function CodexAccountPoolReauthBanner({
   onReauth: () => void;
 }) {
   const t = useT();
+  const { locale } = useI18n();
   return (
     <div className="notice-warn" style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
       <span><IconAlert width={14} /> {t("codexAuth.tokenExpired")}</span>
