@@ -616,7 +616,11 @@ export const ja: Record<TKey, string> = {
   "usage.empty": "まだ使用量が記録されていません。プロキシ経由でリクエストを送信するとここにアクティビティが表示されます。",
   "usage.loadError": "使用量データを読み込めませんでした。",
   "usage.range.all": "すべて",
-  "usage.range.available": "利用可能な履歴",
+  "usage.range.available":
+  "usage.range.1d": "今日",
+  "usage.range.yesterday": "昨日",
+  "usage.filterByDate": "{date} でフィルタ中",
+  "usage.clearDateFilter": "日付フィルタを解除", "利用可能な履歴",
   "usage.historyTruncated": "古い利用履歴が読み込まれていないため、合計は利用可能な履歴のみを対象とします。",
   "usage.range.30d": "30日",
   "usage.range.7d": "7日",

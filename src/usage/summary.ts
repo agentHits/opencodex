@@ -4,7 +4,7 @@ import { usageDisplayTotalTokens } from "./totals";
 import type { PersistedUsageEntry, UsageStatus } from "./log";
 import { estimateComboCost, estimateRequestCost, serviceTierContext } from "./cost";
 
-export type UsageRange = "7d" | "30d" | "all";
+export type UsageRange = "1d" | "yesterday" | "7d" | "30d" | "all";
 export type UsageSurface = "all" | "codex" | "claude" | "grok";
 
 export interface UsageSummaryTotals {
@@ -104,7 +104,9 @@ function retainedBreakdownRows<T>(
 }
 
 export function parseRange(input: string | null | undefined): UsageRange {
-  if (input === "7d" || input === "30d" || input === "all") return input;
+  if (input === "1d" || input === "today" || input === "yesterday" || input === "7d" || input === "30d" || input === "all") {
+    return input === "today" ? "1d" : input;
+  }
   return "30d";
 }
 
@@ -113,7 +115,9 @@ export function parseUsageSurface(input: string | null | undefined): UsageSurfac
   return "all";
 }
 
-function rangeWindow(range: UsageRange, now: number): { since: number | null; days: number } {
+function rangeWindow(range: UsageRange, now: number): { since: number | null; until?: number | null; days: number } {
+  if (range === "1d") return { since: now - DAY_MS, days: 1 };
+  if (range === "yesterday") return { since: now - 2 * DAY_MS, until: now - DAY_MS, days: 1 };
   if (range === "7d") return { since: now - 7 * DAY_MS, days: 7 };
   if (range === "30d") return { since: now - 30 * DAY_MS, days: 30 };
   return { since: null, days: 0 };
@@ -553,9 +557,10 @@ export function summarizeUsage(
   now: number,
   surface: UsageSurface = "all",
 ): UsageSummary {
-  const { since } = rangeWindow(range, now);
+  const { since, until } = rangeWindow(range, now);
   const filteredEntries = entries.filter(entry => {
     if (since !== null && entry.timestamp < since) return false;
+    if (until !== undefined && until !== null && entry.timestamp >= until) return false;
     if (surface === "claude") return entry.surface === "claude" || entry.surface === "claude-desktop";
     if (surface === "grok") return entry.surface === "grok";
     // Codex = the historical unlabelled bucket. Before the grok tag existed every

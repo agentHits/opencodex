@@ -105,7 +105,7 @@ function usageSummaryExpiresAt(
   now: number,
 ): number {
   let expiresAt = nextLocalMidnight(now);
-  const windowMs = range === "7d" ? 7 * USAGE_DAY_MS : range === "30d" ? 30 * USAGE_DAY_MS : null;
+  const windowMs = range === "1d" ? USAGE_DAY_MS : range === "yesterday" ? 2 * USAGE_DAY_MS : range === "7d" ? 7 * USAGE_DAY_MS : range === "30d" ? 30 * USAGE_DAY_MS : null;
   if (windowMs === null) return expiresAt;
   for (const entry of entries) {
     if (!usageEntryMatchesSurface(entry, surface)) continue;
@@ -116,7 +116,7 @@ function usageSummaryExpiresAt(
 }
 
 function refreshedUsageSummary<T extends UsageSummary & { historyTruncated: boolean }>(summary: T, range: UsageRange, now: number): T {
-  const since = range === "7d" ? now - 7 * USAGE_DAY_MS : range === "30d" ? now - 30 * USAGE_DAY_MS : null;
+  const since = range === "1d" ? now - USAGE_DAY_MS : range === "yesterday" ? now - 2 * USAGE_DAY_MS : range === "7d" ? now - 7 * USAGE_DAY_MS : range === "30d" ? now - 30 * USAGE_DAY_MS : null;
   return { ...summary, since, generatedAt: now };
 }
 

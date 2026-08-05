@@ -648,7 +648,11 @@ export const ru: Record<TKey, string> = {
   "usage.empty": "Данных об использовании пока нет. Отправьте запрос через прокси, чтобы увидеть здесь активность.",
   "usage.loadError": "Не удалось загрузить данные об использовании.",
   "usage.range.all": "Все",
-  "usage.range.available": "Доступная история",
+  "usage.range.available":
+  "usage.range.1d": "Сегодня",
+  "usage.range.yesterday": "Вчера",
+  "usage.filterByDate": "Фильтр по дате: {date}",
+  "usage.clearDateFilter": "Сбросить фильтр по дате", "Доступная история",
   "usage.historyTruncated": "Итоги охватывают только доступную историю, поскольку старые данные не загружены.",
   "usage.range.30d": "30 дн.",
   "usage.range.7d": "7 дн.",

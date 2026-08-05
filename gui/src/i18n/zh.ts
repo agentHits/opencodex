@@ -642,7 +642,11 @@ export const zh: Record<TKey, string> = {
   "usage.empty": "尚无用量记录。通过代理发送请求后将在此显示。",
   "usage.loadError": "无法加载用量数据。",
   "usage.range.all": "全部",
-  "usage.range.available": "可用历史",
+  "usage.range.available":
+  "usage.range.1d": "今天",
+  "usage.range.yesterday": "昨天",
+  "usage.filterByDate": "按日期筛选: {date}",
+  "usage.clearDateFilter": "清除日期筛选", "可用历史",
   "usage.historyTruncated": "由于未加载较早的使用记录，合计仅涵盖可用历史。",
   "usage.range.30d": "30 天",
   "usage.range.7d": "7 天",

@@ -10,7 +10,7 @@ import { DataSurfaceSkeleton } from "../components/data-surface";
 import { SectionTabs } from "../components/section-tabs";
 import { sectionAnchorId } from "../section-anchors";
 
-type Range = "all" | "30d" | "7d";
+type Range = "all" | "30d" | "7d" | "yesterday" | "1d";
 type UsageSurface = "all" | "codex" | "claude" | "grok";
 
 interface UsageSummaryTotals {
@@ -244,7 +244,7 @@ function UsageFilters({
         })}
       </div>
       <div className="usage-segmented" role="group" aria-label={t("usage.title")}>
-        {(["all", "30d", "7d"] as Range[]).map(choice => {
+        {(["all", "30d", "7d", "yesterday", "1d"] as Range[]).map(choice => {
           const label = choice === "all" ? t("usage.range.available") : t(`usage.range.${choice}`);
           return (
             <button

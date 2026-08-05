@@ -23,7 +23,10 @@ function entry(overrides: Partial<PersistedUsageEntry> & { ts: number }): Persis
 }
 
 describe("parseRange", () => {
-  test("accepts 7d / 30d / all", () => {
+  test("accepts 1d / yesterday / 7d / 30d / all", () => {
+    expect(parseRange("1d")).toBe("1d");
+    expect(parseRange("today")).toBe("1d");
+    expect(parseRange("yesterday")).toBe("yesterday");
     expect(parseRange("7d")).toBe("7d");
     expect(parseRange("30d")).toBe("30d");
     expect(parseRange("all")).toBe("all");
@@ -702,6 +705,24 @@ describe("summarizeUsage", () => {
       attemptCount: 5,
       totalTokens: 10,
     });
+  });
+
+
+  test("1d and yesterday ranges filter entries by day window", () => {
+    const DAY_MS = 86_400_000;
+    const entries: PersistedUsageEntry[] = [
+      entry({ ts: FIXED_NOW - 1000, usageStatus: "reported", usage: { inputTokens: 10, outputTokens: 5 }, totalTokens: 15 }),
+      entry({ ts: FIXED_NOW - (DAY_MS + 1000), usageStatus: "reported", usage: { inputTokens: 20, outputTokens: 10 }, totalTokens: 30 }),
+      entry({ ts: FIXED_NOW - (3 * DAY_MS), usageStatus: "reported", usage: { inputTokens: 40, outputTokens: 20 }, totalTokens: 60 }),
+    ];
+
+    const today = summarizeUsage(entries, "1d", FIXED_NOW);
+    expect(today.summary.requests).toBe(1);
+    expect(today.summary.totalTokens).toBe(15);
+
+    const yesterday = summarizeUsage(entries, "yesterday", FIXED_NOW);
+    expect(yesterday.summary.requests).toBe(1);
+    expect(yesterday.summary.totalTokens).toBe(30);
   });
 
 });

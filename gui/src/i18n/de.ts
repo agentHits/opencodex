@@ -627,7 +627,11 @@ export const de: Record<TKey, string> = {
   "usage.empty": "Noch keine Nutzung erfasst. Sende eine Anfrage über den Proxy, um Aktivität hier zu sehen.",
   "usage.loadError": "Nutzungsdaten konnten nicht geladen werden.",
   "usage.range.all": "Alle",
-  "usage.range.available": "Verfügbarer Verlauf",
+  "usage.range.available":
+  "usage.range.1d": "Heute",
+  "usage.range.yesterday": "Gestern",
+  "usage.filterByDate": "Gefiltered nach {date}",
+  "usage.clearDateFilter": "Datumsfilter zurücksetzen", "Verfügbarer Verlauf",
   "usage.historyTruncated": "Die Summen beziehen sich nur auf den verfügbaren Verlauf, da ältere Nutzungsdaten nicht geladen wurden.",
   "usage.range.30d": "30d",
   "usage.range.7d": "7d",

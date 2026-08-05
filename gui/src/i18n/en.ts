@@ -658,7 +658,11 @@ export const en = {
   "usage.empty": "No usage recorded yet. Send a request through the proxy to see activity here.",
   "usage.loadError": "Could not load usage data.",
   "usage.range.all": "All",
-  "usage.range.available": "Available history",
+  "usage.range.available":
+  "usage.range.1d": "Today",
+  "usage.range.yesterday": "Yesterday",
+  "usage.filterByDate": "Filtered for {date}",
+  "usage.clearDateFilter": "Clear date filter", "Available history",
   "usage.historyTruncated": "Totals cover available history only because older usage was not loaded.",
   "usage.range.30d": "30d",
   "usage.range.7d": "7d",
