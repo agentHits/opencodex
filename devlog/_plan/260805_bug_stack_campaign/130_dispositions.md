@@ -13,22 +13,23 @@ ambiguous cases go back to the user first.
 
 ## Campaign output map (2026-08-05)
 
-| Issue | Successor PR | CI |
-|------:|--------------|----|
-| (400 incident) | #1020 | green |
-| #914 | #1023 | green |
-| #893 | #1025 | green |
-| #875 | #1026 | green |
-| #938 | #1027 | green |
-| #992 | #1028 | green |
-| #1007 | #1029 | green |
-| #1001 | #1030 | green |
-| #907 | #1031 | green (+ jawcode `63aefba` on `codex/gpt-5.6-price-cut-refresh`) |
-| #993 | #1032 | green |
-| #959 | #1033 | green (adopts #961; body says Closes #961) |
+| Issue | Successor PR | Landed on `dev` |
+|------:|--------------|-----------------|
+| (400 incident) | #1020 | `ab5b20ca4` |
+| #914 | #1023 | `af100ec93` |
+| #893 | #1025 | `064686b41` |
+| #875 | #1026 | `c1e9a204b` |
+| #938 | #1027 | `2d7aa907c` |
+| #992 | #1028 | `02dbcff9c` |
+| #1007 | #1029 | `cc10b3fe9` |
+| #1001 | #1030 | `79f0fa508` |
+| #907 | #1031 | `27efe1940` (+ jawcode `63aefba` pushed to `codex/gpt-5.6-price-cut-refresh`) |
+| #993 | #1032 | see 140 |
+| #959 | #1033 | `51c4be686` (adopted #961; #961 closed manually) |
+| (review follow-up) | #1038 | `4cfdc7168` |
 
-Merges are the maintainer's call. Supersede closes below wait for their
-landings and user confirmation.
+Full closeout record, including the two audit rounds that produced #1038:
+`140_closeout_supersede_and_merge.md`.
 
 ## Verification-needed issues — campaign verdicts
 
@@ -50,11 +51,16 @@ with the reason. "The linked issue is fixed" alone is never sufficient.
 
 | PR | Successor | Equivalence basis (from the decade docs) | Disposition when landed |
 |---:|-----------|------------------------------------------|-------------------------|
-| #966, #922 | 030 (#914) | #966 closest semantic source (classifier/retry extracted, sidecar blast radius excluded); #922 not equivalent (policy expansions rejected) | close with pointer, user confirm |
-| #928 | 040 (#893) | field-only normalization ≠ commitment; event-synthesis design recorded | close with pointer, user confirm |
-| #940 | 060 (#938) | ID-prefix idea equivalent; 750-line bundle's extra mechanisms deliberately excluded, named in the close comment | close with pointer, user confirm |
-| #1006 | 050 (#875) | core policy adopted (bounded upstream JSON), diff superseded with attribution | adopt-or-close at that cycle's P |
-| #961 | 120 (#959) | ADOPTED, not superseded — authorship preserved, hardening slice added | review forward, not close |
+| #966, #922 | 030 (#914) | #966 closest semantic source (classifier/retry extracted, sidecar blast radius excluded); #922 not equivalent (policy expansions rejected) | **closed 2026-08-05** |
+| #928 | 040 (#893) | field-only normalization ≠ commitment; event-synthesis design recorded | **closed 2026-08-05** |
+| #940 | 060 (#938) | ID-prefix idea equivalent; the rest of the bundle deliberately excluded, named in the close comment | **closed 2026-08-05** |
+| #1006 | 050 (#875) | core policy adopted (bounded upstream JSON), diff superseded with attribution | **closed 2026-08-05** |
+| #961 | 120 (#959) | ADOPTED, not superseded — authorship preserved (`71ac00af8f82`, `e56dfbdc1bc8`), hardening slice added | **closed 2026-08-05 after #1033 landed** — manually, since a closing keyword does not close a PR |
+
+All five closes were made BEFORE their successors landed, on the user's
+instruction, and each comment said so explicitly: successor number, its audited
+head SHA, and the statement that it was open and unmerged with revalidation
+pending. Every successor subsequently landed, so no reopen was needed.
 
 ## Stale/broken PRs outside the stack
 
