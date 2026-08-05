@@ -177,6 +177,16 @@ describe("multiauth accounts API", () => {
 
 
   test("POST import validates provider and accounts payload", async () => {
+    const originalFetch = globalThis.fetch;
+    // Mock network fetch for OAuth token endpoint so test does not wait for network timeout
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (urlStr.includes("oauth2.googleapis.com/token")) {
+        return new Response(JSON.stringify({ error: "invalid_grant", error_description: "Invalid refresh token" }), { status: 400 });
+      }
+      return originalFetch(input, init);
+    }) as typeof globalThis.fetch;
+
     const server = startServer(0);
     try {
       const badProvider = await fetch(new URL("/api/oauth/accounts/import", server.url), {
@@ -185,24 +195,35 @@ describe("multiauth accounts API", () => {
       });
       expect(badProvider.status).toBe(400);
 
+      const nonAntigravityProvider = await fetch(new URL("/api/oauth/accounts/import", server.url), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "anthropic", accounts: [{ refresh_token: "1//foo" }] }),
+      });
+      expect(nonAntigravityProvider.status).toBe(400);
+
       const emptyAccounts = await fetch(new URL("/api/oauth/accounts/import", server.url), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: "google-antigravity", accounts: [] }),
       });
       expect(emptyAccounts.status).toBe(400);
 
-      const invalidToken = await fetch(new URL("/api/oauth/accounts/import", server.url), {
+      const invalidTokenAndNonObject = await fetch(new URL("/api/oauth/accounts/import", server.url), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify([
+          "not-an-object",
           { email: "bad@example.com", refresh_token: "invalid-token" }
         ]),
       });
-      expect(invalidToken.status).toBe(200);
-      const resJson = await invalidToken.json() as { ok: boolean; failedCount: number; results: Array<{ status: string }> };
+      expect(invalidTokenAndNonObject.status).toBe(200);
+      const resJson = await invalidTokenAndNonObject.json() as { ok: boolean; totalCount: number; failedCount: number; results: Array<{ status: string; error?: string }> };
       expect(resJson.ok).toBe(false);
-      expect(resJson.failedCount).toBe(1);
+      expect(resJson.totalCount).toBe(2);
+      expect(resJson.failedCount).toBe(2);
       expect(resJson.results[0]?.status).toBe("failed");
+      expect(resJson.results[0]?.error).toBe("invalid account object");
+      expect(resJson.results[1]?.status).toBe("failed");
     } finally {
+      globalThis.fetch = originalFetch;
       await server.stop(true);
     }
   });

@@ -1004,7 +1004,10 @@ export const en = {
   "pws.noModels": "No models discovered for this provider.",
  "pws.noModelMatch": "No models match the filter.",
   "pws.adapterBaseRequired": "Adapter and base URL are required.",
-  "pws.addAccount": "Add account",
+  "pws.addAccount":
+  "pws.importJson": "Import JSON",
+  "pws.importJsonCockpit": "Import JSON (Cockpit)",
+  "pws.importResultSummary": "Imported {imported} account(s), {failed} failed.", "Add account",
   "pws.addKey": "Add API key",
   "pws.apiKeys": "API Keys",
   "pws.authMode": "Auth mode",

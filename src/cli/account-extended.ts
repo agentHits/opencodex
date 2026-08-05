@@ -20,7 +20,8 @@ const EXTENDED_USAGE = `Usage:
   ocx account alias <provider> <id|main> <display-name|-> [--json]
   ocx account remove <provider> <id|main> --yes [--json]
   ocx account clear-cooldown <provider> <id|main> [--json]
-  ocx account add-key <provider> [--label <label>] [--json]`;
+  ocx account add-key <provider> [--label <label>] [--json]
+  ocx account import <provider> <file-or-json> [--json]`;
 const PIPE_GUIDANCE = `Pipe the API key on stdin, for example:
   ocx account add-key <provider> <<< "$MY_KEY"
   security find-generic-password -w <item> | ocx account add-key <provider>`;

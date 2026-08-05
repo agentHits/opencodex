@@ -1480,7 +1480,10 @@ export const ko: Record<TKey, string> = {
   "pws.noModels": "이 프로바이더에서 발견된 모델이 없습니다.",
  "pws.noModelMatch": "필터와 일치하는 모델이 없습니다.",
   "pws.adapterBaseRequired": "어댑터와 기본 URL은 필수입니다.",
-  "pws.addAccount": "계정 추가",
+  "pws.addAccount":
+  "pws.importJson": "JSON 가져오기",
+  "pws.importJsonCockpit": "JSON 가져오기 (Cockpit)",
+  "pws.importResultSummary": "{imported}개 계정을 가져왔습니다 ({failed}개 실패).", "계정 추가",
   "pws.addKey": "API 키 추가",
   "pws.apiKeys": "API 키",
   "pws.authMode": "인증 방식",

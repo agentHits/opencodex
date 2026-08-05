@@ -379,22 +379,25 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
   if (url.pathname === "/api/oauth/accounts/import" && req.method === "POST") {
     const rawBody = await readManagementJsonBodyOr(req, null);
     let provider = (url.searchParams.get("provider") ?? "").trim().toLowerCase();
-    let accountEntries: Array<Record<string, unknown>> = [];
+    let accountEntriesRaw: unknown[] = [];
 
     if (Array.isArray(rawBody)) {
-      accountEntries = rawBody.filter(isPlainRecord) as Array<Record<string, unknown>>;
+      accountEntriesRaw = rawBody;
     } else if (isPlainRecord(rawBody)) {
       if (typeof rawBody.provider === "string" && rawBody.provider.trim()) {
         provider = rawBody.provider.trim().toLowerCase();
       }
       if (Array.isArray(rawBody.accounts)) {
-        accountEntries = rawBody.accounts.filter(isPlainRecord) as Array<Record<string, unknown>>;
+        accountEntriesRaw = rawBody.accounts;
       }
     }
 
     if (!provider) provider = "google-antigravity";
     if (!isPublicOAuthProvider(provider)) return jsonResponse({ error: "unknown oauth provider" }, 400);
-    if (accountEntries.length === 0) return jsonResponse({ error: "no valid accounts array provided" }, 400);
+    if (provider !== "google-antigravity") {
+      return jsonResponse({ error: "account import is currently only supported for google-antigravity" }, 400);
+    }
+    if (accountEntriesRaw.length === 0) return jsonResponse({ error: "no valid accounts array provided" }, 400);
 
     const { saveCredential, getAccountSet } = await import("../../oauth/store");
     const { refreshAntigravityToken } = await import("../../oauth/google-antigravity");
@@ -404,7 +407,14 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     let importedCount = 0;
     let failedCount = 0;
 
-    for (const entry of accountEntries) {
+    for (const rawItem of accountEntriesRaw) {
+      if (!isPlainRecord(rawItem)) {
+        results.push({ status: "failed", error: "invalid account object" });
+        failedCount++;
+        continue;
+      }
+
+      const entry = rawItem as Record<string, unknown>;
       const refreshToken = (
         (typeof entry.refresh_token === "string" ? entry.refresh_token : "")
         || (typeof entry.refreshToken === "string" ? entry.refreshToken : "")
@@ -419,19 +429,14 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       }
 
       try {
-        if (provider === "google-antigravity") {
-          const creds = await refreshAntigravityToken(refreshToken);
-          if (inputEmail && !creds.email) creds.email = inputEmail;
-          await saveCredential(provider, creds, { preserveIdentityless: true });
-          const set = getAccountSet(provider);
-          const identity = creds.accountId ?? creds.email;
-          const activeAcc = set?.accounts.find(a => (a.credential.accountId ?? a.credential.email) === identity);
-          results.push({ email: creds.email ?? inputEmail, accountId: activeAcc?.id, status: "imported" });
-          importedCount++;
-        } else {
-          results.push({ email: inputEmail, status: "failed", error: `account import not supported for provider ${provider}` });
-          failedCount++;
-        }
+        const creds = await refreshAntigravityToken(refreshToken);
+        if (inputEmail && !creds.email) creds.email = inputEmail;
+        await saveCredential(provider, creds, { preserveIdentityless: true });
+        const set = getAccountSet(provider);
+        const identity = creds.accountId ?? creds.email;
+        const activeAcc = set?.accounts.find(a => (a.credential.accountId ?? a.credential.email) === identity);
+        results.push({ email: creds.email ?? inputEmail, accountId: activeAcc?.id, status: "imported" });
+        importedCount++;
       } catch (err) {
         results.push({ email: inputEmail, status: "failed", error: err instanceof Error ? err.message : String(err) });
         failedCount++;
@@ -447,7 +452,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       provider,
       importedCount,
       failedCount,
-      totalCount: accountEntries.length,
+      totalCount: accountEntriesRaw.length,
       results,
     });
   }

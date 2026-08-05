@@ -206,7 +206,32 @@ async function mockManagementApi(req: Request): Promise<Response> {
     return json({ ok: true, activeAccountId: accountId });
   }
 
-  if (req.method === "PUT" && url.pathname === "/api/oauth/accounts/alias") {
+  if (req.method === "POST" && url.pathname === "/api/oauth/accounts/import") {
+    const payload = body as { provider?: string; accounts?: Array<{ email?: string; refresh_token?: string }> };
+    if (payload.provider !== "google-antigravity") {
+      return json({ error: "account import is currently only supported for google-antigravity" }, 400);
+    }
+    const accounts = payload.accounts ?? [];
+    if (!Array.isArray(accounts) || accounts.length === 0) {
+      return json({ error: "no valid accounts array provided" }, 400);
+    }
+    const importedCount = accounts.filter(a => a && typeof a === "object" && typeof (a as { refresh_token?: string }).refresh_token === "string" && (a as { refresh_token: string }).refresh_token.startsWith("1//")).length;
+    const failedCount = accounts.length - importedCount;
+    return json({
+      ok: importedCount > 0,
+      provider: payload.provider,
+      importedCount,
+      failedCount,
+      totalCount: accounts.length,
+      results: accounts.map(a => ({
+        email: (a && typeof a === "object" && (a as { email?: string }).email) || "imported@example.com",
+        status: (a && typeof a === "object" && typeof (a as { refresh_token?: string }).refresh_token === "string" && (a as { refresh_token: string }).refresh_token.startsWith("1//")) ? "imported" : "failed",
+        error: (a && typeof a === "object" && typeof (a as { refresh_token?: string }).refresh_token === "string" && (a as { refresh_token: string }).refresh_token.startsWith("1//")) ? undefined : "invalid refresh token",
+      })),
+    });
+  }
+
+    if (req.method === "PUT" && url.pathname === "/api/oauth/accounts/alias") {
     const payload = body as { accountId: string; alias: string };
     const account = oauthAccounts.find(entry => entry.id === payload.accountId);
     if (!account) return json({ error: "account not found" }, 404);
@@ -1328,5 +1353,28 @@ describe("ocx account CLI (issue #180 matrix)", () => {
     } finally {
       sleepSpy.mockRestore();
     }
+  });
+
+  test("ocx account import validates inputs and outputs results", async () => {
+    const missingArgs = await run(["import"]);
+    expect(missingArgs.code).toBe(1);
+    expect(missingArgs.stderr).toContain("ocx account import");
+
+    const nonOauth = await run(["import", "openai", '[{"refresh_token":"1//abc"}]']);
+    expect(nonOauth.code).toBe(1);
+    expect(nonOauth.stderr).toContain("account import only applies to OAuth providers");
+
+    const badJson = await run(["import", "google-antigravity", "{not-valid-json}"]);
+    expect(badJson.code).toBe(1);
+    expect(badJson.stderr).toContain("Error parsing JSON");
+
+    const inlineOk = await run(["import", "google-antigravity", '[{"email":"user@gmail.com","refresh_token":"1//abc"}]']);
+    expect(inlineOk.code).toBe(0);
+    expect(inlineOk.stdout).toContain("google-antigravity: imported 1 account(s) successfully (0 failed)");
+    expect(inlineOk.stdout).toContain("✓ user@gmail.com");
+
+    const jsonOutput = await run(["import", "google-antigravity", '[{"email":"user@gmail.com","refresh_token":"1//abc"}]', "--json"]);
+    expect(jsonOutput.code).toBe(0);
+    expect(jsonOutput.stdout).toContain('"importedCount": 1');
   });
 });

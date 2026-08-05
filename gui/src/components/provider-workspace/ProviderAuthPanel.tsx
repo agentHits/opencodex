@@ -289,13 +289,13 @@ export default function ProviderAuthPanel({
                   rows={4}
                   value={importJsonText}
                   onChange={e => setImportJsonText(e.target.value)}
-                  placeholder="[{\"email\":\"user@gmail.com\",\"refresh_token\":\"1//...\"}]"
+                  placeholder='[{"email":"user@gmail.com","refresh_token":"1//..."}]'
                   disabled={importBusy}
                   style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}
                 />
                 {importResult && (
                   <div className="muted faint" style={{ fontSize: 12, marginTop: 4 }}>
-                    Imported {importResult.imported} account(s), {importResult.failed} failed.
+                    {t("pws.importResultSummary", { imported: importResult.imported, failed: importResult.failed })}
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -341,7 +341,7 @@ export default function ProviderAuthPanel({
                       }
                     }}
                   >
-                    {importBusy ? t("pws.saving") : "Import JSON"}
+                    {importBusy ? t("pws.saving") : t("pws.importJson")}
                   </button>
                   <button
                     type="button"
@@ -360,10 +360,12 @@ export default function ProviderAuthPanel({
                     {t("pws.addAccount")}
                   </button>
                 )}
-                <button type="button" className="btn btn-ghost btn-sm"
-                  onClick={() => setImportingJson(true)} disabled={busy || Boolean(switchingAccountId)}>
-                  Import JSON (Cockpit)
-                </button>
+                {item.name === "google-antigravity" && (
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => setImportingJson(true)} disabled={busy || Boolean(switchingAccountId)}>
+                    {t("pws.importJsonCockpit")}
+                  </button>
+                )}
               </div>
             )}
           </>

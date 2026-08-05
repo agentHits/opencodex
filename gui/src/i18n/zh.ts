@@ -1473,7 +1473,10 @@ export const zh: Record<TKey, string> = {
   "pws.noModels": "未发现此提供商的模型。",
  "pws.noModelMatch": "没有匹配筛选的模型。",
   "pws.adapterBaseRequired": "适配器和基本 URL 为必填项。",
-  "pws.addAccount": "添加账户",
+  "pws.addAccount":
+  "pws.importJson": "导入 JSON",
+  "pws.importJsonCockpit": "导入 JSON (Cockpit)",
+  "pws.importResultSummary": "已导入 {imported} 个账户，{failed} 个失败。", "添加账户",
   "pws.addKey": "添加 API 密钥",
   "pws.apiKeys": "API 密钥",
   "pws.authMode": "认证方式",
