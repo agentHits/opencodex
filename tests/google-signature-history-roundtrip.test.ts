@@ -151,20 +151,20 @@ describe("#1735 thought signature survives history replay", () => {
   test("streaming SSE chunks carry thought signature across chunk boundaries to function calls", async () => {
     const adapter = createGoogleAdapter(provider);
     await adapter.buildRequest(firstTurn());
-    const ssePayload = [
-      `data: ${JSON.stringify(googleBody([{ text: "thinking...", thought: true, thought_signature: SIGNATURE }]))}`,
-      "",
-      `data: ${JSON.stringify(googleBody([{ functionCall: { name: "shell_command", args: { command: "pwd" } } }]))}`,
-      "",
-      `data: ${JSON.stringify(googleBody([{ functionCall: { name: "shell_command", args: { command: "ls" } } }]))}`,
-      "",
-      "data: [DONE]",
-      "",
-    ].join("\n");
+    // Each SSE frame arrives as its own transport chunk so the signature has to
+    // survive the chunk boundary between the thought part and the function calls.
+    const frames = [
+      `data: ${JSON.stringify(googleBody([{ text: "thinking...", thought: true, thought_signature: SIGNATURE }]))}\n\n`,
+      `data: ${JSON.stringify(googleBody([{ functionCall: { name: "shell_command", args: { command: "pwd" } } }]))}\n\n`,
+      `data: ${JSON.stringify(googleBody([{ functionCall: { name: "shell_command", args: { command: "ls" } } }]))}\n\n`,
+      // usageMetadata is the terminal signal; no [DONE] sentinel needed.
+      `data: ${JSON.stringify({ usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 2 } })}\n\n`,
+    ];
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode(ssePayload));
+        const encoder = new TextEncoder();
+        for (const frame of frames) controller.enqueue(encoder.encode(frame));
         controller.close();
       },
     });
@@ -174,6 +174,9 @@ describe("#1735 thought signature survives history replay", () => {
       events.push(event);
     }
 
+    // The turn completes cleanly: no error events, terminal done last.
+    expect(events.some((e: AdapterEvent) => e.type === "error")).toBe(false);
+    expect(events[events.length - 1]?.type).toBe("done");
     const starts = events.filter((e: AdapterEvent) => e.type === "tool_call_start");
     expect(starts.length).toBe(2);
     expect("providerMetadata" in starts[0] ? starts[0].providerMetadata?.google?.thoughtSignature : undefined)

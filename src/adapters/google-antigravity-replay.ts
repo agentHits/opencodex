@@ -599,10 +599,13 @@ export function antigravityUsesReplayCache(model: string): boolean {
  * Observe a parsed CCA chunk's `candidates[0].content.parts` and record thought signatures keyed by
  * the functionCall identity (name + args). Accumulates across the whole session so a sequential
  * multi-step tool loop keeps EVERY prior call's signature, not just the latest part-index slot.
- * A signature on a standalone thought part is paired with the next functionCall in the same
- * array (#897); a call's own signature takes precedence and an unpaired one is dropped.
-* `parts` is the already-unwrapped `response.candidates[0].content.parts`.
-*/
+ * A signature on a standalone thought part applies to the functionCall parts that follow it in
+ * the same array AND to later arrays of the same turn: streaming splits a thought part and its
+ * calls across SSE chunks, so `carriedThoughtSig` threads the still-unpaired signature from the
+ * previous chunk and the return value hands the remainder to the next one (#897, #2125). A call's
+ * own signature always takes precedence over a carried one.
+ * `parts` is the already-unwrapped `response.candidates[0].content.parts`.
+ */
 export function observeAntigravityReplay(
   model: string,
   sessionId: string,
