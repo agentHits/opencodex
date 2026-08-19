@@ -601,10 +601,15 @@ export function antigravityUsesReplayCache(model: string): boolean {
  * multi-step tool loop keeps EVERY prior call's signature, not just the latest part-index slot.
  * A signature on a standalone thought part is paired with the next functionCall in the same
  * array (#897); a call's own signature takes precedence and an unpaired one is dropped.
- * `parts` is the already-unwrapped `response.candidates[0].content.parts`.
- */
-export function observeAntigravityReplay(model: string, sessionId: string, parts: unknown[]): void {
-  if (!antigravityUsesReplayCache(model) || !Array.isArray(parts) || parts.length === 0) return;
+* `parts` is the already-unwrapped `response.candidates[0].content.parts`.
+*/
+export function observeAntigravityReplay(
+  model: string,
+  sessionId: string,
+  parts: unknown[],
+  carriedThoughtSig?: string,
+): string | undefined {
+  if (!antigravityUsesReplayCache(model) || !Array.isArray(parts) || parts.length === 0) return carriedThoughtSig;
   ensureReplaySnapshotLoaded();
   const now = Date.now();
   deleteExpiredReplaySessionsThrottled(now);
@@ -618,7 +623,7 @@ export function observeAntigravityReplay(model: string, sessionId: string, parts
     lastActiveAtMs: 0,
   };
   let inserted = false;
-  let pendingThoughtSig: string | undefined;
+  let pendingThoughtSig: string | undefined = carriedThoughtSig;
   for (const raw of parts) {
     if (!raw || typeof raw !== "object") continue;
     const part = raw as Record<string, unknown>;
@@ -632,7 +637,6 @@ export function observeAntigravityReplay(model: string, sessionId: string, parts
       continue;
     }
     const callSig = sig ?? pendingThoughtSig; // a signature on the call part itself wins
-    pendingThoughtSig = undefined;
     if (!callSig) continue;
     const ck = functionCallKey(fc.name, fc.args);
     if (!ck) continue; // only function-call signatures are replayable by identity
@@ -645,7 +649,7 @@ export function observeAntigravityReplay(model: string, sessionId: string, parts
     replayBytes += sizeBytes;
     inserted = true;
   }
-  if (!inserted) return;
+  if (!inserted) return pendingThoughtSig;
   // Charge the fixed outer key only when the session is actually stored.
   if (!existing) replayBytes += REPLAY_SESSION_KEY_BYTES;
   evictInnerCalls(entry);
@@ -659,7 +663,7 @@ export function observeAntigravityReplay(model: string, sessionId: string, parts
     } else {
       replayBytes -= REPLAY_SESSION_KEY_BYTES;
     }
-    return;
+    return pendingThoughtSig;
   }
   entry.expiresAtMs = now + REPLAY_TTL_MS;
   entry.lastActiveAtMs = now;
@@ -668,6 +672,7 @@ export function observeAntigravityReplay(model: string, sessionId: string, parts
   evictIfNeeded();
   enforceAppOwnedMemoryBudget();
   markReplayDirty();
+  return pendingThoughtSig;
 }
 
 /**

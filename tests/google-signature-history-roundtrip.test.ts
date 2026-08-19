@@ -132,6 +132,56 @@ describe("#1735 thought signature survives history replay", () => {
     expect(signatures).toEqual([SIGNATURE, SIGNATURE_B]);
   });
 
+  test("a standalone thought part's signature attaches to all subsequent functionCalls in non-streaming parse", async () => {
+    const adapter = createGoogleAdapter(provider);
+    await adapter.buildRequest(firstTurn());
+    const events = await adapter.parseResponse!(new Response(JSON.stringify(googleBody([
+      { text: "thinking...", thought: true, thoughtSignature: SIGNATURE },
+      { functionCall: { name: "shell_command", args: { command: "pwd" } } },
+      { functionCall: { name: "shell_command", args: { command: "ls" } } },
+    ]))));
+    const starts = events.filter((e: AdapterEvent) => e.type === "tool_call_start");
+    expect(starts.length).toBe(2);
+    expect("providerMetadata" in starts[0] ? starts[0].providerMetadata?.google?.thoughtSignature : undefined)
+      .toBe(SIGNATURE);
+    expect("providerMetadata" in starts[1] ? starts[1].providerMetadata?.google?.thoughtSignature : undefined)
+      .toBe(SIGNATURE);
+  });
+
+  test("streaming SSE chunks carry thought signature across chunk boundaries to function calls", async () => {
+    const adapter = createGoogleAdapter(provider);
+    await adapter.buildRequest(firstTurn());
+    const ssePayload = [
+      `data: ${JSON.stringify(googleBody([{ text: "thinking...", thought: true, thought_signature: SIGNATURE }]))}`,
+      "",
+      `data: ${JSON.stringify(googleBody([{ functionCall: { name: "shell_command", args: { command: "pwd" } } }]))}`,
+      "",
+      `data: ${JSON.stringify(googleBody([{ functionCall: { name: "shell_command", args: { command: "ls" } } }]))}`,
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n");
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(ssePayload));
+        controller.close();
+      },
+    });
+
+    const events: AdapterEvent[] = [];
+    for await (const event of adapter.parseStream(new Response(stream))) {
+      events.push(event);
+    }
+
+    const starts = events.filter((e: AdapterEvent) => e.type === "tool_call_start");
+    expect(starts.length).toBe(2);
+    expect("providerMetadata" in starts[0] ? starts[0].providerMetadata?.google?.thoughtSignature : undefined)
+      .toBe(SIGNATURE);
+    expect("providerMetadata" in starts[1] ? starts[1].providerMetadata?.google?.thoughtSignature : undefined)
+      .toBe(SIGNATURE);
+  });
+
   test("a signature replayed through Responses history reaches the rebuilt Google part", async () => {
     // No cache is warmed here: this is a cold process replaying client-supplied history.
     const parsed = parseRequestScoped({
