@@ -343,7 +343,7 @@ describe("antigravity reasoning-replay cache", () => {
       now = 1_002;
       applyAntigravityReplay(MODEL, SESSION, [{ role: "model", parts: [fcPart("one", {})] }]);
       expect(antigravityReplayRetainedStoreSnapshot().oldestAt).toBe(1_001);
-      now = 1_001 + 60 * 60 * 1000;
+      now = 1_001 + 7 * 24 * 60 * 60 * 1000;
       const expired = [{ role: "model", parts: [fcPart("one", {})] }];
       applyAntigravityReplay(MODEL, SESSION, expired);
       expect((expired[0].parts[0] as { thoughtSignature?: string }).thoughtSignature).toBeUndefined();
@@ -522,7 +522,7 @@ describe("antigravity replay fixed-size key identities", () => {
       observeAntigravityReplay(MODEL, "s-2", [fcPart("f", {}, "sig-1234567890abcdef")]);
       expect(antigravityReplayMetrics().sessions).toBe(2);
       // The periodic sweeper still removes expired sessions on its own pass.
-      Date.now = () => originalNow() + 60 * 60 * 1000 + 1000;
+      Date.now = () => originalNow() + 7 * 24 * 60 * 60 * 1000 + 1000;
       const removed = sweepExpiredAntigravityReplay(Date.now());
       expect(removed).toBe(2);
       expect(antigravityReplayMetrics().sessions).toBe(0);

@@ -34,11 +34,11 @@ interface ReplayEntry {
 }
 
 const MIN_SIGNATURE_LEN = 16;
-const REPLAY_TTL_MS = 60 * 60 * 1000; // 1h
+const REPLAY_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d (matches Responses durable store TTL for long-running and resumed threads)
 export const ANTIGRAVITY_REPLAY_MAX_ENTRIES = 10_240;
 const REPLAY_EVICT_BATCH = 128;
-const REPLAY_MAX_CALLS_PER_SESSION = 256;
-export const ANTIGRAVITY_REPLAY_MAX_BYTES_PER_SESSION = 2 * 1024 * 1024;
+const REPLAY_MAX_CALLS_PER_SESSION = 8_192;
+export const ANTIGRAVITY_REPLAY_MAX_BYTES_PER_SESSION = 8 * 1024 * 1024;
 export const ANTIGRAVITY_REPLAY_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const REPLAY_MAX_SIGNATURE_BYTES = 64 * 1024;
 /** Fixed 64-hex outer key length, counted once per session entry. */
