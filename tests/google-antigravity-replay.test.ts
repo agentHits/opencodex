@@ -298,6 +298,50 @@ describe("antigravity reasoning-replay cache", () => {
     expect(contents.every(c => typeof (c.parts[0] as { thoughtSignature?: string }).thoughtSignature === "string")).toBe(true);
   });
 
+  test("preserves and restores signatures in deep 1500+ call sessions under production default limits", async () => {
+    const totalCalls = 1_500;
+    for (let i = 0; i < totalCalls; i++) {
+      observeAntigravityReplay(MODEL, SESSION, [fcPart("exec", { cmd: `cmd-${i}` }, `sig-call-${i}-${"a".repeat(24)}`)]);
+    }
+    const metricsBefore = antigravityReplayMetrics();
+    expect(metricsBefore.calls).toBe(totalCalls);
+
+    // Both earliest (position 0) and latest (position 1499) calls must restore under default limits:
+    const testContents = [
+      { role: "model", parts: [fcPart("exec", { cmd: "cmd-0" })] },
+      { role: "model", parts: [fcPart("exec", { cmd: `cmd-${totalCalls - 1}` })] },
+    ];
+    applyAntigravityReplay(MODEL, SESSION, testContents);
+    expect((testContents[0].parts[0] as { thoughtSignature?: string }).thoughtSignature).toContain("sig-call-0-");
+    expect((testContents[1].parts[0] as { thoughtSignature?: string }).thoughtSignature).toContain(`sig-call-${totalCalls - 1}-`);
+
+    // Verify survival across durable snapshot flush, reset, and reload:
+    await flushAntigravityReplay();
+    setAntigravityReplayLimitsForTests();
+    const reloadedContents = [
+      { role: "model", parts: [fcPart("exec", { cmd: "cmd-0" })] },
+      { role: "model", parts: [fcPart("exec", { cmd: `cmd-${totalCalls - 1}` })] },
+    ];
+    applyAntigravityReplay(MODEL, SESSION, reloadedContents);
+    expect((reloadedContents[0].parts[0] as { thoughtSignature?: string }).thoughtSignature).toContain("sig-call-0-");
+    expect((reloadedContents[1].parts[0] as { thoughtSignature?: string }).thoughtSignature).toContain(`sig-call-${totalCalls - 1}-`);
+  });
+
+  test("retains session between 2 MiB and 8 MiB without tripping the old 2 MiB cap", () => {
+    // 5000 calls x (64 key bytes + 500 signature bytes) = ~2.8 MiB (exceeds the old 2 MiB session cap):
+    const callCount = 5_000;
+    for (let i = 0; i < callCount; i++) {
+      observeAntigravityReplay(MODEL, SESSION, [fcPart("exec", { index: i }, `sig-${i}-${"s".repeat(500)}`)]);
+    }
+    const metrics = antigravityReplayMetrics();
+    expect(metrics.calls).toBe(callCount);
+    expect(metrics.totalBytes).toBeGreaterThan(2 * 1024 * 1024);
+    expect(metrics.totalBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    const contents = [{ role: "model", parts: [fcPart("exec", { index: 0 })] }];
+    applyAntigravityReplay(MODEL, SESSION, contents);
+    expect((contents[0].parts[0] as { thoughtSignature?: string }).thoughtSignature).toContain("sig-0-");
+  });
+
   test("evicts oldest inner call at the exact per-session count boundary", () => {
     setAntigravityReplayLimitsForTests({ maxCallsPerSession: 2 });
     observeAntigravityReplay(MODEL, SESSION, [fcPart("one", {}, "sig-one-aaaaaaaaaaaa")]);
@@ -343,7 +387,7 @@ describe("antigravity reasoning-replay cache", () => {
       now = 1_002;
       applyAntigravityReplay(MODEL, SESSION, [{ role: "model", parts: [fcPart("one", {})] }]);
       expect(antigravityReplayRetainedStoreSnapshot().oldestAt).toBe(1_001);
-      now = 1_001 + 7 * 24 * 60 * 60 * 1000;
+      now = 1_001 + 60 * 60 * 1000;
       const expired = [{ role: "model", parts: [fcPart("one", {})] }];
       applyAntigravityReplay(MODEL, SESSION, expired);
       expect((expired[0].parts[0] as { thoughtSignature?: string }).thoughtSignature).toBeUndefined();
@@ -522,7 +566,7 @@ describe("antigravity replay fixed-size key identities", () => {
       observeAntigravityReplay(MODEL, "s-2", [fcPart("f", {}, "sig-1234567890abcdef")]);
       expect(antigravityReplayMetrics().sessions).toBe(2);
       // The periodic sweeper still removes expired sessions on its own pass.
-      Date.now = () => originalNow() + 7 * 24 * 60 * 60 * 1000 + 1000;
+      Date.now = () => originalNow() + 60 * 60 * 1000 + 1000;
       const removed = sweepExpiredAntigravityReplay(Date.now());
       expect(removed).toBe(2);
       expect(antigravityReplayMetrics().sessions).toBe(0);

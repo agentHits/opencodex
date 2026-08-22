@@ -34,7 +34,7 @@ interface ReplayEntry {
 }
 
 const MIN_SIGNATURE_LEN = 16;
-const REPLAY_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d (matches Responses durable store TTL for long-running and resumed threads)
+const REPLAY_TTL_MS = 60 * 60 * 1000; // 1h
 export const ANTIGRAVITY_REPLAY_MAX_ENTRIES = 10_240;
 const REPLAY_EVICT_BATCH = 128;
 const REPLAY_MAX_CALLS_PER_SESSION = 8_192;

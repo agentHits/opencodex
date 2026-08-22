@@ -779,6 +779,14 @@ so matching uses the provider-visible tool name.
 - 다른 대안 대신 이 방식을 선택한 이유: Responses ids are not Gemini signatures and previously caused Base64/TYPE_BYTES failures; a second cache duplicates limits; an unscoped cache could send provider-private state across destinations.
 - 장점, 단점 및 영향: Tool loops continue with exact opaque state and bounded memory while cross-transport reuse fails closed. Replay remains process-local, matching the existing Antigravity contract.
 
+[Decision Log: Deep-session replay capacity scaling]
+- 목적과 의도: Prevent premature LRU eviction of early function call signatures in deep conversations (500+ / 1,500+ calls) on Google Antigravity / Vertex without compromising the global memory or disk snapshot bounds.
+- 기존 구현 및 제약 조건: `REPLAY_MAX_CALLS_PER_SESSION` was capped at 256 calls and `REPLAY_MAX_BYTES_PER_SESSION` at 2 MiB, which evicted early historical calls once active sessions exceeded 256 calls, causing upstream Gemini to reject the turn with HTTP 400 (`Function call is missing a thought_signature in functionCall parts`).
+- 검토한 주요 대안: Retain the 256-call cap and rely on client-side re-generation; remove the per-session cap entirely; scale the per-session limits to 8,192 calls and 8 MiB while keeping the unchanged 64 MiB global cap, 10,240 session cap, and 24 MiB snapshot write bound.
+- 선택한 방식: Scale `REPLAY_MAX_CALLS_PER_SESSION` to 8,192 and `REPLAY_MAX_BYTES_PER_SESSION` to 8 MiB. Retain the unchanged 1-hour `REPLAY_TTL_MS`, 10,240 session cap, 64 MiB global memory cap, and 24 MiB snapshot disk cap.
+- 다른 대안 대신 이 방식을 선택한 이유: 8,192 calls per session covers long-running multi-agent tasks and 1,500+ call deep transcripts without memory leaks, while the global 64 MiB cap and snapshot LRU sweep protect against unbounded heap growth.
+- 장점, 단점 및 영향: Deep sessions with up to 8,192 calls reliably restore their historical thought signatures without 400 rejections; global memory limits remain strictly enforced.
+
 ## Google tool-result adjacency repair
 
 Google-family requests serialize a model tool-call turn and its results as one adjacent
