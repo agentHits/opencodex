@@ -33,6 +33,7 @@ import {
   submitManualLoginCode,
   upsertOAuthProvider,
 } from "../../oauth";
+import { isCodexReasoningEffort } from "../../reasoning-effort";
 import { replaceProviderAccountSet } from "../../oauth/store";
 import { providerDestinationResolvedError } from "../../lib/destination-policy";
 import { reconcileLiveStateStores } from "../../lib/state-store-registrations";
@@ -478,6 +479,40 @@ function applyProviderPatchFields(
     }
     touched = true;
   }
+  if (Object.hasOwn(rawBody, "pinnedReasoningEffort")) {
+    const value = rawBody.pinnedReasoningEffort;
+    if (value === null || value === "") {
+      delete next.pinnedReasoningEffort;
+    } else if (typeof value === "string" && (isCodexReasoningEffort(value) || value === "none" || value === "minimal")) {
+      next.pinnedReasoningEffort = value;
+    } else {
+      return { error: "pinnedReasoningEffort must be a valid reasoning effort or null" };
+    }
+    touched = true;
+  }
+  if (Object.hasOwn(rawBody, "modelPinnedReasoningEfforts")) {
+    const value = rawBody.modelPinnedReasoningEfforts;
+    if (value === null) {
+      delete next.modelPinnedReasoningEfforts;
+    } else {
+      if (!isPlainRecord(value)) return { error: "modelPinnedReasoningEfforts must be a plain object or null" };
+      const efforts: Record<string, string> = { ...(next.modelPinnedReasoningEfforts ?? {}) };
+      for (const [model, effort] of Object.entries(value)) {
+        if (!model.trim()) return { error: "modelPinnedReasoningEfforts keys must be nonblank model ids" };
+        if (effort === null || effort === "") {
+          delete efforts[model];
+          continue;
+        }
+        if (typeof effort !== "string" || (!isCodexReasoningEffort(effort) && effort !== "none" && effort !== "minimal")) {
+          return { error: `invalid reasoning effort "${String(effort)}" for model "${model}"` };
+        }
+        efforts[model] = effort;
+      }
+      if (Object.keys(efforts).length > 0) next.modelPinnedReasoningEfforts = efforts;
+      else delete next.modelPinnedReasoningEfforts;
+    }
+    touched = true;
+  }
   if (Object.hasOwn(rawBody, "modelAutoCompactTokenLimits")) {
     const value = rawBody.modelAutoCompactTokenLimits;
     const error = modelAutoCompactTokenLimitsConfigError(value, {
@@ -689,6 +724,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       models: p.models ?? [],
       contextWindow: p.contextWindow,
       modelContextWindows: p.modelContextWindows,
+      pinnedReasoningEffort: p.pinnedReasoningEffort,
+      modelPinnedReasoningEfforts: p.modelPinnedReasoningEfforts,
       modelAutoCompactTokenLimits: p.modelAutoCompactTokenLimits,
       modelSupportsServiceTier: p.modelSupportsServiceTier,
       noStructuredOutputModels: p.noStructuredOutputModels,
@@ -942,6 +979,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // call can never fire.
     const submittedContextWindow = Object.hasOwn(prov, "contextWindow");
     const submittedModelContextWindows = Object.hasOwn(prov, "modelContextWindows");
+    const submittedPinnedReasoningEffort = Object.hasOwn(prov, "pinnedReasoningEffort");
+    const submittedModelPinnedReasoningEfforts = Object.hasOwn(prov, "modelPinnedReasoningEfforts");
     const submittedModelAutoCompactTokenLimits = Object.hasOwn(prov, "modelAutoCompactTokenLimits");
     const submittedModelDisplayNames = Object.hasOwn(prov, "modelDisplayNames");
     const submittedRequestPacing = Object.hasOwn(prov, "requestPacing");
@@ -992,6 +1031,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     if (!submittedUpstreamWebsocket && existing?.upstreamWebsocket !== undefined) {
       prov.upstreamWebsocket = existing.upstreamWebsocket;
     }
+    if (!submittedPinnedReasoningEffort && existing?.pinnedReasoningEffort !== undefined) {
+      prov.pinnedReasoningEffort = existing.pinnedReasoningEffort;
+    }
     if (existing?.modelContextWindows) {
       // When the client did send a map, its keys win and the user's other keys survive. When
       // it did not, the stored value is the user's map alone: merging the registry seed in
@@ -1000,6 +1042,11 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       prov.modelContextWindows = submittedModelContextWindows
         ? { ...existing.modelContextWindows, ...(prov.modelContextWindows ?? {}) }
         : { ...existing.modelContextWindows };
+    }
+    if (existing?.modelPinnedReasoningEfforts) {
+      prov.modelPinnedReasoningEfforts = submittedModelPinnedReasoningEfforts
+        ? { ...existing.modelPinnedReasoningEfforts, ...(prov.modelPinnedReasoningEfforts ?? {}) }
+        : { ...existing.modelPinnedReasoningEfforts };
     }
     if (existing?.modelAutoCompactTokenLimits) {
       prov.modelAutoCompactTokenLimits = submittedModelAutoCompactTokenLimits
