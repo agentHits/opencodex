@@ -1693,7 +1693,7 @@ export const ru: Record<TKey, string> = {
   "integrations.semantics.mcode": "Управляет только custom_provider.opencodex. Модель по умолчанию и вход MiniMax не меняются.",
   "integrations.semantics.zcode": "Управляет только provider.opencodex в ~/.zcode/v2/config.json. Вход Z.ai и другие провайдеры не меняются. Перезапустите ZCode после изменений.",
   "integrations.semantics.prime": "Управляет только providers.opencodex в models.json Prime Agent — ~/.prime/agent, если PRIME_AGENT_CODING_AGENT_DIR не переопределяет путь. Другие провайдеры и переопределения моделей не меняются. Применяется к новым сессиям.",
-  "integrations.semantics.aside": "Управляет только providers.opencodex в файле models.json этого профиля. Другие провайдеры остаются без изменений. После применения полностью закройте и снова откройте Aside.",
+  "integrations.semantics.aside": "Управляет только providers.opencodex в файле ~/.aside/u/<id>/models.json этого профиля. Другие провайдеры остаются без изменений. После применения полностью закройте и снова откройте Aside.",
   "codexAuth.mainAccount": "Основной аккаунт",
   "codexAuth.logLabel": "Метка журнала",
   "codexAuth.codexApp": "Codex App",

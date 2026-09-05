@@ -1637,7 +1637,7 @@ export const ja: Record<TKey, string> = {
   "integrations.semantics.mcode": "custom_provider.opencodex のみを管理します。既定モデルと MiniMax ログインは変更しません。",
   "integrations.semantics.zcode": "~/.zcode/v2/config.json の provider.opencodex のみを管理します。Z.ai ログインと他のプロバイダーは変更しません。変更後は ZCode を再起動してください。",
   "integrations.semantics.prime": "Prime Agent の models.json 内の providers.opencodex のみを管理します。場所は ~/.prime/agent ですが、PRIME_AGENT_CODING_AGENT_DIR が設定されている場合はそちらが優先されます。他のプロバイダーとモデルオーバーライドは変更しません。新しいセッションから適用されます。",
-  "integrations.semantics.aside": "このプロファイルの models.json 内の providers.opencodex のみを管理します。他のプロバイダーは変更しません。適用後は Aside を完全に終了してから開き直してください。",
+  "integrations.semantics.aside": "このプロファイルの ~/.aside/u/<id>/models.json 内の providers.opencodex のみを管理します。他のプロバイダーは変更しません。適用後は Aside を完全に終了してから開き直してください。",
   "codexAuth.mainAccount": "メインアカウント",
   "codexAuth.logLabel": "ログラベル",
   "codexAuth.codexApp": "Codex App",

@@ -1227,7 +1227,7 @@ export const ko: Record<TKey, string> = {
   "integrations.semantics.mcode": "custom_provider.opencodex만 관리하며 기본 모델과 MiniMax 로그인은 변경하지 않습니다.",
   "integrations.semantics.zcode": "~/.zcode/v2/config.json의 provider.opencodex만 관리하며 Z.ai 로그인과 다른 프로바이더는 변경하지 않습니다. 변경 후 ZCode를 재시작하세요.",
   "integrations.semantics.prime": "Prime Agent의 models.json에서 providers.opencodex만 관리합니다. 위치는 ~/.prime/agent이며 PRIME_AGENT_CODING_AGENT_DIR가 설정되면 그쪽이 우선합니다. 다른 프로바이더와 모델 오버라이드는 변경하지 않습니다. 새 세션부터 적용됩니다.",
-  "integrations.semantics.aside": "이 프로필의 models.json에서 providers.opencodex만 관리합니다. 다른 프로바이더는 그대로 유지됩니다. 적용 후 Aside를 완전히 종료하고 다시 여세요.",
+  "integrations.semantics.aside": "이 프로필의 ~/.aside/u/<id>/models.json에서 providers.opencodex만 관리합니다. 다른 프로바이더는 그대로 유지됩니다. 적용 후 Aside를 완전히 종료하고 다시 여세요.",
   "codexAuth.mainAccount": "메인 계정",
   "codexAuth.logLabel": "로그 라벨",
   "codexAuth.codexApp": "Codex App",

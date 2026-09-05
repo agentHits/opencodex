@@ -1682,7 +1682,7 @@ export const fr: Record<TKey, string> = {
   "integrations.semantics.mcode": "Gère uniquement custom_provider.opencodex. Votre modèle par défaut et votre connexion MiniMax restent inchangés.",
   "integrations.semantics.zcode": "Gère uniquement provider.opencodex dans ~/.zcode/v2/config.json. Votre connexion Z.ai et les autres fournisseurs restent inchangés. Redémarrez ZCode après toute modification.",
   "integrations.semantics.prime": "Gère uniquement providers.opencodex dans le models.json de Prime Agent — ~/.prime/agent, sauf si PRIME_AGENT_CODING_AGENT_DIR le redirige. Vos autres fournisseurs et surcharges de modèles restent inchangés. S'applique aux nouvelles sessions.",
-  "integrations.semantics.aside": "Gère uniquement providers.opencodex dans le fichier models.json de ce profil. Vos autres fournisseurs restent inchangés. Quittez complètement Aside et relancez-le après application.",
+  "integrations.semantics.aside": "Gère uniquement providers.opencodex dans le fichier ~/.aside/u/<id>/models.json de ce profil. Vos autres fournisseurs restent inchangés. Quittez complètement Aside et relancez-le après application.",
   "codexAuth.mainAccount": "Compte principal",
   "codexAuth.logLabel": "Libellé du journal",
   "codexAuth.codexApp": "Application Codex",

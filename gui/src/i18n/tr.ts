@@ -1699,7 +1699,7 @@ export const tr: Record<TKey, string> = {
   "integrations.semantics.mcode": "Yalnızca custom_provider.opencodex bölümünü yönetir. Varsayılan model ve MiniMax oturumu değişmez.",
   "integrations.semantics.zcode": "Yalnızca ~/.zcode/v2/config.json içindeki provider.opencodex bölümünü yönetir. Z.ai oturumu ve diğer sağlayıcılar değişmez. Değişikliklerden sonra ZCode'u yeniden başlatın.",
   "integrations.semantics.prime": "Yalnızca Prime Agent'ın models.json dosyasındaki providers.opencodex bölümünü yönetir — PRIME_AGENT_CODING_AGENT_DIR ayarlı değilse ~/.prime/agent. Diğer sağlayıcılar ve model geçersiz kılmaları değişmez. Yeni oturumlarda geçerli olur.",
-  "integrations.semantics.aside": "Yalnızca bu profilin models.json dosyasındaki providers.opencodex bölümünü yönetir. Diğer sağlayıcılarınız değişmez. Uyguladıktan sonra Aside’ı tamamen kapatıp yeniden açın.",
+  "integrations.semantics.aside": "Yalnızca bu profilin ~/.aside/u/<id>/models.json dosyasındaki providers.opencodex bölümünü yönetir. Diğer sağlayıcılarınız değişmez. Uyguladıktan sonra Aside’ı tamamen kapatıp yeniden açın.",
   "integrations.semantics.omp": "Kataloğu yüklemek için OMP'yi yeniden başlatın.",
   "codexAuth.mainAccount": "Ana Hesap",
   "codexAuth.logLabel": "Günlük etiketi",

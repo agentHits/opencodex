@@ -1220,7 +1220,7 @@ export const zh: Record<TKey, string> = {
   "integrations.semantics.mcode": "仅管理 custom_provider.opencodex，不会更改默认模型或 MiniMax 登录状态。",
   "integrations.semantics.zcode": "仅管理 ~/.zcode/v2/config.json 中的 provider.opencodex，不会更改 Z.ai 登录状态或其他提供商。更改后请重启 ZCode。",
   "integrations.semantics.prime": "仅管理 Prime Agent 的 models.json 中的 providers.opencodex；默认位于 ~/.prime/agent，若设置 PRIME_AGENT_CODING_AGENT_DIR 则以其为准。不会更改其他提供商或模型覆盖设置。对新会话生效。",
-  "integrations.semantics.aside": "仅管理此配置文件的 models.json 中的 providers.opencodex。其他提供商保持不变。应用后请完全退出并重新打开 Aside。",
+  "integrations.semantics.aside": "仅管理此配置文件的 ~/.aside/u/<id>/models.json 中的 providers.opencodex。其他提供商保持不变。应用后请完全退出并重新打开 Aside。",
   "codexAuth.mainAccount": "主账号",
   "codexAuth.logLabel": "日志标签",
   "codexAuth.codexApp": "Codex App",

@@ -1750,7 +1750,7 @@ export const en = {
   "integrations.semantics.mcode": "Manages only custom_provider.opencodex. Your default model and MiniMax login stay unchanged.",
   "integrations.semantics.zcode": "Manages only provider.opencodex in ~/.zcode/v2/config.json. Your Z.ai login and other providers stay unchanged. Restart ZCode after changes.",
   "integrations.semantics.prime": "Manages only providers.opencodex in Prime Agent's models.json — ~/.prime/agent unless PRIME_AGENT_CODING_AGENT_DIR redirects it. Your other providers and model overrides stay unchanged. Applies to new sessions.",
-  "integrations.semantics.aside": "Manages only providers.opencodex in this profile’s models.json. Your other providers stay unchanged. Fully quit and reopen Aside after applying.",
+  "integrations.semantics.aside": "Manages only providers.opencodex in this profile’s ~/.aside/u/<id>/models.json. Your other providers stay unchanged. Fully quit and reopen Aside after applying.",
   "codexAuth.mainAccount": "Main Account",
   "codexAuth.logLabel": "Log label",
   "codexAuth.codexApp": "Codex App",

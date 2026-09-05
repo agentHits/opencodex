@@ -1203,7 +1203,7 @@ export const de: Record<TKey, string> = {
   "integrations.semantics.mcode": "Verwaltet nur custom_provider.opencodex. Standardmodell und MiniMax-Anmeldung bleiben unverändert.",
   "integrations.semantics.zcode": "Verwaltet nur provider.opencodex in ~/.zcode/v2/config.json. Z.ai-Anmeldung und andere Provider bleiben unverändert. ZCode nach Änderungen neu starten.",
   "integrations.semantics.prime": "Verwaltet nur providers.opencodex in der models.json von Prime Agent — ~/.prime/agent, sofern PRIME_AGENT_CODING_AGENT_DIR sie nicht umleitet. Andere Provider und Modell-Overrides bleiben unverändert. Gilt für neue Sitzungen.",
-  "integrations.semantics.aside": "Verwaltet nur providers.opencodex in der models.json dieses Profils. Andere Provider bleiben unverändert. Beende Aside nach dem Anwenden vollständig und öffne es erneut.",
+  "integrations.semantics.aside": "Verwaltet nur providers.opencodex in der ~/.aside/u/<id>/models.json dieses Profils. Andere Provider bleiben unverändert. Beende Aside nach dem Anwenden vollständig und öffne es erneut.",
   "codexAuth.mainAccount": "Hauptkonto",
   "codexAuth.logLabel": "Log-Kennung",
   "codexAuth.codexApp": "Codex App",
