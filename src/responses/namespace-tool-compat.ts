@@ -341,7 +341,10 @@ function rewriteInputItem(item: unknown, plan: NamespaceRewritePlan, emitted: Se
  * `<namespace>__<name>` wire identity as the chat adapters. The returned request-local aliases
  * are the only names response restoration is allowed to expand.
  */
-export function rewriteRoutedNamespaceToolsForUpstream(body: unknown): {
+export function rewriteRoutedNamespaceToolsForUpstream(
+  body: unknown,
+  convertedCustomToolNames?: ReadonlySet<string>,
+): {
   body: unknown;
   aliases: Map<string, RoutedNamespaceToolIdentity>;
 } {
@@ -375,6 +378,11 @@ export function rewriteRoutedNamespaceToolsForUpstream(body: unknown): {
     if (dottedAliasIsUnambiguous(identity.namespace, identity.name)
       && !ambiguousDotted.has(dotted) && !plan.bareWireNames.has(dotted)
       && !aliases.has(dotted)) aliases.set(dotted, identity);
+  }
+  // The adapter lowers custom tools before namespaces. Preserve their declared
+  // kind only in already-authorized response aliases; wire selectors remain lowered.
+  for (const identity of aliases.values()) {
+    if (convertedCustomToolNames?.has(namespacedToolName(identity.namespace, identity.name))) identity.kind = "custom";
   }
   return {
     body: {

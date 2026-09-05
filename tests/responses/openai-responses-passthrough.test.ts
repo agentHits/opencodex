@@ -21,6 +21,8 @@ import {
 import { createTranslatorBudget } from "../../src/lib/translator-budget";
 import type { OcxConfig } from "../../src/types";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
+import { restoreRoutedNamespaceCalls } from "../../src/responses/namespace-tool-compat";
+import { restoreRoutedCustomCalls } from "../../src/responses/custom-tool-compat";
 
 const createResponsesPassthroughAdapter = (...args: Parameters<typeof createResponsesPassthroughAdapterProduction>) =>
   withTestTranslatorBudget(createResponsesPassthroughAdapterProduction(...args));
@@ -3713,6 +3715,59 @@ describe("routed namespace and custom-tool identity", () => {
 
   const frame = (event: string, payload: Record<string, unknown>): string =>
     `event: ${event}\ndata: ${JSON.stringify({ type: event, ...payload })}`;
+
+  test.each(["function_call", "custom_tool_call"])("adapter preserves original custom kind for upstream %s after actual lowering order", type => {
+    const adapter = createResponsesPassthroughAdapter(config.providers.fixture!);
+    const built = adapter.buildRequest({
+      modelId: "routed-model", context: { messages: [] }, stream: false, options: {},
+      _rawBody: { model: "routed-model", input: "read", tools: rawTools },
+    }, { headers: new Headers() });
+    const aliases = built.convertedRoutedNamespaceToolAliases;
+    const names = built.convertedRoutedCustomToolNames;
+    if (!aliases || !names) throw new Error("Missing adapter conversion provenance");
+    expect([...names]).toEqual([`${customNamespace}__read`]);
+    expect(JSON.parse(built.body).tools).toMatchObject([
+      { type: "function", name: `${customNamespace}__read` },
+      { type: "function", name: `${functionNamespace}__read` },
+    ]);
+    for (const separator of ["__", "."]) {
+      const name = `${customNamespace}${separator}read`;
+      expect(aliases.get(name)?.kind).toBe("custom");
+      expect(aliases.get(`${functionNamespace}${separator}read`)?.kind).toBe("function");
+      const call = type === "function_call" ? { ...customUpstreamItem, name } : {
+        type, name, id: "ctc_custom_read", call_id: "call_custom_read", input: "freeform payload", status: "completed",
+      };
+      const restored = restoreRoutedNamespaceCalls({ output: [call] }, aliases);
+      expect(restored.changed).toBe(true);
+      expect(restoreRoutedCustomCalls(restored.value, names).value).toEqual({ output: [{
+        type: "custom_tool_call", name: "read", namespace: customNamespace,
+        id: "ctc_custom_read", call_id: "call_custom_read", input: "freeform payload", status: "completed",
+      }] });
+      const mismatched = { type: "custom_tool_call", name: `${functionNamespace}${separator}read`, input: "opaque payload" };
+      expect(restoreRoutedNamespaceCalls(mismatched, aliases)).toEqual({ value: mismatched, changed: false });
+    }
+  });
+
+  test("adapter custom provenance does not add excluded or colliding namespace aliases", () => {
+    const adapter = createResponsesPassthroughAdapter(config.providers.fixture!);
+    const build = (tools: unknown[], tool_choice: unknown) => adapter.buildRequest({
+      modelId: "routed-model", context: { messages: [] }, stream: false, options: {},
+      _rawBody: { model: "routed-model", input: "read", tools, tool_choice },
+    }, { headers: new Headers() });
+    expect(build(rawTools, "none").convertedRoutedNamespaceToolAliases?.size).toBe(0);
+    const selected = build(rawTools, { type: "function", namespace: functionNamespace, name: "read" });
+    expect([...selected.convertedRoutedNamespaceToolAliases!.keys()])
+      .toEqual([`${functionNamespace}__read`, `${functionNamespace}.read`]);
+    const customSelected = build(rawTools, { type: "custom", namespace: customNamespace, name: "read" });
+    expect([...customSelected.convertedRoutedNamespaceToolAliases!.keys()])
+      .toEqual([`${customNamespace}__read`, `${customNamespace}.read`]);
+    expect(customSelected.convertedRoutedNamespaceToolAliases?.get(`${customNamespace}__read`)?.kind).toBe("custom");
+    const collision = build([...rawTools, { type: "function", name: `${customNamespace}.read`, parameters: {} }], "auto");
+    expect(collision.convertedRoutedNamespaceToolAliases?.has(`${customNamespace}.read`)).toBe(false);
+    expect(collision.convertedRoutedNamespaceToolAliases?.get(`${customNamespace}__read`)?.kind).toBe("custom");
+    expect(() => build([...rawTools, { type: "function", name: `${customNamespace}__read`, parameters: {} }], "auto"))
+      .toThrow("namespace tool wire-name collision");
+  });
 
   test("round-trips same-named namespaced custom and function calls through JSON and SSE", async () => {
     const adapter = createResponsesPassthroughAdapter(config.providers.fixture!);
