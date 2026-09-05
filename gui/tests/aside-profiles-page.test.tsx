@@ -12,7 +12,7 @@ const globals = [
 const apiBase = "http://aside-profiles-test.invalid";
 const profilesPath = "/api/client-integrations/aside/profiles";
 const syncPath = "/api/client-integrations/aside/sync";
-let previousGlobals: Record<(typeof globals)[number], unknown>;
+let previousGlobals: Record<(typeof globals)[number], PropertyDescriptor | undefined>;
 let testWindow: Window;
 let container: HTMLElement;
 let root: Root | null = null;
@@ -51,7 +51,9 @@ function success(profileId?: number) {
 }
 
 beforeEach(() => {
-  previousGlobals = Object.fromEntries(globals.map(key => [key, Reflect.get(globalThis, key)])) as typeof previousGlobals;
+  previousGlobals = Object.fromEntries(
+    globals.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  ) as typeof previousGlobals;
   clearClientResourceStoresForTests();
   testWindow = new Window({ url: "http://localhost/#integrations/aside" });
   Object.defineProperty(testWindow.navigator, "language", { configurable: true, value: "en-US" });
@@ -108,7 +110,9 @@ afterEach(async () => {
   clearClientResourceStoresForTests();
   testWindow.close();
   for (const key of globals) {
-    Object.defineProperty(globalThis, key, { configurable: true, value: previousGlobals[key] });
+    const descriptor = previousGlobals[key];
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else Reflect.deleteProperty(globalThis, key);
   }
 });
 

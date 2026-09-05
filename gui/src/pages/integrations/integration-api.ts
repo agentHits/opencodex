@@ -286,7 +286,7 @@ export async function toggleIntegration(
   );
   const outcomes = result.results === undefined ? undefined : parseAsideProfileOutcomes(result.results);
   if (client === "aside" && result.results !== undefined && (!outcomes
-    || (result.ok === true && outcomes.some(row => !row.ok)))) {
+    || result.ok !== outcomes.every(row => row.ok))) {
     throw new IntegrationApiError(502, { code: "invalid_aside_profile_response" });
   }
   if (result.ok !== true) throw new IntegrationApiError(207, {

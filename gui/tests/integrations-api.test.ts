@@ -196,3 +196,16 @@ test("bulk Aside refusals retain operation-specific recovery fields", async () =
     results: [{ profileId: 2, reason: "write_failed", snapshotPath: "/backup/profile-2", residual: true }],
   } });
 });
+
+test.each([
+  { ok: false, results: [{ profileId: 2, ok: true }] },
+  { ok: false, results: [] },
+  { ok: true, results: [{ profileId: 0, ok: true }, { profileId: 2, ok: false }] },
+])("bulk Aside rejects a contradictory aggregate result: $ok / $results", async body => {
+  globalThis.fetch = (async () => Response.json(body, { status: body.ok ? 200 : 207 })) as typeof fetch;
+
+  await expect(toggleIntegration("http://fixture", "aside", true)).rejects.toMatchObject({
+    status: 502,
+    body: { code: "invalid_aside_profile_response" },
+  });
+});
