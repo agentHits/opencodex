@@ -16,7 +16,6 @@ import type { ProviderModelUsageRow } from "../components/provider-workspace/typ
 export type ProviderModelCounts = Record<string, number>;
 export type ProviderAvailableModels = Record<string, string[]>;
 export type ProviderSelectedModels = Record<string, string[]>;
-export type ProviderDisabledModels = Record<string, string[]>;
 
 /** Parse `/api/selected-models` available map into provider -> model id list. */
 export function parseAvailableModels(data: unknown): ProviderAvailableModels {
@@ -65,26 +64,10 @@ export function parseSelectedModels(data: unknown): ProviderSelectedModels {
   return models;
 }
 
-/** Parse `/api/selected-models` disabled map into provider -> hidden model id list. */
-export function parseDisabledModels(data: unknown): ProviderDisabledModels {
-  if (!data || typeof data !== "object") return {};
-  const disabled = (data as { disabled?: unknown }).disabled;
-  if (!disabled || typeof disabled !== "object" || Array.isArray(disabled)) return {};
-
-  const models: ProviderDisabledModels = {};
-  for (const [provider, ids] of Object.entries(disabled)) {
-    if (!Array.isArray(ids)) continue;
-    models[provider] = ids.filter((id): id is string => typeof id === "string");
-  }
-  return models;
-}
-
 export function countAvailableModels(data: unknown): ProviderModelCounts {
   const counts: ProviderModelCounts = {};
-  const disabled = parseDisabledModels(data);
   for (const [provider, models] of Object.entries(parseAvailableModels(data))) {
-    const hidden = new Set(disabled[provider] ?? []);
-    counts[provider] = models.filter(model => !hidden.has(model)).length;
+    counts[provider] = models.length;
   }
   return counts;
 }
