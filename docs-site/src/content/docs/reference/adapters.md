@@ -157,6 +157,19 @@ of the HTTP retry loop.
   ChatGPT account id, and the OpenAI beta/originator/session headers. This is the ChatGPT-login path
   that also powers the [sidecars](/guides/sidecars/).
 
+## Command Code session affinity
+
+The OAuth `command-code` adapter derives an opaque `x-session-id` from the client
+thread identity, then the reasoning-replay conversation identity. When neither is
+available, it uses a prompt-cache key only if the integration has explicitly
+classified that key as belonging to one conversation. Shared or unclassified cache
+keys do not establish session affinity; requests without a usable identity receive
+a fresh session ID. Recovery and cached-history replay preserve this classification.
+
+The API-key `commandcode` provider uses the `openai-chat` adapter and supports
+forwarding `prompt_cache_key`. This is separate from the OAuth adapter's session
+header and does not guarantee a provider cache hit.
+
 ## `anthropic`
 
 **Targets:** Anthropic **Messages** (`/v1/messages`).
@@ -366,7 +379,8 @@ compatibility pair: `agent.v1.AgentService/RunSSE` for server output and
   `unsafeAllowNativeLocalExec: true` remains equivalent only when `nativeLocalExec` is unset.
 
 Codex-compatible shell schemas retain sandbox permissions, justification, reusable
-prefix rules and login mode. Freeform tools expose one required string `input`;
+prefix rules and login mode. Freeform tools expose one required string `input`
+and preserve its tool-specific guidance, such as the required patch envelope;
 bare `exec_command` and `shell_command` names are reserved for non-freeform shell
 bridges. Namespace a custom freeform tool that uses either name. These schema
 declarations do not grant approval or change execution policy.
