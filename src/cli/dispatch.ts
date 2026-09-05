@@ -400,7 +400,13 @@ const commandRunners: Record<string, CommandRunner> = {
           },
           config,
           port: live.port,
-        }, ["mcode", "pi", "aside"]);
+        }, ["mcode", "pi"]);
+        try {
+          const { refreshAsideProfilesThroughServer } = await import("./aside-profiles");
+          results.push(...await refreshAsideProfilesThroughServer({ findLiveProxy: async () => live }));
+        } catch (error) {
+          console.warn(`Aside profiles were not refreshed: ${error instanceof Error ? error.message : String(error)}`);
+        }
         for (const result of results) {
           const label = result.profileId === undefined ? result.client : `${result.client}:${result.profileId}`;
           if (result.changed) console.log(`${label} integration refreshed from the current catalog.`);

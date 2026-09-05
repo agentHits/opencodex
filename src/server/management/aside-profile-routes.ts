@@ -3,7 +3,7 @@ import { ClientPathError } from "../../clients/config-export";
 import { IntegrationMutationBusyError } from "../../integrations/mutation-flight";
 import { IntegrationWriterLockBusyError } from "../../integrations/writer-lock";
 import {
-  getAsideProfileState, listAsideProfileStates, mutateAsideProfiles,
+  getAsideProfileState, listAsideProfileStates, mutateAsideProfiles, refreshAsideProfiles,
   type AsideProfilesInput,
 } from "../../integrations/aside-profiles";
 import {
@@ -49,25 +49,85 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+async function readProfileBody(req: Request): Promise<unknown> {
+  try { return await readManagementJsonBody(req); }
+  catch (error) { rethrowManagementBodyTooLarge(error); throw new ProfileQueryError("invalid JSON body"); }
+}
+
+function validateClientSelector(ctx: ManagementContext): void {
+  const client = ctx.url.searchParams.get("client");
+  if (client !== null && client !== "aside") throw new ProfileQueryError("client/profile selectors must identify Aside");
+}
+
+/** Dedicated scoped paths fail closed even when a newer client reaches an older server. */
+function nestedProfileContext(ctx: ManagementContext): { ctx: ManagementContext; action?: string } {
+  const prefix = "/api/client-integrations/aside/profiles/";
+  if (!ctx.url.pathname.startsWith(prefix)) return { ctx };
+  validateClientSelector(ctx);
+  const parts = ctx.url.pathname.slice(prefix.length).split("/");
+  const url = new URL(ctx.url);
+  if (parts.length === 1 && parts[0] === "journal") {
+    if (url.searchParams.has("profile")) throw new ProfileQueryError("Use a profile-specific journal path");
+    url.pathname = "/api/client-integrations/journal";
+    url.searchParams.set("client", "aside");
+    return { ctx: { ...ctx, url }, action: "journal" };
+  }
+  if (parts.length > 2 || !parts[0] || (parts[1] !== undefined && !["journal", "restore"].includes(parts[1]))) {
+    throw new ProfileQueryError("Invalid Aside profile path");
+  }
+  const prior = url.searchParams.get("profile");
+  if (prior !== null && prior !== parts[0]) throw new ProfileQueryError("Conflicting Aside profile selectors");
+  url.searchParams.set("profile", parts[0]);
+  url.searchParams.set("client", "aside");
+  url.pathname = parts[1] ? `/api/client-integrations/${parts[1]}` : "/api/client-integrations/aside";
+  return { ctx: { ...ctx, url }, action: parts[1] };
+}
+
 /** Own only Aside status/toggle paths; other clients keep the existing adapter. */
 export async function handleAsideProfileRoutes(
   ctx: ManagementContext, options: AsideProfileRouteOptions,
 ): Promise<Response | null> {
-  const { req, url } = ctx;
-  if (url.pathname !== "/api/client-integrations/aside" && url.pathname !== "/api/client-integrations/aside/profiles") return null;
-  if (req.method !== "GET" && req.method !== "PUT") return null;
+  if (ctx.url.pathname !== "/api/client-integrations/aside"
+    && !ctx.url.pathname.startsWith("/api/client-integrations/aside/")) return null;
   try {
+    const normalized = nestedProfileContext(ctx);
+    ctx = normalized.ctx;
+    const { req, url } = ctx;
+    validateClientSelector(ctx);
     const id = profileId(ctx);
-    if (url.pathname.endsWith("/profiles")) {
-      if (req.method !== "GET" || id !== undefined) throw new ProfileQueryError("The profile collection supports GET without a profile selector");
-      return jsonResponse(await listAsideProfileStates(options.input()), 200, req, ctx.config);
+    if (normalized.action === "journal") {
+      if (req.method === "GET") return asideJournalResponse(ctx, "aside", options);
+      if (req.method === "DELETE") {
+        const opId = url.searchParams.get("opId")?.trim();
+        if (!opId) throw new ProfileQueryError("opId is required");
+        return asideJournalDeleteResponse(ctx, opId, options);
+      }
+      return null;
     }
+    if (normalized.action === "restore") {
+      if (req.method !== "POST") return null;
+      const body = await readProfileBody(req);
+      if (!isObject(body) || typeof body.opId !== "string" || !body.opId.trim()
+        || (body.confirmDrift !== undefined && typeof body.confirmDrift !== "boolean")) throw new ProfileQueryError("Invalid Aside restore request");
+      return asideRestoreResponse(ctx, { opId: body.opId.trim(), confirmDrift: body.confirmDrift === true }, options);
+    }
+    if (url.pathname === "/api/client-integrations/aside/sync") {
+      if (req.method !== "POST") return null;
+      if (id !== undefined) throw new ProfileQueryError("Aside sync uses the server's selected profiles");
+      const body = await readProfileBody(req);
+      if (!isObject(body) || Object.keys(body).length !== 0) throw new ProfileQueryError("Aside sync expects an empty object");
+      const results = await refreshAsideProfiles(options.input());
+      const ok = results.every(result => result.ok);
+      return jsonResponse({ ok, clientId: "aside", results }, ok ? 200 : 207, req, ctx.config);
+    }
+    if (url.pathname !== "/api/client-integrations/aside" && url.pathname !== "/api/client-integrations/aside/profiles") return null;
+    if (req.method !== "GET" && req.method !== "PUT") return null;
+    if (url.pathname.endsWith("/profiles") && id !== undefined) throw new ProfileQueryError("Use a profile-specific path");
     if (req.method === "GET") {
       const state = id === undefined ? await listAsideProfileStates(options.input()) : await getAsideProfileState(options.input(), id);
       return jsonResponse(state, 200, req, ctx.config);
     }
-    let body: unknown;
-    try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); throw new ProfileQueryError("invalid JSON body"); }
+    const body = await readProfileBody(req);
     if (!isObject(body) || typeof body.enabled !== "boolean") throw new ProfileQueryError("enabled must be a boolean");
     if (body.overwriteConflict !== undefined && typeof body.overwriteConflict !== "boolean") throw new ProfileQueryError("overwriteConflict must be a boolean");
     if (body.overwriteConflict === true && !body.enabled) throw new ProfileQueryError("overwriteConflict applies only to enabling an integration");
@@ -120,11 +180,12 @@ export async function asideRestoreResponse(
   ctx: ManagementContext, body: { opId: string; confirmDrift?: boolean }, options: AsideProfileRouteOptions,
 ): Promise<Response | null> {
   try {
+    validateClientSelector(ctx);
     const id = profileId(ctx);
     const input = options.input();
     const rootEntry = input.store?.findOperation(body.opId);
     if (rootEntry && rootEntry.clientId !== "aside") {
-      if (id !== undefined) throw new ProfileQueryError("profile applies only to Aside");
+      if (id !== undefined || ctx.url.searchParams.has("client")) throw new ProfileQueryError("client/profile selectors do not match the operation");
       return null;
     }
     const operation = await findAsideOperation(input, body.opId, id);
@@ -145,11 +206,12 @@ export async function asideJournalDeleteResponse(
   ctx: ManagementContext, opId: string, options: AsideProfileRouteOptions,
 ): Promise<Response | null> {
   try {
+    validateClientSelector(ctx);
     const id = profileId(ctx);
     const input = options.input();
     const rootEntry = input.store?.findOperation(opId);
     if (rootEntry && rootEntry.clientId !== "aside") {
-      if (id !== undefined) throw new ProfileQueryError("profile applies only to Aside");
+      if (id !== undefined || ctx.url.searchParams.has("client")) throw new ProfileQueryError("client/profile selectors do not match the operation");
       return null;
     }
     const operation = await findAsideOperation(input, opId, id);

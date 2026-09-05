@@ -127,3 +127,34 @@ test("invalid persisted profile policy fails closed without resetting the surrou
   expect(loaded.port).toBe(10100);
   expect(loaded.providers.fixture).toBeDefined();
 });
+
+test.each(["%61side", "as%69de"])("alternate Aside spelling %s cannot reach the legacy writer", async spelling => {
+  const before = [0,1,2].map(id => readFileSync(path(id), "utf8"));
+  expect((await api(`/api/client-integrations/${spelling}`, "PUT", { enabled: true })).status).toBe(400);
+  expect(saved).toBeUndefined();
+  expect([0,1,2].map(id => readFileSync(path(id), "utf8"))).toEqual(before);
+  expect(store.listOperations("aside")).toEqual([]);
+});
+
+test("conflicting client selectors cannot restore Aside or delete its history", async () => {
+  const on = await (await api("/api/client-integrations/aside/profiles/0", "PUT", { enabled: true })).json();
+  await api("/api/client-integrations/aside/profiles/0", "PUT", { enabled: false });
+  const before = readFileSync(path(0), "utf8");
+  const policy = structuredClone(config.asideProfileSync);
+  expect((await api("/api/client-integrations/restore?client=pi&profile=0", "POST", { opId: on.opId })).status).toBe(400);
+  expect((await api(`/api/client-integrations/journal?client=pi&profile=0&opId=${on.opId}`, "DELETE")).status).toBe(400);
+  expect(readFileSync(path(0), "utf8")).toBe(before);
+  expect(config.asideProfileSync).toEqual(policy);
+  const history = await (await api("/api/client-integrations/aside/profiles/0/journal")).json();
+  expect(history.operations.some((row: { opId: string }) => row.opId === on.opId)).toBe(true);
+});
+
+test("dedicated nested paths retain profile scope for status, history and restore", async () => {
+  const on = await (await api("/api/client-integrations/aside/profiles/2", "PUT", { enabled: true })).json();
+  expect(on).toMatchObject({ ok: true, profileId: 2 });
+  expect(await (await api("/api/client-integrations/aside/profiles/2")).json()).toMatchObject({ profileId: 2, enabled: true });
+  expect((await api("/api/client-integrations/aside/profiles/2?profile=1", "PUT", { enabled: false })).status).toBe(400);
+  expect((await api("/api/client-integrations/aside/profiles/2/restore", "POST", { opId: on.opId })).status).toBe(200);
+  expect(document(2).providers.opencodex).toBeUndefined();
+  expect(document(0).providers.opencodex).toBeUndefined();
+});

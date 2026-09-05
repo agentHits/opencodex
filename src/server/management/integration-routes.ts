@@ -622,6 +622,11 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
   const requestedClient = decodeClientPath(url.pathname);
   if (requestedClient === null) return null;
   if (!isIntegrationClientId(requestedClient)) return invalidClientResponse(ctx);
+  // Canonical Aside paths are owned above. Never decode an alternate spelling
+  // into the legacy single-account writer or bypass profile policy/guards.
+  if (requestedClient === "aside") {
+    return jsonResponse({ error: "Use the canonical Aside profile path", code: "invalid_aside_profile_path" }, 400, req, ctx.config);
+  }
 
   if (req.method === "GET") {
     try {

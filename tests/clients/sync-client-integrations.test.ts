@@ -511,7 +511,8 @@ test("the direct ocx sync command refreshes MCode, Pi and Aside instead of relyi
   const start = src.indexOf("sync: async deps =>");
   const command = src.slice(start, src.indexOf("v2: async deps =>", start));
   expect(command).toContain("refreshOwnedCatalogIntegrations");
-  expect(command).toContain('["mcode", "pi", "aside"]');
+  expect(command).toContain('["mcode", "pi"]');
+  expect(command).toContain("refreshAsideProfilesThroughServer");
   expect(command.indexOf("syncModelsToCodex")).toBeLessThan(command.indexOf("refreshOwnedCatalogIntegrations"));
   expect(command).toContain('synced.status !== "refused"');
 });

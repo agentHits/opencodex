@@ -43,7 +43,18 @@ function uniqueOperations(rows: AsideOperation[]): AsideOperation[] {
     if (previous && (previous.profileId !== row.profileId || JSON.stringify(previous.entry) !== JSON.stringify(row.entry))) {
       throw new AsideProfileError("aside_operation_ambiguous", 409, "Aside operation identifies multiple profiles");
     }
-    if (!previous) seen.set(row.entry.opId, row);
+    if (!previous) {
+      seen.set(row.entry.opId, row);
+      continue;
+    }
+    // Identical journal rows can outlive different snapshot-retention windows.
+    const previousSnapshot = previous.store.readSnapshot(previous.entry);
+    const candidateSnapshot = row.store.readSnapshot(row.entry);
+    if (previousSnapshot.kind === "stored" && candidateSnapshot.kind === "stored"
+      && previousSnapshot.text !== candidateSnapshot.text) {
+      throw new AsideProfileError("aside_operation_ambiguous", 409, "Aside operation has conflicting snapshot copies");
+    }
+    if (previousSnapshot.kind === "expired" && candidateSnapshot.kind === "stored") seen.set(row.entry.opId, row);
   }
   return [...seen.values()];
 }
@@ -131,11 +142,8 @@ function snapshotWasOwned(entry: JournalEntry, text: string | null, bound: Integ
 function importOperation(row: AsideOperation, scope: AsideProfileScope): void {
   if (row.store.root === scope.store.root) return;
   const existing = scope.store.findOperation(row.entry.opId);
-  if (existing) {
-    if (JSON.stringify(existing) !== JSON.stringify(row.entry)) {
-      throw new AsideProfileError("aside_operation_ambiguous", 409, "Aside operation conflicts with existing profile history");
-    }
-    return;
+  if (existing && JSON.stringify(existing) !== JSON.stringify(row.entry)) {
+    throw new AsideProfileError("aside_operation_ambiguous", 409, "Aside operation conflicts with existing profile history");
   }
   const snapshot = row.store.readSnapshot(row.entry);
   if (snapshot.kind === "expired") throw new AsideProfileError("integration_snapshot_expired", 410, "That backup has expired");
@@ -148,7 +156,7 @@ function importOperation(row: AsideOperation, scope: AsideProfileScope): void {
     }
     if (present.kind !== "stored") scope.store.captureSnapshot("aside", row.entry.opId, snapshot.text);
   }
-  scope.store.appendJournal(structuredClone(row.entry));
+  if (!existing) scope.store.appendJournal(structuredClone(row.entry));
 }
 
 export function restoreAsideProfile(

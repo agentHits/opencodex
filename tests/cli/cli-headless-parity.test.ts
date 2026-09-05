@@ -929,10 +929,10 @@ describe("Aside profile integration CLI", () => {
     expect(await handleClientIntegrationCommand(["history", "--client", "aside", "--profile", "2", "--json"], runtime.deps)).toBe(0);
     expect(await handleClientIntegrationCommand(["restore", "--client", "aside", "--profile", "2", "--op", "op-profile", "--json"], runtime.deps)).toBe(0);
     expect(runtime.requests.map(row => row.path)).toEqual([
-      "/api/client-integrations/aside?profile=2",
-      "/api/client-integrations/aside?profile=2",
-      "/api/client-integrations/journal?client=aside&profile=2",
-      "/api/client-integrations/restore?client=aside&profile=2",
+      "/api/client-integrations/aside/profiles/2",
+      "/api/client-integrations/aside/profiles/2",
+      "/api/client-integrations/aside/profiles/2/journal",
+      "/api/client-integrations/aside/profiles/2/restore",
     ]);
     expect(runtime.requests[1]!.body).toEqual({ enabled: false });
     expect(runtime.requests[3]!.body).toEqual({ opId: "op-profile", confirmDrift: false });
@@ -956,6 +956,6 @@ describe("Aside profile integration CLI", () => {
       results: [{ profileId: 0, ok: true, message: "updated" }, { profileId: 1, ok: false, message: "conflict" }],
     }));
     expect(await handleClientIntegrationCommand(["enable", "--client", "aside", "--json"], runtime.deps)).toBe(1);
-    expect(runtime.requests[0]).toEqual({ path: "/api/client-integrations/aside", method: "PUT", body: { enabled: true } });
+    expect(runtime.requests[0]).toEqual({ path: "/api/client-integrations/aside/profiles", method: "PUT", body: { enabled: true } });
   });
 });

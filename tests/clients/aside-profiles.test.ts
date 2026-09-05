@@ -295,6 +295,60 @@ describe("Aside profile desired state, ownership and history", () => {
     expect(store.readRecords().aside).toEqual(owner);
   });
 
+  test.each(["child", "legacy"] as const)("history restores from the remaining copy when %s retention expires", async expired => {
+    const opId = seedLegacy(1);
+    seedLegacy(0);
+    const rootOwner = store.readRecords().aside;
+    const applied = readFileSync(path(1), "utf8");
+    expect((await restoreAsideProfile(input(), { opId })).ok).toBe(true);
+    const child = createIntegrationStateStore(join(store.root, "aside-profiles", "1"));
+    const entry = store.findOperation(opId)!;
+    expect(child.findOperation(opId)).toEqual(entry);
+    const expiredStore = expired === "child" ? child : store;
+    const remainingStore = expired === "child" ? store : child;
+    const snapshot = expiredStore.readSnapshot(entry);
+    if (snapshot.kind !== "stored") throw new Error("fixture snapshot missing");
+    removeTreeWithRetry(snapshot.path);
+    expect(expiredStore.readSnapshot(entry).kind).toBe("expired");
+    expect(remainingStore.readSnapshot(entry)).toMatchObject({ kind: "stored", text: original });
+    const selected = findAsideOperation(input(), opId, 1)!;
+    expect(selected.store.root).toBe(remainingStore.root);
+    expect(listAsideOperations(input(), 1).filter(row => row.entry.opId === opId)).toHaveLength(1);
+    // Recreate the operation's result so ordinary Undo needs no drift override.
+    writeFileSync(path(1), applied);
+    expect(asideOperationMatchesCurrent(input(), selected)).toBe(true);
+    expect((await restoreAsideProfile(input(), { opId, profileId: 1 })).ok).toBe(true);
+    expect(readFileSync(path(1), "utf8")).toBe(original);
+    expect(child.readSnapshot(entry)).toMatchObject({ kind: "stored", text: original });
+    expect(child.listOperations("aside").filter(row => row.opId === opId)).toHaveLength(1);
+    expect(store.listOperations("aside").filter(row => row.opId === opId)).toHaveLength(1);
+    expect(store.readRecords().aside).toEqual(rootOwner);
+    if (expired === "legacy") expect(store.readSnapshot(entry).kind).toBe("expired");
+  });
+
+  test("conflicting available snapshot copies refuse lookup and restore before saving or writing", async () => {
+    const opId = seedLegacy(1);
+    seedLegacy(0);
+    expect((await restoreAsideProfile(input(), { opId })).ok).toBe(true);
+    const child = createIntegrationStateStore(join(store.root, "aside-profiles", "1"));
+    const entry = store.findOperation(opId)!;
+    const snapshot = child.readSnapshot(entry);
+    if (snapshot.kind !== "stored") throw new Error("fixture snapshot missing");
+    writeFileSync(snapshot.path, JSON.stringify({ theme: "conflicting-copy" }));
+    expect(child.findOperation(opId)).toEqual(entry);
+    const before = bytes();
+    const beforeSaves = saves;
+    const beforeHistory = child.listOperations("aside");
+    expect(() => findAsideOperation(input(), opId, 1)).toThrow("conflicting snapshot copies");
+    expect(() => listAsideOperations(input(), 1)).toThrow("conflicting snapshot copies");
+    await expect(restoreAsideProfile(input(), { opId, profileId: 1, confirmDrift: true }))
+      .rejects.toMatchObject({ code: "aside_operation_ambiguous", status: 409 });
+    expect(saves).toBe(beforeSaves);
+    expect(bytes()).toEqual(before);
+    expect(child.listOperations("aside")).toEqual(beforeHistory);
+    expect(store.readSnapshot(entry)).toMatchObject({ kind: "stored", text: original });
+  });
+
   test("unknown profile selectors and unregistered historical targets are not retargeted", async () => {
     await expect(getAsideProfileState(input(), 9)).rejects.toMatchObject({ code: "aside_profile_not_found", status: 404 });
     await expect(mutateAsideProfiles(input(), { profileId: -1, enabled: true })).rejects.toBeInstanceOf(AsideProfileError);
