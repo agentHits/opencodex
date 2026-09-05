@@ -66,6 +66,26 @@ deleting, or editing a provider's shape clears that per-provider cache; a disabl
 deliberately does not, because a disabled provider is already excluded from the catalog gather
 instead. Codex's own `models_cache.json` is a different cache, invalidated by catalog refresh.
 
+For `liveModels: false`, a static provider publishes the ordered union of `models` and
+`retainModels`. When `models` is absent or empty, its configured `defaultModel` seeds that
+union before retained ids; a nonempty explicit list does not import a different default.
+Without any default or configured/retained ids, the static result stays empty. The existing
+forward-auth native path remains separate. Static gathering does not refresh OAuth or call
+the provider's model endpoint, and normal selection and visibility filters still apply.
+
+The provider workspace uses the existing `/api/models` projection for displayed rows,
+model identity and inventory counts. Counts cover distinct non-disabled selectors within
+each provider, before search or the render cap; they are not selected-model or live-discovery
+counts. The full available list and discovery provenance remain separate inputs.
+
+Deleting a custom definition uses its stable record id and does not also hide the underlying
+model. Native or discovered metadata can therefore reappear without changing the inventory
+count. Hide uses the represented row's native/routed identity and changes visibility only.
+The Models page can restore existing hidden rows; adding a definition does not implicitly
+clear a previous hide or provider allowlist. Actions wait for current row and custom-ownership
+observations, and mutations reconcile those observations instead of retaining browser-only
+removal markers. These presentation operations do not grant routing or account entitlement.
+
 ### Windows request-path catalog-state discovery
 
 [Decision Log]

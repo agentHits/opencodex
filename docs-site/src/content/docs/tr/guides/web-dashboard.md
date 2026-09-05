@@ -90,6 +90,25 @@ ayarlanmadığında) ve devre dışı bırakılmadığında açıktır. Bir mode
 iki filtreyi de atomik olarak uzlaştırır; **Tümünü aç (All on)** sağlayıcı izin
 listesini temizler, böylece yeni keşfedilen modeller de açık olur.
 
+### Sağlayıcı çalışma alanında modelleri yönetme
+
+Sağlayıcının **Modeller** sekmesinde **Sil**, kayıtlı özel tanımı kaldırır. Alttaki yerel veya canlı
+keşfedilmiş model yeniden görünebilir; bu nedenle model sayısı aynı kalabilir. **Gizle** yalnızca
+katalog görünürlüğünü değiştirir; tanımı silmez veya doğrudan yönlendirme ilkesini değiştirmez.
+**Modeller bölümünde görünürlüğü yönet**, görünürlüğü geri yükleyebileceğiniz **Modeller** sayfasını
+açar. Sağlayıcı sekmesinde hiç satır kalmasa da bu bağlantı kullanılabilir.
+
+**Ekle**, özel tanımı kaydeder; mevcut gizleme durumunu veya sağlayıcı seçim kurallarını kaldırmaz.
+Kaydedilen model gizli kalabilir. Model zaten biliniyorsa görünürlüğünü **Modeller** bölümünden
+yönetin. Kayıt doğrulandıysa katalog yenilemesi başarısız olsa bile tanım kaydedilmiştir. Yeniden
+eklemek yerine yenileme mesajını izleyin. Değişiklik doğrulanamıyorsa tekrar denemeden önce
+modellerin durumunu yenileyin.
+
+Sağlayıcının model sayısı, sunucunun döndürdüğü güncel model envanterindeki devre dışı olmayan
+benzersiz girdileri, arama ve görüntüleme sınırı uygulanmadan önce sayar. Bu sayı izin listesinin
+boyutu veya canlı keşif sayısı değildir; girdinin sağlayıcıdan keşfedildiğini de kanıtlamaz.
+Seçim rozetleri ve keşif bilgileri bu sayıdan ayrıdır.
+
 ## Yetkilendirme seçicisi ve spawn yönlendirmesi
 
 Kontrol Panelinin **Alt ajan yetkilendirmesi** seçicisi `injectionModel`'i ve
