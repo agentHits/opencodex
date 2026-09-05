@@ -38,6 +38,35 @@ test("replay does not recover unseen envelopes, other parents, or other callers"
   expect(calls).toBe(1);
 });
 
+test("a rotated token for the same account cannot reuse the previous credential's recovery", async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Response(recoverySse(calls === 1 ? "Original credential assignment." : "Rotated credential assignment."));
+  }) as typeof fetch;
+  const config = routedConfig({ enabled: true });
+  const exp = Math.floor(Date.now() / 1000) + 3_600;
+  const headers = codexHeaders("acct-caller");
+  headers.set("authorization", `Bearer ${fakeChatGptJwt("acct-caller", { exp })}`);
+  const rotatedHeaders = new Headers(headers);
+  rotatedHeaders.set("authorization", `Bearer ${fakeChatGptJwt("acct-caller", { exp: exp + 1 })}`);
+  const original = new Request("http://localhost/v1/responses", { headers });
+  const rotated = new Request("http://localhost/v1/responses", { headers: rotatedHeaders });
+  expect(await recoverEncryptedAgentTask(original, encryptedInput(), {}, config)).toBe(true);
+  const missed = encryptedInput();
+  expect(restoreCachedEncryptedAgentTasks(rotated, missed, config)).toBe(0);
+  expect(missed).toEqual(encryptedInput());
+  expect(calls).toBe(1);
+  const replay = encryptedInput();
+  expect(restoreCachedEncryptedAgentTasks(original, replay, config)).toBe(1);
+  expect(JSON.stringify(replay)).toContain("Original credential assignment.");
+  // The rotated credential is valid, but must perform its own admitted recovery.
+  const fresh = encryptedInput();
+  expect(await recoverEncryptedAgentTask(rotated, fresh, {}, config)).toBe(true);
+  expect(JSON.stringify(fresh)).toContain("Rotated credential assignment.");
+  expect(calls).toBe(2);
+});
+
 test("Responses handler restores a cached task in a continued child turn", async () => {
   const { post, providerResponse } = await import("../helpers/agent-task-recovery");
   let recoveries = 0;
