@@ -218,11 +218,23 @@ ocx mcode
 
 Once connected, `ocx sync` refreshes owned MCode, Pi, and Aside catalogs with the current
 model selection, context windows, and reasoning-effort ladders. Changes to model visibility,
-provider selection, or presets also refresh connected Pi and Aside catalogs. Missing,
-foreign-edited, unsafe, and never-owned blocks stay untouched; reconnect them explicitly.
+provider selection, or presets also refresh connected Pi and Aside catalogs. Foreign-edited
+or unsafe blocks stay untouched, as do previously owned blocks you removed manually.
+An enabled Aside profile is an exception to the usual owned-only refresh: if its account
+directory exists and it has never had an owned block, sync may create its first block when
+that slot is empty. A prior Aside connection enables this behavior for all registered
+profiles by default. Sync does not create missing account directories or replace manual blocks.
 A refused or overlapping refresh is reported separately for each client. Start a new Pi
 session or fully quit and reopen Aside to load the updated file.
 Aside refresh requires a [compatible running proxy](#aside-profile-controls).
+
+If Models reports **“Model selection saved”** together with a client-refresh warning, the
+selection is already saved; one or more client files could not be updated. The warning names
+the affected client and Aside profile, when applicable, and explains the refusal. Open
+**Integrations** to inspect that client or profile before starting a new session. Resolve the
+reported issue, then retry `ocx sync`; an overlapping operation must finish first. If the
+warning includes a backup path or says recovery did not finish, inspect that recovery state
+before retrying. A successful selection save alone does not confirm client-file recovery.
 
 The separate MiniMax platform CLI (`mmx`) is not a file-toggle integration. Its text
 commands use MiniMax's Anthropic-compatible endpoint, so OpenCodex provides a
@@ -273,6 +285,12 @@ siblings unchanged. Desired sync settings are saved before file changes; actual 
 refusal are reported for each profile. A partial bulk result is not an all-applied success and
 the CLI exits nonzero. Undo restores the selected profile's synchronization intent as well as
 its file, so a later sync does not silently reverse Undo.
+
+The [profile API](/reference/management-api/#aside-profile-controls) returns HTTP 200 for a
+successful bulk operation and HTTP 207 with `ok: false` if any profile refuses. Inspect every
+entry in `results`: successful profiles are not rolled back when another fails. Desired
+settings remain saved, so retry after addressing the affected profile rather than assuming
+the entire change failed. If saving those settings fails, no profile files are changed.
 
 Each profile has separate ownership and history. Existing user edits, unsafe paths and linked
 catalogs are refused; the existing explicit overwrite and drift-confirmation controls remain
