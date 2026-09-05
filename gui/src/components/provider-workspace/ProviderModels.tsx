@@ -68,6 +68,7 @@ function ProviderModelInventory({ item, apiBase, availableModels, selectedModels
   const pendingSelection = rows.some(row => row.initialSelectionPending);
   const actionsBlocked = !ready || busy || pendingSelection;
   const customModels = ownership?.rows.filter(row => row.provider === item.name) ?? [];
+  const selectedSet = new Set(selectedModels);
   // Full raw inputs retain duplicate/collision protection. Native-only DTO ids are not definitions.
   const known = [...availableModels, ...(item.models ?? []), ...customModels.map(row => row.modelId), ...(item.defaultModel ? [item.defaultModel] : [])];
   const modelId = draft.trim();
@@ -250,7 +251,7 @@ function ProviderModelInventory({ item, apiBase, availableModels, selectedModels
         : filtered.length === 0 && modelRows !== null ? <p className="muted" role="status">{t("pws.noModelMatch")}</p>
         : <ul className="pws-model-list">{filtered.slice(0, CHIP_RENDER_CAP).map(row => <ProviderModelChip key={row.namespaced}
           row={row} disambiguate={(labels.get(row.id) ?? 0) > 1} copied={copiedId === row.namespaced}
-          isDefault={row.id === item.defaultModel} selected={row.native !== true && selectedModels.includes(row.id)}
+          isDefault={row.id === item.defaultModel} selected={row.native !== true && selectedSet.has(row.id)}
           action={actionFor(row)} disabled={actionsBlocked} onCopy={() => { void copyModel(row); }}
           onRemove={button => { void removeModel(row, button); }} />)}</ul>}
       {filtered.length > CHIP_RENDER_CAP && <p className="muted text-label" style={{ marginTop: 10 }}>

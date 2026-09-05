@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
 import ProviderModels from "../src/components/provider-workspace/ProviderModels";
@@ -20,7 +20,8 @@ let postReply: ((record: { id: string; provider: string; modelId: string }) => R
 let getReply: (() => Response | Promise<Response>) | undefined;
 let refreshes: number;
 let ready: boolean;
-let rerender: () => void;
+const unmountedControl = () => { throw new Error("Provider model harness is not mounted"); };
+let rerender: () => void = unmountedControl;
 const committed = { status: "committed", changed: true, degraded: false, notices: [] };
 const item: WorkspaceItem = { name: "AiCodeWith", adapter: "openai-chat", baseUrl: "https://example.invalid/v1", models: ["claude-opus-5"], defaultModel: "claude-opus-5" };
 const row = (id: string, overrides: Partial<ModelRow> = {}): ModelRow => ({ provider: "AiCodeWith", id, namespaced: `AiCodeWith/${id}`, disabled: false, ...overrides });
@@ -65,12 +66,16 @@ async function mount(options: { item?: WorkspaceItem; available?: string[]; live
   const { createRoot } = await import("react-dom/client");
   function Harness() {
     const [epoch, setEpoch] = useState(0);
-    rerender = () => setEpoch(value => value + 1);
+    useEffect(() => {
+      const committedRerender = () => setEpoch(value => value + 1);
+      rerender = committedRerender;
+      return () => { if (rerender === committedRerender) rerender = unmountedControl; };
+    }, []);
     return <ProviderModels item={options.item ?? item} availableModels={options.available ?? ["claude-opus-5"]}
       selectedModels={options.selected ?? []} hasLiveModels={options.live ?? true}
       modelRows={[...rows]} modelRevision={String(epoch)} modelRowsReady={ready}
       apiBase="http://localhost:10100" onOpenModels={() => {}}
-      onRetryModels={() => { refreshes += 1; rerender(); }} />;
+      onRetryModels={() => { refreshes += 1; setEpoch(value => value + 1); }} />;
   }
   await act(async () => { root = createRoot(container); root.render(<LanguageProvider><Harness /></LanguageProvider>); });
 }

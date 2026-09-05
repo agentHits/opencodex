@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import type { Root } from "react-dom/client";
 import ProviderWorkspaceShell from "../src/components/provider-workspace/ProviderWorkspaceShell";
 import ProviderModels from "../src/components/provider-workspace/ProviderModels";
@@ -21,8 +21,9 @@ let available: Record<string, string[]>;
 let requests: Array<{ path: string; method: string; body?: unknown }>;
 let reads: Record<string, number>;
 let recovery: number;
-let refresh: () => void;
-let choose: (name: string) => void;
+const unmountedControl = () => { throw new Error("Provider management harness is not mounted"); };
+let refresh: () => void = unmountedControl;
+let choose: (name: string) => void = unmountedControl;
 let deleteMode: "ok" | "reject" | "lost" | "malformed" | "refresh-failed";
 let underlying: ModelRow | undefined;
 let writeGate: Promise<void> | undefined;
@@ -152,7 +153,15 @@ async function waitFor(predicate: () => boolean) {
 async function mount(name = "vendor") {
   function Harness() {
     const [epoch, setEpoch] = useState(0); const [provider, setProvider] = useState(name);
-    refresh = () => setEpoch(value => value + 1); choose = setProvider;
+    useEffect(() => {
+      const committedRefresh = () => setEpoch(value => value + 1);
+      refresh = committedRefresh;
+      choose = setProvider;
+      return () => {
+        if (refresh === committedRefresh) refresh = unmountedControl;
+        if (choose === setProvider) choose = unmountedControl;
+      };
+    }, []);
     return <ProviderWorkspaceShell providers={providers} apiBase="http://localhost:10100" defaultProvider="vendor"
       selectedName={provider} onSelect={value => setProvider(value ?? "vendor")} onAddProvider={() => {}}
       modelsRefreshToken={epoch} detail={(item, data) => <section>
