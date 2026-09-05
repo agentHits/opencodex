@@ -96,6 +96,49 @@ describe("original function declaration authority", () => {
     }
   });
 
+  test.each([false, true])("equivalent duplicate schemas ignore object key order (loaded=%s)", loaded => {
+    const first = { type: "object", properties: {
+      cell_id: { type: "string", description: "Cell identifier" },
+      yield_time_ms: { type: "integer", minimum: 0 },
+    }, required: ["cell_id", "yield_time_ms"], additionalProperties: false };
+    const reordered = { additionalProperties: false, required: ["cell_id", "yield_time_ms"], properties: {
+      yield_time_ms: { minimum: 0, type: "integer" },
+      cell_id: { description: "Cell identifier", type: "string" },
+    }, type: "object" };
+    for (const [original, duplicate] of [[first, reordered], [reordered, first]]) {
+      const explicit = { ...wait, parameters: original };
+      const repeated = { ...wait, parameters: duplicate };
+      const body = loaded
+        ? { tools: [explicit], input: [{ type: "tool_search_output", tools: [repeated] }] }
+        : { tools: [explicit, repeated] };
+      const before = JSON.stringify(body);
+      const map = collectFunctionCallRepairSchemas(body);
+      expect([...map.keys()]).toEqual(["wait"]);
+      expect(map.get("wait")?.parameters).toBe(original);
+      expect(repairFunctionCalls(item(), map).value).toEqual(item(canonical));
+      expect(JSON.stringify(body)).toBe(before);
+    }
+  });
+
+  test("duplicate schema comparison keeps required and nested type arrays ordered", () => {
+    const original = { ...parameters, required: ["cell_id", "yield_time_ms"] };
+    const differentArrays = [
+      [original, { ...original, required: ["yield_time_ms", "cell_id"] }],
+      [
+        { ...original, properties: { ...original.properties, union: { type: ["number", "string"] } } },
+        { ...original, properties: { ...original.properties, union: { type: ["string", "number"] } } },
+      ],
+    ];
+    for (const [baseline, changed] of differentArrays) {
+      for (const pair of [[baseline, changed], [changed, baseline]]) {
+        const map = collectFunctionCallRepairSchemas({ tools: pair.map(parameters => ({ ...wait, parameters })) });
+        expect(map.size).toBe(0);
+        const completed = item();
+        expect(repairFunctionCalls(completed, map)).toEqual({ value: completed, changed: false });
+      }
+    }
+  });
+
   test("loaded tool_search_output functions retain their original schemas", () => {
     const body = { input: [{ type: "tool_search_output", tools: [wait, { type: "custom", name: "exec" }] }] };
     const before = JSON.stringify(body);

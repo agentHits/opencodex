@@ -16,6 +16,19 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** JSON object member order is immaterial; array elements retain their exact order. */
+function sameSchemaValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => sameSchemaValue(value, right[index]));
+  }
+  if (!isObject(left) || !isObject(right)) return false;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length
+    && keys.every(key => Object.hasOwn(right, key) && sameSchemaValue(left[key], right[key]));
+}
+
 function namespaceOf(value: unknown): string | undefined {
   return typeof value === "string" && value !== "functions" ? value : undefined;
 }
@@ -65,7 +78,7 @@ export function collectFunctionCallRepairSchemas(body: unknown): Map<string, Fun
       if (!previous || previous.kind !== tool.type
         || previous.identity.namespace !== namespace
         || previous.identity.name !== tool.name
-        || JSON.stringify(previous.identity.parameters) !== JSON.stringify(identity.parameters)) {
+        || !sameSchemaValue(previous.identity.parameters, identity.parameters)) {
         occupied.set(key, null);
       }
     } else occupied.set(key, { kind: tool.type, identity });
