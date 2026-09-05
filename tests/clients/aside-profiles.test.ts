@@ -76,6 +76,26 @@ describe("Aside profile desired state, ownership and history", () => {
     expect(saves).toBe(0);
   });
 
+  test("sync retains backup and incomplete-recovery diagnostics for a failed profile", async () => {
+    seedLegacy();
+    const io = store.io();
+    let attempts = 0;
+    const outcomes = await refreshAsideProfiles(input({ models: models.slice(0, 1),
+      store: { ...store, putRecord() { throw new Error("synthetic ownership failure"); } }, io: {
+      ...io,
+      writeText(target, text) {
+        if (target !== path(0)) return io.writeText(target, text);
+        attempts += 1;
+        if (attempts === 1) return io.writeText(target, text);
+        throw new Error("synthetic write and compensation failure");
+      },
+    } }));
+    const failure = outcomes.find(row => row.profileId === 0);
+    expect(failure).toMatchObject({ ok: false, refusalReason: "write_failed", residual: true });
+    expect(failure?.snapshotPath).toBeString();
+    expect(existsSync(failure!.snapshotPath!)).toBe(true);
+  });
+
   test("legacy connection defaults all profiles on and refresh shares one catalog load", async () => {
     seedLegacy();
     expect((await listAsideProfileStates(input())).enabledCount).toBe(3);

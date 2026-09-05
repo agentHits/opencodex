@@ -160,6 +160,23 @@ describe("ocx sync refreshes an already-owned MCode integration", () => {
     expect(store.listOperations("mcode")).toHaveLength(0);
   });
 
+  test("retains recovery details when refresh bookkeeping and compensation both fail", async () => {
+    expect(applyIntegration(input(oldModels)).ok).toBe(true);
+    const io = store.io();
+    let writes = 0;
+    const result = await refreshOwnedIntegration({ ...input(newModels), io: {
+      ...io,
+      writeText(path, text) {
+        if (path === configPath && ++writes > 1) throw new Error("synthetic rollback failure");
+        io.writeText(path, text);
+      },
+      putRecord() { throw new Error("synthetic ownership failure"); },
+    } });
+    expect(result).toMatchObject({ client: "mcode", ok: false, refusalReason: "write_failed", residual: true });
+    expect(result?.snapshotPath).toBeString();
+    expect(result?.reason).toContain("could not be rolled back");
+  });
+
   test("refuses a foreign edit without changing bytes or appending a journal row", async () => {
     expect(applyIntegration(input(oldModels)).ok).toBe(true);
     const recordBefore = JSON.stringify(store.readRecords().mcode);

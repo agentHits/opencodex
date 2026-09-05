@@ -272,7 +272,7 @@ export async function handleClientIntegrationCommand(
     }, deps);
     const batch = result as { ok?: boolean; message?: string; results?: Array<Record<string, unknown>> };
     printData(result, wantsJson, batch.results
-      ? batch.results.map(row => `aside:${String(row.profileId)}  ${String(row.message ?? (row.ok ? "updated" : "refused"))}`)
+      ? batch.results.map(row => `aside:${String(row.profileId)}  ${String(row.message ?? (row.ok ? "updated" : "refused"))}${row.residual === true ? " Recovery did not finish." : ""}${typeof row.snapshotPath === "string" ? ` Backup: ${row.snapshotPath}` : ""}`)
       : [String(batch.message ?? `${client} ${action}d.`)]);
     if (batch.ok === false) throw new RuntimeApiError(batch.message ?? "Some Aside profiles could not be updated", 207, result);
   });

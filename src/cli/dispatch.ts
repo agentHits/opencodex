@@ -419,7 +419,7 @@ const commandRunners: Record<string, CommandRunner> = {
       for (const result of results) {
         const label = result.profileId === undefined ? result.client : `${result.client}:${result.profileId}`;
         if (result.changed) console.log(`${label} integration refreshed from the current catalog.`);
-        else if (result.reason) console.warn(`${label} integration was not refreshed: ${result.reason}`);
+        else if (result.reason) console.warn(`${label} integration was not refreshed: ${result.reason}${result.residual ? " Recovery did not finish." : ""}${result.snapshotPath ? ` Backup: ${result.snapshotPath}` : ""}`);
       }
     }
     return code;

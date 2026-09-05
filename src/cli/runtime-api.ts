@@ -79,7 +79,12 @@ function responseMessage(body: unknown, status: number): string {
   if (reason && reason !== primary) parts.push(`reason: ${reason}`);
   const hint = stringField(record, "hint");
   if (hint && hint !== primary) parts.push(`hint: ${hint}`);
-  return parts.join("\n").slice(0, 1200);
+  const snapshotPath = stringField(record, "snapshotPath");
+  const recovery = [
+    ...(snapshotPath ? [`Backup: ${snapshotPath.slice(0, 32768)}`] : []),
+    ...(record.residual === true ? ["Automatic recovery did not finish; check the client configuration before retrying."] : []),
+  ];
+  return [parts.join("\n").slice(0, 1200), ...recovery].join("\n");
 }
 
 export async function runtimeRequest<T = unknown>(
