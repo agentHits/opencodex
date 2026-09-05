@@ -18,6 +18,11 @@ export async function refreshOwnedCatalogIntegrations(
   const outcomes: OwnedIntegrationRefreshOutcome[] = [];
   for (const clientId of clientIds) {
     try {
+      if (clientId === "aside") {
+        const { refreshAsideProfiles } = await import("./aside-profiles");
+        outcomes.push(...await refreshAsideProfiles({ ...input, models: loadModels }));
+        continue;
+      }
       const result = await refreshOwnedIntegration({ ...input, clientId, models: loadModels });
       if (result) outcomes.push(result);
     } catch (error) {

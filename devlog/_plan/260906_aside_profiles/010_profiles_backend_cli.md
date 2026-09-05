@@ -25,3 +25,19 @@ Verification: standalone temp-root production probe establishes three distinct f
 - Add profileId to journal/API rows, and treat (clientId,profileId/configPath) as history ownership for latest/undo/delete checks. Existing non-Aside behavior stays unchanged.
 
 C4 audit findings and concrete filesystem guard details are kept in ignored scratch; the public roadmap records feature contracts only.
+
+## P implementation interfaces at37b3a7f9b
+
+Delegation is within this one010 cycle with disjoint write sets. Path worker owns clients/aside-profiles.ts and tests/clients/aside-profile-paths.test.ts. Engine worker owns integrations/aside-profile-context.ts, aside-profiles.ts, aside-profile-journal.ts and tests/clients/aside-profiles.test.ts. Main owns type/config schemas, resolved-path seams in state/writer, management routes, CLI, implicit fan-out wiring and route/CLI tests. No worker commits, orchestration, local suites or real profile mutation.
+
+Path module exports AsideProfile {id,name?,current,root,configPath,detectDir}; listAsideProfiles(env?,home?) and guardAsideProfileIO(profile,io,profiles?) plus assertAsideProfileBoundary(profile,profiles?,mutation?). Invalid manifest/selector/path raises ClientPathError with safe text. Engine module exports AsideProfilesInput (config, models array/lazy, port, env/home/store/io, persistConfig?, lockSeams?), AsideProfileState (IntegrationStatus plus profileId/name/current/enabled and optional safe error), AsideProfileList (clientId,profiles,allEnabled,enabledCount,appliedCount,total plus aggregate state fields), listAsideProfileStates, getAsideProfileState(input,id), mutateAsideProfiles(input,{enabled,profileId?,overwriteConflict?}), refreshAsideProfiles. Mutations return {ok,clientId,changed,state,message,results:[WriteOutcome+profileId]}; singleton result stays accessible for the existing refusal serializer.
+
+Journal module exports listAsideOperations(input,profileId?) -> [{profileId,entry,store}], findAsideOperation(input,opId,profileId?) -> row|null, restoreAsideProfile(input,{opId,profileId?,confirmDrift?}) -> WriteOutcome+profileId and deleteAsideOperation(input,{opId,profileId?,principal?}). Main serializes journal metadata using each source store; profile-scoped newest protection and duplicate retirement live in the journal service. Journal discovery can return null for unrecognized non-Aside operations so the existing route handles them.
+
+The context owner centralizes exact scope/store resolution, desired policy, guarded IO and outer flight; engine/journal import it without circular imports. Scope includes a safe ownership-store root as well as the client file target. No writable legacy root may be shared across profiles. Domain errors carry safe code/status for route mapping; no manifest/session payload reaches diagnostics.
+
+## Implementation evidence and review scope
+
+`bun .tmp/aside-profiles/api-cli-probe.ts` passed against an isolated live HTTP management handler and actual CLI: three-profile bulk enable, individual-off after persisted reload/model selection, Undo followed by sync, unrelated settings and metadata privacy. Default unconfigured/disabled Aside now skips implicit fan-out before manifest/catalog discovery.
+
+This C4 backend layer is larger than the default review-size guideline because the new filesystem scope, one-owner store model, reversible desired state, and API/CLI consumers must be assessed as one complete contract; these are new cohesive modules with focused fixtures, not unrelated cleanup. UI implementation remains a separate dependent PR/cycle, and the original Grok work is already four separate reviewed PRs.

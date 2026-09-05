@@ -920,3 +920,42 @@ describe("#2566 per-account quota in ocx account list", () => {
     expect(formatAccountTable([row({ quotaUnavailable: true })] as never, true)).toContain("unavailable");
   });
 });
+
+describe("Aside profile integration CLI", () => {
+  test("scopes status, toggle, history and restore without changing other client routes", async () => {
+    const runtime = fakeRuntime();
+    expect(await handleClientIntegrationCommand(["status", "--client", "aside", "--profile", "2", "--json"], runtime.deps)).toBe(0);
+    expect(await handleClientIntegrationCommand(["disable", "--client", "aside", "--profile", "2", "--json"], runtime.deps)).toBe(0);
+    expect(await handleClientIntegrationCommand(["history", "--client", "aside", "--profile", "2", "--json"], runtime.deps)).toBe(0);
+    expect(await handleClientIntegrationCommand(["restore", "--client", "aside", "--profile", "2", "--op", "op-profile", "--json"], runtime.deps)).toBe(0);
+    expect(runtime.requests.map(row => row.path)).toEqual([
+      "/api/client-integrations/aside?profile=2",
+      "/api/client-integrations/aside?profile=2",
+      "/api/client-integrations/journal?client=aside&profile=2",
+      "/api/client-integrations/restore?client=aside&profile=2",
+    ]);
+    expect(runtime.requests[1]!.body).toEqual({ enabled: false });
+    expect(runtime.requests[3]!.body).toEqual({ opId: "op-profile", confirmDrift: false });
+  });
+
+  test.each([
+    ["enable", "--client", "pi", "--profile", "0"],
+    ["status", "--profile", "0"],
+    ["enable", "--client", "aside", "--profile", "../0"],
+    ["disable", "--client", "aside", "--profile", "01"],
+    ["restore", "--client", "aside", "--op", "op-profile"],
+  ].map(args => ({ args })))("rejects unsupported or ambiguous profile selectors before a request: $args", async ({ args }) => {
+    const runtime = fakeRuntime();
+    expect(await handleClientIntegrationCommand(args, runtime.deps)).toBe(2);
+    expect(runtime.requests).toHaveLength(0);
+  });
+
+  test("unqualified Aside enable remains bulk and reports partial failure as nonzero", async () => {
+    const runtime = fakeRuntime(() => ({
+      ok: false, clientId: "aside", message: "one profile refused",
+      results: [{ profileId: 0, ok: true, message: "updated" }, { profileId: 1, ok: false, message: "conflict" }],
+    }));
+    expect(await handleClientIntegrationCommand(["enable", "--client", "aside", "--json"], runtime.deps)).toBe(1);
+    expect(runtime.requests[0]).toEqual({ path: "/api/client-integrations/aside", method: "PUT", body: { enabled: true } });
+  });
+});

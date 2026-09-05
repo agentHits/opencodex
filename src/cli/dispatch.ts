@@ -402,8 +402,9 @@ const commandRunners: Record<string, CommandRunner> = {
           port: live.port,
         }, ["mcode", "pi", "aside"]);
         for (const result of results) {
-          if (result.changed) console.log(`${result.client} integration refreshed from the current catalog.`);
-          else if (result.reason) console.warn(`${result.client} integration was not refreshed: ${result.reason}`);
+          const label = result.profileId === undefined ? result.client : `${result.client}:${result.profileId}`;
+          if (result.changed) console.log(`${label} integration refreshed from the current catalog.`);
+          else if (result.reason) console.warn(`${label} integration was not refreshed: ${result.reason}`);
         }
       } catch (error) {
         console.warn(`Client integrations were not refreshed: ${error instanceof Error ? error.message : String(error)}`);

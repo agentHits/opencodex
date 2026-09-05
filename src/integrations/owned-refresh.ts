@@ -27,6 +27,8 @@ export interface OwnedIntegrationRefreshInput {
   home?: string;
   store?: IntegrationStateStore;
   io?: IntegrationIO;
+  /** Internal profile target selected before entering the coordinated writer. */
+  resolvedPaths?: { configPath: string; detectDir: string };
 }
 
 export interface OwnedIntegrationRefreshOutcome {
@@ -34,6 +36,7 @@ export interface OwnedIntegrationRefreshOutcome {
   readonly ok: boolean;
   readonly changed?: boolean;
   readonly reason?: string;
+  readonly profileId?: number;
 }
 
 /**

@@ -1,6 +1,7 @@
 # Recipes
 
-Each sequence below was run against a live proxy. Every command named here exists; where the
+The original sequences below were run against a live proxy; the Aside profile sequence was
+verified through an isolated live management handler and the production CLI. Every command named here exists; where the
 obvious-sounding command does *not* exist, that is called out rather than left as a trap.
 
 Preflight for all of them:
@@ -205,3 +206,18 @@ Two absences are also expected and are not defects:
 provider sets `liveModels: false` deliberately — its authenticated roster includes image and voice
 models this Responses-agent provider cannot drive — so the absence of a live probe is a design
 decision, not a broken connection.
+
+## Aside profiles
+
+```bash
+ocx integration client status --client aside --json
+ocx integration client enable --client aside
+ocx integration client disable --client aside --profile 1
+ocx integration client history --client aside --profile 1
+ocx integration client restore --client aside --profile 1 --op <opId>
+```
+
+Read `profiles[]` to find numeric profile IDs. No profile selector means a bulk toggle; an
+explicit selector affects only that account-backed profile. Sync intent and actual file state
+are distinct, so inspect each result after a partial bulk operation. The CLI returns nonzero
+for a partial refusal. Never use the overwrite or drift flags merely to suppress a refusal.

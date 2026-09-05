@@ -156,6 +156,7 @@ interface ClientIntegrationSyncOutcome {
   readonly ok: boolean;
   readonly changed?: boolean;
   readonly reason?: string;
+  readonly profileId?: number;
 }
 
 /**
