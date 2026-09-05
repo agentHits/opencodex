@@ -209,6 +209,11 @@ decision, not a broken connection.
 
 ## Aside profiles
 
+These commands and the Aside refresh in `ocx sync` require a compatible running ocx proxy.
+There is no local profile-file fallback when the server is unavailable or too old. Follow
+the [proxy upgrade, restart, and retry sequence](https://opencodex.me/guides/integrations/#aside-profile-controls),
+then fully quit and reopen Aside after its profile files update successfully.
+
 ```bash
 ocx integration client status --client aside --json
 ocx integration client enable --client aside
