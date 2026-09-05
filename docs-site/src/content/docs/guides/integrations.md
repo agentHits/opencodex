@@ -222,6 +222,7 @@ provider selection, or presets also refresh connected Pi and Aside catalogs. Mis
 foreign-edited, unsafe, and never-owned blocks stay untouched; reconnect them explicitly.
 A refused or overlapping refresh is reported separately for each client. Start a new Pi
 session or fully quit and reopen Aside to load the updated file.
+Aside refresh requires a [compatible running proxy](#aside-profile-controls).
 
 The separate MiniMax platform CLI (`mmx`) is not a file-toggle integration. Its text
 commands use MiniMax's Anthropic-compatible endpoint, so OpenCodex provides a
@@ -248,6 +249,15 @@ research notes in `devlog/_fin/260802_client_toggle_api/002_client_toggle_matrix
 for what was checked and when.
 
 ## Aside profile controls
+
+Aside profile controls and the Aside refresh performed by `ocx sync` require a running
+ocx proxy that supports the Aside profile APIs. Updating the CLI alone does not update an
+already-running proxy. If the proxy is unavailable or too old, the Aside operation cannot
+complete; the CLI never falls back to writing Aside profile files locally.
+
+Upgrade the ocx installation used by the proxy, then restart the proxy (or start it if it
+is stopped). Retry `ocx sync` or the profile command. After the profile files update
+successfully, fully quit and reopen Aside so it loads the new catalogs.
 
 ```bash
 ocx integration client status --client aside --json
