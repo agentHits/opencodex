@@ -611,6 +611,7 @@ export const fr: Record<TKey, string> = {
   "models.tipActive": "Actif",
   "models.tipDisabled": "Désactivé",
   "models.applied": "Appliqué — prend effet au prochain tour Codex.",
+  "models.integrationRefreshWarning": "Sélection des modèles enregistrée. Certains catalogues clients n’ont pas pu être actualisés. Vérifiez les intégrations avant de démarrer une nouvelle session.",
   "models.saveFailed": "Échec de l’enregistrement",
   "models.networkError": "Erreur réseau — le proxy est-il en cours d’exécution ?",
   "models.loadFail": "Échec du chargement des modèles — le proxy est-il en cours d’exécution ?",

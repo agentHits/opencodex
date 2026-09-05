@@ -609,6 +609,7 @@ export const zh: Record<TKey, string> = {
   "models.tipActive": "已启用",
   "models.tipDisabled": "已禁用",
   "models.applied": "已应用 — 将在下一个 Codex 回合生效。",
+  "models.integrationRefreshWarning": "模型选择已保存。部分客户端的模型目录未能刷新。开始新会话前，请检查“集成”页面。",
   "models.saveFailed": "保存失败",
   "models.networkError": "网络错误 — 代理在运行吗？",
   "models.loadFail": "加载模型失败 — 代理在运行吗？",

@@ -617,6 +617,7 @@ export const tr: Record<TKey, string> = {
   "models.tipActive": "Aktif",
   "models.tipDisabled": "Devre Dışı",
   "models.applied": "Uygulandı.",
+  "models.integrationRefreshWarning": "Model seçimi kaydedildi. Bazı istemcilerin model katalogları yenilenemedi. Yeni bir oturum başlatmadan önce Entegrasyonlar bölümünü kontrol edin.",
   "models.saveFailed": "Kaydetme başarısız",
   "models.networkError": "Ağ hatası — proxy çalışıyor mu?",
   "models.loadFail": "Modeller yüklenemedi — proxy çalışıyor mu?",

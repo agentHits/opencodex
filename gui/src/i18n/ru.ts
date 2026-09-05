@@ -614,6 +614,7 @@ export const ru: Record<TKey, string> = {
   "models.tipActive": "Активна",
   "models.tipDisabled": "Отключена",
   "models.applied": "Применено — вступит в силу на следующем ходе Codex.",
+  "models.integrationRefreshWarning": "Выбор моделей сохранён. Не удалось обновить каталоги некоторых клиентов. Проверьте раздел «Интеграции» перед началом нового сеанса.",
   "models.saveFailed": "Не удалось сохранить",
   "models.networkError": "Ошибка сети — запущен ли прокси?",
   "models.loadFail": "Не удалось загрузить модели — запущен ли прокси?",

@@ -573,6 +573,7 @@ export const ja: Record<TKey, string> = {
   "models.customApply": "適用",
   "models.customPlaceholder": "トークン (例: 420000)",
   "models.applied": "適用しました — 次回の Codex ターンで有効になります。",
+  "models.integrationRefreshWarning": "モデルの選択を保存しました。一部のクライアントのモデル一覧を更新できませんでした。新しいセッションを始める前に「連携」を確認してください。",
   "models.saveFailed": "保存に失敗しました",
   "models.networkError": "ネットワークエラー — プロキシは起動していますか?",
   "models.loadFail": "モデルの読み込みに失敗しました — プロキシは起動していますか?",

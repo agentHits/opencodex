@@ -480,6 +480,7 @@ export const zhTW: Record<TKey, string> = {
   "models.tipActive": "已啟用",
   "models.tipDisabled": "已停用",
   "models.applied": "已套用 — 將在下一個 Codex 回合生效。",
+  "models.integrationRefreshWarning": "已儲存模型選擇。部分用戶端的模型目錄無法更新。開始新工作階段前，請檢查「整合」頁面。",
   "models.saveFailed": "儲存失敗",
   "models.networkError": "網路錯誤 — 代理在執行嗎？",
   "models.loadFail": "載入模型失敗 — 代理在執行嗎？",

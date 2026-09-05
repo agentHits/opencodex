@@ -105,15 +105,15 @@ export function describeRefusal(
       ? error.message
       : fallback ?? t("integrations.error.generic");
   }
-  return describeParts(t, refusal);
+  return describeIntegrationRefusalParts(t, refusal);
 }
 
 export function describeAsideProfileOutcome(t: Translate, row: AsideProfileOutcome): string {
-  return describeParts(t, { clientId: "aside", message: row.message ?? row.reason,
+  return describeIntegrationRefusalParts(t, { clientId: "aside", message: row.message ?? row.reason,
     reason: row.refusalReason ?? row.reason, snapshotPath: row.snapshotPath, residual: row.residual });
 }
 
-function describeParts(t: Translate, refusal: {
+export function describeIntegrationRefusalParts(t: Translate, refusal: {
   reason?: string; message?: string; clientId: string; snapshotPath?: string; residual?: boolean;
 }): string {
   const message = LOCALIZED_REASONS.has(refusal.reason ?? "")

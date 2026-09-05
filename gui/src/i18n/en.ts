@@ -626,6 +626,7 @@ export const en = {
   "models.tipActive": "Active",
   "models.tipDisabled": "Disabled",
   "models.applied": "Applied — takes effect on the next Codex turn.",
+  "models.integrationRefreshWarning": "Model selection saved. Some client catalogs could not be refreshed. Check Integrations before starting a new session.",
   "models.saveFailed": "Save failed",
   "models.networkError": "Network error — is the proxy running?",
   "models.loadFail": "Failed to load models — is the proxy running?",

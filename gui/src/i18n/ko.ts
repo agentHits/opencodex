@@ -612,6 +612,7 @@ export const ko: Record<TKey, string> = {
   "models.tipActive": "활성",
   "models.tipDisabled": "비활성",
   "models.applied": "적용됨 — 다음 Codex 턴부터 반영됩니다.",
+  "models.integrationRefreshWarning": "모델 선택을 저장했습니다. 일부 클라이언트의 모델 목록을 갱신하지 못했습니다. 새 세션을 시작하기 전에 연동 메뉴를 확인하세요.",
   "models.saveFailed": "저장 실패",
   "models.networkError": "네트워크 오류 — 프록시가 실행 중인가요?",
   "models.loadFail": "모델을 불러오지 못했습니다 — 프록시가 실행 중인가요?",
