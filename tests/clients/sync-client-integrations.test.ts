@@ -365,7 +365,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
       loads += 1;
       return filteredModels;
     }));
-    expect(outcomes).toEqual(clients.map(client => ({ client, ok: true, changed: true })));
+    expect(outcomes).toEqual(clients.map(client => ({ client, ok: true, changed: true, ...(client === "aside" ? { profileId: 0 } : {}) })));
     expect(loads).toBe(1);
     for (const client of clients) {
       expect(document(client)).toMatchObject({ theme: "dark", providers: { personal: sibling } });
@@ -403,6 +403,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
     writeFileSync(path, before);
     expect(await refreshOwnedCatalogIntegrations(input(filteredModels))).toEqual([{
       client: clientId, ok: true, changed: false,
+      ...(clientId === "aside" ? { profileId: 0 } : {}),
       reason: "managed block is absent; refresh did not reconnect it",
     }]);
     expect(readFileSync(path, "utf8")).toBe(before);
@@ -456,7 +457,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
     });
     expect(outcomes).toEqual([
       { client: "pi", ok: false, reason: "synthetic Pi stat failure" },
-      { client: "aside", ok: true, changed: true },
+      { client: "aside", profileId: 0, ok: true, changed: true },
     ]);
     expect(readFileSync(path, "utf8")).toBe(before);
     expect(store.readRecords().pi).toEqual(recordBefore);
@@ -489,7 +490,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
       }, [clientId]);
       await contended;
       release();
-      expect(await first).toEqual([{ client: clientId, ok: true, changed: true }]);
+      expect(await first).toEqual([{ client: clientId, ok: true, changed: true, ...(clientId === "aside" ? { profileId: 0 } : {}) }]);
       expect(await second).toEqual([{ client: clientId, ok: false, reason: "integration_mutation_busy" }]);
       expect(document(clientId).providers.opencodex?.models.map(model => model.id)).toEqual(["mock/visible"]);
       expect(store.listOperations(clientId).map(row => row.kind)).toEqual(["refresh", "apply"]);
@@ -499,7 +500,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
       setIntegrationMutationFlightTestHook(null);
     }
     expect(await refreshOwnedCatalogIntegrations(input(nextModels), [clientId]))
-      .toEqual([{ client: clientId, ok: true, changed: true }]);
+      .toEqual([{ client: clientId, ok: true, changed: true, ...(clientId === "aside" ? { profileId: 0 } : {}) }]);
     expect(document(clientId).providers.opencodex?.models.map(model => model.id)).toEqual(["mock/hidden"]);
     expect(store.listOperations(clientId).map(row => row.kind)).toEqual(["refresh", "refresh", "apply"]);
   });
