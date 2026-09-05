@@ -192,7 +192,9 @@ export async function handleClientIntegrationCommand(
       const rows = (result as { clients?: Array<Record<string, unknown>> }).clients;
       const profiles = (result as { profiles?: Array<Record<string, unknown>> }).profiles;
       printData(result, wantsJson, profiles
-        ? profiles.map(row => `${String(row.profileId)}  ${String(row.name ?? "Aside")}: ${row.enabled ? "on" : "off"} (${String(row.state)})${row.current ? " [current]" : ""}`)
+        ? profiles.length > 0
+          ? profiles.map(row => `${String(row.profileId)}  ${String(row.name ?? "Aside")}: ${row.enabled ? "on" : "off"} (${String(row.state)})${row.current ? " [current]" : ""}`)
+          : [String((result as { error?: string }).error ?? "No Aside profiles found.")]
         : rows
         ? rows.map(row => `${String(row.clientId)}: ${String(row.state)}${row.installed ? "" : " (not installed)"}`)
         : summaryLines(result));

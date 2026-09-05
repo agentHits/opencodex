@@ -959,3 +959,12 @@ describe("Aside profile integration CLI", () => {
     expect(runtime.requests[0]).toEqual({ path: "/api/client-integrations/aside/profiles", method: "PUT", body: { enabled: true } });
   });
 });
+
+test("Aside status prints the empty-profile diagnostic for humans", async () => {
+  const runtime = fakeRuntime(() => ({ profiles: [], error: "Open Aside to create a profile" }));
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  try {
+    expect(await handleClientIntegrationCommand(["status", "--client", "aside"], runtime.deps)).toBe(0);
+    expect(log.mock.calls.flat().join("\n")).toContain("Open Aside to create a profile");
+  } finally { log.mockRestore(); }
+});
