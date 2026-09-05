@@ -38,8 +38,16 @@ function selectorAllows(
 export function collectFunctionCallRepairSchemas(body: unknown): Map<string, FunctionCallRepairSchema> {
   const schemas = new Map<string, FunctionCallRepairSchema>();
   if (!isObject(body)) return schemas;
+  const groups = collectResponsesToolGroups(body);
+  if (Array.isArray(body.input)) {
+    for (const entry of body.input) {
+      if (isObject(entry) && entry.type === "tool_search_output" && Array.isArray(entry.tools)) groups.push(entry.tools);
+    }
+  }
   // Reuse namespace selector resolution, retaining schemas from the original objects below.
-  const lowered = rewriteRoutedNamespaceToolsForUpstream(body).body;
+  // This local catalog view includes loaded definitions without revisiting replay history or
+  // teaching the shared tool-group collector a new transport-wide interpretation.
+  const lowered = rewriteRoutedNamespaceToolsForUpstream({ ...body, tools: groups.flat(), input: [] }).body;
   const choice = body.tool_choice;
   const loweredChoice = isObject(lowered) ? lowered.tool_choice : undefined;
   const occupied = new Map<string, { kind: unknown; identity: FunctionCallRepairSchema } | null>();
@@ -62,7 +70,7 @@ export function collectFunctionCallRepairSchemas(body: unknown): Map<string, Fun
       }
     } else occupied.set(key, { kind: tool.type, identity });
   };
-  for (const group of collectResponsesToolGroups(body)) {
+  for (const group of groups) {
     for (const tool of group) {
       if (!isObject(tool)) continue;
       if (tool.type === "namespace") {

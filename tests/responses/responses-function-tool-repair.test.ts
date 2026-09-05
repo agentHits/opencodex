@@ -9,6 +9,7 @@ import {
 import { createResponsesFunctionToolRepairBlockRewrite } from "../../src/server/responses-function-tool-repair";
 import { createTranslatorBudget, TranslatorBudgetExceededError } from "../../src/lib/translator-budget";
 import { sseDataPayload } from "../../src/server/sse-payload-rewrite";
+import { currentTurnWireToolCatalogBody } from "../../src/server/responses-undeclared-tool-guard";
 
 const parameters = { type: "object", properties: {
   cell_id: { type: "string" }, yield_time_ms: { type: "integer" },
@@ -92,6 +93,50 @@ describe("original function declaration authority", () => {
     const other = { ...wait, parameters: { type: "object", properties: { cell_id: { type: "number" } } } };
     for (const tools of [[wait, other], [other, wait], [wait, { type: "custom", name: "wait" }]]) {
       expect(collectFunctionCallRepairSchemas({ tools }).size).toBe(0);
+    }
+  });
+
+  test("loaded tool_search_output functions retain their original schemas", () => {
+    const body = { input: [{ type: "tool_search_output", tools: [wait, { type: "custom", name: "exec" }] }] };
+    const before = JSON.stringify(body);
+    const map = collectFunctionCallRepairSchemas(body);
+    expect([...map.keys()]).toEqual(["wait"]);
+    expect(map.get("wait")?.parameters).toBe(parameters);
+    expect(repairFunctionCalls(item(), map).value).toEqual(item(canonical));
+    expect(JSON.stringify(body)).toBe(before);
+  });
+
+  test.each([
+    [{ type: "function", name: "left.wait" }, ["left__wait"]],
+    [{ type: "function", namespace: "right", name: "wait" }, ["right__wait"]],
+    [{ type: "function", name: "wait" }, []],
+    [{ type: "custom", name: "left.wait" }, []],
+    [{ type: "function", namespace: "right", name: "left__wait" }, []],
+    [{ type: "allowed_tools", tools: [{ type: "function", name: "right.wait" }] }, ["right__wait"]],
+    ["none", []],
+  ])("loaded namespace declarations honor selector %j", (tool_choice, keys) => {
+    const body = { tool_choice, input: [{ type: "tool_search_output", tools: groups }] };
+    expect([...collectFunctionCallRepairSchemas(body).keys()]).toEqual(keys);
+  });
+
+  test("replay-trimmed loaded definitions cannot grant historical schema authority", () => {
+    const historical = { ...wait, parameters: { type: "object", properties: { cell_id: { type: "number" } } } };
+    const body = { input: [
+      { type: "tool_search_output", tools: [historical, { type: "function", name: "old_only" }] },
+      { type: "message", role: "user", content: [] },
+      { type: "tool_search_output", tools: [wait] },
+    ] };
+    const map = collectFunctionCallRepairSchemas(currentTurnWireToolCatalogBody(body, 2));
+    expect([...map.keys()]).toEqual(["wait"]);
+    expect(map.get("wait")?.parameters).toBe(parameters);
+    expect(repairFunctionCalls(item(), map).value).toEqual(item(canonical));
+    expect(collectFunctionCallRepairSchemas(currentTurnWireToolCatalogBody(body, 3)).size).toBe(0);
+  });
+
+  test("loaded and explicit conflicting declarations remain fail-closed in either order", () => {
+    const conflict = { ...wait, parameters: { type: "object", properties: { cell_id: { type: "number" } } } };
+    for (const [explicit, loaded] of [[wait, conflict], [conflict, wait]]) {
+      expect(collectFunctionCallRepairSchemas({ tools: [explicit], input: [{ type: "tool_search_output", tools: [loaded] }] }).size).toBe(0);
     }
   });
 
@@ -190,11 +235,32 @@ describe("native function completion SSE", () => {
         .toMatchObject({ arguments: canonical });
       const output = rewrite(frame("response.output_item.added", { output_index: 1, item: item("", { name: "get_state", id: "fc_two", status: "in_progress" }) }));
       expect(output.map(block => payload(block).type)).toEqual(["response.output_item.added", "response.function_call_arguments.done"]);
-      expect(payload(output[1]!)).toMatchObject({ arguments: "{}", output_index: 1 });
+      expect(payload(output[1]!)).toMatchObject({ arguments: "{}", output_index: 1, item_id: "fc_two" });
       expect(budget.snapshot().currentBytes).toBe(0);
       rewrite.dispose?.();
       expect(budget.snapshot().currentBytes).toBe(0);
     } finally { rewrite.dispose?.(); budget.dispose(); }
+  });
+
+  test.each([raw, canonical])("index-only completion gets downstream identity even when arguments stay unchanged: %s", argumentsText => {
+    const rewrite = createResponsesFunctionToolRepairBlockRewrite(schemas);
+    try {
+      expect(rewrite(frame("response.function_call_arguments.done", { output_index: 0, arguments: argumentsText }))).toEqual([]);
+      const output = rewrite(frame("response.output_item.added", { output_index: 0, item: item("", { status: "in_progress" }) }));
+      const calls = new Map<string, string>();
+      for (const block of output) {
+        const event = payload(block);
+        if (event.type === "response.output_item.added") {
+          const call = event.item as { id: string; arguments: string };
+          calls.set(call.id, call.arguments);
+        } else if (event.type === "response.function_call_arguments.done") {
+          expect(typeof event.item_id).toBe("string");
+          expect(calls.has(event.item_id as string)).toBe(true);
+          calls.set(event.item_id as string, event.arguments as string);
+        }
+      }
+      expect([...calls]).toEqual([["fc_one", canonical]]);
+    } finally { rewrite.dispose?.(); }
   });
 
   test("terminal snapshots resolve early completions; authoritative arguments beat previews", () => {

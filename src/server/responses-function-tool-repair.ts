@@ -93,9 +93,14 @@ export function createResponsesFunctionToolRepairBlockRewrite(
   };
   const repairCompletion = (block: string, event: Record<string, unknown>, identity: Identity): string => {
     if (typeof event.arguments !== "string") return block;
+    const resolved = (typeof event.item_id !== "string" || event.item_id === "") && identity.itemId !== undefined
+      ? { ...event, item_id: identity.itemId }
+      : event;
     const repaired = repairFunctionCalls({ ...identity.item, status: identity.item.status ?? "completed", arguments: event.arguments }, schemas);
-    if (!repaired.changed || !isObject(repaired.value)) return block;
-    return replaceSseDataPayload(block, JSON.stringify({ ...event, arguments: repaired.value.arguments }));
+    if (repaired.changed && isObject(repaired.value)) {
+      return replaceSseDataPayload(block, JSON.stringify({ ...resolved, arguments: repaired.value.arguments }));
+    }
+    return resolved === event ? block : replaceSseDataPayload(block, JSON.stringify(resolved));
   };
   const flushPending = (identity: Identity): string[] => {
     const output: string[] = [];
