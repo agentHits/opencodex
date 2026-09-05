@@ -323,7 +323,10 @@ test("rail counts inventory before search/cap and routed selection does not badg
   rows.push(row("hidden", { disabled: true })); selected = { vendor: ["model-304"] };
   available = { vendor: rows.map(value => value.id) };
   await mount(); await waitFor(() => ids().length === 300);
-  const rail = [...host.querySelectorAll('[role="option"]')].find(value => value.textContent?.includes("vendor"))!;
+  const vendorOptions = host.querySelectorAll('[role="option"][title="Vendor"]');
+  expect(vendorOptions).toHaveLength(1);
+  const rail = vendorOptions[0]!;
+  expect(rail.getAttribute("aria-selected")).toBe("true");
   expect(rail.textContent).toContain("305");
   const search = host.querySelector<HTMLInputElement>("input.pws-model-search")!;
   await act(async () => {
