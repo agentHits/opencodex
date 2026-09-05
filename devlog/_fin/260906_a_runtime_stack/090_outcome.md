@@ -2,7 +2,7 @@
 
 All five assigned originals are closed and their credited changes are on dev. The final stack entered dev through [#3716](https://github.com/lidge-jun/opencodex/pull/3716), merge [`a2f69c8aa`](https://github.com/lidge-jun/opencodex/commit/a2f69c8aa60976345740ae6f3d2301f89297328e). GitHub automatically recognized the folded review PRs as merged; their actual dev integration is recorded below.
 
-| Original | Reviewed carry | Dev integration | Exact carried-head full CI |
+| Original | Reviewed carry | Dev integration | Full CI before dev integration |
 | --- | --- | --- | --- |
 | [#3672](https://github.com/lidge-jun/opencodex/pull/3672) | [#3683](https://github.com/lidge-jun/opencodex/pull/3683) | [#3683](https://github.com/lidge-jun/opencodex/pull/3683) · [`c6d8678f7`](https://github.com/lidge-jun/opencodex/commit/c6d8678f73ce6e1ae9df004ab032af09837b5b45) | [33981578769](https://github.com/lidge-jun/opencodex/actions/runs/33981578769) |
 | [#3679](https://github.com/lidge-jun/opencodex/pull/3679) | [#3686](https://github.com/lidge-jun/opencodex/pull/3686) | [#3686](https://github.com/lidge-jun/opencodex/pull/3686) · [`a6d1065cf`](https://github.com/lidge-jun/opencodex/commit/a6d1065cfbadc7d8f9c02e17549908b42d2bfd7a) | [33981581047](https://github.com/lidge-jun/opencodex/actions/runs/33981581047) |
@@ -26,4 +26,4 @@ The final candidate passed all 24 actual cross-platform producers and the aggreg
 
 Historical failed CI jobs were preserved. One earlier Cursor echo/close timeout has no established cause; the same source subsequently passed all final cross-platform checks. It was not claimed to be fixed by the fixture changes.
 
-Integrated dev verification is tracked at [run33993960826](https://github.com/lidge-jun/opencodex/actions/runs/33993960826), head `a2f69c8aa60976345740ae6f3d2301f89297328e`. The final landing gate checks completion separately before this unit is archived.
+Integrated dev `a2f69c8aa60976345740ae6f3d2301f89297328e` passed [run33993960826](https://github.com/lidge-jun/opencodex/actions/runs/33993960826): all17 applicable producers and the aggregate succeeded. Windows suite and unsharded macOS control are dispatch-only and were correctly skipped on this push; both were included in the successful24-producer final candidate run above.
