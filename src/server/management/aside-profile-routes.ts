@@ -22,6 +22,9 @@ export interface AsideProfileRouteOptions {
 
 class ProfileQueryError extends Error { readonly status = 400; readonly code = "invalid_aside_profile"; }
 
+const ASIDE_INTEGRATION_PATH = "/api/client-integrations/aside";
+const ASIDE_PROFILES_PATH = "/api/client-integrations/aside/profiles";
+
 function profileId(ctx: ManagementContext): number | undefined {
   const raw = ctx.url.searchParams.get("profile");
   if (raw === null) return undefined;
@@ -87,8 +90,8 @@ function nestedProfileContext(ctx: ManagementContext): { ctx: ManagementContext;
 export async function handleAsideProfileRoutes(
   ctx: ManagementContext, options: AsideProfileRouteOptions,
 ): Promise<Response | null> {
-  if (ctx.url.pathname !== "/api/client-integrations/aside"
-    && !ctx.url.pathname.startsWith("/api/client-integrations/aside/")) return null;
+  if (ctx.url.pathname !== ASIDE_INTEGRATION_PATH
+    && !ctx.url.pathname.startsWith(`${ASIDE_INTEGRATION_PATH}/`)) return null;
   try {
     const normalized = nestedProfileContext(ctx);
     ctx = normalized.ctx;
@@ -120,7 +123,7 @@ export async function handleAsideProfileRoutes(
       const ok = results.every(result => result.ok);
       return jsonResponse({ ok, clientId: "aside", results }, ok ? 200 : 207, req, ctx.config);
     }
-    if (url.pathname !== "/api/client-integrations/aside" && url.pathname !== "/api/client-integrations/aside/profiles") return null;
+    if (url.pathname !== ASIDE_INTEGRATION_PATH && url.pathname !== ASIDE_PROFILES_PATH) return null;
     if (req.method !== "GET" && req.method !== "PUT") return null;
     if (url.pathname.endsWith("/profiles") && id !== undefined) throw new ProfileQueryError("Use a profile-specific path");
     if (req.method === "GET") {
