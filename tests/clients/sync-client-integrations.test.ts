@@ -160,6 +160,23 @@ describe("ocx sync refreshes an already-owned MCode integration", () => {
     expect(store.listOperations("mcode")).toHaveLength(0);
   });
 
+  test("retains recovery details when refresh bookkeeping and compensation both fail", async () => {
+    expect(applyIntegration(input(oldModels)).ok).toBe(true);
+    const io = store.io();
+    let writes = 0;
+    const result = await refreshOwnedIntegration({ ...input(newModels), io: {
+      ...io,
+      writeText(path, text) {
+        if (path === configPath && ++writes > 1) throw new Error("synthetic rollback failure");
+        io.writeText(path, text);
+      },
+      putRecord() { throw new Error("synthetic ownership failure"); },
+    } });
+    expect(result).toMatchObject({ client: "mcode", ok: false, refusalReason: "write_failed", residual: true });
+    expect(result?.snapshotPath).toBeString();
+    expect(result?.reason).toContain("could not be rolled back");
+  });
+
   test("refuses a foreign edit without changing bytes or appending a journal row", async () => {
     expect(applyIntegration(input(oldModels)).ok).toBe(true);
     const recordBefore = JSON.stringify(store.readRecords().mcode);
@@ -365,7 +382,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
       loads += 1;
       return filteredModels;
     }));
-    expect(outcomes).toEqual(clients.map(client => ({ client, ok: true, changed: true })));
+    expect(outcomes).toEqual(clients.map(client => ({ client, ok: true, changed: true, ...(client === "aside" ? { profileId: 0 } : {}) })));
     expect(loads).toBe(1);
     for (const client of clients) {
       expect(document(client)).toMatchObject({ theme: "dark", providers: { personal: sibling } });
@@ -403,6 +420,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
     writeFileSync(path, before);
     expect(await refreshOwnedCatalogIntegrations(input(filteredModels))).toEqual([{
       client: clientId, ok: true, changed: false,
+      ...(clientId === "aside" ? { profileId: 0 } : {}),
       reason: "managed block is absent; refresh did not reconnect it",
     }]);
     expect(readFileSync(path, "utf8")).toBe(before);
@@ -456,7 +474,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
     });
     expect(outcomes).toEqual([
       { client: "pi", ok: false, reason: "synthetic Pi stat failure" },
-      { client: "aside", ok: true, changed: true },
+      { client: "aside", profileId: 0, ok: true, changed: true },
     ]);
     expect(readFileSync(path, "utf8")).toBe(before);
     expect(store.readRecords().pi).toEqual(recordBefore);
@@ -489,7 +507,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
       }, [clientId]);
       await contended;
       release();
-      expect(await first).toEqual([{ client: clientId, ok: true, changed: true }]);
+      expect(await first).toEqual([{ client: clientId, ok: true, changed: true, ...(clientId === "aside" ? { profileId: 0 } : {}) }]);
       expect(await second).toEqual([{ client: clientId, ok: false, reason: "integration_mutation_busy" }]);
       expect(document(clientId).providers.opencodex?.models.map(model => model.id)).toEqual(["mock/visible"]);
       expect(store.listOperations(clientId).map(row => row.kind)).toEqual(["refresh", "apply"]);
@@ -499,7 +517,7 @@ describe("owned Pi/Aside catalogs follow filtered model selections", () => {
       setIntegrationMutationFlightTestHook(null);
     }
     expect(await refreshOwnedCatalogIntegrations(input(nextModels), [clientId]))
-      .toEqual([{ client: clientId, ok: true, changed: true }]);
+      .toEqual([{ client: clientId, ok: true, changed: true, ...(clientId === "aside" ? { profileId: 0 } : {}) }]);
     expect(document(clientId).providers.opencodex?.models.map(model => model.id)).toEqual(["mock/hidden"]);
     expect(store.listOperations(clientId).map(row => row.kind)).toEqual(["refresh", "refresh", "apply"]);
   });
@@ -510,7 +528,8 @@ test("the direct ocx sync command refreshes MCode, Pi and Aside instead of relyi
   const start = src.indexOf("sync: async deps =>");
   const command = src.slice(start, src.indexOf("v2: async deps =>", start));
   expect(command).toContain("refreshOwnedCatalogIntegrations");
-  expect(command).toContain('["mcode", "pi", "aside"]');
+  expect(command).toContain('["mcode", "pi"]');
+  expect(command).toContain("refreshAsideProfilesThroughServer");
   expect(command.indexOf("syncModelsToCodex")).toBeLessThan(command.indexOf("refreshOwnedCatalogIntegrations"));
   expect(command).toContain('synced.status !== "refused"');
 });

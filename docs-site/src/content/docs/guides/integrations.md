@@ -52,12 +52,10 @@ disagree about which file is meant. Its managed block owns only
 stay untouched. Prime Agent reads `models.json` when a session starts, so start
 a new session after connecting it.
 
-Aside is per-account: its state lives under `~/.aside/u/<account>/` and opencodex
-writes the catalog of whichever account Aside's own `accounts.json` names as
-current. If that manifest is missing or unreadable the integration refuses rather
-than guessing an account, because a guess on a multi-account machine would write
-into a different account's catalog. Its managed block owns only
-`providers.opencodex`, so your other Aside providers stay untouched.
+Aside keeps a separate model catalog for each registered profile, including local profiles. OpenCodex lists
+all registered profiles, including local profiles, and can synchronize them together or control
+one profile at a time. Switching an integration never changes Aside's active account. A prior
+Aside connection enables all profiles by default; individual exclusions survive later syncs.
 
 One caveat specific to Aside: the running app rewrites `models.json` itself, so
 fully quit and reopen Aside after applying, the same way Claude Desktop needs a
@@ -224,6 +222,7 @@ provider selection, or presets also refresh connected Pi and Aside catalogs. Mis
 foreign-edited, unsafe, and never-owned blocks stay untouched; reconnect them explicitly.
 A refused or overlapping refresh is reported separately for each client. Start a new Pi
 session or fully quit and reopen Aside to load the updated file.
+Aside refresh requires a [compatible running proxy](#aside-profile-controls).
 
 The separate MiniMax platform CLI (`mmx`) is not a file-toggle integration. Its text
 commands use MiniMax's Anthropic-compatible endpoint, so OpenCodex provides a
@@ -248,3 +247,33 @@ decision to make.
 Client details were verified against each project's own configuration format; see the
 research notes in `devlog/_fin/260802_client_toggle_api/002_client_toggle_matrix.md`
 for what was checked and when.
+
+## Aside profile controls
+
+Aside profile controls and the Aside refresh performed by `ocx sync` require a running
+ocx proxy that supports the Aside profile APIs. Updating the CLI alone does not update an
+already-running proxy. If the proxy is unavailable or too old, the Aside operation cannot
+complete; the CLI never falls back to writing Aside profile files locally.
+
+Upgrade the ocx installation used by the proxy, then restart the proxy (or start it if it
+is stopped). Retry `ocx sync` or the profile command. After the profile files update
+successfully, fully quit and reopen Aside so it loads the new catalogs.
+
+```bash
+ocx integration client status --client aside --json
+ocx integration client enable --client aside
+ocx integration client disable --client aside --profile 1
+ocx integration client history --client aside --profile 1
+ocx integration client restore --client aside --profile 1 --op <opId>
+```
+
+The profile number is the account ID shown by the status command. Omitting `--profile` on an
+Aside toggle applies the desired state to every registered profile. A per-profile change leaves
+siblings unchanged. Desired sync settings are saved before file changes; actual state and any
+refusal are reported for each profile. A partial bulk result is not an all-applied success and
+the CLI exits nonzero. Undo restores the selected profile's synchronization intent as well as
+its file, so a later sync does not silently reverse Undo.
+
+Each profile has separate ownership and history. Existing user edits, unsafe paths and linked
+catalogs are refused; the existing explicit overwrite and drift-confirmation controls remain
+available. Fully quit and reopen Aside to load changed model files.

@@ -148,3 +148,16 @@ fingerprint-only tests are supplementary; they cannot prove the status and write
 ## Remote connection lifecycle
 
 Remote clients journal and restore native integrations locally while model traffic travels directly to the hub. Catalog writes occur only after protocol negotiation and full remote schema validation. The management relay is launcher-scoped and fixed to the connection's management origin. Claude/Codex launch behavior remains integration-scoped. Key rotation uses `pendingOperation` plus `.prev`; disconnect restores locally without hub-side revocation or usage mirroring.
+
+## Aside profile ownership
+
+Aside discovery projects only registered numeric account IDs, labels and current status. Catalog
+paths derive from the configured root/u/id, never from browser profilePath. Guarded filesystem
+identity and IO apply to status and writes; internal resolved path pairs survive async freezing.
+
+`asideProfileSync` owns desired all-profile defaults and per-profile overrides. The legacy
+connection defaults all profiles on; explicit per-profile changes materialize that default and
+pin one legacy root owner before changing it. Sibling stores remain independent. Policy saves
+precede coordinated writes under one scoped flight, and actual file state/refusals remain
+separate. Restore reconciles target intent from validated snapshot ownership without changing
+sibling policy. Profile journal views retain source-store provenance for older legacy entries.

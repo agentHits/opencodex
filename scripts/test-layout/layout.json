@@ -11,7 +11,7 @@
   "domains": {
     "providers": {
       "match": [
-        "^(?:aside|auto|azure|baseten|chutes|cline|command|commandcode|context|cyber|deepinfra|deepseek|digitalocean|exa|featherless|forward|hyperbolic|kimi|meta|mimo|minimax|moonshot|muse|new|nous|novita|nscale|nvidia|opencode|openrouter|qwen38|sambanova|umans|vercel|zcode|zhipu)-"
+        "^(?:aside(?!-profile)|auto|azure|baseten|chutes|cline|command|commandcode|context|cyber|deepinfra|deepseek|digitalocean|exa|featherless|forward|hyperbolic|kimi|meta|mimo|minimax|moonshot|muse|new|nous|novita|nscale|nvidia|opencode|openrouter|qwen38|sambanova|umans|vercel|zcode|zhipu)-"
       ],
       "children": {
         "cursor": [
@@ -38,6 +38,7 @@
     },
     "server": {
       "match": [
+        "^aside-profiles-routes",
         "^(?:account|alias|bounded|cancel|config\\.test\\.ts|consume|data|debug|error|errors|fetch|health|input|loopback|management|memory|outbound|owned|passive|port|ports\\.test\\.ts|proxy|relay|response|retry|server|session|sidebar|stream|v2)-"
       ]
     },
@@ -107,6 +108,7 @@
     },
     "clients": {
       "match": [
+        "^aside-profile(?!s-routes)",
         "^(?:desktop|omp|pi|prime|remote|sync)-"
       ]
     },
@@ -232,6 +234,10 @@
     "artifacts-prune.test.ts": "images",
     "artifacts-ssrf.test.ts": "images",
     "aside-client.test.ts": "providers",
+    "aside-profiles-routes.test.ts": "server",
+    "aside-profiles.test.ts": "clients",
+    "aside-profile-paths.test.ts": "clients",
+    "aside-profile-sync-owner.test.ts": "clients",
     "assert-mergeable-review.test.ts": "ci-workflows",
     "auto-compact-budget.test.ts": "providers",
     "autostart-health.test.ts": "service",
