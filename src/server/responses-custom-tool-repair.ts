@@ -273,8 +273,10 @@ export function createRoutedCustomToolRestoreBlockRewrite(
       openCalls.set(upstreamItemId, open);
       if (customExecItemNames.get(upstreamItemId) !== "exec"
         || mayBecomePatchEnvelope(open.argumentsText)
-        || FREEFORM_WRAP_PREFIX.startsWith(open.argumentsText.trimStart())
-        || FREEFORM_WRAP_PREFIX_RE.test(open.argumentsText)) return [];
+        // JSON.parse accepts whitespace, escaped keys and arbitrary property order.
+        // Any object prefix may still wrap a patch; keep it until authoritative completion.
+        || open.argumentsText.trimStart() === ""
+        || open.argumentsText.trimStart().startsWith("{")) return [];
       // If a held prefix turns out to be ordinary JavaScript, release the entire
       // un-emitted suffix. Native custom input remains byte-exact.
       const inputDelta = open.argumentsText.slice(open.emittedInput.length);
