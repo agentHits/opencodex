@@ -380,6 +380,8 @@ import {
 } from "../sse-payload-rewrite";
 import { restoreRoutedCustomCalls, restoreRoutedCustomCallsInJson } from "../../responses/custom-tool-compat";
 import { createRoutedCustomToolRestoreBlockRewrite } from "../responses-custom-tool-repair";
+import { collectFunctionCallRepairSchemas, repairFunctionCalls, repairFunctionCallsInJson } from "../../responses/function-call-compat";
+import { createResponsesFunctionToolRepairBlockRewrite } from "../responses-function-tool-repair";
 import { restoreRoutedToolSearchCallsInJson } from "../../responses/tool-search-compat";
 import { createRoutedToolSearchRestoreBlockRewrite } from "../responses-tool-search-repair";
 import {
@@ -3976,6 +3978,9 @@ async function handleResponsesInner(
       }
       throw error;
     }
+    const functionRepairSchemas = isCanonicalOpenAiForwardProvider(route.provider)
+      ? new Map()
+      : collectFunctionCallRepairSchemas(clientToolAuthorizationBody);
     if (!isCanonicalOpenAiForwardProvider(route.provider)) {
       for (const name of request.convertedRoutedCustomToolNames ?? []) {
         if (
@@ -4153,12 +4158,12 @@ async function handleResponsesInner(
     const rememberPassthroughResponseChecked = rememberPassthroughResponse
       ? (response: { id?: unknown; output?: unknown; status?: unknown }) => {
         if (inspectionSawUndeclaredTool) return;
-        const restoredResponse = restoreRoutedCustomCalls(
-          restoreAuthorizedBareNamespaceToolCalls(response),
+        const restoredResponse = repairFunctionCalls(restoreRoutedCustomCalls(
+          restoreAuthorizedBareNamespaceToolCalls(restoreRoutedNamespaceCalls(response, routedNamespaceToolAliases).value),
           routedCustomToolNames,
           routedCustomToolRepairNames,
           declaredWireToolNames,
-        ).value as { id?: unknown; output?: unknown; status?: unknown };
+        ).value, functionRepairSchemas).value as { id?: unknown; output?: unknown; status?: unknown };
         if (
           undeclaredToolGuardActive
           && undeclaredToolCallNameInResponse(
@@ -5056,6 +5061,9 @@ async function handleResponsesInner(
           ? createResponsesSnapshotBlockRewrite(outboundRequestBody, translatorBudget)
           : undefined,
         createResponsesFieldBackfillBlockRewrite(),
+        functionRepairSchemas.size > 0
+          ? createResponsesFunctionToolRepairBlockRewrite(functionRepairSchemas, translatorBudget)
+          : undefined,
         // Last: every rewrite above can still rename or reshape a call item, so the guard must
         // compare the names the client will actually receive against the declared catalog.
         undeclaredToolGuardActive
@@ -5273,9 +5281,10 @@ async function handleResponsesInner(
           restored,
           routedToolSearchNames,
         );
+        const restoredFunctionCalls = repairFunctionCallsInJson(restoredToolSearch, functionRepairSchemas);
         const repaired = hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair)
-          ? repairResponsesSnapshotJson(restoredToolSearch, outboundRequestBody)
-          : restoredToolSearch;
+          ? repairResponsesSnapshotJson(restoredFunctionCalls, outboundRequestBody)
+          : restoredFunctionCalls;
         const modelRewritten = parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
           ? rewriteResponsesModelJson(backfillResponsesFieldsJson(repaired), parsed._responseModelId)
           : backfillResponsesFieldsJson(repaired);
