@@ -44,7 +44,7 @@ export class RuntimeApiError extends Error {
 
 export async function runtimeBaseUrl(deps: RuntimeApiDeps = {}): Promise<string> {
   if (deps.baseUrl) return deps.baseUrl.replace(/\/$/, "");
-  const live = await findLiveProxy();
+  const live = await (deps.findLiveProxy ?? findLiveProxy)();
   if (!live) throw new RuntimeApiError("Proxy is not running. Start it with: ocx start", 503, null);
   return `http://${probeHostname(live.hostname)}:${live.port}`;
 }
