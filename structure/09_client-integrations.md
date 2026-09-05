@@ -36,6 +36,13 @@ Status and mutation must use the same classifier. A special case added only to a
 would be misleading because refresh or disable could still reject the same file; a special case
 added only to a writer would let a mutation bypass the state users saw.
 
+## Catalog visibility
+
+Management export and CLI export apply the canonical routed catalog visibility filter before
+serialization: provider selections, disabled models, and pending initial selection all constrain
+the client roster. The full management list remains available for selection. Native rows retain
+their existing visibility rules.
+
 ## Fast model selectors
 
 The serving proxy resolves `fastRowAvailable` on every management model row, including its
