@@ -1590,8 +1590,11 @@ const desktopRequestHeaders = {
   authorization: "Bearer sk-ant-oat01-desktop-test",
 };
 
-for (const fallbacks of [false, true]) {
-  test(`missing Desktop IDs reject before upstream dispatch (fallbacks=${fallbacks})`, async () => {
+for (const { fallbacks, fastRows } of [
+  { fallbacks: false, fastRows: false }, { fallbacks: true, fastRows: false },
+  { fallbacks: false, fastRows: true }, { fallbacks: true, fastRows: true },
+]) {
+  test(`missing Desktop IDs reject before upstream dispatch (fallbacks=${fallbacks}, fastRows=${fastRows})`, async () => {
     const selected = mockChatUpstreamCapturing();
     const fallback = mockChatUpstreamCapturing();
     const native = mockChatUpstreamCapturing();
@@ -1600,7 +1603,7 @@ for (const fallbacks of [false, true]) {
       apiKey: "test-key", allowPrivateNetwork: true, liveModels: false, models,
     });
     saveConfig({
-      port: 0, defaultProvider: "fallback",
+      port: 0, defaultProvider: "fallback", fastRows,
       providers: {
         selected: provider(selected, ["model-selected"]),
         fallback: provider(fallback, ["model-default", "model-dateless", "model-classifier"]),
@@ -1618,7 +1621,8 @@ for (const fallbacks of [false, true]) {
     try {
       for (const model of [
         "claude-opus-4-8-20260202", "claude-opus-4-8-zzz", "claude-opus-4-zzz",
-        "claude-opus-4-8-20260202[1m]",
+        "claude-opus-4-8-20260202[1m]", "claude-opus-4-8-20260202--fast",
+        "claude-opus-4-8-zzz--fast", "claude-opus-4-zzz--fast", "claude-opus-4-8-20260202--fast[1m]",
       ]) {
         for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
           const response = await fetch(new URL(path, server.url), {
@@ -1643,7 +1647,8 @@ for (const fallbacks of [false, true]) {
   }, { timeout: SERVER_BUDGET_MS });
 }
 
-test("registered Desktop IDs and exact operator overrides reach distinct intended routes", async () => {
+for (const fastRows of [false, true]) {
+test(`registered Desktop IDs and exact overrides reach intended routes (fastRows=${fastRows})`, async () => {
   const selected = mockChatUpstreamCapturing();
   const explicit = mockChatUpstreamCapturing();
   const fallback = mockChatUpstreamCapturing();
@@ -1652,7 +1657,7 @@ test("registered Desktop IDs and exact operator overrides reach distinct intende
     apiKey: "test-key", allowPrivateNetwork: true, liveModels: false, models: [model],
   });
   saveConfig({
-    port: 0, defaultProvider: "fallback",
+    port: 0, defaultProvider: "fallback", fastRows,
     providers: {
       selected: provider(selected, "model-selected"), explicit: provider(explicit, "model-explicit"),
       fallback: provider(fallback, "model-fallback"),
@@ -1661,6 +1666,7 @@ test("registered Desktop IDs and exact operator overrides reach distinct intende
       anthropicBaseUrl: fallback.server.url.origin,
       modelMap: {
         "claude-opus-4-8-20260202": "explicit/model-explicit",
+        "claude-opus-4-8-20260203--fast": "explicit/model-explicit",
         "claude-opus-4-8": "fallback/model-fallback",
       },
       classifierModel: "fallback/model-fallback",
@@ -1669,7 +1675,11 @@ test("registered Desktop IDs and exact operator overrides reach distinct intende
   buildDesktop3pRegistry([], [{ provider: "selected", id: "model-selected" }], managedDesktopProfile);
   const server = startServer(0);
   try {
-    for (const model of ["claude-opus-4-8-20260201", "claude-opus-4-8-20260201[1m]", "claude-opus-4-8-20260202"]) {
+    for (const model of [
+      "claude-opus-4-8-20260201", "claude-opus-4-8-20260201[1m]",
+      ...(fastRows ? ["claude-opus-4-8-20260201--fast"] : []),
+      "claude-opus-4-8-20260202", "claude-opus-4-8-20260203--fast",
+    ]) {
       const response = await fetch(new URL("/v1/messages", server.url), {
         method: "POST", headers: desktopRequestHeaders, signal: AbortSignal.timeout(5_000),
         body: JSON.stringify({ model, stream: true, max_tokens: 8, messages: [{ role: "user", content: "hello" }] }),
@@ -1677,18 +1687,18 @@ test("registered Desktop IDs and exact operator overrides reach distinct intende
       expect(response.status).toBe(200);
       expect(await response.text()).toContain("message_stop");
     }
-    expect(selected.captured.map(body => body.model)).toEqual(["model-selected", "model-selected"]);
-    expect(explicit.captured.map(body => body.model)).toEqual(["model-explicit"]);
-    expect(selected.urls).toEqual([new URL("/v1/chat/completions", selected.server.url).href, new URL("/v1/chat/completions", selected.server.url).href]);
-    expect(explicit.urls).toEqual([new URL("/v1/chat/completions", explicit.server.url).href]);
+    expect(selected.captured.map(body => body.model)).toEqual(Array(fastRows ? 3 : 2).fill("model-selected"));
+    expect(explicit.captured.map(body => body.model)).toEqual(["model-explicit", "model-explicit"]);
+    expect(selected.urls).toEqual(Array(fastRows ? 3 : 2).fill(new URL("/v1/chat/completions", selected.server.url).href));
+    expect(explicit.urls).toEqual(Array(2).fill(new URL("/v1/chat/completions", explicit.server.url).href));
     expect(fallback.urls).toEqual([]);
     const count = await fetch(new URL("/v1/messages/count_tokens", server.url), {
       method: "POST", headers: desktopRequestHeaders,
-      body: JSON.stringify({ model: "claude-opus-4-8-20260202", messages: [{ role: "user", content: "hello" }] }),
+      body: JSON.stringify({ model: "claude-opus-4-8-20260203--fast", messages: [{ role: "user", content: "hello" }] }),
     });
     expect(count.status).toBe(200);
     expect((await count.json() as { input_tokens: number }).input_tokens).toBeGreaterThan(0);
-    expect(explicit.urls).toHaveLength(1);
+    expect(explicit.urls).toHaveLength(2);
     expect(fallback.urls).toEqual([]);
   } finally {
     await server.stop(true);
@@ -1696,3 +1706,4 @@ test("registered Desktop IDs and exact operator overrides reach distinct intende
     buildDesktop3pRegistry([], []);
   }
 }, { timeout: SERVER_BUDGET_MS });
+}

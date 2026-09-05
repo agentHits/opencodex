@@ -138,10 +138,22 @@ function deniedTraffic(fx: Fixture): string {
 }
 
 afterEach(async () => {
-  for (const owned of children.splice(0)) await stopOwned(owned);
-  for (const server of servers.splice(0)) await server.stop(true);
-  for (const root of roots.splice(0)) removeTreeWithRetry(root);
-});
+  const failures: unknown[] = [];
+  for (const owned of children.splice(0)) {
+    try { await stopOwned(owned); }
+    catch (error) {
+      failures.push(error);
+      if (owned.child.exitCode === null) children.push(owned);
+    }
+  }
+  for (const server of servers.splice(0)) {
+    try { await server.stop(true); } catch (error) { failures.push(error); }
+  }
+  for (const root of roots.splice(0)) {
+    try { removeTreeWithRetry(root); } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw new AggregateError(failures, "Desktop process fixture cleanup failed");
+}, 90_000);
 
 for (const storedProfile of [true, false]) {
   test("connected Desktop uses hub IDs across a cold restart (stored profile=" + storedProfile + ")", async () => {
@@ -191,7 +203,7 @@ for (const storedProfile of [true, false]) {
     const snapshot = await snapshotResponse.json() as { version: number; models: Desktop3pModelEntry[] };
     expect(snapshot.version).toBe(1);
     expect(snapshot.models.some(model => model.labelOverride.includes("(native)"))).toBe(true);
-    const chosenEntry = snapshot.models.find(model => model.labelOverride.includes("model-target"));
+    const chosenEntry = snapshot.models.find(model => model.labelOverride === "Model Target (chosen)");
     expect(chosenEntry).toBeDefined();
     if (storedProfile) expect(chosenEntry!.name).toBe("claude-opus-4-8-20260211");
     else expect(chosenEntry!.name).toMatch(/^claude-opus-4-8-[a-z][a-z0-9]{2}$/);

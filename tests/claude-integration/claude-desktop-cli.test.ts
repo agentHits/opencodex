@@ -107,7 +107,7 @@ test.each([
       },
       findLiveProxyImpl: async () => { throw new Error("must not look for local proxy"); },
       postApplyImpl: async () => { throw new Error("must not call local management"); },
-      probeClaudeDesktopPolicy: () => "absent",
+      probeClaudeDesktopPolicy: () => "present",
     })).toBe(0);
     expect(downloads).toBe(1);
     const written = JSON.parse(readFileSync(writtenPath, "utf8"));
@@ -116,6 +116,7 @@ test.each([
     expect(written.inferenceModels).toEqual(mode === "discovery" ? undefined : remoteModels);
     expect(loadConfig().claudeCode?.desktopProfile).toBeUndefined();
     expect(warn).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Windows managed Claude policy is active"));
     expect(error).not.toHaveBeenCalled();
   } finally { log.mockRestore(); warn.mockRestore(); error.mockRestore(); }
 });

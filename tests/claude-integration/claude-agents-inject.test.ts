@@ -345,12 +345,15 @@ test("stale Desktop selectors retain the roster and configured blocked skills", 
   const model = "claude-opus-4-8-20260702";
   buildDesktop3pRegistry([], []);
   try {
+    const directory = tempDir();
+    writeFileSync(join(directory, "settings.json"), JSON.stringify({ model }));
     const defs = buildClaudeAgentDefs(cfg({
-      subagentModels: [model],
+      subagentModels: [],
       claudeCode: { blockedSkills: ["restricted-test-skill"] },
-    }), {}, tempDir());
-    const stale = defs.find(def => def.model === model);
+    }), {}, directory);
+    const stale = defs.find(def => def.name === "ocx-self");
     expect(stale).toBeDefined();
+    expect(stale!.model).toBe(model);
     expect(stale!.blockedSkills).toEqual(["restricted-test-skill"]);
     expect(defs.length).toBeGreaterThan(0);
   } finally { buildDesktop3pRegistry([], []); }
@@ -366,8 +369,10 @@ test("unexpected resolver errors still propagate from roster construction", () =
   });
   buildDesktop3pRegistry([], []);
   try {
+    const directory = tempDir();
+    writeFileSync(join(directory, "settings.json"), JSON.stringify({ model }));
     expect(() => buildClaudeAgentDefs(cfg({
-      subagentModels: [model], claudeCode: { modelMap, blockedSkills: ["restricted-test-skill"] },
-    }), {}, tempDir())).toThrow("injected-resolver-failure");
+      subagentModels: [], claudeCode: { modelMap, blockedSkills: ["restricted-test-skill"] },
+    }), {}, directory)).toThrow("injected-resolver-failure");
   } finally { buildDesktop3pRegistry([], []); }
 });

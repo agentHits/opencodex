@@ -511,6 +511,8 @@ export async function downloadDesktop3pModels(
     throw new HubClientError("insecure_http_refused", "Desktop model snapshots require HTTPS or loopback HTTP");
   }
   try {
+    // Keep fetchBounded's total request deadline active through body consumption;
+    // continuous progress must not extend a small Desktop snapshot download indefinitely.
     const response = await fetchBounded(options.fetchImpl ?? fetch, `${origin}/v1/models?ids=desktop&format=desktop-config`, {
       method: "GET",
       headers: new Headers({
@@ -518,7 +520,7 @@ export async function downloadDesktop3pModels(
         "anthropic-version": "2023-06-01",
         "x-opencodex-api-key": admissionToken,
       }),
-    }, options.timeoutMs, "headers");
+    }, options.timeoutMs);
     if (!response.ok || response.status === 304) {
       try { await response.body?.cancel(); } catch { /* best effort */ }
       throw new HubClientError(`desktop_snapshot_http_${response.status}`, "Hub Desktop model snapshot request failed", response.status);

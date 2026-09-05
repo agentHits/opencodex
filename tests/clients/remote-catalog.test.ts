@@ -163,6 +163,74 @@ describe("remote Desktop snapshot consumer", () => {
     })).toEqual({ version: 1, models: [] });
   });
 
+  test("enforces the Desktop total deadline even while a loopback body keeps progressing", async () => {
+    const timeoutMs = 1000;
+    const observed: {
+      headers: boolean;
+      chunks: number;
+      bytes: number;
+      chunksAtDeadline: number;
+      signal?: AbortSignal;
+    } = { headers: false, chunks: 0, bytes: 0, chunksAtDeadline: 0 };
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let finishedNaturally = false;
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"version":1,"models":[]}'));
+            let ticks = 0;
+            // Progress is twenty times more frequent than the inactivity deadline. The
+            // whole valid body is under 100 bytes, so neither inactivity nor size is
+            // the intended rejection. A broken total deadline would finish successfully.
+            timer = setInterval(() => {
+              controller.enqueue(new Uint8Array([0x20]));
+              if (++ticks === 40) {
+                clearInterval(timer);
+                finishedNaturally = true;
+                controller.close();
+              }
+            }, 50);
+          },
+          cancel() { clearInterval(timer); },
+        }), { headers: JSON_HEADERS });
+      },
+    });
+    try {
+      await expect(downloadDesktop3pModels(`http://127.0.0.1:${server.port}`, "ocx_data_test", {
+        timeoutMs,
+        fetchImpl: async (input, init) => {
+          observed.signal = init?.signal ?? undefined;
+          observed.signal?.addEventListener("abort", () => {
+            observed.chunksAtDeadline = observed.chunks;
+          }, { once: true });
+          const received = await fetch(input, init);
+          observed.headers = true;
+          // Count bytes actually delivered to the consumer, not merely server enqueues.
+          const body = received.body!.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              observed.chunks++;
+              observed.bytes += chunk.byteLength;
+              controller.enqueue(chunk);
+            },
+          }));
+          return new Response(body, { status: received.status, headers: received.headers });
+        },
+      })).rejects.toMatchObject({ code: "unreachable" });
+      expect(observed.headers).toBe(true);
+      expect(observed.chunksAtDeadline).toBeGreaterThanOrEqual(2);
+      expect(observed.signal?.aborted).toBe(true);
+      expect(observed.bytes).toBeGreaterThan(0);
+      expect(observed.bytes).toBeLessThan(100);
+      expect(finishedNaturally).toBe(false);
+    } finally {
+      clearInterval(timer);
+      server.stop(true);
+    }
+  });
+
   test("bounds stalled response headers and streamed bodies without exposing their errors", async () => {
     await expect(downloadDesktop3pModels("https://hub.example.test", "ocx_data_test", {
       timeoutMs: 25,

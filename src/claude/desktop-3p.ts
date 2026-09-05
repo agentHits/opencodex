@@ -324,10 +324,19 @@ export function resolveDesktop3pAlias(alias: string): string | null {
   return desktop3pRegistry.get(alias) ?? null;
 }
 
+/** Exact registered and identity-preserving catalog IDs precede synthetic syntax. */
+export function isKnownDesktop3pModelId(id: string): boolean {
+  return desktop3pRegistry.has(id) || desktop3pRealAnthropicIds.has(id);
+}
+
 /** Only missing IDs in the emitted Desktop namespaces are managed-alias errors. */
 export function isUnresolvedDesktop3pAlias(id: string): boolean {
-  if (desktop3pRegistry.has(id) || desktop3pRealAnthropicIds.has(id)) return false;
-  return validDateAlias(id) || /^claude-opus-4-(?:8-)?[a-z][a-z0-9]{2}$/.test(id);
+  if (isKnownDesktop3pModelId(id)) return false;
+  // Validate the managed base even when Fast routing is disabled. This checks
+  // identity only; it neither enables a tier nor strips an exact full catalog ID.
+  const base = id.endsWith("--fast") ? id.slice(0, -"--fast".length) : id;
+  if (isKnownDesktop3pModelId(base)) return false;
+  return validDateAlias(base) || /^claude-opus-4-(?:8-)?[a-z][a-z0-9]{2}$/.test(base);
 }
 
 /** Alias selected by the installed profile registry, falling back to the legacy hash shape. */

@@ -11,6 +11,7 @@ import {
   generateDesktop3pModels,
   legacyDesktop3pAlias,
   isUnresolvedDesktop3pAlias,
+  isKnownDesktop3pModelId,
   parseDesktop3pModeArgs,
   resolveDesktop3pConfigLibraryPath,
   resolveDesktop3pAlias,
@@ -418,4 +419,22 @@ describe("Claude Desktop 3P models", () => {
       warning.mockRestore();
     }
   });
+});
+
+
+test("Desktop FAST base validation preserves exact catalog IDs and clears stale exemptions", () => {
+  const unknown = "claude-opus-4-8-20260202--fast";
+  const registry = buildDesktop3pRegistry([], [{ provider: "routed", id: "model-one" }]);
+  const known = registry.keys().next().value!;
+  try {
+    expect(isKnownDesktop3pModelId(known)).toBe(true);
+    expect(isUnresolvedDesktop3pAlias(known + "--fast")).toBe(false);
+    expect(isUnresolvedDesktop3pAlias(unknown)).toBe(true);
+    generateDesktop3pModels([], [{ provider: "anthropic", id: unknown }]);
+    expect(isKnownDesktop3pModelId(unknown)).toBe(true);
+    expect(isUnresolvedDesktop3pAlias(unknown)).toBe(false);
+    buildDesktop3pRegistry([], []);
+    expect(isKnownDesktop3pModelId(unknown)).toBe(false);
+    expect(isUnresolvedDesktop3pAlias(unknown)).toBe(true);
+  } finally { buildDesktop3pRegistry([], []); }
 });
