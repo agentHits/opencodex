@@ -49,6 +49,15 @@ provider — xAI, Kimi, DeepSeek, GLM, Groq, OpenRouter, Ollama (local), and mor
   tiers, accepts reasoning deltas from either `delta.reasoning_content` or `delta.reasoning`, requests
   streamed usage with `stream_options.include_usage`, and reads usage from non-stream response envelopes.
 
+Streaming tool calls retain their identity when a provider first sends an ID,
+then associates that ID with an index, and later sends index-only argument
+fragments. Those fragments assemble into one call with the original name and
+complete arguments; parallel calls retain separate identities.
+When present, streamed tool-call indexes must be non-negative safe integers. Non-numeric
+values and negative, fractional, or unsafe numbers terminate the stream with an upstream
+error before identity matching. Missing and null indexes remain absent-index placeholders;
+numeric strings are not coerced.
+
 ## `ollama-native`
 
 **Targets:** Ollama's own **Chat API** (`POST /api/chat`) rather than its OpenAI-compatible
@@ -147,6 +156,19 @@ of the HTTP retry loop.
 - In `forward` mode only a safe header allowlist is relayed (`FORWARD_HEADERS`): authorization,
   ChatGPT account id, and the OpenAI beta/originator/session headers. This is the ChatGPT-login path
   that also powers the [sidecars](/guides/sidecars/).
+
+## Command Code session affinity
+
+The OAuth `command-code` adapter derives an opaque `x-session-id` from the client
+thread identity, then the reasoning-replay conversation identity. When neither is
+available, it uses a prompt-cache key only if the integration has explicitly
+classified that key as belonging to one conversation. Shared or unclassified cache
+keys do not establish session affinity; requests without a usable identity receive
+a fresh session ID. Recovery and cached-history replay preserve this classification.
+
+The API-key `commandcode` provider uses the `openai-chat` adapter and supports
+forwarding `prompt_cache_key`. This is separate from the OAuth adapter's session
+header and does not guarantee a provider cache hit.
 
 ## `anthropic`
 
@@ -355,6 +377,13 @@ compatibility pair: `agent.v1.AgentService/RunSSE` for server output and
   and `desktopExecutor` integrations have separate opt-ins; `nativeLocalExec: "on"` enables the
   broader built-in executor and bypasses Codex approval/sandbox semantics, and legacy
   `unsafeAllowNativeLocalExec: true` remains equivalent only when `nativeLocalExec` is unset.
+
+Codex-compatible shell schemas retain sandbox permissions, justification, reusable
+prefix rules and login mode. Freeform tools expose one required string `input`
+and preserve its tool-specific guidance, such as the required patch envelope;
+bare `exec_command` and `shell_command` names are reserved for non-freeform shell
+bridges. Namespace a custom freeform tool that uses either name. These schema
+declarations do not grant approval or change execution policy.
 
 ## `azure-openai` (alias: `azure`)
 
