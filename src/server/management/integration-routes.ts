@@ -47,6 +47,8 @@ import { loadExportModels } from "./model-rows";
 
 
 const INTEGRATION_ROUTE_PREFIX = "/api/client-integrations/";
+const INTEGRATION_COLLECTION_PATH = "/api/client-integrations";
+const INTEGRATION_HISTORY_PATHS = ["/api/client-integrations/journal", "/api/client-integrations/restore"];
 export { INTEGRATION_MUTATION_TERMINAL_MS };
 
 type IntegrationStateRecord = Awaited<ReturnType<typeof readIntegrationState>>;
@@ -422,9 +424,8 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
   const aside = await handleAsideProfileRoutes(ctx, profileOptions);
   if (aside) return aside;
   if (url.searchParams.has("profile")
-    && (url.pathname === "/api/client-integrations" || url.pathname.startsWith(INTEGRATION_ROUTE_PREFIX))
-    && url.pathname !== "/api/client-integrations/journal"
-    && url.pathname !== "/api/client-integrations/restore") {
+    && (url.pathname === INTEGRATION_COLLECTION_PATH || url.pathname.startsWith(INTEGRATION_ROUTE_PREFIX))
+    && !INTEGRATION_HISTORY_PATHS.includes(url.pathname)) {
     return jsonResponse({ error: "profile applies only to Aside", code: "invalid_aside_profile" }, 400, req, ctx.config);
   }
 
