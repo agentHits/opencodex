@@ -37,6 +37,10 @@ export interface OwnedIntegrationRefreshOutcome {
   readonly changed?: boolean;
   readonly reason?: string;
   readonly profileId?: number;
+  readonly refusalReason?: string;
+  readonly state?: string;
+  readonly snapshotPath?: string;
+  readonly residual?: boolean;
 }
 
 /**

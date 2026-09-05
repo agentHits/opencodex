@@ -156,9 +156,19 @@ export function refreshAsideProfiles(input: AsideProfilesInput): Promise<Array<O
           client: "aside", profileId: profile.id, ok: result.ok,
           ...(result.ok ? { changed: result.changed } : {}),
           ...(!result.ok || result.state === "absent" ? { reason: result.message } : {}),
+          ...(!result.ok ? {
+            refusalReason: result.reason, state: result.state,
+            ...(result.snapshotPath ? { snapshotPath: result.snapshotPath } : {}),
+            ...(result.residual ? { residual: true } : {}),
+          } : {}),
         });
       } catch (error) {
-        outcomes.push({ client: "aside", profileId: profile.id, ok: false, reason: asideProfileFailure(profile.id, error).message });
+        const failure = asideProfileFailure(profile.id, error);
+        outcomes.push({ client: "aside", profileId: profile.id, ok: false, reason: failure.message,
+          ...(!failure.ok ? { refusalReason: failure.reason, state: failure.state,
+            ...(failure.snapshotPath ? { snapshotPath: failure.snapshotPath } : {}),
+            ...(failure.residual ? { residual: true } : {}) } : {}),
+        });
       }
     }
     return outcomes;
