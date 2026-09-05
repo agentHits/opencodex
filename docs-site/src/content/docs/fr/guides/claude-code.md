@@ -134,6 +134,8 @@ est temporairement indisponible, la première route disponible de la famille est
 
 Vous pouvez également gérer le même profil depuis la ligne de commande :
 
+Les instructions de modification ci-dessous concernent le profil local. L'application via un hub connecté est décrite séparément plus bas.
+
 ```bash
 ocx claude desktop [apply]
 ocx claude desktop show [--json]
@@ -204,6 +206,30 @@ l'en-tête d'admission dédié du proxy est valide. Par conséquent, l'avertisse
 Désactivez ce comportement avec `claudeCode.nativePassthrough: false` ; définissez une autre destination avec
 `claudeCode.anthropicBaseUrl`.
 
+## Claude Desktop connecté à un hub distant
+
+Sur une machine connectée, `ocx claude desktop apply` ou `ocx claude desktop` récupère
+l'instantané Desktop du hub et écrit son origine ainsi que ses identifiants exacts dans la
+configuration Desktop locale, sans créer d'alias locaux. Les modes static/hybrid copient les
+entrées ; discovery-only utilise l'origine du hub sans intégrer la liste.
+
+Le hub gère le profil, les familles et les valeurs par défaut. Modifiez-les sur le hub, puis
+réappliquez côté client et sélectionnez à nouveau le modèle dans Desktop. Les anciens alias
+créés uniquement sur le client nécessitent aussi cette opération. `show`, les modifications
+locales et import/export restent locaux. En connexion distante,
+`ocx claude desktop import <path> --apply` est refusé avant l'enregistrement ; sans `--apply`,
+l'importation reste locale.
+
+La lecture utilise l'identifiant d'accès aux données de la connexion existante, sans jeton
+administrateur ni envoi de profil. Un ancien hub incompatible, une réponse invalide ou une liste
+Desktop vide fait échouer l'application, sans catalogue local ni adresse de bouclage de secours.
+Mettez à jour ou configurez le hub, puis réappliquez.
+
+Ce changement d'alias ne résout pas la demande distincte de [#3646](https://github.com/lidge-jun/opencodex/issues/3646) concernant la relecture de
+`thinking` / `redacted_thinking` et le cache de prompts. L'accès au proxy seul n'active pas le
+passthrough Anthropic natif ; les routes Anthropic traduites peuvent néanmoins utiliser le cache.
+La fidélité de relecture et la comparaison des accès au cache restent à traiter séparément.
+
 ## Le sélecteur /model (« Depuis la passerelle »)
 
 Claude Code 2.1.129+ découvre les modèles de passerelle via `GET /v1/models?limit=1000` et les répertorie dans
@@ -247,6 +273,8 @@ utilisent l'alias haché. Les identifiants de modèle peuvent contenir `--` (la 
 
 **Ordre de résolution du modèle :** retrait du marqueur `[1m]` → décodage de l'alias lisible → décodage de l'alias haché
 de Claude Desktop → correspondance exacte dans `modelMap` → correspondance sans date (suffixe `-20250514` retiré) → transfert direct.
+
+Les alias Desktop gérés de type date/hash qui ne peuvent pas être résolus sont rejetés avec HTTP 400 avant suppression de date ou repli, pour Messages comme pour count-tokens. Les entrées exactes de `modelMap` et les véritables ID Anthropic reconnus conservent leur traitement habituel.
 
 Chaque entrée porte un nom d'affichage tel que `gemini-3-pro (gemini)`, ainsi que toutes les fonctionnalités du modèle
 (échelle d'effort de raisonnement et types de réflexion) dans la structure officielle `ModelInfo`. Les véritables modèles Anthropic
@@ -344,6 +372,8 @@ l'élision). Le contenu de remplacement préserve l'association entre l'appel d'
 ```
 
 Ordre de recherche : alias de découverte → identifiant exact → identifiant sans le suffixe de date (`-20250514`) → transfert direct.
+
+Les alias Desktop gérés de type date/hash qui ne peuvent pas être résolus sont rejetés avec HTTP 400 avant suppression de date ou repli, pour Messages comme pour count-tokens. Les entrées exactes de `modelMap` et les véritables ID Anthropic reconnus conservent leur traitement habituel.
 
 ## Matrice des services auxiliaires : recherche web et compréhension des images
 

@@ -27,7 +27,7 @@ Responses 表示是这座桥的中心。原生兼容的路由可以跳过部分�
 | OpenAI Chat Completions | `POST /v1/chat/completions` | `chat.completion` JSON | 以 `chat.completion.chunk` SSE 结尾并带 `[DONE]` |
 | Anthropic Messages | `POST /v1/messages` | Anthropic `message` JSON | Anthropic Messages SSE |
 | Anthropic token count | `POST /v1/messages/count_tokens` | `{ "input_tokens": number }` | 不适用 |
-| 模型发现 | `GET /v1/models` | 三种目录契约之一 | 不适用 |
+| 模型发现 | `GET /v1/models` | 目录或显式 Desktop 快照 | 不适用 |
 | 语音和 Realtime | `POST /v1/live`, `POST /v1/realtime/calls` | 转发的调用创建响应 | 独立的 sideband WebSocket 双向转发帧 |
 | Responses compaction | `POST /v1/responses/compact` | 替换历史 JSON | 不适用 |
 
@@ -170,13 +170,25 @@ choice 增量、带 `finish_reason` 的终止 choice，以及 `data: [DONE]`。�
 
 ## `GET /v1/models`
 
-同一路由要服务三种期望不兼容目录封装的客户端。除非同时存在 `client_version`，否则 Anthropic 形态优先。
+未指定 `format=desktop-config` 时，使用以下普通目录契约：
 
 | 契约 | 触发条件 | 顶层形态 | 模型 ID 行为 |
 | --- | --- | --- | --- |
 | Anthropic model list | `anthropic-version` 头或 `?flavor=anthropic`，且没有 `client_version` | `{ "data": [...] }`，包含 Anthropic model-info 条目 | Claude Code 收到可读 ID；Desktop 可以收到其 profile-specific 别名族 |
 | Codex catalog | `client_version` 查询参数 | `{ "models": [...] }` | 原生和路由条目携带更丰富的 Codex catalog 字段、可见性、effort、WebSocket 和 multi-agent 元数据 |
 | Plain OpenAI list | 两个触发条件都没有 | `{ "object": "list", "data": [...] }` | 可见的原生 ID 是裸值；路由 ID 是别名或 `provider/model` |
+
+### Desktop 配置快照
+
+`GET /v1/models?ids=desktop&format=desktop-config` 显式选择 Desktop 快照，不依赖
+user-agent。响应为 `{ "version": 1, "models": [...] }`，带有 `Cache-Control: no-store`。
+客户端发送 `Accept: application/json`、`anthropic-version: 2023-06-01` 及现有数据访问凭证；
+不需要管理员令牌，也不上传配置。条目是 hub 发放的 Desktop 配置模型，不是 Codex 目录行。
+
+此格式与 `ids=cli` 或任意 `client_version` 一起使用时返回 HTTP 400。不指定格式时，上述普通
+契约保持不变。Claude 关闭时返回 `{ "version": 1, "models": [] }`；已连接的 Desktop apply
+会视为不可用，不写入替代配置。返回普通目录而非版本 1 的旧 hub 不受支持，客户端不会回退到
+本地生成的 ID。
 
 ## `POST /v1/live` 和 Realtime sideband
 

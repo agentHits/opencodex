@@ -8,6 +8,7 @@ import { claudeDesktopConfigLibraryDir, resolveConfigLibraryDir } from "./deskto
 import {
   reconcileDesktopProfile,
   renderDesktopProfile,
+  validDateAlias,
   type DesktopProfileModel,
 } from "./desktop-profile";
 import { nativeOpenAiContextWindow, type NativeContextLimitsInput } from "../codex/catalog";
@@ -144,6 +145,7 @@ export interface Desktop3pRemovalResult {
 
 let desktop3pRegistry = new Map<string, string>();
 let desktop3pAliasesByRoute = new Map<string, string>();
+let desktop3pRealAnthropicIds = new Set<string>();
 
 /** Derive a stable letter-first, three-character base36 code from a route key. */
 export function deriveDesktop3pCode(route: string): string {
@@ -192,7 +194,7 @@ function collectDesktop3pModels(
   routedModels: Array<Desktop3pRoutedModel>,
   profile?: OcxClaudeDesktopProfile,
   nativeContextCap?: NativeContextLimitsInput,
-): { models: Desktop3pModelEntry[]; registry: Map<string, string> } {
+): { models: Desktop3pModelEntry[]; registry: Map<string, string>; realAnthropicIds: Set<string> } {
   const registry = new Map<string, string>();
   const models: Desktop3pModelEntry[] = [];
   const candidates: Desktop3pRoutedModel[] = [
@@ -205,6 +207,9 @@ function collectDesktop3pModels(
     }),
     ...routedModels,
   ];
+  const realAnthropicIds = new Set(candidates
+    .filter(model => model.provider === "anthropic" && model.id.startsWith("claude-"))
+    .map(model => model.id));
 
   if (profile) {
     const profileModels = candidates.map(({ provider, id, contextWindow }) => ({
@@ -242,7 +247,7 @@ function collectDesktop3pModels(
       registry.set(legacy, model.route);
     }
     desktop3pAliasesByRoute = aliasesByRoute;
-    return { models, registry };
+    return { models, registry, realAnthropicIds };
   }
 
   for (const { provider, id, contextWindow } of candidates) {
@@ -285,7 +290,7 @@ function collectDesktop3pModels(
 
   if (models[0]) models[0].isFamilyDefault = true;
   desktop3pAliasesByRoute = new Map(candidates.map(({ provider, id }) => [`${provider}/${id}`, desktop3pAlias(provider, id)]));
-  return { models, registry };
+  return { models, registry, realAnthropicIds };
 }
 
 /** Build and install the registry used to decode Desktop aliases. */
@@ -295,8 +300,9 @@ export function buildDesktop3pRegistry(
   profile?: OcxClaudeDesktopProfile,
   nativeContextCap?: NativeContextLimitsInput,
 ): Map<string, string> {
-  const { registry } = collectDesktop3pModels(nativeSlugs, routedModels, profile, nativeContextCap);
+  const { registry, realAnthropicIds } = collectDesktop3pModels(nativeSlugs, routedModels, profile, nativeContextCap);
   desktop3pRegistry = registry;
+  desktop3pRealAnthropicIds = realAnthropicIds;
   return registry;
 }
 
@@ -307,14 +313,21 @@ export function generateDesktop3pModels(
   profile?: OcxClaudeDesktopProfile,
   nativeContextCap?: NativeContextLimitsInput,
 ): Desktop3pModelEntry[] {
-  const { models, registry } = collectDesktop3pModels(nativeSlugs, routedModels, profile, nativeContextCap);
+  const { models, registry, realAnthropicIds } = collectDesktop3pModels(nativeSlugs, routedModels, profile, nativeContextCap);
   desktop3pRegistry = registry;
+  desktop3pRealAnthropicIds = realAnthropicIds;
   return models;
 }
 
 /** Resolve an alias using the most recently generated Desktop model registry. */
 export function resolveDesktop3pAlias(alias: string): string | null {
   return desktop3pRegistry.get(alias) ?? null;
+}
+
+/** Only missing IDs in the emitted Desktop namespaces are managed-alias errors. */
+export function isUnresolvedDesktop3pAlias(id: string): boolean {
+  if (desktop3pRegistry.has(id) || desktop3pRealAnthropicIds.has(id)) return false;
+  return validDateAlias(id) || /^claude-opus-4-(?:8-)?[a-z][a-z0-9]{2}$/.test(id);
 }
 
 /** Alias selected by the installed profile registry, falling back to the legacy hash shape. */
@@ -569,6 +582,34 @@ export function writeDesktop3pConfig(
   profile?: OcxClaudeDesktopProfile,
   nativeContextCap?: NativeContextLimitsInput,
 ): { written: boolean; path: string; reason?: string; fingerprint?: string } {
+  return writeDesktop3pConfigWithGenerator(() => (
+    generateDesktop3pConfig(port, nativeSlugs, routedModels, apiKey, mode, profile, nativeContextCap)
+  ));
+}
+
+/** Write the hub's exact entries without constructing a client-local alias registry. */
+export function writeRemoteDesktop3pConfig(options: {
+  baseUrl: string;
+  apiKey: string;
+  mode: Desktop3pConfigMode;
+  models: Desktop3pModelEntry[];
+}): { written: boolean; path: string; reason?: string; fingerprint?: string } {
+  return writeDesktop3pConfigWithGenerator(() => {
+    assertDesktop3pModelsValid(options.models);
+    return {
+      inferenceProvider: "gateway",
+      inferenceCredentialKind: "static",
+      inferenceGatewayBaseUrl: options.baseUrl,
+      inferenceGatewayApiKey: options.apiKey,
+      modelDiscoveryEnabled: options.mode !== "static",
+      ...(options.mode === "discovery" ? {} : { inferenceModels: options.models }),
+    };
+  });
+}
+
+function writeDesktop3pConfigWithGenerator(
+  generate: () => object,
+): { written: boolean; path: string; reason?: string; fingerprint?: string } {
   const libraryPath = resolveDesktop3pConfigLibraryPath();
   const metadataPath = join(libraryPath, "_meta.json");
   let configPath = libraryPath;
@@ -585,7 +626,7 @@ export function writeDesktop3pConfig(
       ? metadata.entries.map(current => current === existing ? entry : current)
       : [...metadata.entries, entry];
 
-    const generated = generateDesktop3pConfig(port, nativeSlugs, routedModels, apiKey, mode, profile, nativeContextCap);
+    const generated = generate();
     const preserved = readDesktopProfileForeignKeys(configPath);
     const configJson = JSON.stringify({ ...preserved, ...generated }, null, 2) + "\n";
     const fingerprint = createHash("sha256").update(configJson).digest("hex").slice(0, 16);

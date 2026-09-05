@@ -1066,36 +1066,41 @@ export async function handleClaudeCountTokens(
   if (typeof raw.model !== "string" || raw.model.length === 0) {
     return anthropicErrorResponse(400, "model is required");
   }
-  let model = raw.model;
-  // Case-insensitive [1m] strip (audit 021 #7 — the CLI matches /\[1m\]/i).
-  const stripped = stripOneMillionMarker(model);
-  if (stripped !== model) {
-    model = stripped;
-    raw.model = model;
+  try {
+    let model = raw.model;
+    // Case-insensitive [1m] strip (audit 021 #7 — the CLI matches /\[1m\]/i).
+    const stripped = stripOneMillionMarker(model);
+    if (stripped !== model) {
+      model = stripped;
+      raw.model = model;
+    }
+    // ocx-route override (devlog 072): keep count_tokens consistent with messages.
+    const countRoute = extractOcxRouteDirective(raw);
+    if (countRoute) {
+      model = stripOneMillionMarker(countRoute);
+      raw.model = model;
+    }
+    // Fast-only: count_tokens never parsed an effort row, so it must not start. It returns a
+    // token estimate and sends no tier, so only the IDENTITY is corrected - without this the
+    // synthetic id reaches native passthrough as a model Anthropic has never heard of.
+    const countFastRow = parseFastOnlyRowId(
+      config, () => decodeClaudeFastSelector(model, config.claudeCode),
+    );
+    if (countFastRow) {
+      model = countFastRow.baseId;
+      raw.model = model;
+    }
+    captureClaudeInbound("count_tokens", raw, resolveInboundModel(model, config.claudeCode), req.headers.get("anthropic-beta") ?? undefined);
+    if (wantsNativePassthrough(req, config, requestPolicy, model)) {
+      return await anthropicNativePassthrough(req, config, { model, provider: "anthropic-native", surface: "claude" }, undefined, raw, "/v1/messages/count_tokens");
+    }
+    const inputTokens = estimateClaudeRequestTokens(raw, model);
+    return new Response(JSON.stringify({ input_tokens: inputTokens }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    if (error instanceof AnthropicRequestError) return anthropicErrorResponse(400, error.message);
+    throw error;
   }
-  // ocx-route override (devlog 072): keep count_tokens consistent with messages.
-  const countRoute = extractOcxRouteDirective(raw);
-  if (countRoute) {
-    model = stripOneMillionMarker(countRoute);
-    raw.model = model;
-  }
-  // Fast-only: count_tokens never parsed an effort row, so it must not start. It returns a
-  // token estimate and sends no tier, so only the IDENTITY is corrected - without this the
-  // synthetic id reaches native passthrough as a model Anthropic has never heard of.
-  const countFastRow = parseFastOnlyRowId(
-    config, () => decodeClaudeFastSelector(model, config.claudeCode),
-  );
-  if (countFastRow) {
-    model = countFastRow.baseId;
-    raw.model = model;
-  }
-  captureClaudeInbound("count_tokens", raw, resolveInboundModel(model, config.claudeCode), req.headers.get("anthropic-beta") ?? undefined);
-  if (wantsNativePassthrough(req, config, requestPolicy, model)) {
-    return await anthropicNativePassthrough(req, config, { model, provider: "anthropic-native", surface: "claude" }, undefined, raw, "/v1/messages/count_tokens");
-  }
-  const inputTokens = estimateClaudeRequestTokens(raw, model);
-  return new Response(JSON.stringify({ input_tokens: inputTokens }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
 }

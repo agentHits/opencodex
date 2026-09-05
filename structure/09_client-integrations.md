@@ -132,3 +132,25 @@ fingerprint-only tests are supplementary; they cannot prove the status and write
 ## Remote connection lifecycle
 
 Remote clients journal and restore native integrations locally while model traffic travels directly to the hub. Catalog writes occur only after protocol negotiation and full remote schema validation. The management relay is launcher-scoped and fixed to the connection's management origin. Claude/Codex launch behavior remains integration-scoped. Key rotation uses `pendingOperation` plus `.prev`; disconnect restores locally without hub-side revocation or usage mirroring.
+
+## Connected Claude Desktop profiles
+
+Connected `ocx claude desktop apply` reads the hub's Desktop snapshot and writes the hub origin
+and exact hub-issued IDs to the local Desktop configuration. Static/hybrid embed the entries;
+discovery-only keeps discovery on the hub. The hub owns family assignments and defaults; local
+show/edit/import/export operations do not manage that profile. After hub changes or historical
+client-only aliases, apply again and reselect the model. Connected `import --apply` is explicitly
+unsupported and refuses before saving the import.
+
+`src/claude/desktop-discovery-inputs.ts` owns the shared Desktop discovery projection used by
+startup registry initialization and server discovery. `src/server/index.ts` exposes the explicit
+`GET /v1/models?ids=desktop&format=desktop-config` snapshot, shaped as `{version:1,models:[...]}`
+and sent with `Cache-Control: no-store`. `src/client/hub-client.ts` downloads it with the existing
+data credential; `src/cli/claude-desktop.ts` selects connected apply, and `src/claude/desktop-3p.ts`
+writes the resulting local Desktop configuration. No admin token, hub-profile upload or local
+alias regeneration is part of this flow. Unsupported old hubs, invalid snapshots and unavailable
+Desktop models fail apply without a local-catalog or loopback fallback.
+
+The remote-alias slice does not change thinking/redacted-thinking replay or prompt-cache
+behavior. Those remain the separate request recorded in #3646; proxy admission alone does not
+establish native Anthropic passthrough or imply that translated Anthropic caching is disabled.

@@ -88,6 +88,25 @@ Anthropic。若任一提供方请求头包含代理准入密钥，该密钥会�
 可以设置 `claudeCode.nativePassthrough: false` 来禁用；也可以通过
 `claudeCode.anthropicBaseUrl` 指向其他位置。
 
+## 连接远程 hub 的 Claude Desktop
+
+已连接的机器运行 `ocx claude desktop apply` 或 `ocx claude desktop` 时，会读取 hub 的
+Desktop 快照，将 hub origin 和 hub 发放的完整模型 ID 原样写入本机 Desktop 配置，不再本地
+生成别名。static/hybrid 模式也复制模型列表；discovery-only 模式使用 hub origin，不嵌入列表。
+
+Desktop 配置、模型家族分组及默认值由 hub 管理。在 hub 上修改后，请在客户端重新应用，
+并在 Desktop 中重新选择模型。以前只在客户端生成的别名也需要重新应用、重新选择，不会自动
+迁移。`show`、本地编辑和 import/export 仍只操作本地配置。连接期间不支持
+`ocx claude desktop import <path> --apply`，会在保存前拒绝；不带 `--apply` 的 import 仍是本地操作。
+
+读取使用现有连接的数据访问凭证，不需要管理员令牌，也不上传配置。旧版 hub 不支持快照、
+响应无效或 Desktop 列表为空时，应用会失败，不会改用本地目录或回环地址。
+请更新或配置 hub 后重新应用。
+
+本次别名修改不解决 [#3646](https://github.com/lidge-jun/opencodex/issues/3646) 中独立的 `thinking` / `redacted_thinking` 重放与提示缓存请求。
+只有代理接入凭证不会启用原生 Anthropic 透传，但经过转换的 Anthropic 路由仍可使用提示缓存。
+重放保真和缓存命中率对比仍是独立工作。
+
 ## /model 选择器（“From gateway”）
 每个条目带有诚实的显示名（如 `gemini-3-pro (gemini)`），并以官方 ModelInfo 形态附带模型能力
 信息（推理强度梯度、thinking 类型），使 Claude Desktop 的第三方网关模式能够启用推理强度选择
@@ -125,6 +144,8 @@ v1 别名按字面解码（历史上 model ID 中包含的两字符序列 `~s` /
 
 **模型解析顺序：**移除 `[1m]` 标记 → 解码易读别名 → 解码 Desktop 哈希别名 →
 `modelMap` 精确匹配 → 移除日期后的匹配（移除 `-20250514`）→ 透传。
+
+未解析的受管理 Desktop 日期/哈希别名会在去除日期或回退之前被拒绝，Messages 和 count-tokens 均返回 HTTP 400。操作员的精确 `modelMap` 条目及已识别的真实 Anthropic 模型 ID 保持正常处理。
 
 每个条目都带有类似 `gemini-3-pro (gemini)` 的显示名称，以及官方 `ModelInfo` 结构中的完整
 模型能力（推理强度阶梯、思考类型）。真正的 Anthropic 模型在两个界面上都保留其规范 ID。
@@ -216,6 +237,8 @@ opencodex 会在**已路由**请求中将该技能内容替换为一个短占位
 ```
 
 查找顺序：发现别名 → 精确 ID → 移除日期后缀的 ID（`-20250514`）→ 透传。
+
+未解析的受管理 Desktop 日期/哈希别名会在去除日期或回退之前被拒绝，Messages 和 count-tokens 均返回 HTTP 400。操作员的精确 `modelMap` 条目及已识别的真实 Anthropic 模型 ID 保持正常处理。
 
 ## Sidecar 矩阵：Web Search 与图像理解
 

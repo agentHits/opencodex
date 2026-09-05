@@ -459,8 +459,8 @@ async function handleStart(options: { block?: boolean } = {}) {
   reportShellHookFailure(reconcileShellHook(systemEnv.injected));
   await maybeShowStarPrompt(); // once-only Yes/No GitHub-star prompt on first interactive start
   // Codex sync owns the ready/failed verdict, but its successful transition is
-  // deferred until the best-effort Claude roster reconciliation settles. This
-  // keeps /readyz closed across both startup writes without making an optional
+  // deferred until the best-effort Claude roster and Desktop registry settle. This
+  // keeps /readyz closed across startup initialization without making an optional
   // Claude integration failure prevent the proxy from starting.
   const startupSync = await reconcileClientStartupBeforeReady(
     readinessGate,
@@ -468,6 +468,26 @@ async function handleStart(options: { block?: boolean } = {}) {
     () => systemEnv.injected
       ? Promise.resolve(null)
       : syncClaudeAgentDefsAtProxyStartup(config, port),
+    async () => {
+      try {
+        const { fetchAllModels } = await import("../server/management-api");
+        const { desktopVisibleNativeSlugs } = await import("../codex/catalog");
+        const { resolveCodexModelEntitlements } = await import("../codex/model-entitlements");
+        const { buildDesktopDiscoveryInputs } = await import("../claude/desktop-discovery-inputs");
+        const [models, modelEntitlements] = await Promise.all([
+          fetchAllModels(config),
+          resolveCodexModelEntitlements(config, { clientVersion: null }),
+        ]);
+        const inputs = buildDesktopDiscoveryInputs({
+          config, models, modelEntitlements,
+          desktopNativeCandidates: desktopVisibleNativeSlugs(config),
+        });
+        buildDesktop3pRegistry(
+          inputs.nativeSlugs, inputs.routedModels,
+          config.claudeCode?.desktopProfile, inputs.nativeContextCap,
+        );
+      } catch { /* best-effort — registry rebuilds on the next /v1/models call */ }
+    },
   );
   if (!startupSync.ran) console.log("   Codex integration OFF; startup left Codex native.");
   // #1046: one warning per startup, after BOTH writes. The server's cache
@@ -482,17 +502,6 @@ async function handleStart(options: { block?: boolean } = {}) {
   if (!currentExternalCodexModelProvider() && !shouldInjectApiAuthHeader(config) && config.syncResumeHistory !== false) {
     historyGuardian = startHistoryMigrationGuardian();
   }
-  // Build Desktop 3P alias registry so inbound claude-opus-4-8-{code} aliases (and legacy claude-opus-4-{code}) decode correctly.
-  try {
-    const { fetchAllModels } = await import("../server/management-api");
-    const { visibleNativeSlugs, filterCatalogVisibleModels } = await import("../codex/catalog");
-    const models = filterCatalogVisibleModels(await fetchAllModels(config), config);
-    buildDesktop3pRegistry(
-      [...visibleNativeSlugs(config)],
-      models.map(m => ({ provider: m.provider, id: m.id, contextWindow: m.contextWindow })),
-      config.claudeCode?.desktopProfile,
-    );
-  } catch { /* best-effort — registry rebuilds on first /v1/models call */ }
   // Grok Build auto-registration: additive fenced block in ~/.grok/config.toml so an installed
   // grok CLI can pick opencodex-routed models without manual config. No-op when ~/.grok is
   // absent or the bind is non-loopback; removed again by stop/eject/uninstall/shutdown.

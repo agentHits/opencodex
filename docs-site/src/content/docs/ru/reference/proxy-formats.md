@@ -29,7 +29,7 @@ control и safety ответа всё равно происходят на гр�
 | OpenAI Chat Completions | `POST /v1/chat/completions` | `chat.completion` JSON | `chat.completion.chunk` SSE, заканчивающийся `[DONE]` |
 | Anthropic Messages | `POST /v1/messages` | Anthropic `message` JSON | Anthropic Messages SSE |
 | Подсчёт токенов Anthropic | `POST /v1/messages/count_tokens` | `{ "input_tokens": number }` | Не применяется |
-| Обнаружение моделей | `GET /v1/models` | Один из трёх контрактов каталога | Не применяется |
+| Обнаружение моделей | `GET /v1/models` | Каталог или явно запрошенный снимок Desktop | Не применяется |
 | Голос и Realtime | `POST /v1/live`, `POST /v1/realtime/calls` | Ответ создания вызова после ретрансляции | Отдельный sideband WebSocket ретранслирует frame'ы в обе стороны |
 | Компактизация Responses | `POST /v1/responses/compact` | JSON истории-замены | Не применяется |
 
@@ -207,14 +207,27 @@ passthrough. Native-eligible-запрос пересылается в count-endp
 
 ## `GET /v1/models`
 
-Один и тот же маршрут обслуживает три клиента, ожидающих несовместимые envelope'ы каталога.
-Форма Anthropic имеет приоритет, если только одновременно не присутствует `client_version`.
+Без `format=desktop-config` действуют следующие обычные контракты каталога:
 
 | Контракт | Триггер | Форма верхнего уровня | Поведение id модели |
 | --- | --- | --- | --- |
 | Список моделей Anthropic | Заголовок `anthropic-version` или `?flavor=anthropic`, без `client_version` | `{ "data": [...] }` с Anthropic model-info entry | Claude Code получает читаемые id; Desktop может получать семейство alias'ов, специфичное для профиля |
 | Каталог Codex | Query-параметр `client_version` | `{ "models": [...] }` | Нативные и маршрутизируемые записи несут более богатые поля каталога Codex: visibility, effort, WebSocket и multi-agent metadata |
 | Обычный список OpenAI | Ни один триггер не сработал | `{ "object": "list", "data": [...] }` | Видимые native-id идут без префикса; routed-id — как alias или `provider/model` |
+
+### Снимок конфигурации Desktop
+
+`GET /v1/models?ids=desktop&format=desktop-config` явно выбирает снимок Desktop независимо
+от user-agent. Ответ — `{ "version": 1, "models": [...] }` с `Cache-Control: no-store`.
+Клиент отправляет `Accept: application/json`, `anthropic-version: 2023-06-01` и существующие
+учётные данные для доступа к данным; администраторский токен и загрузка профиля не нужны.
+Элементы — модели конфигурации Desktop, выданные хабом, а не строки каталога Codex.
+
+Этот формат вместе с `ids=cli` или любым `client_version` возвращает HTTP 400. Без выбора
+формата обычные контракты выше не меняются. При выключенном Claude ответ имеет вид
+`{ "version": 1, "models": [] }`: подключённый Desktop apply считает модели недоступными и
+не записывает заменяющий профиль. Старые хабы с обычным каталогом вместо версии 1 не
+поддерживаются; перехода к локально созданным ID нет.
 
 ## `POST /v1/live` и Realtime sideband
 

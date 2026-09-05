@@ -139,6 +139,8 @@ is temporarily unavailable, the first available route in that family is used unt
 
 You can also manage the same profile from the command line:
 
+The profile-editing instructions below describe the local profile. Connected remote apply is described separately below.
+
 ```bash
 ocx claude desktop [apply]
 ocx claude desktop show [--json]
@@ -217,6 +219,31 @@ dedicated proxy admission header is valid. This also means the
 Disable with `claudeCode.nativePassthrough: false`; point elsewhere with
 `claudeCode.anthropicBaseUrl`.
 
+## Claude Desktop on a connected remote hub
+
+When this machine is connected to a hub, `ocx claude desktop apply` (or `ocx claude desktop`)
+uses the hub's Desktop model snapshot. It writes the connected hub origin and the hub-issued
+model IDs into the local Desktop configuration without generating replacement aliases locally.
+Static and hybrid modes copy the snapshot entries; discovery-only mode uses the hub origin
+without embedding the model list.
+
+The hub owns the Desktop profile, family assignments and defaults. Change those on the hub,
+then apply again on the connected client and reselect the model in Desktop. Old aliases created
+only on the client require reapply/reselection; they are not automatically migrated. Local `show`,
+profile edits, and import/export remain local views and operations, not hub-profile management.
+While connected, `ocx claude desktop import <path> --apply` is unsupported and refuses the import
+before saving. Import without `--apply` remains local.
+
+Apply reads the snapshot using the existing connection's data credential. It needs no admin token
+and uploads no profile. If the hub is too old to support the snapshot, the response is invalid,
+or no Desktop models are available, apply fails without substituting a local catalog or loopback
+origin. Upgrade/configure the hub and apply again.
+
+This alias change does not fix the separate `thinking` / `redacted_thinking` replay and prompt-cache
+request in [#3646](https://github.com/lidge-jun/opencodex/issues/3646). Proxy admission alone does not enable native Anthropic passthrough; translated
+Anthropic routes can still use prompt caching. Replay fidelity and cache-hit comparisons remain
+separate work.
+
 ## The /model picker ("From gateway")
 
 Claude Code 2.1.129+ discovers gateway models via `GET /v1/models?limit=1000` and lists them in
@@ -260,6 +287,8 @@ express fall back to the hashed alias. Model ids MAY contain `--` (resolution sp
 
 **Model resolution order:** `[1m]` marker stripped → readable alias decoded → Desktop hashed
 alias decoded → `modelMap` exact match → date-stripped match (`-20250514` removed) → passthrough.
+
+Unresolved managed Desktop date/hash aliases are rejected with HTTP 400 before date-stripping or fallback, on both Messages and count-tokens. Exact operator `modelMap` entries and recognized real Anthropic model IDs retain their normal handling.
 
 Each entry carries a display name like `gemini-3-pro (gemini)`, plus full model capabilities
 (reasoning-effort ladder, thinking types) in the official `ModelInfo` shape. Real Anthropic models
@@ -358,6 +387,8 @@ entirely). The stub keeps tool call/result pairing intact.
 ```
 
 Lookup order: discovery alias → exact id → id with date suffix stripped (`-20250514`) → passthrough.
+
+Unresolved managed Desktop date/hash aliases are rejected with HTTP 400 before date-stripping or fallback, on both Messages and count-tokens. Exact operator `modelMap` entries and recognized real Anthropic model IDs retain their normal handling.
 
 ## Sidecar matrix: web search and image understanding
 

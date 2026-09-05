@@ -1,7 +1,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfig, saveConfigPreservingClaudeCode } from "../config";
-import { setIntegrationEnabled } from "../codex/desired-state";
+import { claudeDesktopIntegrationEnabledNow, setIntegrationEnabled } from "../codex/desired-state";
+import { readClientConnectionState, type ClientConnectionState } from "../client/state";
+import { downloadDesktop3pModels, HubClientError, normalizeHubOrigin } from "../client/hub-client";
+import { readServiceApiTokenState } from "../lib/service-secrets";
 import {
   DESKTOP_FAMILIES,
   moveDesktopRoute,
@@ -10,7 +13,8 @@ import {
   type DesktopFamily,
   type DesktopProfile,
 } from "../claude/desktop-profile";
-import { writeDesktop3pConfig, type Desktop3pConfigMode, parseDesktop3pModeArgs } from "../claude/desktop-3p";
+import { writeDesktop3pConfig, writeRemoteDesktop3pConfig, type Desktop3pConfigMode, parseDesktop3pModeArgs } from "../claude/desktop-3p";
+import { claudeDesktopPolicyWarning, probeClaudeDesktopPolicy } from "../claude/desktop-policy";
 import { filterCatalogVisibleModels, desktopVisibleNativeSlugs, nativeContextLimits } from "../codex/catalog";
 import { buildClaudeDesktopState, fetchAllModels } from "../server/management-api";
 import { findLiveProxy } from "../server/proxy-liveness";
@@ -33,6 +37,8 @@ function printDesktopHelp(): void {
 }
 
 export interface ApplyProfileDeps {
+  downloadDesktop3pModelsImpl?: typeof downloadDesktop3pModels;
+  writeRemoteDesktop3pConfigImpl?: typeof writeRemoteDesktop3pConfig;
   findLiveProxyImpl?: typeof findLiveProxy;
   postApplyImpl?: (
     mode: Desktop3pConfigMode,
@@ -41,11 +47,55 @@ export interface ApplyProfileDeps {
   probeClaudeDesktopPolicy?: typeof import("../claude/desktop-policy").probeClaudeDesktopPolicy;
 }
 
+async function applyConnectedDesktopProfile(
+  mode: Desktop3pConfigMode,
+  connection: Extract<ClientConnectionState, { kind: "connected" }>,
+  deps: ApplyProfileDeps,
+): Promise<{ ok: boolean; path: string; reason?: string; warning?: string }> {
+  const token = readServiceApiTokenState();
+  if (connection.value.pendingOperation) return { ok: false, path: "", reason: "client_rotation_pending" };
+  if (token.kind !== "present" || token.fingerprint !== connection.value.tokenFingerprint) {
+    return { ok: false, path: "", reason: "client_token_mismatch" };
+  }
+  let baseUrl: string;
+  try { baseUrl = normalizeHubOrigin(connection.value.serverUrl); }
+  catch { return { ok: false, path: "", reason: "client_connection_invalid" }; }
+  const desired = setIntegrationEnabled("claude-desktop", true);
+  if (!desired.ok) return { ok: false, path: "", reason: desired.message };
+  let snapshot: Awaited<ReturnType<typeof downloadDesktop3pModels>>;
+  try {
+    snapshot = await (deps.downloadDesktop3pModelsImpl ?? downloadDesktop3pModels)(baseUrl, token.token);
+  } catch (error) {
+    return { ok: false, path: "", reason: error instanceof HubClientError ? error.code : "desktop_download_failed" };
+  }
+  const current = readClientConnectionState();
+  const currentToken = readServiceApiTokenState();
+  if (current.kind !== "connected" || current.value.pendingOperation
+    || current.value.serverUrl !== connection.value.serverUrl
+    || current.value.apiKeyId !== connection.value.apiKeyId
+    || current.value.tokenFingerprint !== connection.value.tokenFingerprint
+    || current.value.connectedAt !== connection.value.connectedAt
+    || currentToken.kind !== "present" || currentToken.fingerprint !== connection.value.tokenFingerprint) {
+    return { ok: false, path: "", reason: "client_connection_changed" };
+  }
+  if (!claudeDesktopIntegrationEnabledNow()) return { ok: false, path: "", reason: "desired_state_changed" };
+  if (snapshot.models.length === 0) return { ok: false, path: "", reason: "desktop_unavailable" };
+  const result = (deps.writeRemoteDesktop3pConfigImpl ?? writeRemoteDesktop3pConfig)({
+    baseUrl, apiKey: currentToken.token, mode, models: snapshot.models,
+  });
+  const warning = result.written
+    ? claudeDesktopPolicyWarning((deps.probeClaudeDesktopPolicy ?? probeClaudeDesktopPolicy)()) : undefined;
+  return { ok: result.written, path: result.path, reason: result.reason, ...(warning ? { warning } : {}) };
+}
+
 export async function applyProfile(
-  profile: DesktopProfile,
+  profile: DesktopProfile | undefined,
   mode: Desktop3pConfigMode,
   deps: ApplyProfileDeps = {},
 ): Promise<{ ok: boolean; path: string; reason?: string; warning?: string }> {
+  const connection = readClientConnectionState();
+  if (connection.kind === "connected") return applyConnectedDesktopProfile(mode, connection, deps);
+  if (connection.kind !== "disconnected") return { ok: false, path: "", reason: "client_connection_invalid" };
   // Explicit apply is an enable action. Persist intent before any Desktop write
   // so a process crash cannot leave a gateway profile that startup immediately removes.
   const desired = setIntegrationEnabled("claude-desktop", true);
@@ -86,7 +136,6 @@ export async function applyProfile(
   // The toggle can persist OFF while fetchAllModels was awaiting (same race the
   // management writers fence). Re-read persisted intent immediately before the
   // writer; a lost race is a discriminated skip, not a write.
-  const { claudeDesktopIntegrationEnabledNow } = await import("../codex/desired-state");
   if (!claudeDesktopIntegrationEnabledNow()) {
     return { ok: false, path: "", reason: "desired_state_changed" };
   }
@@ -104,7 +153,6 @@ export async function applyProfile(
     state.profile,
     nativeContextLimits(config),
   );
-  const { claudeDesktopPolicyWarning, probeClaudeDesktopPolicy } = await import("../claude/desktop-policy");
   const policyState = (deps.probeClaudeDesktopPolicy ?? probeClaudeDesktopPolicy)();
   const warning = result.written ? claudeDesktopPolicyWarning(policyState) : undefined;
   return {
@@ -134,12 +182,9 @@ export async function handleClaudeDesktopCommand(argv: string[], deps: ApplyProf
     const parsedMode = parseDesktop3pModeArgs(legacyFlags);
     if ("error" in parsedMode) { console.error(parsedMode.error); return 2; }
     try {
-      const config = loadConfig();
-      const state = await buildClaudeDesktopState(config);
-      const result = await applyProfile(state.profile, parsedMode.mode, deps);
+      const result = await applyProfile(undefined, parsedMode.mode, deps);
       if (!result.ok) {
         console.error(`설정 적용 실패: ${result.reason ?? "unknown error"}`);
-        console.error("프로필은 저장되었지만 Claude Desktop 설정 파일에는 반영되지 않았습니다. 프록시 상태를 확인한 뒤 다시 적용해 주세요.");
         return 1;
       }
       console.log(`Claude Desktop 설정을 적용했습니다: ${result.path}`);
@@ -155,6 +200,16 @@ export async function handleClaudeDesktopCommand(argv: string[], deps: ApplyProf
   }
 
   try {
+    const connection = readClientConnectionState();
+    if (command === "import" && argv.includes("--apply") && connection.kind !== "disconnected") {
+      throw new CliUsageError(connection.kind === "connected"
+        ? "Connected Desktop apply uses the hub profile. Import on the hub, then run ocx claude desktop apply here."
+        : "Client connection state is invalid; refusing import --apply.");
+    }
+    const localView = connection.kind === "connected";
+    if (localView && ["show", "export", "move", "default", "import"].includes(command ?? "")) {
+      console.warn("Local client profile only; connected Desktop apply uses the hub profile.");
+    }
     const config = loadConfig();
     // `status` is API-backed and must NOT build local state first: the whole point of the
     // route the GUI polls (/api/claude-desktop/status) is the applied-vs-desired comparison,
@@ -178,7 +233,7 @@ export async function handleClaudeDesktopCommand(argv: string[], deps: ApplyProf
       const rest = argv.slice(1);
       const wantsJson = takeJsonFlag(rest);
       if (rest.length > 0) throw new CliUsageError("Usage: ocx claude desktop show [--json]");
-      if (wantsJson) console.log(JSON.stringify(state));
+      if (wantsJson) console.log(JSON.stringify(localView ? { ...state, scope: "local" } : state));
       else {
         for (const family of DESKTOP_FAMILIES) {
           console.log(`${family.toUpperCase()}${state.profile.defaults[family] ? ` (default: ${state.profile.defaults[family]})` : ""}`);
@@ -224,6 +279,9 @@ export async function handleClaudeDesktopCommand(argv: string[], deps: ApplyProf
       if (!source || flags.some(flag => flag !== "--apply")) throw new CliUsageError("Usage: ocx claude desktop import <path> [--apply]");
       const profile = parseDesktopProfile(JSON.parse(readFileSync(resolve(source), "utf8")));
       const reconciled = (await buildClaudeDesktopState(config, profile)).profile;
+      if (flags.includes("--apply") && readClientConnectionState().kind !== "disconnected") {
+        throw new CliUsageError("Client connection changed; refusing import --apply. Connected Desktop apply uses the hub profile.");
+      }
       config.claudeCode = { ...(config.claudeCode ?? {}), desktopProfile: reconciled };
       saveConfigPreservingClaudeCode(config);
       if (flags.includes("--apply")) {

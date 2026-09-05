@@ -117,6 +117,30 @@ hook을 제거해요. Claude Desktop은 별도 profile을 사용하며 shell hoo
 `claudeCode.nativePassthrough: false`로 끌 수 있고, `claudeCode.anthropicBaseUrl`로 다른 주소를
 지정할 수 있어요.
 
+## 원격 허브에 연결된 Claude Desktop
+
+허브에 연결된 컴퓨터에서 `ocx claude desktop apply` 또는 `ocx claude desktop`을 실행하면
+허브의 Desktop 모델 스냅샷을 받아요. 로컬 별칭을 새로 만들지 않고 허브가 발급한 모델 ID와
+연결된 허브 origin을 로컬 Desktop 설정에 써요. static·hybrid 모드는 모델 목록도 복사하고,
+discovery-only 모드는 목록을 넣지 않고 허브 origin을 사용해요.
+
+Desktop 프로필과 모델 계열 배치·기본값은 허브에서 관리해요. 허브에서 바꾼 뒤 연결된
+클라이언트에서 다시 적용하고 Desktop에서 모델을 다시 선택하세요. 과거에 클라이언트에서만
+만든 별칭은 자동 이전되지 않으므로 재적용·재선택이 필요해요. 로컬 `show`, 프로필 편집,
+import/export는 로컬 설정만 다뤄요. 허브 프로필을 바꾸지 않아요. 연결 중에는
+`ocx claude desktop import <path> --apply`를 지원하지 않으며 저장 전에 거절해요.
+`--apply` 없는 import는 로컬 작업으로 남아요.
+
+스냅샷은 기존 연결의 데이터 자격 증명으로 읽어요. 관리자 토큰이나 프로필 업로드는
+필요하지 않아요. 구형 허브가 스냅샷을 지원하지 않거나 응답이 잘못됐거나 Desktop 모델이
+없으면 적용에 실패해요. 로컬 목록이나 루프백 주소로 대신 적용하지 않아요.
+허브를 업데이트하거나 설정을 확인한 뒤 다시 적용하세요.
+
+이번 별칭 변경에는 [#3646](https://github.com/lidge-jun/opencodex/issues/3646)의 별도 `thinking` / `redacted_thinking` 재전송과 프롬프트 캐시
+요청은 포함되지 않아요. 프록시 접속 자격 증명만으로 네이티브 Anthropic 패스스루가 켜지지는
+않지만, 번역된 Anthropic 요청도 프롬프트 캐시를 쓸 수 있어요. 재전송 보존과 캐시 적중률
+비교는 별도 작업으로 남아요.
+
 ## /model 선택기("From gateway")
 각 항목은 `gemini-3-pro (gemini)` 같은 정직한 표시 이름과 함께, 공식 ModelInfo 형태의 모델
 능력 정보(추론 강도 사다리, thinking 타입)를 실어 보냅니다 — Claude Desktop의 서드파티
@@ -158,6 +182,8 @@ v2 별칭은 이스케이프를 펼쳐요. 읽기 쉬운 형식으로 표현할 
 
 **모델 해석 순서:** `[1m]` 표식 제거 → 읽기 쉬운 별칭 디코딩 → Desktop 해시 별칭 디코딩 →
 `modelMap` 정확히 일치 → 날짜를 제거한 값과 일치(`-20250514` 제거) → 패스스루 순서예요.
+
+해결되지 않은 관리 대상 Desktop 날짜·해시 별칭은 Messages와 count-tokens 모두에서 날짜 제거·폴백 전에 HTTP 400으로 거절해요. 운영자가 정확히 지정한 `modelMap` 항목과 인식된 실제 Anthropic 모델 ID는 기존 방식대로 처리해요.
 
 각 항목에는 `gemini-3-pro (gemini)` 같은 표시 이름과 공식 `ModelInfo` 형식의 전체 모델 기능
 (reasoning-effort 단계, thinking 유형)이 들어 있어요. 실제 Anthropic 모델은 두 화면 모두에서
@@ -255,6 +281,8 @@ Anthropic 패스스루는 그대로 유지해요.
 ```
 
 조회 순서: 검색 별칭 → 정확한 ID → 날짜 접미사를 제거한 ID(`-20250514`) → 패스스루 순서예요.
+
+해결되지 않은 관리 대상 Desktop 날짜·해시 별칭은 Messages와 count-tokens 모두에서 날짜 제거·폴백 전에 HTTP 400으로 거절해요. 운영자가 정확히 지정한 `modelMap` 항목과 인식된 실제 Anthropic 모델 ID는 기존 방식대로 처리해요.
 
 ## 사이드카 매트릭스: 웹 검색과 이미지 이해
 

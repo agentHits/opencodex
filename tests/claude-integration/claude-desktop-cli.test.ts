@@ -1,16 +1,24 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyProfile, handleClaudeDesktopCommand } from "../../src/cli/claude-desktop";
+import { applyProfile, handleClaudeDesktopCommand, type ApplyProfileDeps } from "../../src/cli/claude-desktop";
+import * as managementApi from "../../src/server/management-api";
 import { buildClaudeDesktopState } from "../../src/server/management-api";
-import { loadConfig, saveConfig } from "../../src/config";
+import { getConfigPath, loadConfig, saveConfig } from "../../src/config";
+import { emptyDesktopProfile } from "../../src/claude/desktop-profile";
+import { writeRemoteDesktop3pConfig } from "../../src/claude/desktop-3p";
+import { readClientConnectionState } from "../../src/client/state";
+import { HubClientError } from "../../src/client/hub-client";
+import { claudeDesktopIntegrationEnabledNow, setIntegrationEnabled } from "../../src/codex/desired-state";
+import { serviceApiTokenBackupPath, serviceApiTokenFilePath, writeServiceApiTokenFile } from "../../src/lib/service-secrets";
 import type { OcxConfig } from "../../src/types";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 let dir = "";
 let previousHome: string | undefined;
 let previousDesktopDir: string | undefined;
+let restoreLocalBuild: (() => void) | undefined;
 
 beforeEach(() => {
   previousHome = process.env.OPENCODEX_HOME;
@@ -28,11 +36,242 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  restoreLocalBuild?.();
+  restoreLocalBuild = undefined;
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
   if (previousDesktopDir === undefined) delete process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
   else process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = previousDesktopDir;
   removeTreeWithRetry(dir);
+});
+
+const remoteModels = [{
+  name: "claude-opus-4-8-20260203", labelOverride: "Hub-selected model", anthropicFamilyTier: "sonnet" as const,
+  isFamilyDefault: true, supports1m: true as const,
+}];
+
+function connectDesktopFixture(blockLocalBuild = true): void {
+  const { fingerprint } = writeServiceApiTokenFile("ocx_desktop_fixture_token");
+  const config = loadConfig();
+  config.runtimeRole = "client";
+  config.client = {
+    serverUrl: "https://hub.example.test", managementUrl: "https://hub.example.test", managementTransport: "direct",
+    selectedClients: ["codex"], tokenEnv: "OPENCODEX_API_AUTH_TOKEN", apiKeyId: "desktop-key",
+    tokenFingerprint: fingerprint, protocolVersion: 1, connectedAt: "2026-09-06T00:00:00.000Z",
+  };
+  saveConfig(config);
+  expect(readClientConnectionState().kind).toBe("connected");
+  if (blockLocalBuild) {
+    const spy = spyOn(managementApi, "buildClaudeDesktopState").mockImplementation(async () => {
+      throw new Error("connected apply must not build local Desktop state");
+    });
+    restoreLocalBuild = () => spy.mockRestore();
+  }
+}
+
+function pendingRotation(): NonNullable<NonNullable<OcxConfig["client"]>["pendingOperation"]> {
+  return { kind: "rotate", rotationId: "rotation-fixture", newKeyIssuedAt: "2026-09-06T01:00:00.000Z", oldKeyBackupPath: serviceApiTokenBackupPath() };
+}
+
+function oldDesktopFile(): string {
+  mkdirSync(join(dir, "desktop"), { recursive: true });
+  const path = join(dir, "desktop", "existing.json");
+  writeFileSync(path, "existing Desktop bytes");
+  return path;
+}
+
+test.each([
+  ["--static", "static"], ["--hybrid", "hybrid"], ["--discovery-only", "discovery"],
+] as const)("connected CLI %s applies exact hub IDs without local reconciliation", async (flag, mode) => {
+  connectDesktopFixture();
+  setIntegrationEnabled("claude-desktop", false);
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  let writtenPath = "";
+  let downloads = 0;
+  try {
+    expect(await handleClaudeDesktopCommand(["apply", flag], {
+      downloadDesktop3pModelsImpl: async (url, token) => {
+        downloads++;
+        expect(url).toBe("https://hub.example.test");
+        expect(token).toBe("ocx_desktop_fixture_token");
+        expect(claudeDesktopIntegrationEnabledNow()).toBe(true);
+        return { version: 1, models: remoteModels };
+      },
+      writeRemoteDesktop3pConfigImpl: options => {
+        expect(options).toEqual({ baseUrl: "https://hub.example.test", apiKey: "ocx_desktop_fixture_token", mode, models: remoteModels });
+        const result = writeRemoteDesktop3pConfig(options);
+        writtenPath = result.path;
+        return result;
+      },
+      findLiveProxyImpl: async () => { throw new Error("must not look for local proxy"); },
+      postApplyImpl: async () => { throw new Error("must not call local management"); },
+      probeClaudeDesktopPolicy: () => "absent",
+    })).toBe(0);
+    expect(downloads).toBe(1);
+    const written = JSON.parse(readFileSync(writtenPath, "utf8"));
+    expect(written.inferenceGatewayBaseUrl).toBe("https://hub.example.test");
+    expect(written.inferenceGatewayApiKey).toBe("ocx_desktop_fixture_token");
+    expect(written.inferenceModels).toEqual(mode === "discovery" ? undefined : remoteModels);
+    expect(loadConfig().claudeCode?.desktopProfile).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  } finally { log.mockRestore(); warn.mockRestore(); error.mockRestore(); }
+});
+
+test.each(["absent", "unsafe", "mismatch", "pending", "invalid", "mismatched"])(
+  "connected apply rejects %s state before download or writing", async fault => {
+    connectDesktopFixture();
+    const oldPath = oldDesktopFile();
+    writeFileSync(serviceApiTokenBackupPath(), "backup must remain");
+    const config = loadConfig();
+    if (fault === "absent" || fault === "unsafe") unlinkSync(serviceApiTokenFilePath());
+    if (fault === "unsafe") mkdirSync(serviceApiTokenFilePath());
+    if (fault === "mismatch") writeFileSync(serviceApiTokenFilePath(), "different-token");
+    if (fault === "pending") { config.client!.pendingOperation = pendingRotation(); saveConfig(config); }
+    if (fault === "invalid") writeFileSync(getConfigPath(), "{invalid-config");
+    if (fault === "mismatched") writeFileSync(getConfigPath(), JSON.stringify({ ...config, runtimeRole: "hub" }));
+    let downloads = 0;
+    let writes = 0;
+    const result = await applyProfile(emptyDesktopProfile(), "static", {
+      downloadDesktop3pModelsImpl: async () => { downloads++; return { version: 1, models: remoteModels }; },
+      writeRemoteDesktop3pConfigImpl: () => { writes++; return { written: true, path: oldPath }; },
+    });
+    expect(result.ok).toBe(false);
+    expect(downloads).toBe(0);
+    expect(writes).toBe(0);
+    expect(readFileSync(oldPath, "utf8")).toBe("existing Desktop bytes");
+    expect(readFileSync(serviceApiTokenBackupPath(), "utf8")).toBe("backup must remain");
+  },
+);
+
+test.each(["empty", "failed"])("connected CLI handles %s snapshot without claiming a saved local profile", async outcome => {
+  connectDesktopFixture();
+  const oldPath = oldDesktopFile();
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  let writes = 0;
+  try {
+    expect(await handleClaudeDesktopCommand(["apply"], {
+      downloadDesktop3pModelsImpl: async () => {
+        if (outcome === "failed") throw new HubClientError("desktop_snapshot_unsupported", "remote-marker");
+        return { version: 1, models: [] };
+      },
+      writeRemoteDesktop3pConfigImpl: () => { writes++; return { written: true, path: oldPath }; },
+    })).toBe(1);
+    expect(writes).toBe(0);
+    expect(readFileSync(oldPath, "utf8")).toBe("existing Desktop bytes");
+    expect(loadConfig().claudeCode?.desktopProfile).toBeUndefined();
+    const output = error.mock.calls.flat().join(" ");
+    expect(output).toContain(outcome === "empty" ? "desktop_unavailable" : "desktop_snapshot_unsupported");
+    expect(output).not.toContain("프로필은 저장");
+    expect(output).not.toContain("remote-marker");
+    expect(output).not.toContain("ocx_desktop_fixture_token");
+  } finally { error.mockRestore(); }
+});
+
+test.each(["off", "server", "key", "fingerprint", "connectedAt", "disconnect", "pending", "token", "invalid"])(
+  "connected apply fences a %s transition during download", async transition => {
+    connectDesktopFixture();
+    const oldPath = oldDesktopFile();
+    writeFileSync(serviceApiTokenBackupPath(), "backup must remain");
+    let started!: () => void;
+    const downloading = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const downloadGate = new Promise<void>(resolve => { release = resolve; });
+    let writes = 0;
+    const applying = applyProfile(emptyDesktopProfile(), "static", {
+      downloadDesktop3pModelsImpl: async () => { started(); await downloadGate; return { version: 1, models: remoteModels }; },
+      writeRemoteDesktop3pConfigImpl: () => { writes++; return { written: true, path: oldPath }; },
+    });
+    await downloading;
+    try {
+      const config = loadConfig();
+      if (transition === "off") setIntegrationEnabled("claude-desktop", false);
+      else if (transition === "token") writeFileSync(serviceApiTokenFilePath(), "different-token");
+      else if (transition === "invalid") writeFileSync(getConfigPath(), "{invalid-config");
+      else {
+        if (transition === "server") config.client!.serverUrl = "https://other.example.test";
+        if (transition === "key") config.client!.apiKeyId = "other-key";
+        if (transition === "fingerprint") config.client!.tokenFingerprint = "1".repeat(64);
+        if (transition === "connectedAt") config.client!.connectedAt = "2026-09-06T02:00:00.000Z";
+        if (transition === "pending") config.client!.pendingOperation = pendingRotation();
+        if (transition === "disconnect") { config.runtimeRole = "standalone"; delete config.client; }
+        saveConfig(config);
+      }
+    } finally { release(); }
+    expect(await applying).toMatchObject({ ok: false, reason: transition === "off" ? "desired_state_changed" : "client_connection_changed" });
+    expect(writes).toBe(0);
+    expect(readFileSync(oldPath, "utf8")).toBe("existing Desktop bytes");
+    expect(readFileSync(serviceApiTokenBackupPath(), "utf8")).toBe("backup must remain");
+    if (transition === "off") expect(claudeDesktopIntegrationEnabledNow()).toBe(false);
+  },
+);
+
+test("remote import --apply refuses before saving or building a local profile", async () => {
+  connectDesktopFixture();
+  const source = join(dir, "import.json");
+  writeFileSync(source, JSON.stringify(emptyDesktopProfile()));
+  const before = readFileSync(getConfigPath(), "utf8");
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(await handleClaudeDesktopCommand(["import", source, "--apply"])).toBe(2);
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(before);
+    expect(error.mock.calls.flat().join(" ")).toContain("hub profile");
+  } finally { error.mockRestore(); }
+});
+
+test("import --apply also refuses a connection established while local reconciliation awaited", async () => {
+  const localState = await buildClaudeDesktopState(loadConfig());
+  const source = join(dir, "import.json");
+  writeFileSync(source, JSON.stringify(emptyDesktopProfile()));
+  let builds = 0;
+  const build = spyOn(managementApi, "buildClaudeDesktopState").mockImplementation(async () => {
+    if (++builds === 2) connectDesktopFixture(false);
+    return localState;
+  });
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  let downloads = 0;
+  try {
+    expect(await handleClaudeDesktopCommand(["import", source, "--apply"], {
+      downloadDesktop3pModelsImpl: async () => { downloads++; return { version: 1, models: [] }; },
+    })).toBe(2);
+    expect(builds).toBe(2);
+    expect(downloads).toBe(0);
+    expect(loadConfig().claudeCode?.desktopProfile).toBeUndefined();
+    expect(readClientConnectionState().kind).toBe("connected");
+  } finally { build.mockRestore(); error.mockRestore(); }
+});
+
+test("connected show/export and local edits identify the local profile view", async () => {
+  connectDesktopFixture(false);
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect(await handleClaudeDesktopCommand(["show", "--json"])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).scope).toBe("local");
+    const target = join(dir, "export.json");
+    expect(await handleClaudeDesktopCommand(["export", target])).toBe(0);
+    expect(JSON.parse(readFileSync(target, "utf8")).version).toBe(1);
+    expect(await handleClaudeDesktopCommand(["move", "mock/test-model", "sonnet"])).toBe(0);
+    expect(await handleClaudeDesktopCommand(["default", "sonnet", "mock/test-model"])).toBe(0);
+    expect(warn.mock.calls).toHaveLength(4);
+    expect(warn.mock.calls.every(call => String(call[0]).includes("Local client profile only"))).toBe(true);
+  } finally { log.mockRestore(); warn.mockRestore(); }
+});
+
+test("a disconnected hub retains local apply instead of downloading a remote snapshot", async () => {
+  const config = loadConfig();
+  config.runtimeRole = "hub";
+  saveConfig(config);
+  expect(readClientConnectionState().kind).toBe("disconnected");
+  const deps: ApplyProfileDeps = {
+    findLiveProxyImpl: async () => ({ pid: 4242, port: 10100, hostname: "127.0.0.1", source: "runtime" }),
+    postApplyImpl: async () => ({ ok: true, path: "/local-daemon" }),
+    downloadDesktop3pModelsImpl: async () => { throw new Error("must not download for a disconnected hub"); },
+  };
+  expect(await applyProfile(undefined, "static", deps)).toMatchObject({ ok: true, path: "/local-daemon" });
+  expect(loadConfig().claudeCode?.desktopProfile).toBeDefined();
 });
 
 test("show --json, move, default and export use the same persisted profile", async () => {

@@ -112,6 +112,8 @@ Claude Desktop 使用與 Claude Code 分開的設定檔。在儀表板開啟 **C
 
 你也可以用命令列管理同一份設定檔：
 
+以下設定檔編輯說明適用於本機設定檔；連接遠端 hub 時的套用方式另見下節。
+
 ```bash
 ocx claude desktop [apply]
 ocx claude desktop show [--json]
@@ -168,6 +170,25 @@ Anthropic。若任一供應商標頭含有代理許可密鑰，該密鑰會被�
 可以設定 `claudeCode.nativePassthrough: false` 來停用；也可以透過
 `claudeCode.anthropicBaseUrl` 指向其他位置。
 
+## 連接遠端 hub 的 Claude Desktop
+
+已連接的機器執行 `ocx claude desktop apply` 或 `ocx claude desktop` 時，會讀取 hub 的
+Desktop 快照，將 hub origin 和 hub 發出的完整模型 ID 原樣寫入本機 Desktop 設定，不再於本機
+產生別名。static/hybrid 模式也複製模型清單；discovery-only 模式使用 hub origin，不嵌入清單。
+
+Desktop 設定檔、模型家族分組及預設值由 hub 管理。在 hub 上修改後，請在客戶端重新套用，
+並在 Desktop 中重新選擇模型。以前只在客戶端產生的別名也需要重新套用、重新選擇，不會自動
+移轉。`show`、本機編輯及 import/export 仍只操作本機設定。連接期間不支援
+`ocx claude desktop import <path> --apply`，會在儲存前拒絕；不帶 `--apply` 的 import 仍是本機操作。
+
+讀取使用現有連線的資料存取憑證，不需要管理員權杖，也不會上傳設定檔。舊版 hub 不支援快照、
+回應無效或 Desktop 清單為空時，套用會失敗，不會改用本機目錄或回環位址。
+請更新或設定 hub 後重新套用。
+
+本次別名修改不解決 [#3646](https://github.com/lidge-jun/opencodex/issues/3646) 中獨立的 `thinking` / `redacted_thinking` 重播與提示快取請求。
+只有代理存取憑證不會啟用原生 Anthropic 透傳，但經過轉換的 Anthropic 路由仍可使用提示快取。
+重播保真與快取命中率比較仍是獨立工作。
+
 ## /model 選擇器（“From gateway”）
 
 Claude Code 2.1.129+ 透過 `GET /v1/models?limit=1000` 發現閘道器模型，並在原生 `/model`
@@ -198,6 +219,8 @@ user-agent 會獲得易讀的 CLI 形式，其他用戶端會獲得 Desktop 雜�
 
 **模型解析順序：**移除 `[1m]` 標記 → 解碼易讀別名 → 解碼 Desktop 雜湊別名 →
 `modelMap` 精確匹配 → 移除日期後的匹配（移除 `-20250514`）→ 透傳。
+
+無法解析的受管理 Desktop 日期/雜湊別名會在移除日期或回退之前遭到拒絕，Messages 和 count-tokens 均回傳 HTTP 400。操作員的精確 `modelMap` 項目及已識別的真實 Anthropic 模型 ID 維持正常處理。
 
 每個條目都帶有類似 `gemini-3-pro (gemini)` 的顯示名稱，以及官方 `ModelInfo` 結構中的完整
 模型能力（推理強度階梯、思考型別）。真正的 Anthropic 模型在兩個介面上都保留其規範 ID。
@@ -289,6 +312,8 @@ opencodex 會在**已路由**請求中將該技能內容替換為一個短佔位
 ```
 
 查詢順序：發現別名 → 精確 ID → 移除日期字尾的 ID（`-20250514`）→ 透傳。
+
+無法解析的受管理 Desktop 日期/雜湊別名會在移除日期或回退之前遭到拒絕，Messages 和 count-tokens 均回傳 HTTP 400。操作員的精確 `modelMap` 項目及已識別的真實 Anthropic 模型 ID 維持正常處理。
 
 ## Sidecar 矩陣：Web Search 與圖像理解
 

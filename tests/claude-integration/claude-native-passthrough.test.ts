@@ -5,6 +5,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../../src/config";
+import { buildDesktop3pRegistry } from "../../src/claude/desktop-3p";
+import { SERVER_BUDGET_MS } from "../helpers/test-budget";
 import { startServer } from "../../src/server";
 import type { OcxConfig } from "../../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
@@ -493,3 +495,53 @@ test("P5: Files API image source passes through untouched", async () => {
     upstream.stop(true);
   }
 });
+
+
+test("catalog-published native dates retain identity while unknown Desktop dates reject", async () => {
+  const published = "claude-opus-4-8-20260402";
+  const captured: Captured[] = [];
+  const upstream = mockAnthropicUpstream(captured);
+  const config = cfg(upstream.url.origin, { desktopNativeModels: false });
+  config.providers.anthropic = {
+    adapter: "anthropic", baseUrl: upstream.url.origin, apiKey: "test-native-key",
+    allowPrivateNetwork: true, liveModels: false, models: [published],
+  };
+  saveConfig(config);
+  buildDesktop3pRegistry([], []);
+  const server = startServer(0);
+  try {
+    // Publish the fixture's genuine identity through the real hub catalog path.
+    const catalog = await fetch(new URL("/v1/models?ids=desktop", server.url), {
+      headers: { "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(5_000),
+    });
+    expect(catalog.status).toBe(200);
+    const list = await catalog.json() as { data: Array<{ id: string }> };
+    expect(list.data.some(row => row.id === published)).toBe(true);
+    for (const model of [published, "claude-opus-4-8", "claude-haiku-4-5"]) {
+      for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
+        const response = await fetch(new URL(path, server.url), {
+          method: "POST", headers: OAUTH_HEADERS, signal: AbortSignal.timeout(5_000),
+          body: JSON.stringify({ ...claudeBody(), model }),
+        });
+        expect(response.status).toBe(200);
+        await response.text();
+        expect(captured.at(-1)!.body.model).toBe(model);
+        expect(captured.at(-1)!.path).toBe(path);
+      }
+    }
+    expect(captured).toHaveLength(6);
+    for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
+      const response = await fetch(new URL(path, server.url), {
+        method: "POST", headers: OAUTH_HEADERS, signal: AbortSignal.timeout(5_000),
+        body: JSON.stringify({ ...claudeBody(), model: "claude-opus-4-8-20260403" }),
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json() as { error: { message: string } }).error.message).toContain("Unknown Claude Desktop alias");
+    }
+    expect(captured).toHaveLength(6);
+  } finally {
+    await server.stop(true);
+    upstream.stop(true);
+    buildDesktop3pRegistry([], []);
+  }
+}, { timeout: SERVER_BUDGET_MS });

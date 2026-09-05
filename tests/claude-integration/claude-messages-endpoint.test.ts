@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../../src/config";
+import { buildDesktop3pRegistry } from "../../src/claude/desktop-3p";
+import type { DesktopProfile } from "../../src/claude/desktop-profile";
 import { createAnthropicAdapter } from "../../src/adapters/anthropic";
 import { clearableDeadline } from "../../src/lib/abort";
 import {
@@ -74,9 +76,11 @@ function mockChatUpstream() {
 
 function mockChatUpstreamCapturing() {
   const captured: Array<Record<string, unknown>> = [];
+  const urls: string[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
+      urls.push(req.url);
       const url = new URL(req.url);
       if (!url.pathname.endsWith("/chat/completions")) {
         return Response.json({ error: { message: `unexpected path ${url.pathname}` } }, { status: 404 });
@@ -91,7 +95,7 @@ function mockChatUpstreamCapturing() {
       return new Response(frames.join(""), { headers: { "Content-Type": "text/event-stream" } });
     },
   });
-  return { server, captured };
+  return { server, captured, urls };
 }
 
 function mockConfig(baseUrl: string, claudeCode?: OcxConfig["claudeCode"]): OcxConfig {
@@ -1572,3 +1576,123 @@ test("count_tokens is CJK-aware: Korean body counts more tokens than equal-lengt
     await server.stop(true);
   }
 });
+
+
+const managedDesktopProfile: DesktopProfile = {
+  version: 1,
+  assignments: { "selected/model-selected": { family: "opus", alias: "claude-opus-4-8-20260201" } },
+  defaults: { opus: "selected/model-selected", fable: null, sonnet: null, haiku: null },
+};
+const desktopRequestHeaders = {
+  "content-type": "application/json",
+  "anthropic-version": "2023-06-01",
+  "anthropic-beta": "oauth-2025-04-20",
+  authorization: "Bearer sk-ant-oat01-desktop-test",
+};
+
+for (const fallbacks of [false, true]) {
+  test(`missing Desktop IDs reject before upstream dispatch (fallbacks=${fallbacks})`, async () => {
+    const selected = mockChatUpstreamCapturing();
+    const fallback = mockChatUpstreamCapturing();
+    const native = mockChatUpstreamCapturing();
+    const provider = (upstream: ReturnType<typeof mockChatUpstreamCapturing>, models: string[]) => ({
+      adapter: "openai-chat" as const, baseUrl: new URL("/v1", upstream.server.url).href,
+      apiKey: "test-key", allowPrivateNetwork: true, liveModels: false, models,
+    });
+    saveConfig({
+      port: 0, defaultProvider: "fallback",
+      providers: {
+        selected: provider(selected, ["model-selected"]),
+        fallback: provider(fallback, ["model-default", "model-dateless", "model-classifier"]),
+      },
+      claudeCode: {
+        anthropicBaseUrl: native.server.url.origin,
+        ...(fallbacks ? {
+          modelMap: { "claude-opus-4-8": "fallback/model-dateless" },
+          classifierModel: "fallback/model-classifier",
+        } : {}),
+      },
+    } as OcxConfig);
+    buildDesktop3pRegistry([], [{ provider: "selected", id: "model-selected" }], managedDesktopProfile);
+    const server = startServer(0);
+    try {
+      for (const model of [
+        "claude-opus-4-8-20260202", "claude-opus-4-8-zzz", "claude-opus-4-zzz",
+        "claude-opus-4-8-20260202[1m]",
+      ]) {
+        for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
+          const response = await fetch(new URL(path, server.url), {
+            method: "POST", headers: desktopRequestHeaders, signal: AbortSignal.timeout(5_000),
+            body: JSON.stringify({ model, max_tokens: 8, messages: [{ role: "user", content: "hello" }] }),
+          });
+          expect(response.status).toBe(400);
+          const body = await response.json() as { type: string; error: { type: string; message: string } };
+          expect(body.type).toBe("error");
+          expect(body.error.type).toBe("invalid_request_error");
+          expect(body.error.message).toContain("Unknown Claude Desktop alias");
+        }
+      }
+      expect(selected.urls).toEqual([]);
+      expect(fallback.urls).toEqual([]);
+      expect(native.urls).toEqual([]);
+    } finally {
+      await server.stop(true);
+      selected.server.stop(true); fallback.server.stop(true); native.server.stop(true);
+      buildDesktop3pRegistry([], []);
+    }
+  }, { timeout: SERVER_BUDGET_MS });
+}
+
+test("registered Desktop IDs and exact operator overrides reach distinct intended routes", async () => {
+  const selected = mockChatUpstreamCapturing();
+  const explicit = mockChatUpstreamCapturing();
+  const fallback = mockChatUpstreamCapturing();
+  const provider = (upstream: ReturnType<typeof mockChatUpstreamCapturing>, model: string) => ({
+    adapter: "openai-chat" as const, baseUrl: new URL("/v1", upstream.server.url).href,
+    apiKey: "test-key", allowPrivateNetwork: true, liveModels: false, models: [model],
+  });
+  saveConfig({
+    port: 0, defaultProvider: "fallback",
+    providers: {
+      selected: provider(selected, "model-selected"), explicit: provider(explicit, "model-explicit"),
+      fallback: provider(fallback, "model-fallback"),
+    },
+    claudeCode: {
+      anthropicBaseUrl: fallback.server.url.origin,
+      modelMap: {
+        "claude-opus-4-8-20260202": "explicit/model-explicit",
+        "claude-opus-4-8": "fallback/model-fallback",
+      },
+      classifierModel: "fallback/model-fallback",
+    },
+  } as OcxConfig);
+  buildDesktop3pRegistry([], [{ provider: "selected", id: "model-selected" }], managedDesktopProfile);
+  const server = startServer(0);
+  try {
+    for (const model of ["claude-opus-4-8-20260201", "claude-opus-4-8-20260201[1m]", "claude-opus-4-8-20260202"]) {
+      const response = await fetch(new URL("/v1/messages", server.url), {
+        method: "POST", headers: desktopRequestHeaders, signal: AbortSignal.timeout(5_000),
+        body: JSON.stringify({ model, stream: true, max_tokens: 8, messages: [{ role: "user", content: "hello" }] }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("message_stop");
+    }
+    expect(selected.captured.map(body => body.model)).toEqual(["model-selected", "model-selected"]);
+    expect(explicit.captured.map(body => body.model)).toEqual(["model-explicit"]);
+    expect(selected.urls).toEqual([new URL("/v1/chat/completions", selected.server.url).href, new URL("/v1/chat/completions", selected.server.url).href]);
+    expect(explicit.urls).toEqual([new URL("/v1/chat/completions", explicit.server.url).href]);
+    expect(fallback.urls).toEqual([]);
+    const count = await fetch(new URL("/v1/messages/count_tokens", server.url), {
+      method: "POST", headers: desktopRequestHeaders,
+      body: JSON.stringify({ model: "claude-opus-4-8-20260202", messages: [{ role: "user", content: "hello" }] }),
+    });
+    expect(count.status).toBe(200);
+    expect((await count.json() as { input_tokens: number }).input_tokens).toBeGreaterThan(0);
+    expect(explicit.urls).toHaveLength(1);
+    expect(fallback.urls).toEqual([]);
+  } finally {
+    await server.stop(true);
+    selected.server.stop(true); explicit.server.stop(true); fallback.server.stop(true);
+    buildDesktop3pRegistry([], []);
+  }
+}, { timeout: SERVER_BUDGET_MS });

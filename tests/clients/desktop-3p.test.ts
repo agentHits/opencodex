@@ -10,16 +10,104 @@ import {
   generateDesktop3pConfig,
   generateDesktop3pModels,
   legacyDesktop3pAlias,
+  isUnresolvedDesktop3pAlias,
   parseDesktop3pModeArgs,
   resolveDesktop3pConfigLibraryPath,
   resolveDesktop3pAlias,
   writeDesktop3pConfig,
+  writeRemoteDesktop3pConfig,
+  type Desktop3pModelEntry,
 } from "../../src/claude/desktop-3p";
 import { moveDesktopRoute, reconcileDesktopProfile, setDesktopFamilyDefault } from "../../src/claude/desktop-profile";
 import { resolveInboundModel } from "../../src/claude/inbound";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 describe("Claude Desktop 3P models", () => {
+  test("replaces native exemptions together with the registry on either install path", () => {
+    const dated = "claude-opus-4-8-20260304";
+    try {
+      buildDesktop3pRegistry([], [{ provider: "anthropic", id: dated }]);
+      expect(resolveDesktop3pAlias(dated)).toBeNull();
+      expect(isUnresolvedDesktop3pAlias(dated)).toBe(false);
+      generateDesktop3pModels(["gpt-5.6-sol"], []);
+      expect(isUnresolvedDesktop3pAlias(dated)).toBe(true);
+      expect(isUnresolvedDesktop3pAlias("claude-opus-4-8-ncb")).toBe(false);
+      expect(isUnresolvedDesktop3pAlias("claude-opus-4-ncb")).toBe(false);
+      generateDesktop3pModels([], [{ provider: "anthropic", id: dated }]);
+      expect(isUnresolvedDesktop3pAlias(dated)).toBe(false);
+      buildDesktop3pRegistry([], []);
+      expect(isUnresolvedDesktop3pAlias(dated)).toBe(true);
+      expect(isUnresolvedDesktop3pAlias("claude-opus-4-8-ncb")).toBe(true);
+      expect(isUnresolvedDesktop3pAlias("claude-opus-4-ncb")).toBe(true);
+      for (const id of ["claude-opus-4-8", "claude-haiku-4-5", "claude-opus-4-8-20250201", "claude-ocx-native--claude-fable-5-1"]) {
+        expect(isUnresolvedDesktop3pAlias(id)).toBe(false);
+      }
+    } finally { buildDesktop3pRegistry([], []); }
+  });
+
+  test("remote apply preserves exact hub entries and foreign keys without installing aliases", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-desktop-remote-"));
+    const previous = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+    process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = dir;
+    const models: Desktop3pModelEntry[] = [{
+      name: "claude-opus-4-8-20260304", labelOverride: "Hub model",
+      anthropicFamilyTier: "fable", isFamilyDefault: true, supports1m: true, prefer1m: true,
+    }];
+    try {
+      const local = writeDesktop3pConfig(4096, ["gpt-5.6-sol"], [], "old-key");
+      expect(local.written).toBe(true);
+      const prior = JSON.parse(readFileSync(local.path, "utf8"));
+      writeFileSync(local.path, JSON.stringify({ ...prior, foreignSetting: { retained: true } }));
+      for (const mode of ["static", "hybrid", "discovery"] as const) {
+        const result = writeRemoteDesktop3pConfig({ baseUrl: "https://hub.example.test", apiKey: "remote-fixture-key", mode, models });
+        expect(result.written).toBe(true);
+        expect(result.path).toBe(local.path);
+        const written = JSON.parse(readFileSync(result.path, "utf8"));
+        expect(written.inferenceGatewayBaseUrl).toBe("https://hub.example.test");
+        expect(written.inferenceGatewayApiKey).toBe("remote-fixture-key");
+        expect(written.modelDiscoveryEnabled).toBe(mode !== "static");
+        expect(written.inferenceModels).toEqual(mode === "discovery" ? undefined : models);
+        expect(written.foreignSetting).toEqual({ retained: true });
+        expect(resolveDesktop3pAlias(models[0]!.name)).toBeNull();
+        expect(resolveDesktop3pAlias("claude-opus-4-8-ncb")).toBe("native/gpt-5.6-sol");
+      }
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+      else process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = previous;
+      buildDesktop3pRegistry([], []);
+      removeTreeWithRetry(dir);
+    }
+  });
+
+  test("local and remote generation failures retain result semantics and existing file bytes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ocx-desktop-generation-"));
+    const previous = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+    process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = dir;
+    try {
+      const initial = writeDesktop3pConfig(4096, [], [{ provider: "test", id: "valid" }]);
+      expect(initial.written).toBe(true);
+      const before = readFileSync(initial.path, "utf8");
+      const beforeMeta = readFileSync(join(dir, "_meta.json"), "utf8");
+      const local = writeDesktop3pConfig(4096, [], [{ provider: "test", id: "x".repeat(90) }]);
+      const remote = writeRemoteDesktop3pConfig({
+        baseUrl: "https://hub.example.test", apiKey: "fixture-key", mode: "static",
+        models: [{ name: "invalid", labelOverride: "Hub", anthropicFamilyTier: "opus" }],
+      });
+      for (const result of [local, remote]) {
+        expect(result.written).toBe(false);
+        expect(result.path).toBe(initial.path);
+        expect(result.reason).toBeTruthy();
+      }
+      expect(readFileSync(initial.path, "utf8")).toBe(before);
+      expect(readFileSync(join(dir, "_meta.json"), "utf8")).toBe(beforeMeta);
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+      else process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = previous;
+      buildDesktop3pRegistry([], []);
+      removeTreeWithRetry(dir);
+    }
+  });
+
   test("resolves the actual cross-platform Claude Desktop config library (#539)", () => {
     // Claude Desktop appends "-3p" to its userData root (app.asar `GE()`), so the
     // suffix-less path is one Desktop never reads. Branch-by-branch coverage lives in

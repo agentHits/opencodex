@@ -31,7 +31,7 @@ genel model kimliği birkaç hedef arasından seçim yapması gerektiğinde
 | OpenAI Chat Completions | `POST /v1/chat/completions` | `chat.completion` JSON | `[DONE]` ile biten `chat.completion.chunk` SSE |
 | Anthropic Messages | `POST /v1/messages` | Anthropic `message` JSON | Anthropic Messages SSE |
 | Anthropic belirteç sayısı | `POST /v1/messages/count_tokens` | `{ "input_tokens": sayi }` | Geçerli değil |
-| Model keşfi | `GET /v1/models` | Üç katalog sözleşmesinden biri | Geçerli değil |
+| Model keşfi | `GET /v1/models` | Katalog veya açıkça istenen Desktop anlık görüntüsü | Geçerli değil |
 | Ses ve Realtime | `POST /v1/live`, `POST /v1/realtime/calls` | İletilen çağrı oluşturma yanıtı | Ayrı bir yan bant WebSocket her iki yönde de çerçeveleri iletir |
 | Responses sıkıştırması | `POST /v1/responses/compact` | Değiştirme geçmişi JSON'ı | Geçerli değil |
 
@@ -235,14 +235,27 @@ yerel belgelenmiş tahmini kullanır ve şunu döndürür:
 
 ## `GET /v1/models`
 
-Aynı rota uyumsuz katalog zarfları bekleyen üç istemciye hizmet verir.
-`client_version` da mevcut olmadıkça Anthropic türü kazanır.
+`format=desktop-config` belirtilmezse aşağıdaki olağan katalog sözleşmeleri kullanılır:
 
 | Sözleşme | Tetikleyici | Üst düzey şekil | Model kimliği davranışı |
 | --- | --- | --- | --- |
 | Anthropic model listesi | `client_version` olmadan `anthropic-version` başlığı veya `?flavor=anthropic` | Anthropic model bilgisi girdileriyle `{ "data": [...] }` | Claude Code okunabilir kimlikleri alır; Desktop profile özgü takma ad ailesini alabilir |
 | Codex kataloğu | `client_version` sorgu parametresi | `{ "models": [...] }` | Yerel ve yönlendirilen girdiler daha zengin Codex katalog alanlarını, görünürlüğü, çabayı, WebSocket ve çoklu ajan meta verilerini taşır |
 | Düz OpenAI listesi | Hiçbir tetikleyici yok | `{ "object": "list", "data": [...] }` | Görünür yerel kimlikler yalındır; yönlendirilen kimlikler takma adlar veya `sağlayıcı/model`'dir |
+
+### Desktop yapılandırma anlık görüntüsü
+
+`GET /v1/models?ids=desktop&format=desktop-config`, user-agent'tan bağımsız olarak Desktop
+anlık görüntüsünü seçer. Yanıt `{ "version": 1, "models": [...] }` ve `Cache-Control: no-store`
+başlığıdır. İstemci `Accept: application/json`, `anthropic-version: 2023-06-01` ve mevcut veri
+erişim kimlik bilgilerini gönderir; yönetici belirteci veya profil yüklemesi gerekmez.
+Girdiler Codex katalog satırları değil, hub'ın verdiği Desktop yapılandırma modelleridir.
+
+Bu biçim `ids=cli` veya herhangi bir `client_version` ile kullanılırsa HTTP 400 döner. Biçim
+seçicisi yoksa yukarıdaki olağan sözleşmeler değişmez. Claude kapalıysa
+`{ "version": 1, "models": [] }` döner; bağlı Desktop apply bunu kullanılamaz sayar ve yeni
+profil yazmaz. Sürüm 1 yerine olağan katalog döndüren eski hub'lar desteklenmez; yerel üretilmiş
+kimliklere geçilmez.
 
 ## `POST /v1/live` ve Realtime yan bandı
 

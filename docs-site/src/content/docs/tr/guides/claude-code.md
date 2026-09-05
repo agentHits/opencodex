@@ -161,6 +161,8 @@ ailedeki ilk kullanılabilir rota kullanılır.
 
 Aynı profili komut satırından da yönetebilirsiniz:
 
+Aşağıdaki profil düzenleme yönergeleri yerel profil içindir. Bağlı uzak hub üzerinden uygulama aşağıda ayrıca açıklanır.
+
 ```bash
 ocx claude desktop [apply]
 ocx claude desktop show [--json]
@@ -247,6 +249,29 @@ ile görünmediği anlamına gelir.
 `claudeCode.nativePassthrough: false` ile devre dışı bırakın;
 `claudeCode.anthropicBaseUrl` ile başka bir yeri işaret edin.
 
+## Uzak hub'a bağlı Claude Desktop
+
+Bağlı makinede `ocx claude desktop apply` veya `ocx claude desktop`, hub'ın Desktop anlık
+görüntüsünü alır ve hub origin'ini ve verdiği model kimliklerini yerel Desktop yapılandırmasına
+aynen yazar. Yerel takma ad üretmez. static/hybrid model listesini de kopyalar;
+discovery-only listeyi gömmeden hub origin'ini kullanır.
+
+Profil, aile atamaları ve varsayılanlar hub'da yönetilir. Hub'da değiştirin, istemcide yeniden
+uygulayın ve Desktop'ta modeli yeniden seçin. Yalnızca istemcide oluşturulmuş eski takma adlar
+için de yeniden uygulama/seçim gerekir. `show`, yerel düzenleme ve import/export yerel kalır.
+Bağlıyken `ocx claude desktop import <path> --apply` desteklenmez ve kaydetmeden reddedilir;
+`--apply` olmadan import yerel bir işlemdir.
+
+Okuma, mevcut bağlantının veri erişim kimlik bilgilerini kullanır; yönetici belirteci veya profil
+yüklemesi gerekmez. Eski hub desteği yoksa, yanıt geçersizse veya Desktop listesi boşsa uygulama
+başarısız olur; yerel katalog ya da loopback adresi kullanılmaz. Hub'ı güncelleyin veya
+yapılandırın, ardından yeniden uygulayın.
+
+Bu takma ad değişikliği, [#3646](https://github.com/lidge-jun/opencodex/issues/3646)'daki ayrı `thinking` / `redacted_thinking` yeniden gönderim ve
+istem önbelleği talebini çözmez. Proxy erişimi tek başına yerel Anthropic geçişini etkinleştirmez;
+çevrilen Anthropic rotaları yine de önbellek kullanabilir. Yeniden gönderim doğruluğu ve önbellek
+isabetlerinin karşılaştırılması ayrı iş olarak kalır.
+
 ## /model seçici ("From gateway")
 
 Claude Code 2.1.129+, `GET /v1/models?limit=1000` aracılığıyla ağ geçidi
@@ -302,6 +327,8 @@ slug'lar karma forma geri döner.
 **Model çözümleme sırası:** `[1m]` işaretçisi kaldırılır → okunabilir takma ad
 çözülür → Desktop karma takma adı çözülür → `modelMap` tam eşleşmesi → tarih
 kaldırılmış eşleşme (`-20250514` kaldırılır) → doğrudan geçiş.
+
+Çözümlenemeyen yönetilen Desktop tarih/hash takma adları, hem Messages hem count-tokens için tarih kaldırma veya yedek rotadan önce HTTP 400 ile reddedilir. Tam `modelMap` girdileri ve tanınan gerçek Anthropic model kimlikleri olağan şekilde işlenir.
 
 Her girdi, `gemini-3-pro (gemini)` gibi bir görünen adın yanı sıra resmi
 `ModelInfo` biçiminde tam model yeteneklerini (akıl yürütme çabası merdiveni,
@@ -421,6 +448,8 @@ yeniden yazar:
 
 Arama sırası: keşif takma adı → tam kimlik → tarih soneki kaldırılmış kimlik
 (`-20250514` kaldırılır) → doğrudan geçiş.
+
+Çözümlenemeyen yönetilen Desktop tarih/hash takma adları, hem Messages hem count-tokens için tarih kaldırma veya yedek rotadan önce HTTP 400 ile reddedilir. Tam `modelMap` girdileri ve tanınan gerçek Anthropic model kimlikleri olağan şekilde işlenir.
 
 ## Sidecar matrisi: web araması ve görsel anlama
 

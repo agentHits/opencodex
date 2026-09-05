@@ -22,7 +22,7 @@ provider events → internal adapter events → client dialect
 | OpenAI チャットの完了 | `POST /v1/chat/completions` | JSON | `chat.completion` `chat.completion.chunk` SSE で終わる `[DONE]` |
 |人間的なメッセージ | `POST /v1/messages` |人類 `message` JSON |人間的メッセージ SSE |
 |人間トークン数 | `POST /v1/messages/count_tokens` | `{ "input_tokens": number }` |該当なし |
-|モデルの発見 | `GET /v1/models` | 3 つのカタログ契約のうちの 1 つ |該当なし |
+|モデルの発見 | `GET /v1/models` | カタログまたは明示的な Desktop スナップショット |該当なし |
 |音声とリアルタイム | `POST /v1/live`、`POST /v1/realtime/calls` |中継されたコール作成応答 |別のサイドバンド WebSocket がフレームを両方向に中継します。
 |応答の圧縮 | `POST /v1/responses/compact` |置換履歴 JSON |該当なし |
 
@@ -153,13 +153,26 @@ admission secret も削除され、別の実際の Anthropic 認証情報は維�
 
 ## `GET /v1/models`
 
-同じルートは、互換性のないカタログ エンベロープを予期する 3 つのクライアントにサービスを提供します。 `client_version` も存在しない限り、人間味が優先されます。
+`format=desktop-config` を指定しない場合、通常のカタログ契約は次のとおりです。
 
-|契約 |トリガー |トップレベルの形状 |モデル ID の動作 |
 | --- | --- | --- | --- |
 |人類モデルのリスト | `anthropic-version` ヘッダーまたは `?flavor=anthropic`、`client_version` なし | Anthropic モデル情報エントリのある `{ "data": [...] }` |クロード コードは読み取り可能な ID を受け取ります。デスクトップはプロファイル固有のエイリアス ファミリを受け取ることができます。
 |Codexカタログ | `client_version` クエリパラメータ | `{ "models": [...] }` |ネイティブおよびルーティングされたエントリには、より豊富な Codex カタログ フィールド、可視性、労力、WebSocket、およびマルチエージェント メタデータが含まれています。
 |プレーンな OpenAI リスト |どちらのトリガーもありません | `{ "object": "list", "data": [...] }` |表示されるネイティブ ID は裸です。ルーティング ID はエイリアスまたは `provider/model` |
+
+### Desktop 設定スナップショット
+
+`GET /v1/models?ids=desktop&format=desktop-config` は user-agent に関係なく Desktop
+スナップショットを明示的に選択します。応答は `{ "version": 1, "models": [...] }` で、
+`Cache-Control: no-store` を含みます。クライアントは `Accept: application/json`、
+`anthropic-version: 2023-06-01` と既存のデータ用認証情報を送ります。管理者トークンや
+プロファイルのアップロードは不要です。項目はハブが発行した Desktop 設定用モデルであり、
+Codex カタログの行ではありません。
+
+この形式に `ids=cli` または `client_version` を併用すると HTTP 400 になります。形式指定が
+なければ上記の通常の契約を維持します。Claude が無効なら `{ "version": 1, "models": [] }`
+を返し、接続中の Desktop apply は利用不可として設定を書き換えません。バージョン 1 ではなく
+通常のカタログを返す古いハブは未対応で、ローカル生成 ID に切り替えることはありません。
 
 ## `POST /v1/live` とRealtime サイドバンド
 

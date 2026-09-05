@@ -94,6 +94,28 @@ hook を削除します。Claude Desktop は独立した profile を使用し、
 `claudeCode.nativePassthrough: false` でオフにでき、`claudeCode.anthropicBaseUrl` で別のアドレスを
 指定できます。
 
+## リモートハブに接続した Claude Desktop
+
+接続中のマシンで `ocx claude desktop apply` または `ocx claude desktop` を実行すると、
+ハブの Desktop スナップショットを取得し、ハブの origin と発行済みモデル ID をそのまま
+ローカル Desktop 設定に書き込みます。ローカルの別名は生成しません。static/hybrid は
+モデル一覧もコピーし、discovery-only は一覧を埋め込まずハブの origin を使います。
+
+プロファイル、ファミリー、デフォルトはハブ側で管理します。ハブで変更してからクライアントで
+再適用し、Desktop でモデルを選び直してください。以前クライアントだけで作成した別名も
+再適用・再選択が必要です。`show`、ローカル編集、import/export はローカル設定だけを扱います。
+接続中の `ocx claude desktop import <path> --apply` は未対応で、保存前に拒否します。
+`--apply` なしの import はローカル操作のままです。
+
+取得には既存の接続のデータ用認証情報を使い、管理者トークンもプロファイルのアップロードも
+不要です。古いハブが未対応の場合、不正な応答や空の Desktop 一覧の場合は適用に失敗します。
+ローカル一覧やループバック URL への代替は行いません。ハブを更新・設定して再適用してください。
+
+この別名変更では、[#3646](https://github.com/lidge-jun/opencodex/issues/3646) の `thinking` / `redacted_thinking` 再送とプロンプトキャッシュの
+別件は修正しません。プロキシの接続認証だけではネイティブ Anthropic パススルーは有効に
+なりませんが、変換された Anthropic ルートでもキャッシュは利用できます。再送の保持と
+キャッシュヒットの比較は別の作業です。
+
 ## /model ピッカー("From gateway")
 
 Claude Code 2.1.129 以降は `GET /v1/models?limit=1000` でゲートウェイモデルを探し、デフォルトの `/model`
@@ -125,6 +147,8 @@ v2 エイリアスはエスケープを展開します。読みやすい形式�
 
 **モデル解決順序:** `[1m]` 標識の削除 → 読みやすいエイリアスのデコード → Desktop ハッシュエイリアスのデコード →
 `modelMap` の完全一致 → 日付を削除した値との一致(`-20250514` 削除) → パススルー順です。
+
+解決できない管理対象 Desktop の日付・ハッシュ別名は、Messages と count-tokens の両方で日付除去やフォールバックの前に HTTP 400 で拒否します。正確に指定された `modelMap` と認識済みの実 Anthropic モデル ID は通常どおり処理します。
 
 各項目には `gemini-3-pro (gemini)` のような表示名と公式 `ModelInfo` 形式の完全なモデル能力
 (推論負荷段階、thinking 型)が含まれます。実際の Anthropic モデルは両画面で正式 ID を維持します。
@@ -220,6 +244,8 @@ Anthropic パススルーはそのまま維持します。
 ```
 
 照合順序: 検索エイリアス → 完全一致 ID → 日付接尾辞を削除した ID(`-20250514`) → パススルー順です。
+
+解決できない管理対象 Desktop の日付・ハッシュ別名は、Messages と count-tokens の両方で日付除去やフォールバックの前に HTTP 400 で拒否します。正確に指定された `modelMap` と認識済みの実 Anthropic モデル ID は通常どおり処理します。
 
 ## サイドカーマトリクス: ウェブ検索と画像理解
 

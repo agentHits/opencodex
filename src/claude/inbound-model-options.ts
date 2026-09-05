@@ -2,8 +2,8 @@ import type { OcxClaudeCodeConfig } from "../types";
 import { isAnthropicOutputSchema } from "../adapters/anthropic-output-schema";
 import { resolveAlias } from "./alias";
 import { stripOneMillionMarker } from "./context-windows";
-import { resolveDesktop3pAlias } from "./desktop-3p";
-import { isRec, type Rec } from "./inbound-records";
+import { isUnresolvedDesktop3pAlias, resolveDesktop3pAlias } from "./desktop-3p";
+import { AnthropicRequestError, isRec, type Rec } from "./inbound-records";
 
 function isClaudeClassifierModel(model: string): boolean {
   const stripped = model.replace(/-\d{8}$/, "");
@@ -54,6 +54,9 @@ export function resolveInboundModel(model: string, cc?: OcxClaudeCodeConfig): st
   const map = cc?.modelMap ?? {};
   const exact = map[model];
   if (typeof exact === "string" && exact.length > 0) return exact;
+  if (isUnresolvedDesktop3pAlias(model)) {
+    throw new AnthropicRequestError("Unknown Claude Desktop alias; reapply the Desktop profile from the connected hub");
+  }
   const stripped = model.replace(/-\d{8}$/, "");
   const dateless = map[stripped];
   if (typeof dateless === "string" && dateless.length > 0) return dateless;

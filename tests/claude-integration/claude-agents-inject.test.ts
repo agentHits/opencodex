@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClaudeAgentDefs, injectClaudeAgentDefs, syncClaudeAgentDefs } from "../../src/claude/agents-inject";
 import { buildClaudeContextWindows } from "../../src/claude/context-windows";
+import { buildDesktop3pRegistry } from "../../src/claude/desktop-3p";
 import { fetchProviderModels } from "../../src/codex/catalog/provider-fetch";
 import { OAUTH_PROVIDERS } from "../../src/oauth";
 import type { OcxConfig } from "../../src/types";
@@ -337,4 +338,36 @@ describe("syncClaudeAgentDefs ownership contract (audit 071 #2/#3)", () => {
     injectClaudeAgentDefs(cfg({ subagentModels: ["gpt-5.6-sol"], claudeCode: { enabled: false } }), {}, dir);
     expect(readdirSync(join(dir, "agents"))).toEqual([]);
   });
+});
+
+
+test("stale Desktop selectors retain the roster and configured blocked skills", () => {
+  const model = "claude-opus-4-8-20260702";
+  buildDesktop3pRegistry([], []);
+  try {
+    const defs = buildClaudeAgentDefs(cfg({
+      subagentModels: [model],
+      claudeCode: { blockedSkills: ["restricted-test-skill"] },
+    }), {}, tempDir());
+    const stale = defs.find(def => def.model === model);
+    expect(stale).toBeDefined();
+    expect(stale!.blockedSkills).toEqual(["restricted-test-skill"]);
+    expect(defs.length).toBeGreaterThan(0);
+  } finally { buildDesktop3pRegistry([], []); }
+});
+
+test("unexpected resolver errors still propagate from roster construction", () => {
+  const model = "claude-opus-4-8-20260702";
+  const modelMap: Record<string, string> = {};
+  // Fault injection at the resolver's exact-map read; only its expected request
+  // error may be converted into conservative blocked-skill policy.
+  Object.defineProperty(modelMap, model, {
+    get() { throw new Error("injected-resolver-failure"); },
+  });
+  buildDesktop3pRegistry([], []);
+  try {
+    expect(() => buildClaudeAgentDefs(cfg({
+      subagentModels: [model], claudeCode: { modelMap, blockedSkills: ["restricted-test-skill"] },
+    }), {}, tempDir())).toThrow("injected-resolver-failure");
+  } finally { buildDesktop3pRegistry([], []); }
 });
