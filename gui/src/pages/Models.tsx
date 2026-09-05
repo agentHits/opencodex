@@ -2146,7 +2146,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
       {integrationFailures.length > 0 && <div className="models-integration-warning">
         <Notice tone="warn">
           {t("models.integrationRefreshWarning")}
-          <ul>{integrationFailures.map((row, index) => <li key={`${row.client}:${row.profileId ?? "all"}:${index}`}>
+          <ul>{integrationFailures.map(row => <li key={`${row.client}:${row.profileId ?? "all"}`}>
             {row.client}{row.profileId === undefined ? "" : `:${row.profileId}`}: {describeIntegrationRefusalParts(t, {
               clientId: row.client, message: row.reason === "integration_mutation_busy" ? t("integrations.error.busy") : row.reason,
               reason: row.refusalReason, snapshotPath: row.snapshotPath, residual: row.residual,
