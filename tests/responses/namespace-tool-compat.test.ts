@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { restoreRoutedCustomCalls, rewriteRoutedCustomToolsForUpstream } from "../../src/responses/custom-tool-compat";
 import {
   createRoutedNamespaceCallRestoreRewrite,
   restoreRoutedNamespaceCalls,
@@ -523,6 +524,39 @@ describe("Responses namespace tool compatibility", () => {
 
 describe("dotted namespace restoration uses the declaration collision boundary", () => {
   const ping = { type: "namespace", name: "mcp", tools: [{ type: "function", name: "ping", parameters: {} }] };
+  test.each(["mcp.ping", "mcp__ping"])("preserves a custom call whose alias %s declares an ordinary function", name => {
+    const { aliases } = rewriteRoutedNamespaceToolsForUpstream({ tools: [ping] });
+    expect(aliases.get(name)?.kind).toBe("function");
+    for (const namespace of [undefined, "mcp"]) {
+      const call = { type: "custom_tool_call", name, call_id: "call_ping", input: "raw custom input",
+        ...(namespace === undefined ? {} : { namespace }) };
+      expect(restoreRoutedNamespaceCalls(call, aliases)).toEqual({ value: call, changed: false });
+      expect(restoreRoutedNamespaceCalls(call, aliases).value).toBe(call);
+      const text = JSON.stringify({ type: "response.completed", response: { output: [call] } }, null, 2);
+      expect(restoreRoutedNamespaceCallsInJson(text, aliases)).toBe(text);
+      expect(createRoutedNamespaceCallRestoreRewrite(aliases)(text)).toBe(text);
+    }
+  });
+
+  test.each(["mcp.run", "mcp__run"])("restores the declared custom tool after upstream function downgrade via %s", name => {
+    const namespaced = rewriteRoutedNamespaceToolsForUpstream({
+      tools: [{ type: "namespace", name: "mcp", tools: [{ type: "custom", name: "run", description: "Run raw input" }] }],
+    });
+    const downgraded = rewriteRoutedCustomToolsForUpstream(namespaced.body, false);
+    expect(downgraded.body).toMatchObject({ tools: [{ type: "function", name: "mcp__run" }] });
+    expect(downgraded.names.has("mcp__run")).toBe(true);
+    expect(namespaced.aliases.get(name)?.kind).toBe("custom");
+    const call = { type: "function_call", name, id: "fc_run", call_id: "call_run", arguments: '{"input":"echo ready"}' };
+    const restored = restoreRoutedNamespaceCalls(call, namespaced.aliases);
+    expect(restored).toEqual({ changed: true, value: { ...call, name: "run", namespace: "mcp" } });
+    expect(restoreRoutedCustomCalls({ output: [restored.value] }, downgraded.names).value).toEqual({
+      output: [{ type: "custom_tool_call", name: "run", namespace: "mcp", id: "ctc_run", call_id: "call_run", input: "echo ready" }],
+    });
+    const nativeCustom = { type: "custom_tool_call", name, input: "raw custom input" };
+    expect(restoreRoutedNamespaceCalls(nativeCustom, namespaced.aliases).value)
+      .toEqual({ ...nativeCustom, name: "run", namespace: "mcp" });
+  });
+
   test("restores the dotted spelling after canonical tool-choice authorization", () => {
     const { aliases } = rewriteRoutedNamespaceToolsForUpstream({ tools: [ping], tool_choice: { type: "function", namespace: "mcp", name: "ping" } });
     expect(restoreRoutedNamespaceCalls({ type: "function_call", name: "mcp.ping", arguments: "{}" }, aliases).value)
