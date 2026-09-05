@@ -416,6 +416,9 @@ export function restoreRoutedNamespaceCalls(
   ) {
     const identity = aliases.get(value.name);
     if (identity
+      // Custom declarations may be lowered to function calls upstream, but an
+      // ordinary function declaration never authorizes a custom call payload.
+      && (value.type !== "custom_tool_call" || identity.kind === "custom")
       && (!Object.hasOwn(value, "namespace") || value.namespace === identity.namespace)) {
       restored.name = identity.name;
       restored.namespace = identity.namespace;
