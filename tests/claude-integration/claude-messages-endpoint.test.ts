@@ -1587,7 +1587,7 @@ const desktopRequestHeaders = {
   "content-type": "application/json",
   "anthropic-version": "2023-06-01",
   "anthropic-beta": "oauth-2025-04-20",
-  authorization: "Bearer sk-ant-oat01-desktop-test",
+  authorization: "Bearer sk-ant-oat01-tst",
 };
 
 for (const { fallbacks, fastRows } of [

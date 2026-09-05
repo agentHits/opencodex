@@ -8,7 +8,7 @@ import type { Desktop3pModelEntry } from "../../src/claude/desktop-3p";
 import { repoPath, fixturePath } from "../helpers/repo-root";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
-const DATA_KEY = "ocx-desktop-process-fixture-key";
+const DATA_KEY = "test-key";
 const cliPath = repoPath("src/cli/index.ts");
 const preloadPath = fixturePath("claude-desktop-network-guard.ts");
 const roots: string[] = [];
