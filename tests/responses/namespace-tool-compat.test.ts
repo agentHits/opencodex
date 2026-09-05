@@ -539,11 +539,11 @@ describe("dotted namespace restoration uses the declaration collision boundary",
   });
 
   test.each(["mcp.run", "mcp__run"])("restores the declared custom tool after upstream function downgrade via %s", name => {
-    const namespaced = rewriteRoutedNamespaceToolsForUpstream({
+    const downgraded = rewriteRoutedCustomToolsForUpstream({
       tools: [{ type: "namespace", name: "mcp", tools: [{ type: "custom", name: "run", description: "Run raw input" }] }],
-    });
-    const downgraded = rewriteRoutedCustomToolsForUpstream(namespaced.body, false);
-    expect(downgraded.body).toMatchObject({ tools: [{ type: "function", name: "mcp__run" }] });
+    }, false);
+    const namespaced = rewriteRoutedNamespaceToolsForUpstream(downgraded.body, downgraded.names);
+    expect(namespaced.body).toMatchObject({ tools: [{ type: "function", name: "mcp__run" }] });
     expect(downgraded.names.has("mcp__run")).toBe(true);
     expect(namespaced.aliases.get(name)?.kind).toBe("custom");
     const call = { type: "function_call", name, id: "fc_run", call_id: "call_run", arguments: '{"input":"echo ready"}' };
