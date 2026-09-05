@@ -637,14 +637,14 @@ export function opencodeNotFoundHint(
 }
 
 export async function cmdOpencode(args: string[]): Promise<number> {
-  const config = loadConfig();
-  const live = await ensureProxyForOpencode(config);
+  const startupConfig = loadConfig();
+  const live = await ensureProxyForOpencode(startupConfig);
   if (!live) {
     console.error("❌ Proxy did not become healthy after starting.");
     return 1;
   }
 
-  const apiKey = opencodeApiKey(config);
+  const apiKey = opencodeApiKey(startupConfig);
   let proxyModels: OpencodeProxyModelRow[];
   try {
     proxyModels = await fetchOpencodeProxyModels(live, apiKey);
@@ -653,6 +653,8 @@ export async function cmdOpencode(args: string[]): Promise<number> {
     console.error(`❌ Could not fetch the model catalog from the proxy: ${reason}`);
     return 1;
   }
+  // /api/models may have completed and persisted initial provider selection.
+  const config = loadConfig();
   const catalog = opencodeCatalogFromProxyRows(proxyModels, config);
   const blocks = buildOpencodeProviderBlocksFromCatalog(live.port, catalog, live.hostname, config);
   const baseUrl = blocks.v1.options.baseURL;
