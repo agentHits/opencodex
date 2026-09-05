@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,21 +31,73 @@ class ClientStateProbeError extends Error {
   }
 }
 
-function readStateProbe(script: string, home: string, timeoutMs = INTERNAL_DEADLINE_MS) {
-  const child = spawnSync(process.execPath, ["--eval", script], {
-    cwd: repoRoot,
-    env: { ...process.env, OPENCODEX_HOME: home },
-    encoding: "utf8",
-    timeout: timeoutMs,
-    killSignal: "SIGKILL",
+async function readStateProbe(script: string, home: string, timeoutMs = INTERNAL_DEADLINE_MS) {
+  const maxCaptureBytes = 1024 * 1024;
+  const cleanupMs = 1_000;
+  const result = await new Promise<{ stdout: string; pid: number; status: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(process.execPath, ["--eval", script], {
+        cwd: repoRoot,
+        env: { ...process.env, OPENCODEX_HOME: home },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch { reject(new ClientStateProbeError(0, null, null, false)); return; }
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let failed = false;
+    let timedOut = false;
+    let settled = false;
+    let status: number | null = null;
+    let signal: NodeJS.Signals | null = null;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let cleanup: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      clearTimeout(cleanup);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.unref();
+      const pid = child.pid ?? 0;
+      if (failed || status !== 0 || signal !== null) reject(new ClientStateProbeError(pid, status, signal, timedOut));
+      else resolve({ stdout: Buffer.concat(chunks).toString("utf8"), pid, status, signal });
+    };
+    const boundCleanup = () => {
+      if (settled) return;
+      cleanup ??= setTimeout(() => { failed = true; finish(); }, cleanupMs);
+    };
+    const stop = () => {
+      if (settled || failed) return;
+      failed = true;
+      clearTimeout(deadline);
+      boundCleanup();
+      try { child.kill("SIGKILL"); } catch { /* Preserve observed exit metadata, never the OS error text. */ }
+    };
+    const capture = (chunk: Buffer, stdout: boolean) => {
+      if (settled || failed) return;
+      bytes += chunk.length;
+      if (bytes > maxCaptureBytes) { stop(); return; }
+      if (stdout) chunks.push(chunk);
+    };
+    child.stdout?.on("data", chunk => capture(chunk, true));
+    child.stderr?.on("data", chunk => capture(chunk, false));
+    child.stdout?.on("error", stop);
+    child.stderr?.on("error", stop);
+    child.on("error", stop);
+    child.once("exit", (code, exitSignal) => {
+      status = code; signal = exitSignal;
+      // A descendant retaining a pipe must not turn successful exit into an unbounded wait.
+      boundCleanup();
+    });
+    child.once("close", (code, exitSignal) => { status = code; signal = exitSignal; finish(); });
+    deadline = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
   });
-  if (child.error || child.status !== 0 || child.signal !== null) {
-    throw new ClientStateProbeError(
-      child.pid, child.status, child.signal,
-      (child.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT",
-    );
+  try { return JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}"); }
+  catch {
+    throw new ClientStateProbeError(result.pid, result.status, result.signal, false);
   }
-  return JSON.parse(child.stdout.trim().split("\n").at(-1) ?? "{}");
 }
 
 function readyBody(protocol = 1, minimumClientProtocol = 1) {
@@ -63,7 +115,7 @@ function readyBody(protocol = 1, minimumClientProtocol = 1) {
 }
 
 describe("remote hub client boundary", () => {
-  test("runtimeRole=hub without client state reads as disconnected so the hub can start", () => {
+  test("runtimeRole=hub without client state reads as disconnected so the hub can start", async () => {
     // First clisu-oracle dogfood boot: the hub role refused 'ocx start' because the
     // client-state reader classified role=hub (no client block) as mismatched. A hub
     // is a server; without client state it is simply not a connected client.
@@ -74,16 +126,16 @@ describe("remote hub client boundary", () => {
     const home = mkdtempSync(join(tmpdir(), "ocx-hub-role-"));
     try {
       writeFileSync(join(home, "config.json"), JSON.stringify({ port: 10190, runtimeRole: "hub" }));
-      expect(readStateProbe(readScript, home).kind).toBe("disconnected");
+      expect((await readStateProbe(readScript, home)).kind).toBe("disconnected");
       // Hub role WITH a client block stays mismatched (the honest conflict).
       writeFileSync(join(home, "config.json"), JSON.stringify({ port: 10190, runtimeRole: "hub", client: { serverUrl: "https://hub.example.test" } }));
-      expect(readStateProbe(readScript, home).kind).toBe("mismatched");
+      expect((await readStateProbe(readScript, home)).kind).toBe("mismatched");
     } finally {
       removeTreeWithRetry(home);
     }
-  }, 35_000); // Two 15s child deadlines plus setup and cleanup, below the CI 60s cap.
+  }, 35_000); // Two 15s child deadlines plus bounded 1s cleanup each, below the CI 60s cap.
 
-  test("state probe kills a stalled child before parsing its output", () => {
+  test("state probe kills a stalled child before parsing its output", async () => {
     const home = mkdtempSync(join(tmpdir(), "ocx-state-probe-stall-"));
     const startedPath = join(home, "probe-started");
     const script = `
@@ -95,7 +147,7 @@ describe("remote hub client boundary", () => {
     try {
       const startedAt = performance.now();
       let failure: unknown;
-      try { readStateProbe(script, home, 2_000); }
+      try { await readStateProbe(script, home, 2_000); }
       catch (error) { failure = error; }
       expect(performance.now() - startedAt).toBeLessThan(10_000);
       expect(failure).toBeInstanceOf(ClientStateProbeError);
@@ -105,7 +157,7 @@ describe("remote hub client boundary", () => {
       expect(failure.signal).toBe("SIGKILL");
       expect(failure.message).not.toContain("not-json");
       expect(Number(readFileSync(startedPath, "utf8"))).toBe(failure.pid);
-      // spawnSync must reap this exact child, not merely return while it remains alive.
+      // The async probe must reap this exact child, not merely return while it remains alive.
       let exitCode: string | undefined;
       try { process.kill(failure.pid, 0); }
       catch (error) { exitCode = (error as NodeJS.ErrnoException).code; }
