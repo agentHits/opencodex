@@ -19,11 +19,17 @@ export interface AsideOperation {
 
 function operationRows(ctx: AsideProfileContext, profileId?: number): AsideOperation[] {
   const rows: AsideOperation[] = [];
+  const entriesByRoot = new Map<string, JournalEntry[]>();
   for (const profile of selectAsideProfiles(ctx, profileId)) {
     const scope = asideProfileScope(ctx, profile);
     const stores = scope.store.root === ctx.rootStore.root ? [scope.store] : [scope.store, ctx.rootStore];
     for (const store of stores) {
-      for (const entry of store.listOperations("aside", Number.MAX_SAFE_INTEGER)) {
+      let entries = entriesByRoot.get(store.root);
+      if (entries === undefined) {
+        entries = store.listOperations("aside", Number.MAX_SAFE_INTEGER);
+        entriesByRoot.set(store.root, entries);
+      }
+      for (const entry of entries) {
         if (entry.clientId === "aside" && entry.configPath === profile.configPath) {
           assertAsideSnapshotEntry(entry);
           if (typeof entry.at !== "string") throw new AsideProfileError("aside_operation_invalid", 409, "Aside operation timestamp is invalid");
@@ -131,7 +137,7 @@ function snapshotWasOwned(entry: JournalEntry, text: string | null, bound: Integ
   const record = entry.priorRecord;
   if (!record || text === null || record.fileFingerprint !== fingerprint(text)) return false;
   const state = classifyIntegration({
-    fileText: text, fileIsRegular: true, parsed: parseConfig(text, "json"), record,
+    fileText: text, fileIsRegular: true, parsed: parseConfig(text, EXPORT_CLIENTS.aside.format), record,
     contribution: EXPORT_CLIENTS.aside.buildContribution(exportContextOf(bound)),
     configPath: entry.configPath, clientId: "aside",
   }).state;
@@ -209,7 +215,7 @@ export function deleteAsideOperation(
     }
     await persistAsidePolicy(ctx);
     const stores = new Map(rows.filter(candidate => candidate.entry.opId === request.opId).map(candidate => [candidate.store.root, candidate.store]));
-    const tombstone = { tombstone: request.opId, at: new Date().toISOString(), by: request.principal ?? "management" };
+    const tombstone = { tombstone: request.opId, at: new Date(input.io?.now() ?? Date.now()).toISOString(), by: request.principal ?? "management" };
     // Retire every copy before pruning any snapshot; deduped history must not resurrect a source row.
     for (const store of stores.values()) store.retireOperation(tombstone);
     let snapshotRemoved = true;

@@ -52,7 +52,7 @@ disagree about which file is meant. Its managed block owns only
 stay untouched. Prime Agent reads `models.json` when a session starts, so start
 a new session after connecting it.
 
-Aside keeps a separate model catalog for each account-backed browser profile. OpenCodex lists
+Aside keeps a separate model catalog for each registered profile, including local profiles. OpenCodex lists
 all registered profiles, including local profiles, and can synchronize them together or control
 one profile at a time. Switching an integration never changes Aside's active account. A prior
 Aside connection enables all profiles by default; individual exclusions survive later syncs.

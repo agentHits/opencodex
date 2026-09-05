@@ -12,7 +12,7 @@ import {
 } from "../../integrations/aside-profile-journal";
 import type { WriteRefused } from "../../integrations/writer";
 import type { ManagementContext } from "./context";
-import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
+import { readManagementJsonBody, readOptionalManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import { jsonResponse } from "../auth-cors";
 
 export interface AsideProfileRouteOptions {
@@ -52,8 +52,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-async function readProfileBody(req: Request): Promise<unknown> {
-  try { return await readManagementJsonBody(req); }
+async function readProfileBody(req: Request, optional = false): Promise<unknown> {
+  try { return await (optional ? readOptionalManagementJsonBody(req) : readManagementJsonBody(req)); }
   catch (error) { rethrowManagementBodyTooLarge(error); throw new ProfileQueryError("invalid JSON body"); }
 }
 
@@ -117,7 +117,7 @@ export async function handleAsideProfileRoutes(
     if (url.pathname === "/api/client-integrations/aside/sync") {
       if (req.method !== "POST") return null;
       if (id !== undefined) throw new ProfileQueryError("Aside sync uses the server's selected profiles");
-      const body = await readProfileBody(req);
+      const body = await readProfileBody(req, true);
       if (!isObject(body) || Object.keys(body).length !== 0) throw new ProfileQueryError("Aside sync expects an empty object");
       const results = await refreshAsideProfiles(options.input());
       const ok = results.every(result => result.ok);

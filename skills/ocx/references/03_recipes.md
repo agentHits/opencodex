@@ -223,6 +223,6 @@ ocx integration client restore --client aside --profile 1 --op <opId>
 ```
 
 Read `profiles[]` to find numeric profile IDs. No profile selector means a bulk toggle; an
-explicit selector affects only that account-backed profile. Sync intent and actual file state
+explicit selector affects only that registered profile. Sync intent and actual file state
 are distinct, so inspect each result after a partial bulk operation. The CLI returns nonzero
 for a partial refusal. Never use the overwrite or drift flags merely to suppress a refusal.
