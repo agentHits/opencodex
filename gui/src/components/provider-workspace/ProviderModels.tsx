@@ -73,7 +73,8 @@ function ProviderModelInventory({ item, apiBase, availableModels, selectedModels
   const modelId = draft.trim();
   const duplicate = !!modelId && (known.includes(modelId) || encodedModelIdCollides(modelId, known));
   const visible = rows.filter(row => !row.disabled);
-  const filtered = visible.filter(row => `${row.id}\n${row.namespaced}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = visible.filter(row => [row.id, row.namespaced].some(value => value.toLowerCase().includes(normalizedQuery)));
   const labels = new Map<string, number>();
   for (const row of visible) labels.set(row.id, (labels.get(row.id) ?? 0) + 1);
 
