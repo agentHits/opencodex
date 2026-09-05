@@ -213,13 +213,21 @@ test("Fable 1M picker alias preserves native passthrough on both Messages endpoi
   const server = startServer(0);
   const pickerModel = "claude-ocx-native--claude-fable-5-1";
   try {
-    const messages = await fetch(new URL("/v1/messages", server.url), {
+    const messagesWithoutMarker = await fetch(new URL("/v1/messages", server.url), {
       method: "POST",
       headers: OAUTH_HEADERS,
       body: JSON.stringify({ ...claudeBody(), model: pickerModel }),
     });
-    expect(messages.status).toBe(200);
-    await messages.text();
+    expect(messagesWithoutMarker.status).toBe(200);
+    await messagesWithoutMarker.text();
+
+    const messagesWithMarker = await fetch(new URL("/v1/messages", server.url), {
+      method: "POST",
+      headers: OAUTH_HEADERS,
+      body: JSON.stringify({ ...claudeBody(), model: `${pickerModel}[1m]` }),
+    });
+    expect(messagesWithMarker.status).toBe(200);
+    await messagesWithMarker.text();
 
     const countTokens = await fetch(new URL("/v1/messages/count_tokens", server.url), {
       method: "POST",
@@ -229,9 +237,10 @@ test("Fable 1M picker alias preserves native passthrough on both Messages endpoi
     expect(countTokens.status).toBe(200);
     expect(await countTokens.json()).toEqual({ input_tokens: 4242 });
 
-    expect(captured).toHaveLength(2);
+    expect(captured).toHaveLength(3);
     expect(captured[0]!.body.model).toBe("claude-fable-5-1");
     expect(captured[1]!.body.model).toBe("claude-fable-5-1");
+    expect(captured[2]!.body.model).toBe("claude-fable-5-1");
   } finally {
     await server.stop(true);
     upstream.stop(true);

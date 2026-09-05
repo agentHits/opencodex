@@ -225,9 +225,9 @@ export function buildAnthropicModelInfos(
     out.push(info);
     // Anthropic passthrough guard (audit 021 #3): never auto-widen canonical claude
     // routes — only a genuine >=1M window earns the variant row there.
-    // Claude Code groups canonical Fable ids before it compares the [1m] marker. A
-    // reversible native alias keeps the 200K and 1M rows independently selectable;
-    // the Messages ingress restores the canonical Anthropic id before passthrough.
+    // Claude Code groups canonical Fable ids before it compares the [1m] marker. This
+    // reversible alias only separates picker families; it is not an OpenAI-native route.
+    // The Messages ingress restores the canonical Anthropic id before passthrough.
     const oneMillionSelector = idStyle === "readable"
       && m.provider === "anthropic"
       && listedModelId.startsWith("claude-fable-")
