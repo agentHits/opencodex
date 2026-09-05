@@ -6,7 +6,7 @@ import { bindTurnTerminationScope, rememberDeliveredFinalAnswer } from "../../sr
 import { conversationIdFromResponsesRequest } from "../../src/server/request-log-conversation";
 import type { OcxParsedRequest } from "../../src/types";
 import { recoverEncryptedAgentTask, resetAgentTaskRecoveryState, restoreCachedEncryptedAgentTasks } from "../../src/server/responses/agent-task-recovery";
-import { codexHeaders, encryptedInput, FERNET_TASK, SECOND_FERNET_TASK, originalFetch, recoverySse, routedConfig } from "../helpers/agent-task-recovery";
+import { codexHeaders, encryptedInput, fakeChatGptJwt, FERNET_TASK, SECOND_FERNET_TASK, originalFetch, recoverySse, routedConfig } from "../helpers/agent-task-recovery";
 afterEach(() => { globalThis.fetch = originalFetch; resetAgentTaskRecoveryState(); });
 
 test("replay reuses admitted recovery after a tool result without another network call", async () => {
@@ -38,6 +38,35 @@ test("replay does not recover unseen envelopes, other parents, or other callers"
   expect(calls).toBe(1);
 });
 
+test("a rotated token for the same account cannot reuse the previous credential's recovery", async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Response(recoverySse(calls === 1 ? "Original credential assignment." : "Rotated credential assignment."));
+  }) as typeof fetch;
+  const config = routedConfig({ enabled: true });
+  const exp = Math.floor(Date.now() / 1000) + 3_600;
+  const headers = codexHeaders("acct-caller");
+  headers.set("authorization", `Bearer ${fakeChatGptJwt("acct-caller", { exp })}`);
+  const rotatedHeaders = new Headers(headers);
+  rotatedHeaders.set("authorization", `Bearer ${fakeChatGptJwt("acct-caller", { exp: exp + 1 })}`);
+  const original = new Request("http://localhost/v1/responses", { headers });
+  const rotated = new Request("http://localhost/v1/responses", { headers: rotatedHeaders });
+  expect(await recoverEncryptedAgentTask(original, encryptedInput(), {}, config)).toBe(true);
+  const missed = encryptedInput();
+  expect(restoreCachedEncryptedAgentTasks(rotated, missed, config)).toBe(0);
+  expect(missed).toEqual(encryptedInput());
+  expect(calls).toBe(1);
+  const replay = encryptedInput();
+  expect(restoreCachedEncryptedAgentTasks(original, replay, config)).toBe(1);
+  expect(JSON.stringify(replay)).toContain("Original credential assignment.");
+  // The rotated credential is valid, but must perform its own admitted recovery.
+  const fresh = encryptedInput();
+  expect(await recoverEncryptedAgentTask(rotated, fresh, {}, config)).toBe(true);
+  expect(JSON.stringify(fresh)).toContain("Rotated credential assignment.");
+  expect(calls).toBe(2);
+});
+
 test("Responses handler restores a cached task in a continued child turn", async () => {
   const { post, providerResponse } = await import("../helpers/agent-task-recovery");
   let recoveries = 0;
@@ -51,8 +80,9 @@ test("Responses handler restores a cached task in a continued child turn", async
     return providerResponse();
   }) as typeof fetch;
   const config = routedConfig({ enabled: true });
-  expect((await post(config, "xai/grok-4.5", encryptedInput(), codexHeaders())).status).toBe(200);
-  expect((await post(config, "xai/grok-4.5", [...encryptedInput(), { type: "message", role: "user", content: "Continue the original task." }], codexHeaders())).status).toBe(200);
+  const headers = codexHeaders();
+  expect((await post(config, "xai/grok-4.5", encryptedInput(), headers)).status).toBe(200);
+  expect((await post(config, "xai/grok-4.5", [...encryptedInput(), { type: "message", role: "user", content: "Continue the original task." }], headers)).status).toBe(200);
   expect(recoveries).toBe(1);
   expect(bodies).toHaveLength(2);
   expect(bodies[1]).toContain("Read nonce.txt exactly.");
@@ -77,10 +107,11 @@ test("MESSAGE recovery reaches the provider and survives tool-result replay", as
     return providerResponse();
   }) as typeof fetch;
   const config = routedConfig({ enabled: true });
-  expect((await post(config, "xai/grok-4.5", encryptedMessage(), codexHeaders())).status).toBe(200);
+  const headers = codexHeaders();
+  expect((await post(config, "xai/grok-4.5", encryptedMessage(), headers)).status).toBe(200);
   expect((await post(config, "xai/grok-4.5", [...encryptedMessage(), {
     type: "message", role: "user", content: "Continue after the tool result.",
-  }], codexHeaders())).status).toBe(200);
+  }], headers)).status).toBe(200);
   expect(recoveries).toBe(1);
   expect(bodies).toHaveLength(2);
   for (const body of bodies) {
