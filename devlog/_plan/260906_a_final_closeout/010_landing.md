@@ -1,0 +1,10 @@
+# Final actions and acceptance
+
+1. Refresh each remaining PR head/base/review threads and its retained full CI. Match all actual producer jobs, including every Windows shard, both macOS shards and unsharded control, Linux shards, types/privacy and smokes. Preserve real failed prior runs and their tested repairs.
+2. Retarget each child before the parent's admin merge because repository auto-deletion is enabled. Use merge commits and match-head guards; preserve original author commits and co-author trailers. Verify each landing SHA is an ancestor of freshly fetched dev.
+3. Immediately close each superseded original after checking it did not gain unique new changes. Source3679's rebase08d25 has verified identical patch; other originals are refreshed normally. Source3672/3679/3568 are already closed. Source3581/3671 close after their landing. Related3661 remains open for its explicitly excluded residual scope.
+4. Merge latest dev into this own closeout branch only after code landings. Move only completed A unit directories from devlog/_plan to devlog/_fin, preserving historical contents. Add a concise public outcome table with source/carry/merge/CI/author proof and scope limitations. Never copy ignored logs or private investigations.
+5. Publish a docs-only closeout PR using the repository template. Verify its changed paths, privacy and metadata; admin merge when checks allow. Runtime/tests/dependencies must be byte-identical to the last code merge. Existing code CI may prove that identical runtime tree; documentation metadata alone is not runtime test evidence.
+6. Require final dev push-CI producer success on the last code head, verify any subsequent docs-only difference and final ancestry, and refresh all source/carry states. Complete the landing criterion and goal only after the durable ledger is complete and the FSM has closed. No release, deployment, service or account changes.
+
+Independent final audit checks this plan and later actual evidence. Any new valid implementation or CI finding returns to a narrowly scoped repair; it is not discarded to finish the goal.
