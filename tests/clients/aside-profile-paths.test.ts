@@ -43,7 +43,7 @@ describe("Aside profile manifest", () => {
     manifest(root, {
       currentAccountId: 1,
       accounts: accounts.map(account => ({
-        ...account, session: { token: "fixture-private-value" }, email: "fixture@example.invalid", userId: "private-user",
+        ...account, session: { token: "fixture-private-value" }, email: "fixture@example.test", userId: "private-user",
       })),
       profileAccountBindings: [{ accountId: 0, profilePath: join(home, "not-a-target") }],
     });
