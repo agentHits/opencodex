@@ -282,7 +282,7 @@ test("native Responses JSON/SSE and replay share the original function schema re
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ model: "fixture/grok-probe", stream, input: [{ role: "user", content: "synthetic" }], tools, ...extra }),
       });
-      const response = await handleResponses(request(), config);
+      const response = await handleResponses(request(), config, { model: "", provider: "" });
       expect(response.status).toBe(200);
       const raw = await response.text();
       if (stream) {
@@ -293,7 +293,7 @@ test("native Responses JSON/SSE and replay share the original function schema re
       } else expect(JSON.parse(raw).output[0].arguments).toBe(expected);
       const previous = activeId;
       activeId = `resp_fn_followup_${crypto.randomUUID()}`;
-      const followup = await handleResponses(request({ previous_response_id: previous, input: [{ type: "function_call_output", call_id: "call_wait", output: "done" }] }), config);
+      const followup = await handleResponses(request({ previous_response_id: previous, input: [{ type: "function_call_output", call_id: "call_wait", output: "done" }] }), config, { model: "", provider: "" });
       await followup.text();
       expect(captured?.input?.find(item => item.type === "function_call" && item.call_id === "call_wait")?.arguments).toBe(expected);
     }
