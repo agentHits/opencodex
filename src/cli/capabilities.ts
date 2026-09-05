@@ -557,7 +557,10 @@ export const CAPABILITIES: readonly Capability[] = [
     command: ["sync"],
     summary: "Synchronize client catalogs, including Aside profiles through the running server's mutation owner.",
     routes: [{ method: "POST", path: "/api/client-integrations/aside/sync" }],
-    flags: [],
+    flags: [
+      { name: "--restart-codex", value: "boolean", summary: "Restart Codex app-servers after a catalog or cache write." },
+      { name: "--restart-desktop-app", value: "boolean", summary: "Restart the Codex desktop app after a catalog or cache write." },
+    ],
     mutates: true,
     json: "none",
     details: ["The Aside refresh uses the live server; other catalog synchronization also performs local work."],

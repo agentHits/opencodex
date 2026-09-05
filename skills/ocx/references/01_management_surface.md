@@ -619,6 +619,11 @@ Synchronize client catalogs, including Aside profiles through the running server
 |---|---|
 | POST | `/api/client-integrations/aside/sync` |
 
+| Flag | Value | Meaning |
+|---|---|---|
+| `--restart-codex` | boolean | Restart Codex app-servers after a catalog or cache write. |
+| `--restart-desktop-app` | boolean | Restart the Codex desktop app after a catalog or cache write. |
+
 JSON mode: `none`.
 
 - The Aside refresh uses the live server; other catalog synchronization also performs local work.

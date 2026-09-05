@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { handleManagementAPI } from "../../src/server/management-api";
+import { MANAGEMENT_JSON_BODY_MAX_BYTES } from "../../src/server/management/body";
 import { setIntegrationMutationFlightTestHooks, setIntegrationPathTestHooks } from "../../src/server/management/integration-routes";
 import { createIntegrationStateStore, type IntegrationStateStore } from "../../src/integrations/store";
 import { applyIntegration } from "../../src/integrations/writer";
@@ -58,10 +59,13 @@ afterEach(() => {
 function path(id: number): string { return join(home, ".aside", "u", String(id), "models.json"); }
 function document(id: number) { return JSON.parse(readFileSync(path(id), "utf8")); }
 async function api(pathname: string, method = "GET", body?: unknown) {
+  return rawApi(pathname, method, body === undefined ? undefined : JSON.stringify(body));
+}
+async function rawApi(pathname: string, method: string, body?: string) {
   const url = new URL(`http://127.0.0.1:10100${pathname}`);
   const response = await handleManagementAPI(new Request(url, {
     method, headers: { Host: url.host, "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body === undefined ? {} : { body }),
   }), url, config, {
     saveConfigPreservingClaudeCode: value => { saved = structuredClone(value); },
     createManagementConvergeCodex: catalogConvergenceFactory(),
@@ -70,6 +74,94 @@ async function api(pathname: string, method = "GET", body?: unknown) {
   if (!response) throw new Error("route missing");
   return response;
 }
+
+async function prepareAsideSync(): Promise<void> {
+  config.providers.fixture!.selectedModels = ["one"];
+  const enabled = await api("/api/client-integrations/aside/profiles", "PUT", { enabled: true });
+  expect(enabled.status).toBe(200);
+  expect(await enabled.json()).toMatchObject({ ok: true });
+  for (const id of [0, 1, 2]) expect(fixtureModelIds(id)).toEqual(["fixture/one"]);
+  // Change the runtime selection without triggering a different endpoint's sync.
+  config.providers.fixture!.selectedModels = ["two"];
+}
+
+function fixtureModelIds(id: number): string[] {
+  return document(id).providers.opencodex.models
+    .filter((model: { id: string }) => model.id.startsWith("fixture/"))
+    .map((model: { id: string }) => model.id);
+}
+
+test.each([undefined, "{}"])("Aside sync accepts body %j and refreshes every enabled profile with HTTP 200", async body => {
+  await prepareAsideSync();
+  const response = await rawApi("/api/client-integrations/aside/sync", "POST", body);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    ok: true, clientId: "aside",
+    results: [0, 1, 2].map(profileId => ({ client: "aside", profileId, ok: true, changed: true })),
+  });
+  for (const id of [0, 1, 2]) {
+    expect(fixtureModelIds(id)).toEqual(["fixture/two"]);
+    expect(document(id).theme).toBe("keep");
+    expect(document(id).providers.personal).toEqual({ models: [] });
+  }
+});
+
+test("bodyless Aside sync returns HTTP 207 for one conflict while refreshing its siblings", async () => {
+  await prepareAsideSync();
+  const edited = document(1);
+  edited.providers.opencodex.baseUrl = "https://user-edit.example.test/v1";
+  const editedBytes = JSON.stringify(edited);
+  writeFileSync(path(1), editedBytes);
+  const response = await api("/api/client-integrations/aside/sync", "POST");
+  expect(response.status).toBe(207);
+  expect(await response.json()).toMatchObject({
+    ok: false, clientId: "aside", results: [
+      { client: "aside", profileId: 0, ok: true, changed: true },
+      { client: "aside", profileId: 1, ok: false, state: "conflict", refusalReason: "conflict" },
+      { client: "aside", profileId: 2, ok: true, changed: true },
+    ],
+  });
+  expect(readFileSync(path(1), "utf8")).toBe(editedBytes);
+  for (const id of [0, 2]) expect(fixtureModelIds(id)).toEqual(["fixture/two"]);
+  expect(await (await api("/api/client-integrations/aside/profiles/1")).json())
+    .toMatchObject({ enabled: true, state: "conflict" });
+});
+
+test.each(['{"enabled":true}', '{"profile":1}', '{"overwriteConflict":true}', "[]", "null", "true", "{"])(
+  "Aside sync rejects nonempty options or invalid JSON %s before mutation", async body => {
+    const before = [0, 1, 2].map(id => readFileSync(path(id), "utf8"));
+    const response = await rawApi("/api/client-integrations/aside/sync", "POST", body);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "invalid_aside_profile", clientId: "aside" });
+    expect([0, 1, 2].map(id => readFileSync(path(id), "utf8"))).toEqual(before);
+    expect(saved).toBeUndefined();
+    expect(store.listOperations("aside")).toEqual([]);
+  },
+);
+
+test.each(["?profile=0", "?profile=invalid", "?client=pi"])("bodyless Aside sync rejects selector %s", async selector => {
+  expect((await api(`/api/client-integrations/aside/sync${selector}`, "POST")).status).toBe(400);
+  expect(saved).toBeUndefined();
+  expect(store.listOperations("aside")).toEqual([]);
+});
+
+test("Aside sync retains the JSON body size limit before accepting an empty-body fallback", async () => {
+  const response = await rawApi("/api/client-integrations/aside/sync", "POST", " ".repeat(MANAGEMENT_JSON_BODY_MAX_BYTES + 1));
+  expect(response.status).toBe(413);
+  expect(await response.json()).toMatchObject({ error: "request body too large" });
+  expect(saved).toBeUndefined();
+  expect(store.listOperations("aside")).toEqual([]);
+});
+
+test.each(["/api/client-integrations/aside/profiles", "/api/client-integrations/aside/profiles/1"])(
+  "Aside PUT still requires its enabled body at %s", async pathname => {
+    const before = [0, 1, 2].map(id => readFileSync(path(id), "utf8"));
+    expect((await api(pathname, "PUT")).status).toBe(400);
+    expect((await api(pathname, "PUT", {})).status).toBe(400);
+    expect([0, 1, 2].map(id => readFileSync(path(id), "utf8"))).toEqual(before);
+    expect(saved).toBeUndefined();
+  },
+);
 
 test("legacy connection refreshes all profiles, and an individual off survives selection refresh and reload", async () => {
   expect(applyIntegration({ clientId: "aside", config, port: 10100, store, env, home,
