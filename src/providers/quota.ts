@@ -1568,7 +1568,10 @@ function hydrateAccountQuotaCache(): void {
   if (diskHydrated) return;
   diskHydrated = true;
   for (const [key, quota] of readPersistedAccountQuotas()) {
-    if (!accountQuotaCache.has(key)) accountQuotaCache.set(key, { ts: quota.updatedAt, quota });
+    // Disk stores observation time, not the Anthropic usage probe's clock.
+    if (!accountQuotaCache.has(key)) {
+      accountQuotaCache.set(key, { ts: key.startsWith("anthropic\u0000") ? 0 : quota.updatedAt, quota });
+    }
   }
 }
 
@@ -1640,6 +1643,66 @@ export function setCachedProviderAccountQuotaForTests(
     return;
   }
   accountQuotaCache.set(key, { ts: Date.now(), quota });
+}
+
+/** Unified headers report utilization fractions and epoch-second reset times. */
+function anthropicHeaderResetAt(value: string | null): number | undefined {
+  const seconds = toFiniteNumber(value);
+  if (seconds === undefined || seconds <= 0) return undefined;
+  const timestamp = seconds * 1000;
+  return Number.isFinite(new Date(timestamp).getTime()) ? timestamp : undefined;
+}
+
+export function parseAnthropicRateLimitHeaders(headers: Headers): ProviderQuota | null {
+  const fiveHourPercent = normalizeUtilizationFraction(headers.get("anthropic-ratelimit-unified-5h-utilization"));
+  const weeklyPercent = normalizeUtilizationFraction(headers.get("anthropic-ratelimit-unified-7d-utilization"));
+  if (fiveHourPercent === undefined && weeklyPercent === undefined) return null;
+  const fiveHourResetAt = anthropicHeaderResetAt(headers.get("anthropic-ratelimit-unified-5h-reset"));
+  const weeklyResetAt = anthropicHeaderResetAt(headers.get("anthropic-ratelimit-unified-7d-reset"));
+  return {
+    ...(fiveHourPercent !== undefined ? { fiveHourPercent } : {}),
+    ...(fiveHourResetAt !== undefined ? { fiveHourResetAt } : {}),
+    ...(weeklyPercent !== undefined ? { weeklyPercent } : {}),
+    ...(weeklyResetAt !== undefined ? { weeklyResetAt } : {}),
+    updatedAt: Date.now(),
+  };
+}
+
+/** Reject unknown scales; round fraction conversion for persisted/displayed percentages. */
+function normalizeUtilizationFraction(value: string | null): number | undefined {
+  const numeric = toFiniteNumber(value);
+  if (numeric === undefined || numeric < 0 || numeric > 1) return undefined;
+  return Math.round(numeric * 10_000) / 100;
+}
+
+/**
+ * Merge serving-account observations without advancing the usage probe's clock or
+ * erasing model-specific windows. The caller owns credential attribution; this guard
+ * prevents a retired account key from being revived by an older config generation.
+ */
+export function recordAnthropicAccountQuotaFromHeaders(
+  accountId: string,
+  headers: Headers,
+  writerGeneration: number,
+): void {
+  if (!accountId) return;
+  const observed = parseAnthropicRateLimitHeaders(headers);
+  if (!observed) return;
+  const key = accountCacheKey("anthropic", accountId);
+  if (!mayCommitAccountQuotaKey(key, writerGeneration)) return;
+  // Hydrate before writing, for the same reason `recordPassiveAccountQuota` does: this write
+  // arrives unprompted from the request path, and `persistAccountQuotaCache` serializes the
+  // whole map. Landing before any reader has hydrated would persist this single row and erase
+  // every other provider's saved row.
+  hydrateAccountQuotaCache();
+  const previous = accountQuotaCache.get(key);
+  accountQuotaCache.set(key, {
+    ...previous,
+    // Headers do not prove that the last usage probe succeeded.
+    ts: previous?.ts ?? 0,
+    quota: { ...(previous?.quota ?? {}), ...observed },
+  });
+  persistAccountQuotaCache();
 }
 
 /**
@@ -1714,7 +1777,11 @@ export function readPassiveProviderAccountQuotas(provider: string): ProviderAcco
 export function sweepExpiredProviderAccountQuotaRows(now = Date.now()): number {
   let removed = 0;
   for (const [key, entry] of accountQuotaCache) {
-    if (entry.ts + ACCOUNT_QUOTA_TTL_MS > now) continue;
+    // Anthropic observations extend retention, never the usage probe's eligibility clock.
+    const retainedAt = key.startsWith("anthropic\u0000")
+      ? Math.max(entry.ts, entry.quota?.updatedAt ?? 0)
+      : entry.ts;
+    if (retainedAt + ACCOUNT_QUOTA_TTL_MS > now) continue;
     accountQuotaCache.delete(key);
     removed += 1;
   }
@@ -1907,6 +1974,7 @@ async function fetchAccountQuota(
 ): Promise<AccountQuotaCacheEntry> {
   if (!supportsPerAccountQuota(provider)) return { ts: Date.now(), quota: null, unavailable: true };
   if (explicitAccountReader(provider)) return fetchExplicitAccountQuota(provider, accountId, forceRefresh, providerConfig);
+  if (provider === "anthropic") hydrateAccountQuotaCache();
   const key = accountCacheKey(provider, accountId);
   const writerGeneration = captureConfigGeneration();
   const cached = accountQuotaCache.get(key);
@@ -1947,7 +2015,8 @@ async function fetchAccountQuota(
         // negative-cache instead of re-probing on every GUI poll.
         const entry: AccountQuotaCacheEntry = {
           ts: Date.now(),
-          quota: cached?.quota ?? null,
+          // Settle once for all joiners against observations committed during the probe.
+          quota: (provider === "anthropic" ? accountQuotaCache.get(key)?.quota : cached?.quota) ?? null,
           unavailable: true,
         };
         if (mayCommitAccountQuotaKey(key, writerGeneration)) {
@@ -1969,7 +2038,7 @@ async function fetchAccountQuota(
     } catch {
       const entry: AccountQuotaCacheEntry = {
         ts: Date.now(),
-        quota: cached?.quota ?? null,
+        quota: (provider === "anthropic" ? accountQuotaCache.get(key)?.quota : cached?.quota) ?? null,
         unavailable: true,
       };
       if (mayCommitAccountQuotaKey(key, writerGeneration)) {
