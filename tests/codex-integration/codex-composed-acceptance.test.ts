@@ -139,28 +139,34 @@ class Fixture {
     for (const path of [this.codex, this.ocx, this.homeA, this.homeB, this.userprofileA, this.userprofileB, this.runtime, this.provider]) {
       mkdirSync(path, { recursive: true, mode: 0o700 });
     }
-    if (process.platform === "win32") {
-      // Fresh child profiles otherwise repeatedly rebuild PowerShell's command cache.
-      // Seed one owned copy per fixture; children must never update the parent cache.
-      const cache = join(this.root, "module-analysis-cache");
-      this.powerShellCacheEnv.PSModuleAnalysisCachePath = cache;
-      const source = Object.entries(process.env).find(([key]) =>
-        key.toLowerCase() === "psmoduleanalysiscachepath")?.[1];
-      if (source && isAbsolute(source)) {
-        try {
-          const before = lstatSync(source);
-          if (before.isFile() && !before.isSymbolicLink()) {
-            copyFileSync(source, cache);
-            if (lstatSync(cache).size !== before.size) rmSync(cache, { force: true });
+    try {
+      if (process.platform === "win32") {
+        // Fresh child profiles otherwise repeatedly rebuild PowerShell's command cache.
+        // Seed one owned copy per fixture; children must never update the parent cache.
+        const cache = join(this.root, "module-analysis-cache");
+        this.powerShellCacheEnv.PSModuleAnalysisCachePath = cache;
+        const source = Object.entries(process.env).find(([key]) =>
+          key.toLowerCase() === "psmoduleanalysiscachepath")?.[1];
+        if (source && isAbsolute(source)) {
+          try {
+            const before = lstatSync(source);
+            if (before.isFile() && !before.isSymbolicLink()) {
+              copyFileSync(source, cache);
+              if (lstatSync(cache).size !== before.size) rmSync(cache, { force: true });
+            }
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT" && code !== "ESTALE") {
+              throw new Error("Composed fixture could not read or copy the PowerShell module cache");
+            }
+            rmSync(cache, { force: true });
           }
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code !== "ENOENT" && code !== "ESTALE") {
-            throw new Error("Composed fixture could not read or copy the PowerShell module cache");
-          }
-          rmSync(cache, { force: true });
         }
       }
+    } catch (error) {
+      // Construction precedes registration in roots, so afterEach cannot own this cleanup.
+      rmSync(this.root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      throw error;
     }
     this.lockPath = resolveCodexCoordinatorDatabasePath(resolveEffectiveUserIdentity(), realpathSync.native(this.codex));
     this.lockAllowlist = [this.lockPath, `${this.lockPath}-journal`, `${this.lockPath}-wal`, `${this.lockPath}-shm`];

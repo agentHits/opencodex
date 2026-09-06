@@ -23,3 +23,9 @@ The copied-cache whole composed file also passed (7 pass, 1 pre-existing skip, 0
 MODIFY tests/codex-integration/codex-composed-acceptance.test.ts only: seed a Windows-only constructor-owned module cache using the existing Desktop fixture policy, outside the Codex manifest root, and pass only that owned destination to children. Preserve HOME/USERPROFILE variants, real SID/service evidence, coordinator paths, provider hold/release, cleanup, all assertions and all deadlines. No product, workflow, or identity-policy changes.
 
 The isolated diagnostic workflows are not delivery changes. Independent source/security review and a fresh full cross-platform run of the combined latest-dev integration head remain required. Local suites/typecheck/build are NOT RUN per instruction. This support layer is separate from the four product PRs.
+
+## Follow-up source review
+
+External review of #3808 identified a construction-failure cleanup gap: the fixture is registered only after its constructor returns. The cache-setup block now removes its own temporary root with bounded retries before rethrowing. Parent cache sources and shared coordinator paths remain outside that cleanup. Independent source review passed; final remote verification will include the delta.
+
+Run 34054412656 passed Windows composed shard 2, including B at 8.511 seconds. It failed a different competing-OFF fixture in shard 6 before the flip started; this does not negate the cache-control result and is tracked separately.
