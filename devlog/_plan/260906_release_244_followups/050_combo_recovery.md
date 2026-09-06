@@ -20,8 +20,8 @@ CodeRabbit HTTPS-only suggestion is assessed against existing http provider poli
 
 ## Current composition and cancellation amendment
 
-The lower stack PR is #3753 at b73809f7e (full CI34018758265 and independent
-security/final reviews passed). Source #3706 remains c311e9598; its source-only
+The lower stack PR #3753 is merged as b9f2acc82 from cd6d4d346 (full
+CI34020474748 and independent security/final reviews passed). Source #3706 remains c311e9598; its source-only
 patch applies cleanly to this foundation. Preserve every opaque preflight and
 client-reader repair; only handleComboResponses changes in core.
 
@@ -47,3 +47,8 @@ existing configured-provider contract without evidence of a distinct boundary.
 Also update the English guides/sub-agent-surface.md paragraph that currently says
 combo routing is unchanged and native-only. The configuration pages alone would
 leave that guide contradicting the newly reachable opt-in routed recovery path.
+
+The parent now also preserves native preflight read resets/cancellation and
+tee/eager failed terminal accounting, including semantic streamAborted parity.
+The combo delta remains unchanged through that cascade; a fresh composition
+review confirmed the same patch and the complete child runtime passed CI34020475627.
