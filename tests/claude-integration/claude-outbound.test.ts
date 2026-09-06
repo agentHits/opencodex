@@ -342,6 +342,90 @@ describe("claude outbound SSE", () => {
     expect(reasoningReleased).toBe(reasoningCommitted);
   });
 
+  for (const terminal of ["eof", "failed", "completed", "incomplete"] as const) {
+    for (const buffered of [false, true]) {
+      test(`closure-only reasoning overflow: ${terminal}, ${buffered ? "collector" : "stream"}`, async () => {
+        // All small deltas fit, including replacement reservations. Closing needs
+        // the retained 32 KiB text PLUS its base64 signature frame. For the
+        // collector allow its additional retained text in the same real budget.
+        const budget = createTestTranslatorBudget({ maxTurnBytes: (buffered ? 102 : 70) * 1024 });
+        let reasoningBytes = 0;
+        let maxReasoningBytes = 0;
+        let reasoningBytesAtOverflow = -1;
+        const trackedBudget: TranslatorBudget = {
+          openCall: id => budget.openCall(id),
+          closeCall: id => budget.closeCall(id),
+          reserveTransient(bytes, scope) {
+            let reservation: ReturnType<TranslatorBudget["reserveTransient"]>;
+            try { reservation = budget.reserveTransient(bytes, scope); }
+            catch (error) { reasoningBytesAtOverflow = reasoningBytes; throw error; }
+            return {
+              commitRetained() {
+                reservation.commitRetained();
+                if (scope.kind === "reasoning") {
+                  reasoningBytes += bytes;
+                  maxReasoningBytes = Math.max(maxReasoningBytes, reasoningBytes);
+                }
+              },
+              release: () => reservation.release(),
+            };
+          },
+          chargeRetained: (bytes, scope) => budget.chargeRetained(bytes, scope),
+          releaseRetained(bytes, scope) {
+            if (scope.kind === "reasoning") reasoningBytes -= bytes;
+            budget.releaseRetained(bytes, scope);
+          },
+          observeAcceptedRequestCopy: bytes => budget.observeAcceptedRequestCopy(bytes),
+          observeExternallyCapped: (kind, bytes) => budget.observeExternallyCapped(kind, bytes),
+          snapshot: () => budget.snapshot(),
+          dispose: () => budget.dispose(),
+        };
+        const text = "x".repeat(32 * 1024);
+        const frames = Array.from({ length: 128 }, () => sse("response.reasoning_text.delta", {
+          item_id: "rs_closure", content_index: 0, delta: text.slice(0, 256),
+        }));
+        if (terminal !== "eof") {
+          frames.push(sse(`response.${terminal}`, { response: terminal === "failed"
+            ? { error: { message: "upstream failure", status: 502 } }
+            : terminal === "incomplete"
+              ? { status: "incomplete", incomplete_details: { reason: "max_output_tokens" }, usage: {} }
+              : { status: "completed", usage: {} } }));
+          // Neither a repeated completion nor a later failure may add a terminal.
+          frames.push(sse("response.completed", { response: { status: "completed", usage: {} } }));
+          frames.push(sse("response.failed", { response: { error: { message: "late failure" } } }));
+        }
+        const stream = responsesSseToAnthropicSse(streamFromChunks(frames), "m", {
+          translatorBudget: trackedBudget, pingIntervalMs: 0,
+        });
+        if (buffered) {
+          const message = await collectAnthropicMessage(stream, "m", trackedBudget);
+          expect(message).toMatchObject({ type: "error", error: {
+            type: "request_too_large", code: "translation_buffer_limit",
+          } });
+          expect(message).not.toHaveProperty("content");
+          expect(message).not.toHaveProperty("stop_reason");
+        } else {
+          const events = await collectEvents(stream);
+          const deltas = events.filter(event => event.data.delta?.type === "thinking_delta");
+          expect(deltas.map(event => event.data.delta.thinking).join("")).toBe(text);
+          expect(events.filter(event => event.name === "error")).toHaveLength(1);
+          expect(events.at(-1)).toMatchObject({ name: "error", data: { type: "error", error: {
+            type: "request_too_large", code: "translation_buffer_limit",
+          } } });
+          expect(JSON.stringify(events.at(-1)).length).toBeLessThan(1024);
+          expect(events.some(event => event.name === "message_stop" || event.name === "message_delta" || event.name === "content_block_stop")).toBe(false);
+          expect(events.some(event => event.data.delta?.type === "signature_delta")).toBe(false);
+        }
+        // These prove failure happened after all text was retained, not while
+        // ingesting a delta, and the error path released the thinking reservation.
+        expect(reasoningBytesAtOverflow).toBe(text.length);
+        expect(maxReasoningBytes).toBeGreaterThanOrEqual(text.length);
+        expect(reasoningBytes).toBe(0);
+        expect(budget.snapshot().overflows).toBe(1);
+      });
+    }
+  }
+
   test("same-part deltas and index-free reasoning frames never get a separator", async () => {
     const samePart = [
       sse("response.created", { response: { id: "resp_1", status: "in_progress" } }),

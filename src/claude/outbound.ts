@@ -234,6 +234,9 @@ export function responsesSseToAnthropicSse(
   let bufferBytes = 0;
   let started = false;
   let terminated = false;
+  // Starting termination can still throw while closing a block or emitting its
+  // terminal frame. Only a delivered terminal forbids the bounded overflow error.
+  let terminalDelivered = false;
   let cancelled = false;
   let blockIndex = 0;
   let open: OpenBlock | null = null;
@@ -338,6 +341,7 @@ export function responsesSseToAnthropicSse(
           usage: anthropicUsage(usage, webSearchRequests),
         });
         emit("message_stop", { type: "message_stop" });
+        terminalDelivered = true;
       };
       // upstreamDerived: transient upstream statuses become overloaded_error so the
       // Anthropic-SDK client retries with backoff; proxy-internal exceptions stay
@@ -346,12 +350,15 @@ export function responsesSseToAnthropicSse(
       // resets reach the reader catch (no failed-tail relay) and stay api_error —
       // same as today, deliberate residual.
       const fail = (status: number, message: string, upstreamDerived = false, code?: string) => {
-        if (terminated) return;
+        // finish/fail sets terminated before closeOpenBlock. A closure-time
+        // allocation failure must still emit one error, without retrying closure.
+        if (terminated && (code !== "translation_buffer_limit" || terminalDelivered)) return;
         terminated = true;
         if (code === "translation_buffer_limit") {
           releaseThinkingBuffer(open);
           if (open?.callId) translatorBudget.closeCall(open.callId);
           open = null;
+          terminalDelivered = true;
           // No normal close frames are valid after overflow. Emit exactly one bounded
           // typed terminal without consulting the exhausted budget.
           controller.enqueue(encoder.encode(sseFrame("error", anthropicErrorBody(
@@ -368,10 +375,12 @@ export function responsesSseToAnthropicSse(
           // Do not manufacture message_start before the terminal error. Earlier transport-only
           // pings remain valid and do not turn the failure into a partial message.
           emit("error", anthropicErrorBody(status, message, type, code));
+          terminalDelivered = true;
           return;
         }
         closeOpenBlock();
         emit("error", anthropicErrorBody(status, message, type, code));
+        terminalDelivered = true;
       };
 
       const handleFrame = (eventName: string, data: Rec) => {
@@ -981,9 +990,10 @@ export async function collectAnthropicMessage(
   } finally {
     reader.releaseLock();
   }
-  closeBlock();
-
+  // Error is authoritative. In particular, do not allocate another copy of an
+  // unfinished thinking block after the translator reported closure overflow.
   if (error) return error;
+  closeBlock();
   return {
     id: `msg_${uuid()}`,
     type: "message",
