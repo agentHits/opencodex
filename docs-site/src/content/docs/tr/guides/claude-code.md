@@ -362,7 +362,14 @@ slug'lar karma forma geri döner.
 çözülür → Desktop karma takma adı çözülür → `modelMap` tam eşleşmesi → tarih
 kaldırılmış eşleşme (`-20250514` kaldırılır) → doğrudan geçiş.
 
-Çözümlenemeyen yönetilen Desktop tarih/hash takma adları, hem Messages hem count-tokens için tarih kaldırma veya yedek rotadan önce HTTP 400 ile reddedilir. Tam `modelMap` girdileri ve tanınan gerçek Anthropic model kimlikleri olağan şekilde işlenir.
+Çözümlenemeyen tarih biçimli bir Desktop kimliği, keşifte yer almayan gerçek bir yerel model
+kimliği de olabilir. Mevcut bilgi kimliği çözmeye yetmiyorsa Messages ve count-tokens sabit
+`desktop_model_mapping_unavailable` hatasıyla HTTP 503 döndürür; bu, modelin geçersiz olduğunu kanıtlamaz.
+Bilinmeyen eski hash takma adları HTTP 400 ile reddedilmeye devam eder. Her iki durumda da tarih
+kaldırılmaz ve başka rotaya geçilmez. Bilinen kimlikler, kayıtlı eşlemeler, tam `modelMap`
+eşleşmeleri ve tanınan gerçek yerel kimlikler aynı şekilde işlenir. Yeniden denemeden önce model
+keşfini yenileyin veya bağlı hub profilini yeniden uygulayın; yalnızca tekrar denemek çözümü
+garanti etmez.
 
 Her girdi, `gemini-3-pro (gemini)` gibi bir görünen adın yanı sıra resmi
 `ModelInfo` biçiminde tam model yeteneklerini (akıl yürütme çabası merdiveni,
@@ -483,7 +490,14 @@ yeniden yazar:
 Arama sırası: keşif takma adı → tam kimlik → tarih soneki kaldırılmış kimlik
 (`-20250514` kaldırılır) → doğrudan geçiş.
 
-Çözümlenemeyen yönetilen Desktop tarih/hash takma adları, hem Messages hem count-tokens için tarih kaldırma veya yedek rotadan önce HTTP 400 ile reddedilir. Tam `modelMap` girdileri ve tanınan gerçek Anthropic model kimlikleri olağan şekilde işlenir.
+Çözümlenemeyen tarih biçimli bir Desktop kimliği, keşifte yer almayan gerçek bir yerel model
+kimliği de olabilir. Mevcut bilgi kimliği çözmeye yetmiyorsa Messages ve count-tokens sabit
+`desktop_model_mapping_unavailable` hatasıyla HTTP 503 döndürür; bu, modelin geçersiz olduğunu kanıtlamaz.
+Bilinmeyen eski hash takma adları HTTP 400 ile reddedilmeye devam eder. Her iki durumda da tarih
+kaldırılmaz ve başka rotaya geçilmez. Bilinen kimlikler, kayıtlı eşlemeler, tam `modelMap`
+eşleşmeleri ve tanınan gerçek yerel kimlikler aynı şekilde işlenir. Yeniden denemeden önce model
+keşfini yenileyin veya bağlı hub profilini yeniden uygulayın; yalnızca tekrar denemek çözümü
+garanti etmez.
 
 ## Sidecar matrisi: web araması ve görsel anlama
 

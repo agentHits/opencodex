@@ -150,6 +150,12 @@ Responses 表示是橋接的中心。原生相容的路由可跳過部分轉譯�
 { "input_tokens": 123 }
 ```
 
+無法解析的日期型 Desktop ID 也可能是探索結果中缺少的真實原生模型 ID。現有資訊不足以
+解析該 ID 時，Messages 和 count-tokens 回傳 HTTP 503 及固定錯誤 `desktop_model_mapping_unavailable`；這不代表
+模型無效。未知的舊版雜湊別名仍回傳 HTTP 400。兩種情況都不會移除日期或回退到其他路由。
+已知 ID、已註冊映射、精確 `modelMap` 匹配及已識別的真實原生 ID 維持原有處理方式。
+請重新整理模型探索或重新套用已連接 hub 的設定後再試；僅重試本身不能保證解決。
+
 ## `GET /v1/models`
 
 未指定 `format=desktop-config` 時，使用以下一般目錄契約：

@@ -168,6 +168,12 @@ choice 增量、带 `finish_reason` 的终止 choice，以及 `data: [DONE]`。�
 { "input_tokens": 123 }
 ```
 
+无法解析的日期型 Desktop ID 也可能是发现结果中缺失的真实原生模型 ID。现有信息不足以
+解析该 ID 时，Messages 和 count-tokens 返回 HTTP 503 及固定错误 `desktop_model_mapping_unavailable`；这并不证明
+模型无效。未知的旧版哈希别名仍返回 HTTP 400。两种情况都不会去除日期或回退到其他路由。
+已知 ID、已注册映射、精确 `modelMap` 匹配及已识别的真实原生 ID 保持原有处理方式。
+请刷新模型发现或重新应用已连接 hub 的配置后再试；仅重试本身不能保证解决。
+
 ## `GET /v1/models`
 
 未指定 `format=desktop-config` 时，使用以下普通目录契约：

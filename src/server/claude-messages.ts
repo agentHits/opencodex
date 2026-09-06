@@ -10,7 +10,7 @@ import { FORWARD_HEADERS } from "../adapters/openai-responses";
 import { sseFieldValue } from "../lib/sse-decoder";
 import { enforceAnthropicImageLimits, sniffImageDimensions } from "../adapters/anthropic-image-guard";
 import { normalizeAnthropicImages } from "../adapters/anthropic-image-normalize";
-import { AnthropicRequestError, anthropicToResponsesTranslation, extractOcxEffortDirective, extractOcxRouteDirective, resolveInboundModel, type ClaudeCacheKeySource } from "../claude/inbound";
+import { AnthropicRequestError, DesktopModelMappingUnavailableError, anthropicToResponsesTranslation, extractOcxEffortDirective, extractOcxRouteDirective, resolveInboundModel, type ClaudeCacheKeySource } from "../claude/inbound";
 import { isKnownDesktop3pModelId, resolveDesktop3pAlias } from "../claude/desktop-3p";
 import { resolveAlias, claudeCodeNativeAlias } from "../claude/alias";
 import { recordDesktopRequest } from "../claude/desktop-health";
@@ -96,6 +96,12 @@ function decodeFablePickerAlias(raw: string, cc?: OcxConfig["claudeCode"]): stri
 
 function isRec(v: unknown): v is Rec {
   return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function desktopMappingUnavailableResponse(error: DesktopModelMappingUnavailableError): Response {
+  const response = anthropicErrorResponse(503, error.message, "api_error", "desktop_model_mapping_unavailable");
+  response.headers.set("Retry-After", "1");
+  return response;
 }
 
 /** Resolve Claude-only sidecar overrides without mutating the shared server config. */
@@ -730,8 +736,10 @@ async function handleClaudeMessagesWithBudget(
     cacheKeySource = translation.cacheKeySource;
   } catch (err) {
     const overflow = isTranslatorBudgetExceededError(err);
-    const status = overflow ? 413 : err instanceof AnthropicRequestError ? 400 : 500;
+    const unavailable = err instanceof DesktopModelMappingUnavailableError;
+    const status = overflow ? 413 : unavailable ? 503 : err instanceof AnthropicRequestError ? 400 : 500;
     if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, status, { closeReason: "non_stream" });
+    if (unavailable) return desktopMappingUnavailableResponse(err);
     return anthropicErrorResponse(
       status,
       overflow ? "request translation buffer exceeded the safe limit" : err instanceof Error ? err.message : String(err),
@@ -1074,6 +1082,7 @@ export async function handleClaudeCountTokens(
   try {
     body = await readAnthropicBody(req, translatorBudget);
   } catch (err) {
+    if (err instanceof DesktopModelMappingUnavailableError) return desktopMappingUnavailableResponse(err);
     if (err instanceof AnthropicRequestError) return anthropicErrorResponse(400, err.message);
     return anthropicErrorResponse(500, err instanceof Error ? err.message : String(err));
   } finally { translatorBudget.dispose(); }
@@ -1120,6 +1129,7 @@ export async function handleClaudeCountTokens(
       headers: { "Content-Type": "application/json" },
     });
   } catch (error) {
+    if (error instanceof DesktopModelMappingUnavailableError) return desktopMappingUnavailableResponse(error);
     if (error instanceof AnthropicRequestError) return anthropicErrorResponse(400, error.message);
     throw error;
   }

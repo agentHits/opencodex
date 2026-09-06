@@ -197,6 +197,14 @@ Responses로 변환되어 일반적으로 라우팅된 뒤, Anthropic JSON 또�
 { "input_tokens": 123 }
 ```
 
+해석되지 않은 날짜형 Desktop ID는 탐색 결과에서 빠진 실제 네이티브 모델일 수도 있습니다.
+정보가 부족해 ID를 해석할 수 없으면 Messages와 count-tokens는 고정된 `desktop_model_mapping_unavailable` 오류와
+HTTP 503을 반환합니다. 모델이 잘못됐다는 판정은 아닙니다. 미등록 레거시 해시 별칭은 계속
+HTTP 400을 반환합니다. 두 경우 모두 날짜 제거나 다른 경로로의 폴백은 하지 않습니다.
+알려진 ID, 등록된 매핑, 정확한 `modelMap` 일치와 인식된 실제 네이티브 ID의 처리는 유지됩니다.
+모델 탐색을 갱신하거나 연결된 허브 프로필을 다시 적용한 뒤 시도하세요. 재시도만으로
+해결된다는 보장은 없습니다.
+
 ## `GET /v1/models`
 
 `format=desktop-config`를 지정하지 않으면 다음 기본 카탈로그 계약을 사용합니다.

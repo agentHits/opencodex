@@ -139,6 +139,7 @@ Les instructions de modification ci-dessous concernent le profil local. L'applic
 ```bash
 ocx claude desktop [apply]
 ocx claude desktop show [--json]
+ocx claude desktop status [--json]
 ocx claude desktop move <route> <opus|fable|sonnet|haiku> [--default]
 ocx claude desktop default <opus|fable|sonnet|haiku> <route|none>
 ocx claude desktop export <path|->
@@ -311,7 +312,15 @@ utilisent l'alias haché. Les identifiants de modèle peuvent contenir `--` (la 
 **Ordre de résolution du modèle :** retrait du marqueur `[1m]` → décodage de l'alias lisible → décodage de l'alias haché
 de Claude Desktop → correspondance exacte dans `modelMap` → correspondance sans date (suffixe `-20250514` retiré) → transfert direct.
 
-Les alias Desktop gérés de type date/hash qui ne peuvent pas être résolus sont rejetés avec HTTP 400 avant suppression de date ou repli, pour Messages comme pour count-tokens. Les entrées exactes de `modelMap` et les véritables ID Anthropic reconnus conservent leur traitement habituel.
+<a id="desktop-alias-resolution"></a>
+
+Un ID Desktop de forme datée non résolu peut aussi être un véritable modèle natif absent de
+la découverte. Messages et count-tokens renvoient HTTP 503 avec l’erreur fixe `desktop_model_mapping_unavailable` lorsque les informations disponibles ne permettent pas de résoudre cet ID ; cela ne
+prouve pas que le modèle est invalide. Les anciens alias de type hash inconnus restent rejetés
+avec HTTP 400. Aucun des deux cas ne retire la date ni ne choisit une autre route. Les ID connus,
+les correspondances enregistrées et les entrées exactes de `modelMap`, dont les véritables ID
+natifs reconnus, conservent leur traitement. Actualisez la découverte ou réappliquez le profil du
+hub connecté avant de réessayer ; une simple nouvelle tentative ne garantit pas la résolution.
 
 Chaque entrée porte un nom d'affichage tel que `gemini-3-pro (gemini)`, ainsi que toutes les fonctionnalités du modèle
 (échelle d'effort de raisonnement et types de réflexion) dans la structure officielle `ModelInfo`. Les véritables modèles Anthropic
@@ -410,7 +419,7 @@ l'élision). Le contenu de remplacement préserve l'association entre l'appel d'
 
 Ordre de recherche : alias de découverte → identifiant exact → identifiant sans le suffixe de date (`-20250514`) → transfert direct.
 
-Les alias Desktop gérés de type date/hash qui ne peuvent pas être résolus sont rejetés avec HTTP 400 avant suppression de date ou repli, pour Messages comme pour count-tokens. Les entrées exactes de `modelMap` et les véritables ID Anthropic reconnus conservent leur traitement habituel.
+Voir la [résolution des alias Desktop](#desktop-alias-resolution) pour les règles de rejet.
 
 ## Matrice des services auxiliaires : recherche web et compréhension des images
 

@@ -233,6 +233,15 @@ yerel belgelenmiş tahmini kullanır ve şunu döndürür:
 { "input_tokens": 123 }
 ```
 
+Çözümlenemeyen tarih biçimli bir Desktop kimliği, keşifte yer almayan gerçek bir yerel model
+kimliği de olabilir. Mevcut bilgi kimliği çözmeye yetmiyorsa Messages ve count-tokens sabit
+`desktop_model_mapping_unavailable` hatasıyla HTTP 503 döndürür; bu, modelin geçersiz olduğunu kanıtlamaz.
+Bilinmeyen eski hash takma adları HTTP 400 ile reddedilmeye devam eder. Her iki durumda da tarih
+kaldırılmaz ve başka rotaya geçilmez. Bilinen kimlikler, kayıtlı eşlemeler, tam `modelMap`
+eşleşmeleri ve tanınan gerçek yerel kimlikler aynı şekilde işlenir. Yeniden denemeden önce model
+keşfini yenileyin veya bağlı hub profilini yeniden uygulayın; yalnızca tekrar denemek çözümü
+garanti etmez.
+
 ## `GET /v1/models`
 
 `format=desktop-config` belirtilmezse aşağıdaki olağan katalog sözleşmeleri kullanılır:

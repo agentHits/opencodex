@@ -227,6 +227,14 @@ estimation documentée du contenu du système, des messages et des outils et ret
 { "input_tokens": 123 }
 ```
 
+Un ID Desktop de forme datée non résolu peut aussi être un véritable modèle natif absent de
+la découverte. Messages et count-tokens renvoient HTTP 503 avec l’erreur fixe `desktop_model_mapping_unavailable` lorsque les informations disponibles ne permettent pas de résoudre cet ID ; cela ne
+prouve pas que le modèle est invalide. Les anciens alias de type hash inconnus restent rejetés
+avec HTTP 400. Aucun des deux cas ne retire la date ni ne choisit une autre route. Les ID connus,
+les correspondances enregistrées et les entrées exactes de `modelMap`, dont les véritables ID
+natifs reconnus, conservent leur traitement. Actualisez la découverte ou réappliquez le profil du
+hub connecté avant de réessayer ; une simple nouvelle tentative ne garantit pas la résolution.
+
 ## `GET /v1/models`
 
 Sans `format=desktop-config`, les contrats de catalogue ordinaires sont les suivants :

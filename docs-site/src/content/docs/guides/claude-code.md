@@ -323,7 +323,15 @@ express fall back to the hashed alias. Model ids MAY contain `--` (resolution sp
 **Model resolution order:** `[1m]` marker stripped → readable alias decoded → Desktop hashed
 alias decoded → `modelMap` exact match → date-stripped match (`-20250514` removed) → passthrough.
 
-Unresolved managed Desktop date/hash aliases are rejected with HTTP 400 before date-stripping or fallback, on both Messages and count-tokens. Exact operator `modelMap` entries and recognized real Anthropic model IDs retain their normal handling.
+<a id="desktop-alias-resolution"></a>
+
+An unresolved date-shaped Desktop ID can also be a genuine native model missing from discovery.
+Messages and count-tokens return HTTP 503 with the fixed `desktop_model_mapping_unavailable` error when the available
+evidence cannot resolve that ID; this does not establish that the model is invalid. Unknown legacy
+hash aliases still return HTTP 400. Neither case strips the date or falls back to another route.
+Known IDs, registered mappings and exact `modelMap` matches keep their existing behavior, including
+recognized real native IDs. Refresh model discovery or reapply the connected hub profile before
+trying again; retrying alone does not guarantee resolution.
 
 Each entry carries a display name like `gemini-3-pro (gemini)`, plus full model capabilities
 (reasoning-effort ladder, thinking types) in the official `ModelInfo` shape. Real Anthropic models
@@ -423,7 +431,7 @@ entirely). The stub keeps tool call/result pairing intact.
 
 Lookup order: discovery alias → exact id → id with date suffix stripped (`-20250514`) → passthrough.
 
-Unresolved managed Desktop date/hash aliases are rejected with HTTP 400 before date-stripping or fallback, on both Messages and count-tokens. Exact operator `modelMap` entries and recognized real Anthropic model IDs retain their normal handling.
+See [Desktop alias resolution](#desktop-alias-resolution) for the rejection policy.
 
 ## Sidecar matrix: web search and image understanding
 

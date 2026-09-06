@@ -302,6 +302,14 @@ documented estimate over system content, messages, and tools and return:
 { "input_tokens": 123 }
 ```
 
+An unresolved date-shaped Desktop ID can also be a genuine native model missing from discovery.
+Messages and count-tokens return HTTP 503 with the fixed `desktop_model_mapping_unavailable` error when the available
+evidence cannot resolve that ID; this does not establish that the model is invalid. Unknown legacy
+hash aliases still return HTTP 400. Neither case strips the date or falls back to another route.
+Known IDs, registered mappings and exact `modelMap` matches keep their existing behavior, including
+recognized real native IDs. Refresh model discovery or reapply the connected hub profile before
+trying again; retrying alone does not guarantee resolution.
+
 ## `GET /v1/models`
 
 Without `format=desktop-config`, the ordinary catalog contracts are:

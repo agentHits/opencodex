@@ -167,6 +167,14 @@ writes the resulting local Desktop configuration. No admin token, hub-profile up
 alias regeneration is part of this flow. Unsupported old hubs, invalid snapshots and unavailable
 Desktop models fail apply without a local-catalog or loopback fallback.
 
+Date-shaped Desktop IDs can overlap genuine native model IDs. When available discovery and
+mapping evidence cannot resolve one, Messages and count-tokens return HTTP 503 with the fixed
+`desktop_model_mapping_unavailable` error rather than classifying it as invalid. Unknown legacy hash aliases
+remain HTTP 400; neither case reaches date-stripping or fallback routing. Known/registered IDs,
+exact operator mappings and recognized native IDs keep their existing handling. Discovery refresh
+or reapplying the connected hub profile may supply the missing mapping; retry alone does not
+guarantee resolution.
+
 The remote-alias slice does not change thinking/redacted-thinking replay or prompt-cache
 behavior. Those remain the separate request tracked in #3719; proxy admission alone does not
 establish native Anthropic passthrough or imply that translated Anthropic caching is disabled.

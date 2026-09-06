@@ -130,9 +130,17 @@ test.each([
   } finally { log.mockRestore(); warn.mockRestore(); error.mockRestore(); }
 });
 
-test.each(["absent", "unsafe", "mismatch", "pending", "invalid", "mismatched"])(
-  "connected apply rejects %s state before download or writing", async fault => {
+test.each([
+  ["absent", "client_token_absent"],
+  ["unsafe", "client_token_unsafe"],
+  ["mismatch", "client_token_mismatch"],
+  ["pending", "client_rotation_pending"],
+  ["invalid", "client_connection_invalid"],
+  ["mismatched", "client_connection_invalid"],
+] as const)(
+  "connected apply rejects %s state before download or writing", async (fault, reason) => {
     connectDesktopFixture();
+    setIntegrationEnabled("claude-desktop", false);
     const oldPath = oldDesktopFile();
     writeFileSync(serviceApiTokenBackupPath(), "backup must remain");
     const config = loadConfig();
@@ -142,15 +150,20 @@ test.each(["absent", "unsafe", "mismatch", "pending", "invalid", "mismatched"])(
     if (fault === "pending") { config.client!.pendingOperation = pendingRotation(); saveConfig(config); }
     if (fault === "invalid") writeFileSync(getConfigPath(), "{invalid-config");
     if (fault === "mismatched") writeFileSync(getConfigPath(), JSON.stringify({ ...config, runtimeRole: "hub" }));
+    const configBefore = readFileSync(getConfigPath(), "utf8");
     let downloads = 0;
     let writes = 0;
     const result = await applyProfile(emptyDesktopProfile(), "static", {
       downloadDesktop3pModelsImpl: async () => { downloads++; return { version: 1, models: remoteModels }; },
       applyRemoteDesktopStoreImpl: () => { writes++; return { ok: true, changed: true, status: "applied", path: oldPath, restartRequired: true }; },
     });
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, path: "", reason });
     expect(downloads).toBe(0);
     expect(writes).toBe(0);
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(configBefore);
+    if (fault === "absent" || fault === "unsafe" || fault === "mismatch") {
+      expect(claudeDesktopIntegrationEnabledNow()).toBe(false);
+    }
     expect(readFileSync(oldPath, "utf8")).toBe("existing Desktop bytes");
     expect(readFileSync(serviceApiTokenBackupPath(), "utf8")).toBe("backup must remain");
   },

@@ -91,7 +91,9 @@ async function applyConnectedDesktopProfile(
       assertClientConnectionUnchanged(connection.value);
       if (connection.value.pendingOperation) throw new Error("client_rotation_pending");
       const current = readServiceApiTokenState();
-      if (current.kind !== "present" || current.fingerprint !== connection.value.tokenFingerprint) {
+      if (current.kind === "absent") throw new Error("client_token_absent");
+      if (current.kind === "unsafe") throw new Error("client_token_unsafe");
+      if (current.fingerprint !== connection.value.tokenFingerprint) {
         throw new Error("client_token_mismatch");
       }
       const desired = setIntegrationEnabled("claude-desktop", true);

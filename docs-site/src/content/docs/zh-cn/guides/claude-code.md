@@ -172,7 +172,13 @@ v1 别名按字面解码（历史上 model ID 中包含的两字符序列 `~s` /
 **模型解析顺序：**移除 `[1m]` 标记 → 解码易读别名 → 解码 Desktop 哈希别名 →
 `modelMap` 精确匹配 → 移除日期后的匹配（移除 `-20250514`）→ 透传。
 
-未解析的受管理 Desktop 日期/哈希别名会在去除日期或回退之前被拒绝，Messages 和 count-tokens 均返回 HTTP 400。操作员的精确 `modelMap` 条目及已识别的真实 Anthropic 模型 ID 保持正常处理。
+<a id="desktop-alias-resolution"></a>
+
+无法解析的日期型 Desktop ID 也可能是发现结果中缺失的真实原生模型 ID。现有信息不足以
+解析该 ID 时，Messages 和 count-tokens 返回 HTTP 503 及固定错误 `desktop_model_mapping_unavailable`；这并不证明
+模型无效。未知的旧版哈希别名仍返回 HTTP 400。两种情况都不会去除日期或回退到其他路由。
+已知 ID、已注册映射、精确 `modelMap` 匹配及已识别的真实原生 ID 保持原有处理方式。
+请刷新模型发现或重新应用已连接 hub 的配置后再试；仅重试本身不能保证解决。
 
 每个条目都带有类似 `gemini-3-pro (gemini)` 的显示名称，以及官方 `ModelInfo` 结构中的完整
 模型能力（推理强度阶梯、思考类型）。真正的 Anthropic 模型在两个界面上都保留其规范 ID。
@@ -265,7 +271,7 @@ opencodex 会在**已路由**请求中将该技能内容替换为一个短占位
 
 查找顺序：发现别名 → 精确 ID → 移除日期后缀的 ID（`-20250514`）→ 透传。
 
-未解析的受管理 Desktop 日期/哈希别名会在去除日期或回退之前被拒绝，Messages 和 count-tokens 均返回 HTTP 400。操作员的精确 `modelMap` 条目及已识别的真实 Anthropic 模型 ID 保持正常处理。
+拒绝规则见 [Desktop 别名解析](#desktop-alias-resolution)。
 
 ## Sidecar 矩阵：Web Search 与图像理解
 

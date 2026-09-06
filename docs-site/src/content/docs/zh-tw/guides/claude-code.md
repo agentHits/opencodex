@@ -117,6 +117,7 @@ Claude Desktop 使用與 Claude Code 分開的設定檔。在儀表板開啟 **C
 ```bash
 ocx claude desktop [apply]
 ocx claude desktop show [--json]
+ocx claude desktop status [--json]
 ocx claude desktop move <route> <opus|fable|sonnet|haiku> [--default]
 ocx claude desktop default <opus|fable|sonnet|haiku> <route|none>
 ocx claude desktop export <path|->
@@ -247,7 +248,13 @@ user-agent 會獲得易讀的 CLI 形式，其他用戶端會獲得 Desktop 雜�
 **模型解析順序：**移除 `[1m]` 標記 → 解碼易讀別名 → 解碼 Desktop 雜湊別名 →
 `modelMap` 精確匹配 → 移除日期後的匹配（移除 `-20250514`）→ 透傳。
 
-無法解析的受管理 Desktop 日期/雜湊別名會在移除日期或回退之前遭到拒絕，Messages 和 count-tokens 均回傳 HTTP 400。操作員的精確 `modelMap` 項目及已識別的真實 Anthropic 模型 ID 維持正常處理。
+<a id="desktop-alias-resolution"></a>
+
+無法解析的日期型 Desktop ID 也可能是探索結果中缺少的真實原生模型 ID。現有資訊不足以
+解析該 ID 時，Messages 和 count-tokens 回傳 HTTP 503 及固定錯誤 `desktop_model_mapping_unavailable`；這不代表
+模型無效。未知的舊版雜湊別名仍回傳 HTTP 400。兩種情況都不會移除日期或回退到其他路由。
+已知 ID、已註冊映射、精確 `modelMap` 匹配及已識別的真實原生 ID 維持原有處理方式。
+請重新整理模型探索或重新套用已連接 hub 的設定後再試；僅重試本身不能保證解決。
 
 每個條目都帶有類似 `gemini-3-pro (gemini)` 的顯示名稱，以及官方 `ModelInfo` 結構中的完整
 模型能力（推理強度階梯、思考型別）。真正的 Anthropic 模型在兩個介面上都保留其規範 ID。
@@ -340,7 +347,7 @@ opencodex 會在**已路由**請求中將該技能內容替換為一個短佔位
 
 查詢順序：發現別名 → 精確 ID → 移除日期字尾的 ID（`-20250514`）→ 透傳。
 
-無法解析的受管理 Desktop 日期/雜湊別名會在移除日期或回退之前遭到拒絕，Messages 和 count-tokens 均回傳 HTTP 400。操作員的精確 `modelMap` 項目及已識別的真實 Anthropic 模型 ID 維持正常處理。
+拒絕規則請見 [Desktop 別名解析](#desktop-alias-resolution)。
 
 ## Sidecar 矩陣：Web Search 與圖像理解
 

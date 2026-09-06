@@ -34,7 +34,7 @@ describe("Grok fence lifecycle wiring", () => {
     expect(registryAt).toBeGreaterThan(startupAt);
     expect(afterStartupAt).toBeGreaterThan(registryAt);
     const initialization = startFn.slice(startupAt, afterStartupAt);
-    expect(initialization).toMatch(/\}\s*catch\s*\{/);
+    expect(initialization).toMatch(/\}\s*catch\s*(?:\([^)]*\)\s*)?\{/);
     expect(initialization).not.toContain('import("../grok/sync")');
     // Grok follows the completed initialization call, outside its callback/try.
     // A comment wording change must not masquerade as a lifecycle regression.

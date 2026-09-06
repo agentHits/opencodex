@@ -1594,7 +1594,7 @@ for (const { fallbacks, fastRows } of [
   { fallbacks: false, fastRows: false }, { fallbacks: true, fastRows: false },
   { fallbacks: false, fastRows: true }, { fallbacks: true, fastRows: true },
 ]) {
-  test(`missing Desktop IDs reject before upstream dispatch (fallbacks=${fallbacks}, fastRows=${fastRows})`, async () => {
+  test(`missing Desktop dates stay unavailable across registry states (fallbacks=${fallbacks}, fastRows=${fastRows})`, async () => {
     const selected = mockChatUpstreamCapturing();
     const fallback = mockChatUpstreamCapturing();
     const native = mockChatUpstreamCapturing();
@@ -1616,29 +1616,59 @@ for (const { fallbacks, fastRows } of [
         } : {}),
       },
     } as OcxConfig);
-    buildDesktop3pRegistry([], [{ provider: "selected", id: "model-selected" }], managedDesktopProfile);
     const server = startServer(0);
     try {
-      for (const model of [
-        "claude-opus-4-8-20260202", "claude-opus-4-8-zzz", "claude-opus-4-zzz",
-        "claude-opus-4-8-20260202[1m]", "claude-opus-4-8-20260202--fast",
-        "claude-opus-4-8-zzz--fast", "claude-opus-4-zzz--fast", "claude-opus-4-8-20260202--fast[1m]",
-      ]) {
-        for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
-          const response = await fetch(new URL(path, server.url), {
+      for (const registryState of ["cold", "prior-success", "degraded-empty"] as const) {
+        if (registryState === "prior-success") {
+          buildDesktop3pRegistry([], [{ provider: "selected", id: "model-selected" }], managedDesktopProfile);
+          const success = await fetch(new URL("/v1/messages", server.url), {
             method: "POST", headers: desktopRequestHeaders, signal: AbortSignal.timeout(5_000),
-            body: JSON.stringify({ model, max_tokens: 8, messages: [{ role: "user", content: "hello" }] }),
+            body: JSON.stringify({ model: "claude-opus-4-8-20260201", stream: true, max_tokens: 8,
+              messages: [{ role: "user", content: "hello" }] }),
           });
-          expect(response.status).toBe(400);
-          const body = await response.json() as { type: string; error: { type: string; message: string } };
-          expect(body.type).toBe("error");
-          expect(body.error.type).toBe("invalid_request_error");
-          expect(body.error.message).toContain("Unknown Claude Desktop alias");
+          expect(success.status).toBe(200);
+          expect(await success.text()).toContain("message_stop");
+          expect(selected.captured.map(body => body.model)).toEqual(["model-selected"]);
+        } else {
+          buildDesktop3pRegistry([], []);
         }
+        const selectedBefore = selected.urls.length;
+        const cases: Array<[string, number]> = [
+          ["claude-opus-4-8-20260202", 503],
+          // Retrying without new mapping evidence must not become a 400 or fallback.
+          ["claude-opus-4-8-20260202", 503],
+          ["claude-opus-4-8-20260202[1m]", 503],
+          ["claude-opus-4-8-20260202--fast", 503],
+          ["claude-opus-4-8-20260202--fast[1m]", 503],
+          ["claude-opus-4-8-zzz", 400], ["claude-opus-4-zzz", 400],
+          ["claude-opus-4-8-zzz--fast", 400], ["claude-opus-4-zzz--fast", 400],
+        ];
+        if (registryState === "degraded-empty") cases.push(["claude-opus-4-8-20260201", 503]);
+        for (const [model, status] of cases) {
+          for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
+            const response = await fetch(new URL(path, server.url), {
+              method: "POST", headers: desktopRequestHeaders, signal: AbortSignal.timeout(5_000),
+              body: JSON.stringify({ model, max_tokens: 8, messages: [{ role: "user", content: "hello" }] }),
+            });
+            expect(response.status).toBe(status);
+            const body = await response.json() as { type: string; error: { type: string; message: string; code?: string } };
+            expect(body.type).toBe("error");
+            expect(body.error.type).toBe(status === 503 ? "api_error" : "invalid_request_error");
+            if (status === 503) {
+              expect(body.error.code).toBe("desktop_model_mapping_unavailable");
+              expect(response.headers.get("retry-after")).toBe("1");
+              expect(body.error.message).not.toContain("Unknown Claude Desktop alias");
+            } else {
+              expect(body.error.message).toContain("Unknown Claude Desktop alias");
+              expect(body.error.code).not.toBe("desktop_model_mapping_unavailable");
+              expect(response.headers.get("retry-after")).toBeNull();
+            }
+          }
+        }
+        expect(selected.urls).toHaveLength(selectedBefore);
+        expect(fallback.urls).toEqual([]);
+        expect(native.urls).toEqual([]);
       }
-      expect(selected.urls).toEqual([]);
-      expect(fallback.urls).toEqual([]);
-      expect(native.urls).toEqual([]);
     } finally {
       await server.stop(true);
       selected.server.stop(true); fallback.server.stop(true); native.server.stop(true);
@@ -1686,6 +1716,12 @@ test(`registered Desktop IDs and exact overrides reach intended routes (fastRows
       });
       expect(response.status).toBe(200);
       expect(await response.text()).toContain("message_stop");
+      const count = await fetch(new URL("/v1/messages/count_tokens", server.url), {
+        method: "POST", headers: desktopRequestHeaders, signal: AbortSignal.timeout(5_000),
+        body: JSON.stringify({ model, messages: [{ role: "user", content: "hello" }] }),
+      });
+      expect(count.status).toBe(200);
+      expect((await count.json() as { input_tokens: number }).input_tokens).toBeGreaterThan(0);
     }
     expect(selected.captured.map(body => body.model)).toEqual(Array(fastRows ? 3 : 2).fill("model-selected"));
     expect(explicit.captured.map(body => body.model)).toEqual(["model-explicit", "model-explicit"]);

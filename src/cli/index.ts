@@ -486,7 +486,10 @@ async function handleStart(options: { block?: boolean } = {}) {
           inputs.nativeSlugs, inputs.routedModels,
           config.claudeCode?.desktopProfile, inputs.nativeContextCap,
         );
-      } catch { /* best-effort — registry rebuilds on the next /v1/models call */ }
+      } catch {
+        // Best-effort; model discovery can rebuild it. Never reflect credential or provider errors.
+        console.warn("[opencodex] Claude Desktop model registry could not be initialized at startup.");
+      }
     },
   );
   if (!startupSync.ran) console.log("   Codex integration OFF; startup left Codex native.");

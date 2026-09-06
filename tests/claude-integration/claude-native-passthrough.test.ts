@@ -341,6 +341,56 @@ test("exposed native passthrough requires dedicated admission and never forwards
   }
 });
 
+test.each([false, true])("Desktop mapping errors follow admission on both endpoints (fastRows=%s)", async fastRows => {
+  const admissionSecret = "desktop-admission-fixture";
+  const captured: Captured[] = [];
+  const upstream = mockAnthropicUpstream(captured);
+  const config = cfg(upstream.url.origin);
+  config.hostname = "0.0.0.0";
+  config.fastRows = fastRows;
+  config.apiKeys = [{ id: "desktop", name: "desktop", key: admissionSecret, createdAt: "2026-09-06" }];
+  // Any default-provider fallback is observable at the same upstream as native dispatch.
+  config.providers.mock!.baseUrl = new URL("/v1", upstream.url).href;
+  saveConfig(config);
+  const server = startServer(0);
+  buildDesktop3pRegistry([], []);
+  try {
+    for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
+      for (const model of ["claude-opus-4-8-20260202", "claude-opus-4-8-20260202--fast[1m]", "claude-opus-4-8-zzz"]) {
+        for (const credential of [undefined, "wrong-admission-fixture", admissionSecret]) {
+          const headers = new Headers(OAUTH_HEADERS);
+          if (credential !== undefined) headers.set("x-opencodex-api-key", credential);
+          const response = await globalThis.fetch(`http://127.0.0.1:${server.port}${path}`, {
+            method: "POST", headers, signal: AbortSignal.timeout(5_000),
+            body: JSON.stringify({ ...claudeBody(), model }),
+          });
+          const body = await response.json() as { type: string; error: { type: string; code?: string; message: string } };
+          expect(body.type).toBe("error");
+          if (credential !== admissionSecret) {
+            expect(response.status).toBe(401);
+            expect(body.error.type).toBe("authentication_error");
+            expect(body.error.code).not.toBe("desktop_model_mapping_unavailable");
+            expect(response.headers.get("retry-after")).toBeNull();
+          } else if (model === "claude-opus-4-8-zzz") {
+            expect(response.status).toBe(400);
+            expect(body.error.type).toBe("invalid_request_error");
+            expect(response.headers.get("retry-after")).toBeNull();
+          } else {
+            expect(response.status).toBe(503);
+            expect(body.error).toMatchObject({ type: "api_error", code: "desktop_model_mapping_unavailable" });
+            expect(response.headers.get("retry-after")).toBe("1");
+          }
+          expect(captured).toEqual([]);
+        }
+      }
+    }
+  } finally {
+    await server.stop(true);
+    upstream.stop(true);
+    buildDesktop3pRegistry([], []);
+  }
+}, { timeout: SERVER_BUDGET_MS });
+
 test("alias/mapped models and non-anthropic credentials do NOT pass through", async () => {
   const captured: Captured[] = [];
   const upstream = mockAnthropicUpstream(captured);
@@ -538,11 +588,12 @@ test("P5: Files API image source passes through untouched", async () => {
 });
 
 
-test("catalog-published native dates retain identity while unknown Desktop dates reject", async () => {
+test.each([false, true])("catalog-published native dates retain identity while unknown dates are unavailable (fastRows=%s)", async fastRows => {
   const published = "claude-opus-4-8-20260402";
   const captured: Captured[] = [];
   const upstream = mockAnthropicUpstream(captured);
   const config = cfg(upstream.url.origin, { desktopNativeModels: false });
+  config.fastRows = fastRows;
   config.providers.anthropic = {
     adapter: "anthropic", baseUrl: upstream.url.origin, apiKey: "test-native-key",
     allowPrivateNetwork: true, liveModels: false, models: [published],
@@ -558,7 +609,7 @@ test("catalog-published native dates retain identity while unknown Desktop dates
     expect(catalog.status).toBe(200);
     const list = await catalog.json() as { data: Array<{ id: string }> };
     expect(list.data.some(row => row.id === published)).toBe(true);
-    for (const model of [published, "claude-opus-4-8", "claude-haiku-4-5"]) {
+    for (const model of [published, `${published}[1m]`, "claude-opus-4-8", "claude-haiku-4-5"]) {
       for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
         const response = await fetch(new URL(path, server.url), {
           method: "POST", headers: OAUTH_HEADERS, signal: AbortSignal.timeout(5_000),
@@ -566,20 +617,23 @@ test("catalog-published native dates retain identity while unknown Desktop dates
         });
         expect(response.status).toBe(200);
         await response.text();
-        expect(captured.at(-1)!.body.model).toBe(model);
+        expect(captured.at(-1)!.body.model).toBe(model.replace("[1m]", ""));
         expect(captured.at(-1)!.path).toBe(path);
       }
     }
-    expect(captured).toHaveLength(6);
+    expect(captured).toHaveLength(8);
     for (const path of ["/v1/messages", "/v1/messages/count_tokens"]) {
       const response = await fetch(new URL(path, server.url), {
         method: "POST", headers: OAUTH_HEADERS, signal: AbortSignal.timeout(5_000),
         body: JSON.stringify({ ...claudeBody(), model: "claude-opus-4-8-20260403" }),
       });
-      expect(response.status).toBe(400);
-      expect((await response.json() as { error: { message: string } }).error.message).toContain("Unknown Claude Desktop alias");
+      expect(response.status).toBe(503);
+      expect(response.headers.get("retry-after")).toBe("1");
+      expect((await response.json() as { error: { type: string; code: string } }).error).toMatchObject({
+        type: "api_error", code: "desktop_model_mapping_unavailable",
+      });
     }
-    expect(captured).toHaveLength(6);
+    expect(captured).toHaveLength(8);
   } finally {
     await server.stop(true);
     upstream.stop(true);

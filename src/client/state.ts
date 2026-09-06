@@ -99,44 +99,55 @@ export function assertClientConnectionUnchanged(expected: OcxClientConnectionCon
   }
 }
 
+/** Undefined means only "possible orphan": the caller must repeat this read under L/C. */
+function observeClientRotationRecovery(): ClientRotationRecoveryGate | undefined {
+  const state = readClientConnectionState();
+  const current = readServiceApiTokenState();
+  const backup = readTokenBackupState();
+  const receipt = readDesktopDisconnectReceipt();
+  if (receipt.kind === "unsafe") return { kind: "unsafe", reason: "client_disconnect_receipt_unsafe" };
+  if (receipt.kind === "valid" && receipt.value.phase !== "complete") {
+    return { kind: "recovery-required", reason: "client_disconnect_pending" };
+  }
+  if (state.kind === "connected" && state.value.pendingOperation) {
+    if (current.kind !== "present" || backup.kind !== "present") {
+      return { kind: "unsafe", reason: "pending rotation requires current and backup token files" };
+    }
+    return { kind: "recovery-required", reason: "rerun ocx connect rotate with transient authority" };
+  }
+  if (backup.kind === "unsafe") return { kind: "unsafe", reason: "service token backup is unsafe" };
+  if (backup.kind === "present" && current.kind === "present") {
+    if (state.kind === "invalid" || state.kind === "mismatched"
+      || (state.kind === "connected" && current.fingerprint !== state.value.tokenFingerprint)) {
+      return { kind: "unsafe", reason: "connected token ownership changed" };
+    }
+    if (state.kind === "connected") {
+      const desktop = inspectRemoteDesktopStore({ serverUrl: state.value.serverUrl, apiKeyId: state.value.apiKeyId, connectedAt: state.value.connectedAt });
+      if (desktop.kind !== "absent" && desktop.kind !== "restored") {
+        // The inspection DTO deliberately exposes no credential generation. Let
+        // explicit rotation reconcile an active Desktop copy before discarding .prev.
+        return { kind: "recovery-required", reason: "Desktop credential reconciliation requires ocx connect rotate" };
+      }
+    }
+    return undefined;
+  }
+  return { kind: "clean" };
+}
+
 export function inspectClientRotationRecoveryGate(
   _state: ClientConnectionState = readClientConnectionState(),
   lockDeps?: ClientLifecycleLockDeps,
 ): ClientRotationRecoveryGate {
   try {
+    // Ordinary status is read-only: even acquiring C creates config-mutation.sqlite.
+    // Only actual orphan cleanup needs L/C; this first observation authorizes no write.
+    const observed = observeClientRotationRecovery();
+    if (observed) return observed;
     return withClientLifecycleSync(() => withConfigMutationLockSync((): ClientRotationRecoveryGate => {
-      const state = readClientConnectionState();
-      const current = readServiceApiTokenState();
-      const backup = readTokenBackupState();
-      const receipt = readDesktopDisconnectReceipt();
-      if (receipt.kind === "unsafe") return { kind: "unsafe", reason: "client_disconnect_receipt_unsafe" };
-      if (receipt.kind === "valid" && receipt.value.phase !== "complete") {
-        return { kind: "recovery-required", reason: "client_disconnect_pending" };
-      }
-      if (state.kind === "connected" && state.value.pendingOperation) {
-        if (current.kind !== "present" || backup.kind !== "present") {
-          return { kind: "unsafe", reason: "pending rotation requires current and backup token files" };
-        }
-        return { kind: "recovery-required", reason: "rerun ocx connect rotate with transient authority" };
-      }
-      if (backup.kind === "unsafe") return { kind: "unsafe", reason: "service token backup is unsafe" };
-      if (backup.kind === "present" && current.kind === "present") {
-        if (state.kind === "invalid" || state.kind === "mismatched"
-          || (state.kind === "connected" && current.fingerprint !== state.value.tokenFingerprint)) {
-          return { kind: "unsafe", reason: "connected token ownership changed" };
-        }
-        if (state.kind === "connected") {
-          const desktop = inspectRemoteDesktopStore({ serverUrl: state.value.serverUrl, apiKeyId: state.value.apiKeyId, connectedAt: state.value.connectedAt });
-          if (desktop.kind !== "absent" && desktop.kind !== "restored") {
-            // The inspection DTO deliberately exposes no credential generation. Let
-            // explicit rotation reconcile an active Desktop copy before discarding .prev.
-            return { kind: "recovery-required", reason: "Desktop credential reconciliation requires ocx connect rotate" };
-          }
-        }
-        removeOrphanTokenBackup();
-        return { kind: "orphan-cleaned" };
-      }
-      return { kind: "clean" };
+      const fresh = observeClientRotationRecovery();
+      if (fresh) return fresh;
+      removeOrphanTokenBackup();
+      return { kind: "orphan-cleaned" };
     }), lockDeps);
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
