@@ -15,3 +15,32 @@ Before: reporter's 2.43.0 output lacks newly landed quotaRefresh; system proxy m
 
 Fresh source and CI show diagnostic fields travel enum -> main-account cache -> snapshot -> CLI, with malformed/unrecognized extras dropped and null not converted to zero. Document unsupported PAC/SOCKS-only behavior according to actual code. Leave issue open if reporter evidence is still absent and record FIELD_VALIDATION_PENDING, rather than calling the underlying incident fixed. This evidence-limited investigation outcome satisfies this named investigation slice, not a false runtime fix. No outbound credentials or system configuration changes here.
 
+
+## Current-source documentation decision
+
+The reporter's latest correction still uses 2.43.0; the maintainer explicitly
+keeps #3644 open until a build containing #3693 supplies categorized A/B evidence.
+Current main-account fetch, identity-fenced snapshot and CLI projector confirm the
+diagnostic contract. CLI account.ts declares the existing command used below.
+No new runtime fix or field-validation result is available.
+
+Add an English Codex quota network diagnostics section to server.md and concise
+translated sections in ko/ja/fr/ru/tr/zh-cn/zh-tw linking that canonical anchor.
+Scope the field to the main Codex account row, not every stored Pool account.
+Explain that quotaRefresh (not the quota numbers themselves) is diagnostic only,
+that cached/no-attempt output can omit it, and null quota is not zero quota.
+Show the real account-list command with a PowerShell projection that outputs only
+quotaRefresh, never complete account records. Use the seven fixed status strings
+and optional httpStatus only for http_error; no inference of entitlement failure.
+
+Keep user guidance about the service environment, unset proxy and startup-only
+WinINET auto detection; omit internal function/file names from the guide. State
+that PAC/WPAD/SOCKS-only and live changes are unsupported by this auto discovery.
+Do not claim TUN as a fix. Keep FIELD_VALIDATION_PENDING and the issue's open state
+in 071 outcome notes/PR description, rather than hard-coding transient issue status
+into all eight evergreen user pages. No local network or account calls.
+
+Per owner steering, documentation CI runs asynchronously. c-quota-proxy remains
+open under release convergence until its scoped checks and unchanged-runtime
+source evidence are reconciled. Do not add implementation-mirroring tests for
+this documentation-only outcome; existing quota/CLI/proxy tests cover the code.
