@@ -11,3 +11,7 @@ Success: roadmap verified, accepted changes reviewed and remotely validated, com
 Acceptance: (1) thinking then text/tool then result retains order and genuine signatures; opaque blocks remain bounded and malformed/nested signatures fail closed. (2) Grok user agent receives ordinary Responses data without codex.rate_limits/codex.response.metadata, while proxy inspection and normal clients retain metadata. (3) valid external task seeds preserve text/order; absent metadata invalid tool outputs still reject. (4) no credential, admission, cache-retention default, provider/routing policy mutation. (5) final CI must really run relevant tests/typecheck, not skip/cancel or fabricate success. No local suite was run. Final failure permits lower-layer CI for localization; unrelated failures may defer delivery, never count as success.
 
 Sources: PRs https://github.com/lidge-jun/opencodex/pull/3815 and /pull/3816; issues /issues/3807 and /issues/3719. Current dev 137d6a727. Evidence snapshots under .tmp/axis3. Public notes contain no unreleased vulnerability detail; any new security investigation stays in scratch.
+
+## Terminal outcome
+
+Runtime scope delivered in3830–3832 with the evidence and explicit diagnostic remainders in021_delivery_record.md. Documentation-only completion retains the late source-author rows and archives this unit. Initial planning statements are historical; the delivery record is the outcome authority.
