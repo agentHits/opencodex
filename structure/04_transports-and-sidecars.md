@@ -833,6 +833,14 @@ with seam heartbeats between bounded units. None of these clocks is a total gene
 
 ## Reasoning and tool-result compatibility
 
+Kiro groups only consecutive original-message tool results whose raw call ID exactly matches
+the originating call. Its wire-ID map retains the original ID privately so replacement or
+truncation collisions cannot join unrelated results. Every non-tool message ends the group,
+including a reasoning-only assistant omitted from the Kiro turns. Group finalization preserves
+single-result normalization, ordered meaningful raw text and whitespace in multi-result output,
+failure text, image order and sticky error status. Empty hints are applied once for an entirely
+text-empty group, not once per chunk; local grouping state never enters the wire payload.
+
 `src/responses/task-input.ts` recognizes complete external Codex task-input envelopes
 before translated Responses adapters: `function_call_output`, no `call_id` property,
 nonblank `id`/`name`/`namespace`, and fully representable nonempty text/image output.
