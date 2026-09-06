@@ -136,7 +136,7 @@ export async function preflightComboStreamResponse(
   response: Response,
   logCtx: RequestLogContext,
   retryableTerminal: (payload: unknown) => boolean = retryableZeroOutputTerminal,
-  options?: { allowMissingContentType?: boolean },
+  options?: { allowMissingContentType?: boolean; replayReadErrors?: boolean },
 ): Promise<ComboStreamPreflightResult> {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   const isEventStream = contentType.includes("text/event-stream")
@@ -168,7 +168,16 @@ export async function preflightComboStreamResponse(
 
   try {
     for (;;) {
-      const next = await reader.read();
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try {
+        next = await reader.read();
+      } catch (error) {
+        if (!options?.replayReadErrors) throw error;
+        // The native relay still owns post-header transport failures. Preserve
+        // the bounded prefix and the errored reader; cancelling it here would
+        // erase the failure before either client relay or inspection sees it.
+        return { kind: "accepted", response: replayBufferedResponse(response, reader, buffered) };
+      }
       if (next.done) {
         inspector.finish();
       } else {

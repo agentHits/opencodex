@@ -647,10 +647,21 @@ describe("opaque blob recovery through /v1/responses", () => {
           sends += 1;
           return streamedFunctionOutputDecryptErrorEvent(flat);
         }, { preconnect: originalFetch.preconnect });
+        const logCtx: RequestLogContext = { model: "", provider: "" };
+        const terminals: string[] = [];
+        let markTerminal!: () => void;
+        const terminal = new Promise<void>(resolve => { markTerminal = resolve; });
         const response = await handleResponses(agentMessageRequest(true), {
           ...config(), streamMode,
-        }, { model: "", provider: "" });
+        }, logCtx, { onNativePassthroughTerminal: status => {
+          terminals.push(status);
+          markTerminal();
+        } });
         const body = await response.text();
+        await terminal;
+        expect(terminals).toEqual(["failed"]);
+        expect(logCtx.activeAttempt).toBeDefined();
+        expect(logCtx.activeAttempt?.streamAborted).not.toBe(true);
         expect(sends).toBe(2);
         expect(body).toContain(FUNCTION_OUTPUT_DECRYPT_MESSAGE);
         expect(body).not.toContain("adapter_eof");
@@ -780,6 +791,116 @@ describe("opaque blob recovery through /v1/responses", () => {
       expect(sends).toBe(1);
       expect(body).toContain(FUNCTION_OUTPUT_DECRYPT_MESSAGE);
       expect(body).not.toContain("response.completed");
+    });
+  }
+
+  for (const streamMode of ["legacy-tee", "eager-relay"] as const) {
+    test(`created-then-reset streamed function-output does not sanitize or resend (${streamMode})`, async () => {
+      const created = {
+        type: "response.created",
+        response: { id: "resp-function-output-reset", status: "in_progress" },
+      };
+      const prefix = new TextEncoder().encode(
+        `event: response.created
+data: ${JSON.stringify(created)}
+
+`,
+      );
+      const readError = new Error("upstream stream reset");
+      const outbound: Array<Record<string, unknown>> = [];
+      globalThis.fetch = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        outbound.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        let sentPrefix = false;
+        return new Response(new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (!sentPrefix) {
+              sentPrefix = true;
+              controller.enqueue(prefix);
+              return;
+            }
+            return Promise.reject(readError);
+          },
+        }), { status: 200, headers: { "content-type": "text/event-stream" } });
+      }, { preconnect: originalFetch.preconnect }) as typeof fetch;
+
+      const logCtx: RequestLogContext = { model: "", provider: "" };
+      const terminals: string[] = [];
+      let markTerminal!: () => void;
+      const terminal = new Promise<void>(resolve => { markTerminal = resolve; });
+      const response = await handleResponses(functionOutputRequest(true), {
+        ...config(), streamMode,
+      }, logCtx, { onNativePassthroughTerminal: status => {
+        terminals.push(status);
+        markTerminal();
+      } });
+      const body = await response.text();
+      await terminal;
+      expect(terminals).toEqual(["failed"]);
+      expect(logCtx.activeAttempt?.streamAborted).toBe(true);
+      expect(response.status).toBe(200);
+      expect(body).toContain("response.failed");
+      expect(body).toContain('"code":"upstream_reset"');
+      expect(body).not.toContain('"reason":"adapter_eof"');
+      expect(outbound).toHaveLength(1);
+      const sentInput = outbound.at(0)?.input as Array<Record<string, unknown>> | undefined;
+      expect(sentInput?.at(1)).toEqual(functionOutputReplayInput().at(1));
+      expect(JSON.stringify(sentInput)).toContain("encrypted_content");
+    });
+
+    test(`created-then-abort streamed function-output returns 499 without resend (${streamMode})`, async () => {
+      const created = {
+        type: "response.created",
+        response: { id: "resp-function-output-abort", status: "in_progress" },
+      };
+      const prefix = new TextEncoder().encode(
+        `event: response.created
+data: ${JSON.stringify(created)}
+
+`,
+      );
+      const abort = new AbortController();
+      let fetchSignal: AbortSignal | undefined;
+      let sawCreated!: () => void;
+      const createdStarted = new Promise<void>(resolve => { sawCreated = resolve; });
+      const outbound: Array<Record<string, unknown>> = [];
+      globalThis.fetch = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        outbound.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        fetchSignal = init?.signal ?? undefined;
+        let sentPrefix = false;
+        return new Response(new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (!sentPrefix) {
+              sentPrefix = true;
+              controller.enqueue(prefix);
+              sawCreated();
+              return new Promise<void>((_resolve, reject) => {
+                const fail = () => reject(fetchSignal?.reason ?? new Error("aborted"));
+                if (fetchSignal?.aborted) {
+                  fail();
+                  return;
+                }
+                fetchSignal?.addEventListener("abort", fail, { once: true });
+              });
+            }
+          },
+        }), { status: 200, headers: { "content-type": "text/event-stream" } });
+      }, { preconnect: originalFetch.preconnect }) as typeof fetch;
+
+      const logCtx: RequestLogContext = { model: "", provider: "" };
+      const pending = handleResponses(functionOutputRequest(true), {
+        ...config(), streamMode,
+      }, logCtx, { abortSignal: abort.signal });
+      await createdStarted;
+      expect(fetchSignal).toBeDefined();
+      abort.abort();
+      expect(fetchSignal?.aborted).toBe(true);
+      const response = await pending;
+      expect(response.status).toBe(499);
+      const body = await response.json() as { error?: { code?: string; type?: string } };
+      expect(body.error?.code ?? body.error?.type).toBe("client_cancelled");
+      expect(outbound).toHaveLength(1);
+      const sentInput = outbound.at(0)?.input as Array<Record<string, unknown>> | undefined;
+      expect(sentInput?.at(1)).toEqual(functionOutputReplayInput().at(1));
     });
   }
 

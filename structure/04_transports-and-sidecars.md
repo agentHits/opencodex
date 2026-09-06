@@ -397,7 +397,12 @@ Both client readers also retain a bounded, redacted message from a bare upstream
 `error` event. If EOF arrives without a real Responses terminal, they synthesize
 one `response.failed` with that message instead of replacing it with `adapter_eof`.
 The delivering reader owns this evidence; an asynchronous tee inspection branch
-cannot reliably supply it before EOF. Existing real terminals remain authoritative.
+cannot reliably supply it before EOF. Inspection independently applies the same
+bare-error rule when EOF arrives, so account health records failure instead of
+clearing avoidance as if the turn had succeeded. Existing real terminals and
+caller cancellation retain precedence on both branches. Native recovery preflight
+also preserves a rejected body reader and its bounded prefix for the normal
+mid-stream failure path; it does not turn that rejection into a decrypt retry.
 
 Native Responses may rebuild once when encrypted function/custom-tool output or
 agent-message content receives the exact known decrypt rejection before output

@@ -160,6 +160,13 @@ export function upstreamErrorTailFrame(encoder: TextEncoder, message: string): U
   })}\n\n`);
 }
 
+function boundedBareUpstreamErrorMessage(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)
+    || (payload as { type?: unknown }).type !== "error") return undefined;
+  const message = upstreamErrorMessageFromPayload(payload);
+  return message ? redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS) : undefined;
+}
+
 export type SseTerminalOutputBoundary = {
   feed(chunk: Uint8Array): Uint8Array;
   finish(): Uint8Array;
@@ -198,10 +205,8 @@ export function createSseTerminalOutputBoundary(): SseTerminalOutputBoundary {
       const parsed = payload === null ? undefined : parseSsePayload(payload);
       // Observe on the client reader itself: a tee inspection branch may lag
       // behind EOF, so its log context cannot determine the outgoing terminal.
-      if (parsed && typeof parsed === "object" && "type" in parsed && parsed.type === "error") {
-        const message = upstreamErrorMessageFromPayload(parsed);
-        if (message) upstreamError = redactSecretString(message).slice(0, MAX_TAIL_ERROR_MESSAGE_CHARS);
-      }
+      const message = boundedBareUpstreamErrorMessage(parsed);
+      if (message !== undefined) upstreamError = message;
       const policyError = parsed !== undefined && isPolicyRewriteType(parsed)
         ? cyberPolicyTerminalError(parsed)
         : undefined;
@@ -1379,11 +1384,16 @@ export function consumeForInspection(
   options?: InspectionConsumerOptions,
 ): void {
   const reader = body.getReader();
+  let bareUpstreamError: string | undefined;
   const inspector = (options?.inspectorFactory ?? createSseInspector)({
     onTerminal,
     logCtx,
     onCompletedResponse,
-    onParsedPayload: options?.onParsedPayload,
+    onParsedPayload: payload => {
+      const message = boundedBareUpstreamErrorMessage(payload);
+      if (message !== undefined) bareUpstreamError = message;
+      options?.onParsedPayload?.(payload);
+    },
     onFirstOutput,
     pinCompletedResponseIdToFirstSeen: options?.pinCompletedResponseIdToFirstSeen,
   });
@@ -1397,7 +1407,11 @@ export function consumeForInspection(
     onCleanEof: () => {
       if (!inspector.reported()) {
         if (logCtx) logCtx.terminalSource = "synthetic";
-        onTerminal("incomplete");
+        if (bareUpstreamError !== undefined) {
+          onTerminal("failed", httpStatusForRequestLogTerminal("failed", logCtx));
+        } else {
+          onTerminal("incomplete");
+        }
       }
     },
     onReadError: () => {

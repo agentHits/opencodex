@@ -5043,7 +5043,11 @@ async function handleResponsesInner(
           const type = (payload as { type?: unknown }).type;
           return (type === "error" || type === "response.failed" || type === "response.incomplete")
             && upstreamErrorMessageFromPayload(payload) === ENCRYPTED_FUNCTION_OUTPUT_REJECTION;
-        }, { allowMissingContentType: !recoveryContentType && parsed.stream });
+        }, {
+          allowMissingContentType: !recoveryContentType && parsed.stream,
+          replayReadErrors: true,
+        });
+      if (options.abortSignal?.aborted) return transportFailureResponse(options.abortSignal.reason);
       upstreamResponse = preflight.response;
       if (preflight.kind === "failed") {
         const streamedOpaqueRecovery = await attemptOpaqueBlobRecovery({
@@ -5348,11 +5352,14 @@ async function handleResponsesInner(
           ...(clientBlockRewrite
             ? { rewriteBlocks: clientBlockRewrite }
             : {}),
-          onSynthetic: kind => {
+          onSynthetic: (kind, reason) => {
             if (!reportNativeTerminal) return;
             if (kind === "incomplete") {
               logCtx.terminalSource = "synthetic";
               reportNativeTerminal("incomplete");
+            } else if (reason === "upstream_error") {
+              logCtx.terminalSource = "synthetic";
+              reportNativeTerminal("failed", logCtx.terminalHttpStatus ?? 502);
             } else {
               logCtx.transportPhase = "mid_stream";
               logCtx.terminalSource = "synthetic";

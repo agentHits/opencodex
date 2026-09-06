@@ -64,7 +64,7 @@ export type EagerRelayHooks = {
   /** True once inspection has reported a protocol terminal (inspector.reported). */
   sawTerminal: () => boolean;
   /** Record a synthetic terminal (caller decides incomplete vs failed-502). */
-  onSynthetic: (kind: "incomplete" | "failed") => void;
+  onSynthetic: (kind: "incomplete" | "failed", reason?: "upstream_error") => void;
   /** Client cancelled and NO terminal arrived within the drain bounds. */
   onClientCancel: () => void;
   /** Exactly once, after the producer fully stops (unregisterTurn parity). */
@@ -242,6 +242,7 @@ export function relaySseEagerBounded(
 
   const producer = async () => {
     let syntheticKind: "incomplete" | "failed" | null = null;
+    let syntheticReason: "upstream_error" | undefined;
     let deliveryFallbackSent = false;
     let priorRewriteFailure = false;
     let priorRewriteError: unknown;
@@ -316,6 +317,7 @@ export function relaySseEagerBounded(
               controllerRef?.enqueue(terminalSentinel);
             } catch { /* client already gone */ }
             syntheticKind = upstreamError === undefined ? "incomplete" : "failed";
+            syntheticReason = upstreamError === undefined ? undefined : "upstream_error";
           }
           break;
         }
@@ -456,7 +458,10 @@ export function relaySseEagerBounded(
         frameBufferBytes = 0;
       }
       terminalBoundary.dispose();
-      if (syntheticKind && canDeliver()) hooks.onSynthetic(syntheticKind);
+      if (syntheticKind && canDeliver()) {
+        if (syntheticReason === undefined) hooks.onSynthetic(syntheticKind);
+        else hooks.onSynthetic(syntheticKind, syntheticReason);
+      }
       if (cancelled && !hooks.sawTerminal()) {
         hooks.onClientCancel();
       }
