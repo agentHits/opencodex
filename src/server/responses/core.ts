@@ -369,6 +369,7 @@ import {
   upstreamHostHealthKey,
   type UpstreamHostAdmissionLease,
 } from "../../codex/upstream-host-health";
+import { createGrokResponsesSparseTerminalBlockRewrite } from "../grok-responses-snapshot-repair";
 import {
   createResponsesSnapshotBlockRewrite,
   hasResponsesSnapshotRepair,
@@ -5246,6 +5247,12 @@ async function handleResponsesInner(
         )
         : upstreamResponse.body;
       const repairConfig = route.provider.responsesItemIdRepair;
+      // Grok Build renders deltas live but reconstructs its durable assistant
+      // turn from the completed response snapshot. Native Responses streams
+      // may instead carry the complete items in output_item.done, so the
+      // explicit Grok compatibility marker enables strict terminal-only repair.
+      // The provider's broader snapshot/lifecycle repair remains opt-in.
+      const grokClientSnapshotRepairEnabled = logCtx.surface === "grok";
       const snapshotRepairEnabled = hasResponsesSnapshotRepair(route.provider.responsesSnapshotRepair);
       const githubCopilotRepairEnabled = route.providerName === "github-copilot";
       const responseModelRewrite = parsed._responseModelId !== undefined
@@ -5293,6 +5300,9 @@ async function handleResponsesInner(
           : undefined,
         githubCopilotRepairEnabled
           ? createGithubCopilotResponsesBlockRewrite(translatorBudget)
+          : undefined,
+        grokClientSnapshotRepairEnabled
+          ? createGrokResponsesSparseTerminalBlockRewrite(translatorBudget)
           : undefined,
         snapshotRepairEnabled
           ? createResponsesSnapshotBlockRewrite(outboundRequestBody, translatorBudget)

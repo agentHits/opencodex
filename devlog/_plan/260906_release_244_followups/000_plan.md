@@ -36,3 +36,12 @@ One work-phase is one PABCD cycle. Publish short dependency stacks; use merge co
 ## Evidence boundaries
 
 #3735/#3734 are public current-SHA reports; independently inspect code, author local-pass statements remain reports. Kiro proof is recorded-log shape plus synthetic CI tests, never a live quota-consuming request. #3644 has a network A/B report and landed diagnostic #3693; do not claim a Windows runtime reproduction from mocked tests. Detailed private logs are never committed.
+
+## Owner steering: asynchronous CI
+
+From the Grok unit onward, implementation/review and PR publication proceed
+without waiting for hosted CI. Each cycle records exact-head CI submission; its
+runtime acceptance criterion stays open under release convergence. CI failures
+are handled asynchronously and stacks cascade after repairs. Bottom-up merges
+and release publication still require successful checks on their final heads.
+This changes scheduling only; no test, platform or release criterion is removed.
