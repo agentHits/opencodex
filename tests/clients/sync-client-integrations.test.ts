@@ -1,17 +1,22 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExportModel } from "../../src/clients/config-export";
+import type { writeDesktop3pConfig } from "../../src/claude/desktop-3p";
+import { desktopVisibleNativeSlugs, type CatalogModel } from "../../src/codex/catalog";
 import { claudeDesktopIntegrationEnabled, grokIntegrationEnabled } from "../../src/codex/desired-state";
 import { INTEGRATION_CLIENTS } from "../../src/integrations/registry";
 import { IntegrationMutationBusyError, runIntegrationMutationFlight, setIntegrationMutationFlightTestHook } from "../../src/integrations/mutation-flight";
 import { refreshOwnedCatalogIntegrations } from "../../src/integrations/catalog-refresh";
+import * as asideProfiles from "../../src/integrations/aside-profiles";
 import { refreshOwnedIntegration } from "../../src/integrations/owned-refresh";
+import * as ownedRefresh from "../../src/integrations/owned-refresh";
 import { createIntegrationStateStore, type IntegrationStateStore } from "../../src/integrations/store";
 import type { IntegrationWriterLockSeams } from "../../src/integrations/writer-lock";
 import { applyIntegration, disableIntegrationCoordinated } from "../../src/integrations/writer";
 import type { OcxConfig } from "../../src/types";
+import { syncEnabledClientIntegrations } from "../../src/server/management/config-routes";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 /**
@@ -68,11 +73,134 @@ describe("ocx sync fans out to enabled native clients and owned file integration
     // call site. 8b672205e threaded `nativeContextLimits` through those writers and
     // left this assertion naming the retired `providerContextCap` spelling, so the
     // source-shape check failed against the very change it is meant to pin.
-    expect(fn).toContain("nativeContextLimits(config)");
+    expect(fn).toContain("nativeContextLimits(latest)");
     // A client that is off is omitted rather than reported: the caller has to be able to
     // tell "left alone" from "tried and failed", so there is no skipped state to emit.
     expect(fn).not.toContain('"skipped"');
   });
+});
+
+describe("Desktop sync rechecks persisted state after discovery", () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    previousHome = process.env.OPENCODEX_HOME;
+    root = mkdtempSync(join(tmpdir(), "ocx-desktop-sync-refresh-"));
+    process.env.OPENCODEX_HOME = root;
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+    else process.env.OPENCODEX_HOME = previousHome;
+    removeTreeWithRetry(root);
+  });
+
+  for (const outcome of ["off", "refresh", "refusal"] as const) {
+    test(`${outcome} during discovery preserves fresh Desktop state and MCode fan-out`, async () => {
+      const config: OcxConfig = {
+        port: 10100,
+        defaultProvider: "mock",
+        clientIntegrations: { grok: false },
+        providers: {
+          mock: { adapter: "openai-chat", baseUrl: "https://example.test/v1", models: ["keep", "hidden"] },
+          openai: { adapter: "openai-responses", baseUrl: "https://example.test/v1", contextWindow: 400_000 },
+        },
+        apiKeys: [{ id: "sync-key", name: "fixture", key: "ocx_old_sync_fixture", createdAt: "2026-01-01T00:00:00.000Z" }],
+        providerContextCaps: { openai: 272_000 },
+        claudeCode: { desktopProfile: {
+          version: 1,
+          assignments: { "mock/hidden": { family: "opus", alias: "claude-opus-4-8-20260201" } },
+          defaults: { opus: "mock/hidden", fable: null, sonnet: null, haiku: null },
+        } },
+      };
+      const nativeToDisable = desktopVisibleNativeSlugs(config)[0];
+      expect(nativeToDisable).toBeDefined();
+      writeFileSync(join(root, "config.json"), JSON.stringify(config));
+      const models: CatalogModel[] = [
+        { provider: "mock", id: "keep", contextWindow: 123_000 },
+        { provider: "mock", id: "hidden", contextWindow: 456_000 },
+      ];
+      let releaseDiscovery!: () => void;
+      let announceDiscovery!: () => void;
+      const discoveryGate = new Promise<void>(resolve => { releaseDiscovery = resolve; });
+      const discoveryStarted = new Promise<void>(resolve => { announceDiscovery = resolve; });
+      const writes: Parameters<typeof writeDesktop3pConfig>[] = [];
+      // The shared refresh now also receives Pi. Stub only MCode so peers retain
+      // their real unowned-client behavior instead of manufacturing MCode results.
+      const realRefresh = ownedRefresh.refreshOwnedIntegration;
+      const refresh = spyOn(ownedRefresh, "refreshOwnedIntegration").mockImplementation((input, options) =>
+        input.clientId === "mcode"
+          ? Promise.resolve({ client: "mcode", ok: true, changed: true })
+          : realRefresh(input, options));
+      const aside = spyOn(asideProfiles, "refreshAsideProfiles");
+      const sync = syncEnabledClientIntegrations(12345, config, {
+        fetchAllModels: async () => {
+          announceDiscovery();
+          await discoveryGate;
+          return models;
+        },
+        writeDesktop3pConfig: (...args) => {
+          writes.push(args);
+          return outcome === "refusal"
+            ? { written: false, path: "fixture", reason: "desktop_remote_store_active" }
+            : { written: true, path: "fixture" };
+        },
+      });
+      try {
+        await Promise.race([
+          discoveryStarted,
+          sync.then(() => { throw new Error("sync ended without entering Desktop discovery"); }),
+        ]);
+        const latest = structuredClone(config);
+        latest.clientIntegrations = { grok: false, "claude-desktop": outcome !== "off" };
+        latest.disabledModels = ["mock/hidden", nativeToDisable!];
+        latest.apiKeys![0]!.key = "ocx_new_sync_fixture";
+        latest.providerContextCaps = { openai: 922_000 };
+        latest.providers.openai!.contextWindow = 1_000_000;
+        latest.claudeCode!.desktopProfile = {
+          version: 1,
+          assignments: { "mock/keep": { family: "sonnet", alias: "claude-opus-4-8-20260202" } },
+          defaults: { opus: null, fable: null, sonnet: "mock/keep", haiku: null },
+        };
+        writeFileSync(join(root, "config.json"), JSON.stringify(latest));
+        releaseDiscovery();
+        const results = await sync;
+        const mcodeCalls = refresh.mock.calls.filter(([input]) => input.clientId === "mcode");
+        expect(mcodeCalls).toHaveLength(1);
+        expect(mcodeCalls[0]![0]).toMatchObject({ clientId: "mcode", port: 12345 });
+        expect(refresh.mock.calls.filter(([input]) => input.clientId === "pi")).toHaveLength(1);
+        expect(aside).toHaveBeenCalledTimes(1);
+        expect(aside.mock.calls[0]![0]).toMatchObject({ config, port: 12345 });
+        expect(await aside.mock.results[0]!.value).toEqual([]);
+        expect(results.filter(result => result.client === "mcode"))
+          .toEqual([{ client: "mcode", ok: true, changed: true }]);
+        expect(results.filter(result => result.client === "pi" || result.client === "aside")).toEqual([]);
+        if (outcome === "off") {
+          expect(writes).toHaveLength(0);
+          expect(results).toEqual([{ client: "mcode", ok: true, changed: true }]);
+        } else {
+          expect(writes).toHaveLength(1);
+          const [port, natives, routed, key, mode, profile, limits] = writes[0]!;
+          expect(port).toBe(12345);
+          expect(natives).not.toContain(nativeToDisable);
+          expect(routed).toEqual([{ provider: "mock", id: "keep", contextWindow: 123_000 }]);
+          expect(key).toBe("ocx_new_sync_fixture");
+          expect(mode).toBe("static");
+          expect(profile).toEqual(latest.claudeCode!.desktopProfile);
+          expect(limits).toEqual({ cap: 922_000, providerWindow: 1_000_000 });
+          expect(results.find(result => result.client === "claude-desktop")).toEqual(outcome === "refusal"
+            ? { client: "claude-desktop", ok: false, reason: "desktop_remote_store_active" }
+            : { client: "claude-desktop", ok: true, changed: true });
+        }
+      } finally {
+        releaseDiscovery();
+        await sync.catch(() => undefined);
+        refresh.mockRestore();
+        aside.mockRestore();
+      }
+    });
+  }
 });
 
 describe("ocx sync refreshes an already-owned MCode integration", () => {
