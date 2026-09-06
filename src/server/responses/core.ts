@@ -242,6 +242,7 @@ import {
   type InboundWire,
 } from "../../providers/registry";
 import type { AdapterRequest, ProviderAdapter } from "../../adapters/base";
+import { providerApiKeySelectionIsCurrent, resolveCurrentProviderApiKeyTransport } from "../../providers/api-key-selection";
 import {
   hasKeyPoolFailover,
   rateLimitRetryDelayMs,
@@ -3677,6 +3678,23 @@ async function handleResponsesInner(
   let oauthSelection = route.provider.authMode === "oauth"
     ? captureOAuthAccountSelection(route.providerName) : null;
   let servingOAuthSnapshot: OAuthAccessSnapshot | undefined;
+  // These owners also serve early passthrough and sidecar sends. A dispatch-time
+  // rebuild must update every later builder, without entering a later block's TDZ.
+  let adapter: ProviderAdapter;
+  let activeAdapter: ProviderAdapter;
+  let runTurnAdapter: ProviderAdapter;
+  let sameTargetRequest: AdapterRequest | undefined;
+  let sameTargetParsed: OcxParsedRequest | undefined;
+  let sameTargetToken = 0;
+  let transportToken = 0;
+  let imageTierBias = 0;
+  const invalidateSameTargetRequest = (): void => { transportToken += 1; };
+  type DispatchBinding =
+    | { kind: "oauth"; selection: NonNullable<typeof oauthSelection>; snapshot: OAuthAccessSnapshot }
+    | { kind: "api-key"; provider: OcxProviderConfig };
+  const requestBindings = new WeakMap<AdapterRequest, DispatchBinding>();
+  const adapterBindings = new WeakMap<ProviderAdapter, DispatchBinding>();
+  const rawRunTurns = new WeakMap<ProviderAdapter, NonNullable<ProviderAdapter["runTurn"]>>();
   const commitResolvedOAuthSelection = async (
     candidate: OAuthAccessSnapshot,
     proactive = false,
@@ -3802,30 +3820,114 @@ async function handleResponsesInner(
     replayOAuthCredentialSnapshot = { accountId: snapshot.accountId, generation: snapshot.generation };
     return true;
   };
-  const oauthSelectionIsCurrent = (): boolean => {
-    if (route.provider.authMode !== "oauth") return true;
-    if (!oauthSelection || !servingOAuthSnapshot) return false;
+  const selectionIsCurrent = (binding: DispatchBinding | undefined): boolean => {
+    if (route.provider.authMode === "forward") return true;
+    if (!binding) return false;
+    if (binding.kind === "api-key") return providerApiKeySelectionIsCurrent(config, route.providerName, binding.provider);
     const selected = captureOAuthAccountSelection(route.providerName);
-    const row = getAccountCredentialWithStatus(route.providerName, servingOAuthSnapshot.accountId);
-    return selected?.accountId === oauthSelection.accountId && selected?.revision === oauthSelection.revision
+    const row = getAccountCredentialWithStatus(route.providerName, binding.snapshot.accountId);
+    return selected?.accountId === binding.selection.accountId && selected?.revision === binding.selection.revision
       && !!row && !row.needsReauth && row.credential.expires > Date.now()
-      && credentialGeneration(row.credential) === servingOAuthSnapshot.generation;
+      && credentialGeneration(row.credential) === binding.snapshot.generation;
+  };
+  const resolveSelectionAdapter = (provider: OcxProviderConfig, retention = config.cacheRetention): ProviderAdapter => {
+    const resolved = resolveAdapter(provider, retention);
+    if (route.provider.authMode === "forward") return resolved;
+    const binding: DispatchBinding | undefined = route.provider.authMode === "oauth"
+      ? oauthSelection && servingOAuthSnapshot
+        ? { kind: "oauth", selection: { ...oauthSelection }, snapshot: servingOAuthSnapshot }
+        : undefined
+      : { kind: "api-key", provider: { ...route.provider } };
+    if (binding) adapterBindings.set(resolved, binding);
+    const build = resolved.buildRequest.bind(resolved);
+    resolved.buildRequest = async (requestParsed, incoming) => {
+      const request = await build(requestParsed, incoming);
+      // Capture at adapter creation, never from mutable serving state after an await.
+      if (binding) requestBindings.set(request, binding);
+      return request;
+    };
+    if (resolved.runTurn) {
+      rawRunTurns.set(resolved, resolved.runTurn.bind(resolved));
+      resolved.runTurn = (requestParsed, incoming, emit) => runSelectedTurn(resolved, requestParsed, incoming, emit);
+    }
+    return resolved;
+  };
+  const refreshDispatchAdapter = async (requestParsed: OcxParsedRequest): Promise<ProviderAdapter> => {
+    if (route.provider.authMode === "oauth") {
+      if (!servingOAuthSnapshot || !await applyFailoverSnapshot(servingOAuthSnapshot, requestParsed)) {
+        throw new Error("OAuth account selection changed before dispatch");
+      }
+    } else {
+      const current = resolveCurrentProviderApiKeyTransport(config, route.providerName, route.provider);
+      if (!current) throw new Error("API key selection is unavailable before dispatch");
+      route.provider = current;
+    }
+    adapter = activeAdapter = runTurnAdapter = resolveSelectionAdapter(
+      resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
+    );
+    invalidateSameTargetRequest();
+    return adapter;
+  };
+  const refreshRunTurnAdapter = async (requestParsed: OcxParsedRequest): Promise<ProviderAdapter> => {
+    requestParsed._cursorIdentityScope = undefined;
+    requestParsed._cursorConversationId = undefined;
+    if (requestParsed._providerContinuation?.cursor) {
+      const { cursor: _oldCursor, ...rest } = requestParsed._providerContinuation;
+      requestParsed._providerContinuation = rest;
+    }
+    return refreshDispatchAdapter(requestParsed);
+  };
+  const runSelectedTurn = async (
+    selectedAdapter: ProviderAdapter,
+    ...[requestParsed, incoming, emit]: Parameters<NonNullable<ProviderAdapter["runTurn"]>>
+  ): Promise<void> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!selectionIsCurrent(adapterBindings.get(selectedAdapter))) selectedAdapter = await refreshRunTurnAdapter(requestParsed);
+      const binding = adapterBindings.get(selectedAdapter);
+      const run = rawRunTurns.get(selectedAdapter);
+      if (!run) throw new Error("Selected provider no longer supports this turn transport");
+      let sent = false;
+      let refused = false;
+      // Both main and image-loop callers already acquired the initial pacing slot.
+      // Subsequent physical messages retain this adapter/credential and are paced normally.
+      const fetch = providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+        providerName: route.providerName, modelId: route.modelId, pacingSlotAcquired: true,
+        beforeDispatch: () => {
+          if (sent) return;
+          if (!selectionIsCurrent(binding)) {
+            refused = true;
+            throw new Error("Account selection changed before the first turn dispatch");
+          }
+          sent = true;
+        },
+      });
+      try {
+        await run(requestParsed, { ...incoming, providerFetch: fetch }, event => { if (!refused) emit(event); });
+      } catch (error) {
+        if (!refused) throw error;
+      }
+      if (!refused) return;
+      // The adapter may map the guard's exception to an error event. Neither that
+      // event nor a refused send may escape before retrying the newly selected account.
+      selectedAdapter = await refreshRunTurnAdapter(requestParsed);
+    }
+    throw new Error("Account selection changed repeatedly before turn dispatch");
   };
   const oauthDispatch = (wireRequest: AdapterRequest, requestParsed = parsed): ProviderFetchOptions["dispatchOverride"] => {
-    if (route.provider.authMode !== "oauth") return undefined;
+    if (route.provider.authMode === "forward") return undefined;
     return async (input, init, execute) => {
       let destination = input;
       let dispatchInit = init;
       for (let attempt = 0; attempt < 3; attempt++) {
-        if (oauthSelectionIsCurrent()) {
+        if (selectionIsCurrent(requestBindings.get(wireRequest))) {
           const fetchImpl = (route.provider as OcxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch ?? execute;
           return fetchImpl(destination, dispatchInit);
         }
-        if (!servingOAuthSnapshot || !await applyFailoverSnapshot(servingOAuthSnapshot, requestParsed)) {
-          throw new Error("OAuth account selection changed before dispatch");
-        }
-        const nextAdapter = resolveAdapter(resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire), config.cacheRetention);
-        const rebuilt = await nextAdapter.buildRequest(requestParsed, { headers: selectedForwardHeaders, translatorBudget });
+        const nextAdapter = await refreshDispatchAdapter(requestParsed);
+        const rebuilt = await nextAdapter.buildRequest(requestParsed, {
+          headers: selectedForwardHeaders, translatorBudget,
+          ...(imageTierBias > 0 ? { imageTierBias } : {}),
+        });
         const bodySize = checkOutboundBodySize(rebuilt.body, config.maxUpstreamBodyBytes);
         if (!bodySize.admitted) {
           rebuilt.releaseBodyObservation?.();
@@ -3836,6 +3938,12 @@ async function handleResponsesInner(
         for (const [name, value] of Object.entries(rebuilt.headers)) headers.set(name, value);
         wireRequest.releaseBodyObservation?.();
         Object.assign(wireRequest, rebuilt);
+        const binding = requestBindings.get(rebuilt);
+        if (binding) requestBindings.set(wireRequest, binding);
+        else requestBindings.delete(wireRequest);
+        sameTargetRequest = wireRequest;
+        sameTargetParsed = requestParsed;
+        sameTargetToken = transportToken;
         destination = rebuilt.url;
         dispatchInit = { ...dispatchInit, method: rebuilt.method, headers, body: rebuilt.body };
         bindRouteReasoningReplayScope({ parsed: requestParsed, providerName: route.providerName, provider: route.provider,
@@ -4005,7 +4113,7 @@ async function handleResponsesInner(
     logCtx.provider = route.providerName;
     delete logCtx.accountLogLabel;
   }
-  const adapter = resolveAdapter(adapterProvider, config.cacheRetention);
+  adapter = resolveSelectionAdapter(adapterProvider, config.cacheRetention);
   bindRouteReasoningReplayScope({
     parsed,
     providerName: route.providerName,
@@ -4034,7 +4142,7 @@ async function handleResponsesInner(
   }
   sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, adapter.name, logCtx.accountLogLabel);
   recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, adapterProvider, adapter.name);
-  let runTurnAdapter = adapter;
+  runTurnAdapter = adapter;
   if (adapter.runTurn) {
     recordAdapterTierMetadata(logCtx, adapter.tierLogForRunTurn?.(parsed));
   }
@@ -4666,7 +4774,7 @@ async function handleResponsesInner(
     const rebuildAndRefetch = async (
       recovery: AttemptRecoveryKind,
     ): Promise<Response | { failed: Response }> => {
-      const retryAdapter = resolveAdapter(
+      const retryAdapter = resolveSelectionAdapter(
         resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
         config.cacheRetention,
       );
@@ -4772,7 +4880,7 @@ async function handleResponsesInner(
       authCtx = replay.authCtx;
       route.provider = replay.provider;
       selectedForwardHeaders = replay.headers;
-      const replayAdapter = resolveAdapter(
+      const replayAdapter = resolveSelectionAdapter(
         resolveWireProtocolOverride(route.providerName, route.modelId, replay.provider, inboundWire),
         config.cacheRetention,
       );
@@ -4889,7 +4997,7 @@ async function handleResponsesInner(
           : undefined,
       );
       route.provider = refreshedProvider;
-      const refreshedAdapter = resolveAdapter(
+      const refreshedAdapter = resolveSelectionAdapter(
         resolveWireProtocolOverride(route.providerName, route.modelId, refreshedProvider, inboundWire),
         config.cacheRetention,
       );
@@ -5898,7 +6006,7 @@ async function handleResponsesInner(
       // credential. The 429 is terminal for this sidecar turn.
       return null;
     }
-    const rotatedAdapter = resolveAdapter(
+    const rotatedAdapter = resolveSelectionAdapter(
       resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
       config.cacheRetention,
     );
@@ -5982,6 +6090,13 @@ async function handleResponsesInner(
       stallTimeoutSec: config.stallTimeoutSec,
       waitForRequestSlot: imageProviderFetch.waitForPacing,
       fetchImpl: imageProviderFetch.unpacedFetch ?? imageProviderFetch,
+      fetchForRequest: (request, iterParsed) => {
+        const fetch = providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+          dispatchOverride: oauthDispatch(request, iterParsed),
+          providerName: route.providerName, modelId: route.modelId,
+        });
+        return fetch.unpacedFetch ?? fetch;
+      },
       onRequestBuilt: request => {
         recordAdapterReasoning(logCtx, request);
         recordAdapterTier(logCtx, request);
@@ -6042,6 +6157,10 @@ async function handleResponsesInner(
       })(input, init)) as typeof globalThis.fetch;
     const wsResponse = await runWithWebSearch({
       parsed, adapter,
+      fetchForRequest: (request, iterParsed) => providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+        dispatchOverride: oauthDispatch(request, iterParsed),
+        providerName: route.providerName, modelId: route.modelId,
+      }),
       incomingMeta: {
         headers: selectedForwardHeaders,
         abortSignal: options.abortSignal,
@@ -6117,20 +6236,9 @@ async function handleResponsesInner(
     const queue = createAdapterEventQueue({
       onBacklogExceeded: () => runTurnAbort.abort(),
     });
-    let selectionDispatchRefused = false;
-    let selectionDispatchRetries = 0;
     const refreshRunTurnSelection = async (): Promise<void> => {
-      if (oauthSelectionIsCurrent()) return;
-      if (!servingOAuthSnapshot || !await applyFailoverSnapshot(servingOAuthSnapshot)) {
-        throw new Error("OAuth account selection changed before dispatch");
-      }
-      parsed._cursorIdentityScope = undefined;
-      parsed._cursorConversationId = undefined;
-      if (parsed._providerContinuation?.cursor) {
-        const { cursor: _oldCursor, ...rest } = parsed._providerContinuation;
-        parsed._providerContinuation = rest;
-      }
-      runTurnAdapter = resolveAdapter(resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire), config.cacheRetention);
+      if (selectionIsCurrent(adapterBindings.get(runTurnAdapter))) return;
+      await refreshRunTurnAdapter(parsed);
       bindRouteReasoningReplayScope({ parsed, providerName: route.providerName, provider: route.provider,
         adapterName: runTurnAdapter.name, oauthCredentialSnapshot: replayOAuthCredentialSnapshot });
       sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, runTurnAdapter.name, logCtx.accountLogLabel);
@@ -6160,7 +6268,6 @@ async function handleResponsesInner(
         }
         await refreshRunTurnSelection();
         noteAttemptSend(logCtx.activeAttempt, logCtx.usageLogInputTokens, recovery);
-        let firstPhysicalSend = true;
         const runTurnProviderFetch = providerFetch(
           route.provider,
           options.codexWsRuntimeIdentity,
@@ -6171,14 +6278,6 @@ async function handleResponsesInner(
             // Cursor HTTP/1.1 consumes it for RunSSE; every BidiAppend and redial then waits on
             // the same provider queue through this stateful wrapper.
             pacingSlotAcquired: true,
-            beforeDispatch: () => {
-              if (!firstPhysicalSend) return; // A started multi-message turn keeps its credential.
-              if (!oauthSelectionIsCurrent()) {
-                selectionDispatchRefused = true;
-                throw new Error("OAuth account selection changed before dispatch");
-              }
-              firstPhysicalSend = false;
-            },
           },
         );
         await runTurnAdapter.runTurn?.(
@@ -6217,11 +6316,6 @@ async function handleResponsesInner(
     const rotateRunTurnAdapterOnPreflight429 = async (
       error: Extract<AdapterEvent, { type: "error" }>,
     ): Promise<boolean> => {
-      if (selectionDispatchRefused && selectionDispatchRetries < 3) {
-        selectionDispatchRefused = false;
-        selectionDispatchRetries += 1;
-        try { await refreshRunTurnSelection(); return true; } catch { return false; }
-      }
       const status = error.status ?? adapterFailureFromMessage(error.message).httpStatus;
       if (
         status !== 429
@@ -6255,7 +6349,7 @@ async function handleResponsesInner(
           route.provider,
           inboundWire,
         );
-        const rotatedAdapter = resolveAdapter(rotatedProvider, config.cacheRetention);
+        const rotatedAdapter = resolveSelectionAdapter(rotatedProvider, config.cacheRetention);
         if (!rotatedAdapter.runTurn) return false;
         runTurnAdapter = rotatedAdapter;
         bindRouteReasoningReplayScope({
@@ -6460,7 +6554,7 @@ async function handleResponsesInner(
   const stallTimeoutMs = typeof config.stallTimeoutSec === "number" && Number.isFinite(config.stallTimeoutSec) && config.stallTimeoutSec > 0
     ? Math.floor(config.stallTimeoutSec * 1000)
     : 300_000;
-  let activeAdapter = adapter;
+  activeAdapter = adapter;
 
   // One immutable, body-safe outbound request per same-target sequence (URL, serialized body,
   // auth headers, generated compat headers). Same-target 429 replays reuse it verbatim; the
@@ -6559,16 +6653,15 @@ async function handleResponsesInner(
   // Capture it in a const so the fetch callbacks read a narrowed, immutable value
   // (TypeScript drops narrowing for a `let` captured by a nested function).
   const builtInitialRequest = initialRequest;
-  let sameTargetRequest: AdapterRequest | undefined = builtInitialRequest;
-  let sameTargetParsed: OcxParsedRequest | undefined = parsed;
-  let sameTargetToken = 0;
-  let transportToken = 0;
+  sameTargetRequest = builtInitialRequest;
+  sameTargetParsed = parsed;
+  sameTargetToken = transportToken;
   /**
    * Invalidate the same-target request cache. Every credential/adapter/parsed mutation MUST
    * go through here: the cache keys on `parsed` REFERENCE identity, so an in-place mutation
    * is invisible to it and a missed bump would replay a request built with a stale key.
    */
-  const invalidateSameTargetRequest = (): void => { transportToken += 1; };
+
   let upstreamResponse: Response;
   try {
     if (activeAdapter.fetchResponse) {
@@ -6637,7 +6730,6 @@ async function handleResponsesInner(
   let rateLimitRetries = 0;
   // Shared with the terminal-guard continuation below: an image-tier reduction that let the
   // main request clear a 413 must not be forgotten on the very next continuation build.
-  let imageTierBias = 0;
   if (!upstreamResponse.ok) {
     // Recovery loop: multi-key 429 failover + at most ONE opaque-state rebuild and ONE
     // anthropic 413 tightened retry
@@ -6794,7 +6886,7 @@ async function handleResponsesInner(
         );
         route.provider = refreshedProvider;
         invalidateSameTargetRequest();
-        activeAdapter = resolveAdapter(
+        activeAdapter = resolveSelectionAdapter(
           resolveWireProtocolOverride(route.providerName, route.modelId, refreshedProvider, inboundWire),
           config.cacheRetention,
         );
@@ -6827,7 +6919,7 @@ async function handleResponsesInner(
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
         route.provider = rotated;
         invalidateSameTargetRequest();
-        activeAdapter = resolveAdapter(
+        activeAdapter = resolveSelectionAdapter(
           resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
           config.cacheRetention,
         );
@@ -6897,7 +6989,7 @@ async function handleResponsesInner(
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
         route.provider = rotated;
         invalidateSameTargetRequest();
-        activeAdapter = resolveAdapter(
+        activeAdapter = resolveSelectionAdapter(
           resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
           config.cacheRetention,
         );
@@ -6935,7 +7027,7 @@ async function handleResponsesInner(
           route.provider = { ...route.provider, apiKey: admitted.accessToken };
           invalidateSameTargetRequest();
           logCtx.provider = formatAnthropicProviderForLog("anthropic", admitted.accountId, config);
-          activeAdapter = resolveAdapter(
+          activeAdapter = resolveSelectionAdapter(
             resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
             config.cacheRetention,
           );
@@ -6978,7 +7070,7 @@ async function handleResponsesInner(
             genericFailovers += 1;
           if (!await applyFailoverSnapshot(snapshot)) break;
           invalidateSameTargetRequest();
-          activeAdapter = resolveAdapter(
+          activeAdapter = resolveSelectionAdapter(
             resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
             config.cacheRetention,
           );
@@ -7305,7 +7397,7 @@ async function handleResponsesInner(
           try { void response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
           route.provider = rotated;
           invalidateSameTargetRequest();
-          activeAdapter = resolveAdapter(
+          activeAdapter = resolveSelectionAdapter(
             resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
             config.cacheRetention,
           );
@@ -7348,7 +7440,7 @@ async function handleResponsesInner(
             route.provider = { ...route.provider, apiKey: admitted.accessToken };
             invalidateSameTargetRequest();
             logCtx.provider = formatAnthropicProviderForLog("anthropic", admitted.accountId, config);
-            activeAdapter = resolveAdapter(
+            activeAdapter = resolveSelectionAdapter(
               resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
               config.cacheRetention,
             );
@@ -7389,7 +7481,7 @@ async function handleResponsesInner(
                 genericFailovers += 1;
             if (await applyFailoverSnapshot(snapshot, nextParsed)) {
               invalidateSameTargetRequest();
-              activeAdapter = resolveAdapter(
+              activeAdapter = resolveSelectionAdapter(
                 resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
                 config.cacheRetention,
               );

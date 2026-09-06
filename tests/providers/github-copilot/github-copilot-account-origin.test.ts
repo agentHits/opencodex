@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { clearGenericFailoverHealth } from "../../../src/oauth/generic-account-failover";
 import { getAccountSet, saveCredential, setActiveAccount } from "../../../src/oauth/store";
 import { handleResponses } from "../../../src/server/responses";
+import { saveConfig } from "../../../src/config";
+import { setActiveProviderApiKey } from "../../../src/providers/api-keys";
 import type { OcxConfig } from "../../../src/types";
 import { removeTreeWithRetry } from "../../helpers/remove-tree";
 
@@ -71,12 +73,12 @@ function config(wire: Wire): OcxConfig {
   } as OcxConfig;
 }
 
-function request(wire: Wire): Request {
+function request(wire: Wire, extra: Record<string, unknown> = {}): Request {
   const model = wire === "chat" ? "gpt-4o" : "gpt-5.4";
   return new Request("http://localhost/v1/responses", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: `github-copilot/${model}`, input: "hello", stream: false }),
+    body: JSON.stringify({ model: `github-copilot/${model}`, input: "hello", stream: false, ...extra }),
   });
 }
 
@@ -135,6 +137,7 @@ function installFetch(options: {
   statuses: number[];
   switchToAccountId?: string;
   switchOn: "refresh" | "first-dispatch" | "never";
+  emptyFirst?: boolean;
 }): { dispatches: { origin: string; authorization: string }[] } {
   const dispatches: { origin: string; authorization: string }[] = [];
   let refreshSwitched = false;
@@ -169,6 +172,14 @@ function installFetch(options: {
           headers: status === 429 ? { "retry-after": "1" } : undefined,
         });
       }
+      if (options.emptyFirst && dispatches.length === 1) {
+        return Response.json({ choices: [{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "stop" }] });
+      }
+      if (JSON.parse(String(init?.body ?? "{}")).stream === true && options.wire === "chat") {
+        return new Response('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
       return successResponse(options.wire);
     }
     return originalFetch(input, init);
@@ -193,6 +204,134 @@ afterEach(() => {
 });
 
 describe("GitHub Copilot bearer/origin snapshot atomicity", () => {
+  test.each(["chat", "responses", "image", "web-search"] as const)("%s API-key dispatch uses a selection committed during pacing", async path => {
+    const cfg = config("chat");
+    cfg.defaultProvider = "fixture";
+    cfg.providers = { fixture: {
+      adapter: path === "responses" ? "openai-responses" : "openai-chat", authMode: "key",
+      baseUrl: "https://fixture.invalid/v1", apiKey: "synthetic-a", models: ["model"],
+      apiKeyPool: [{ id: "a", key: "synthetic-a" }, { id: "b", key: "synthetic-b" }],
+    } };
+    if (path === "image") {
+      cfg.images = { bridgeEnabled: true };
+      cfg.providers.xai = { adapter: "openai-chat", authMode: "key", apiKey: "synthetic-image-key", baseUrl: "https://api.x.ai/v1" };
+    } else if (path === "web-search") cfg.webSearchSidecar = { enabled: true, backend: "exa", exaApiKey: "synthetic-search-key" };
+    saveConfig(cfg);
+    beforePacingReturns = async () => { expect(setActiveProviderApiKey(cfg, "fixture", "b")).toBe(true); };
+    const sent: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      sent.push(new Headers(init?.headers).get("authorization") ?? "");
+      if (path === "image" || path === "web-search") return new Response('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } });
+      return successResponse(path);
+    }) as typeof fetch;
+    const response = await handleResponses(request("chat", {
+      model: "fixture/model", stream: path === "image" || path === "web-search",
+      ...(path === "image" || path === "web-search" ? { tools: [{ type: path === "image" ? "image_generation" : "web_search" }] } : {}),
+    }), cfg, { model: "", provider: "" });
+    expect(await response.text()).toContain("ok");
+    expect(sent).toEqual(["Bearer synthetic-b"]);
+  });
+
+  test("a pacing switch to B keeps B when Anthropic rebuilds an image after 413", async () => {
+    for (const id of ["a", "b"]) await saveCredential("anthropic", {
+      access: `synthetic-anthropic-${id}`, refresh: `synthetic-refresh-${id}`,
+      expires: Date.now() + 3_600_000, accountId: id,
+    });
+    const rows = getAccountSet("anthropic")!.accounts;
+    await setActiveAccount("anthropic", rows[0]!.id);
+    beforePacingReturns = async () => { await setActiveAccount("anthropic", rows[1]!.id); };
+    const sent: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      sent.push(new Headers(init?.headers).get("authorization") ?? "");
+      if (sent.length === 1) return Response.json({ error: { type: "request_too_large", message: "too large" } }, { status: 413 });
+      return Response.json({ id: "message-selection", type: "message", role: "assistant",
+        content: [{ type: "text", text: "ok" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } });
+    }) as typeof fetch;
+    const cfg = config("chat");
+    cfg.providers = { anthropic: { adapter: "anthropic", authMode: "oauth", baseUrl: "https://api.anthropic.com", models: ["claude-fable-5"] } };
+    cfg.defaultProvider = "anthropic";
+    const response = await handleResponses(request("chat", {
+      model: "anthropic/claude-fable-5",
+      input: [{ role: "user", content: [
+        { type: "input_text", text: "look" },
+        { type: "input_image", image_url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" },
+      ] }],
+    }), cfg, { model: "", provider: "" });
+    expect(await response.text()).toContain("ok");
+    expect(sent).toEqual(["Bearer synthetic-anthropic-b", "Bearer synthetic-anthropic-b"]);
+  });
+
+  test("a pacing switch to B keeps B for an empty-completion continuation", async () => {
+    const accounts = await seedAccounts();
+    beforePacingReturns = async () => { await setActiveAccount("github-copilot", accounts.b); };
+    const observed = installFetch({ wire: "chat", statuses: [200, 200], switchOn: "never", emptyFirst: true });
+    const cfg = config("chat");
+    cfg.emptyCompletionRetry = true;
+    const response = await handleResponses(request("chat"), cfg, { model: "", provider: "" });
+    expect(await response.text()).toContain("ok");
+    expect(observed.dispatches).toEqual([
+      { origin: ACCOUNT_B_ORIGIN, authorization: bearer("copilot-access-b") },
+      { origin: ACCOUNT_B_ORIGIN, authorization: bearer("copilot-access-b") },
+    ]);
+  });
+
+  test.each(["image", "web-search"] as const)("%s main-model dispatch follows a manual choice made during pacing", async path => {
+    const accounts = await seedAccounts();
+    beforePacingReturns = async () => { await setActiveAccount("github-copilot", accounts.b); };
+    const observed = installFetch({ wire: "chat", statuses: [200], switchOn: "never" });
+    const cfg = config("chat");
+    if (path === "image") {
+      cfg.images = { bridgeEnabled: true };
+      cfg.providers.xai = { adapter: "openai-chat", authMode: "key", apiKey: "synthetic-image-key", baseUrl: "https://api.x.ai/v1" };
+    } else {
+      cfg.webSearchSidecar = { enabled: true, backend: "exa", exaApiKey: "synthetic-search-key" };
+    }
+    const response = await handleResponses(request("chat", {
+      stream: true, tools: [{ type: path === "image" ? "image_generation" : "web_search" }],
+    }), cfg, { model: "", provider: "" });
+    expect(await response.text()).toContain("ok");
+    expect(observed.dispatches).toEqual([{ origin: ACCOUNT_B_ORIGIN, authorization: bearer("copilot-access-b") }]);
+  });
+
+  test("a cached search-loop adapter cannot bless A wire with B's current snapshot", async () => {
+    const accounts = await seedAccounts();
+    beforePacingReturns = async () => { await setActiveAccount("github-copilot", accounts.b); };
+    const sent: string[] = [];
+    const bodies: Array<{ messages: Array<{ role: string }> }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.hostname === "api.exa.ai") return Response.json({ results: [] });
+      if (!url.hostname.endsWith(".githubcopilot.com")) throw new Error("Unexpected fixture request");
+      sent.push(new Headers(init?.headers).get("authorization") ?? "");
+      bodies.push(JSON.parse(String(init?.body)));
+      const delta = sent.length === 1
+        ? { tool_calls: [{ index: 0, id: "search-1", type: "function", function: { name: "web_search", arguments: '{"query":"fixture"}' } }] }
+        : { content: "ok after search" };
+      return new Response(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: sent.length === 1 ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+    const cfg = config("chat");
+    cfg.webSearchSidecar = { enabled: true, backend: "exa", exaApiKey: "synthetic-search-key" };
+    const response = await handleResponses(request("chat", { stream: true, tools: [{ type: "web_search" }] }), cfg, { model: "", provider: "" });
+    expect(await response.text()).toContain("ok after search");
+    expect(sent).toEqual(["Bearer copilot-access-b", "Bearer copilot-access-b"]);
+    expect(bodies[1]!.messages.some(message => message.role === "tool")).toBe(true);
+  });
+
+  test("a key removed during pacing is never dispatched", async () => {
+    const cfg = config("chat");
+    cfg.defaultProvider = "fixture";
+    cfg.providers = { fixture: { adapter: "openai-chat", authMode: "key", baseUrl: "https://fixture.invalid/v1", apiKey: "synthetic-a" } };
+    beforePacingReturns = async () => { delete cfg.providers.fixture; };
+    let sends = 0;
+    globalThis.fetch = (async () => { sends++; return successResponse("chat"); }) as typeof fetch;
+    const response = await handleResponses(request("chat", { model: "fixture/model" }), cfg, { model: "", provider: "" });
+    await response.text();
+    expect(response.status).not.toBe(200);
+    expect(sends).toBe(0);
+  });
+
   for (const wire of ["chat", "responses"] as const) {
     test(`${wire} revalidates selection after pacing and before physical dispatch`, async () => {
       const accounts = await seedAccounts();

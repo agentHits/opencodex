@@ -15,6 +15,9 @@ let attemptKeys: string[] = [];
 let attemptProjects: Array<string | undefined> = [];
 /** Set by the delivery test: an attempt that emits, then blocks before completing the turn. */
 let slowAttempt: ((emit: (event: AdapterEvent) => void) => Promise<void>) | undefined;
+let beforePhysicalSend: (() => Promise<void>) | undefined;
+let physicalSends = 0;
+const originalFetch = globalThis.fetch;
 
 function fixtureAdapter(provider: OcxProviderConfig): ProviderAdapter {
   return {
@@ -23,10 +26,18 @@ function fixtureAdapter(provider: OcxProviderConfig): ProviderAdapter {
     async *parseStream() {
       yield { type: "error", message: "fixture uses runTurn" } as AdapterEvent;
     },
-    async runTurn(_parsed, _incoming, emit) {
+    async runTurn(_parsed, incoming, emit) {
       const index = attemptKeys.length;
       attemptKeys.push(provider.apiKey ?? "");
       attemptProjects.push(provider.project);
+      const gate = beforePhysicalSend;
+      beforePhysicalSend = undefined;
+      await gate?.();
+      for (let send = 0; send < physicalSends; send++) {
+        await incoming.providerFetch!(provider.baseUrl, {
+          method: "POST", headers: { Authorization: `Bearer ${provider.apiKey}` }, body: "{}",
+        });
+      }
       if (slowAttempt) return await slowAttempt(emit);
       for (const event of attempts[index] ?? []) emit(event);
     },
@@ -92,9 +103,12 @@ beforeEach(() => {
   attemptKeys = [];
   attemptProjects = [];
   slowAttempt = undefined;
+  beforePhysicalSend = undefined;
+  physicalSends = 0;
 });
 
 afterEach(() => {
+  globalThis.fetch = originalFetch;
   clearGenericFailoverHealth();
   if (originalHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = originalHome;
@@ -102,6 +116,48 @@ afterEach(() => {
 });
 
 describe("#2568 adapter-event OAuth failover", () => {
+  test.each([false, true])("runTurn first physical send follows a changed selection (image loop=%s)", async imageLoop => {
+    await seedAccounts(2);
+    const accounts = getAccountSet("cursor")!.accounts;
+    beforePhysicalSend = async () => { await setActiveAccount("cursor", accounts[0]!.id); };
+    physicalSends = 1;
+    slowAttempt = async emit => { emit({ type: "text_delta", text: "selected answer" }); emit({ type: "done" }); };
+    const sent: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      sent.push(new Headers(init?.headers).get("authorization") ?? "");
+      return new Response("{}");
+    }) as typeof fetch;
+    const cfg = config(false);
+    if (imageLoop) {
+      cfg.images = { bridgeEnabled: true };
+      cfg.providers.xai = { adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", authMode: "key", apiKey: "synthetic-image-key" };
+    }
+    const req = imageLoop ? new Request("http://localhost/v1/responses", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "cursor/model", input: "answer", stream: true, tools: [{ type: "image_generation" }] }),
+    }) : request(true);
+    const response = await handleResponses(req, cfg, { model: "", provider: "" });
+    expect(await response.text()).toContain("selected answer");
+    expect(sent).toEqual(["Bearer cursor-access-0"]);
+  });
+
+  test("an already started multi-message turn keeps its original credential", async () => {
+    await seedAccounts(2);
+    const accounts = getAccountSet("cursor")!.accounts;
+    physicalSends = 2;
+    slowAttempt = async emit => { emit({ type: "text_delta", text: "same turn" }); emit({ type: "done" }); };
+    const sent: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      sent.push(new Headers(init?.headers).get("authorization") ?? "");
+      if (sent.length === 1) await setActiveAccount("cursor", accounts[0]!.id);
+      return new Response("{}");
+    }) as typeof fetch;
+    const response = await handleResponses(request(false), config(false), { model: "", provider: "" });
+    expect(await response.text()).toContain("same turn");
+    expect(sent).toEqual(["Bearer cursor-access-1", "Bearer cursor-access-1"]);
+    expect(getCredential("cursor")?.access).toBe("cursor-access-0");
+  });
+
   test("every CCA request pairs the persisted active account with its own project", async () => {
     for (const id of ["a", "b"]) await saveCredential("google-antigravity", {
       access: `ga-access-${id}`, refresh: `ga-refresh-${id}`, expires: Date.now() + 3_600_000,
