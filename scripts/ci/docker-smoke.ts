@@ -127,6 +127,7 @@ const token = randomBytes(32).toString("hex");
 const replacement = randomBytes(32).toString("hex");
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 let seededConfigHash = "";
+let readyConfigHash = "";
 
 // Check the loader, including its schema-repair/default-provider fallback, before server startup
 // and again in each running container. This isolates synthetic inference, not all process egress.
@@ -184,6 +185,9 @@ async function inspect() {
 const stateProbe = `
   import { readFileSync, statSync, writeFileSync } from 'node:fs';
   import { createHash } from 'node:crypto';
+  import { isDeepStrictEqual } from 'node:util';
+  const phase = await Bun.stdin.text();
+  if (!['seed', 'first-ready', 'steady'].includes(phase)) throw new Error('invalid state phase');
   ${fixtureConfigCheck}
   const homes = ['/home/bun/.opencodex', '/home/bun/.codex'];
   const uid = process.getuid();
@@ -202,14 +206,51 @@ const stateProbe = `
     if (s.uid !== uid || (s.mode & 0o777) !== 0o600 || s.size > 65536) throw new Error('file permissions/size');
     return createHash('sha256').update(readFileSync(path)).digest('hex');
   });
+  // The immutable shipped config was byte-verified before fixture creation. Reconstruct only
+  // the deliberate fixture route edits, then compare every original key on disk (not loader defaults).
+  const seed = JSON.parse(readFileSync('docker/config.json', 'utf8'));
+  seed.providers = { smoke: { adapter: 'openai-responses', baseUrl: 'http://127.0.0.1:9/v1', authMode: 'local', allowPrivateNetwork: true } };
+  seed.defaultProvider = 'smoke';
+  const persisted = JSON.parse(readFileSync(paths[0], 'utf8'));
+  const loaded = JSON.parse(JSON.stringify(effective));
+  for (const key of Object.keys(seed)) {
+    for (const config of [persisted, loaded]) {
+      if (!Object.hasOwn(config, key) || !isDeepStrictEqual(config[key], seed[key])) throw new Error('seed semantics changed');
+    }
+  }
+  // Independent oracle measured by isolated startup; update only for an intentional contract change.
+  // Do not derive expected values from runtime migration/default helpers.
+  const additions = {
+    appOwnedMemoryBudgetMb: 256, fastRows: true, managementUsageMaxReadBytes: 67108864,
+    openaiProviderTierVersion: 2,
+    subagentModels: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+    subagentModelsVersion: 1,
+  };
+  for (const config of [persisted, loaded]) {
+    if (Object.keys(config).some(key => !Object.hasOwn(seed, key) && !Object.hasOwn(additions, key))) throw new Error('unexpected startup config addition');
+    for (const [key, expected] of Object.entries(additions)) {
+      if (phase !== 'seed' || Object.hasOwn(config, key)) {
+        if (!Object.hasOwn(config, key) || !isDeepStrictEqual(config[key], expected)) throw new Error('startup oracle mismatch');
+      }
+    }
+  }
+  if (phase === 'seed' && Object.keys(persisted).some(key => !Object.hasOwn(seed, key))) throw new Error('premature seed addition');
   console.log(JSON.stringify(hashes));
 `;
 
-async function state() {
-  const hashes = JSON.parse(await compose(["exec", "-T", "hub", "bun", "-e", stateProbe])) as string[];
+async function state(phase: "seed" | "first-ready" | "steady" = "steady") {
+  const invocation = phase === "seed" ? ["run", "--rm", "-T", "--no-deps"] : ["exec", "-T"];
+  const hashes = JSON.parse(await compose([...invocation, "hub", "bun", "-e", stateProbe], phase)) as string[];
   check(hashes.length === 3 && hashes.every(hash => /^[a-f0-9]{64}$/.test(hash)), "invalid state evidence");
-  check(hashes[0] === seededConfigHash, "seeded config changed");
   check(hashes[1] === sha256(`${token}\n`) && hashes[2] === sha256(fixture), "token/catalog changed");
+  if (phase === "first-ready") {
+    check(!readyConfigHash, "post-start config baseline already established");
+    // stateProbe has checked persisted/effective semantics and the independent startup oracle.
+    readyConfigHash = hashes[0]!;
+  } else {
+    check(hashes[0] === (phase === "seed" ? seededConfigHash : readyConfigHash),
+      phase === "seed" ? "seeded config changed before startup" : "post-start config changed");
+  }
   return JSON.stringify(hashes);
 }
 
@@ -353,11 +394,13 @@ async function main() {
   check(/^[a-f0-9]{64}$/.test(seededConfigHash), "invalid seeded config evidence");
   progress("bootstrap throwaway token");
   await compose(["run", "--rm", "-T", "--no-deps", "hub", "bun", "run", "docker/bootstrap-token.ts"], `${token}\n`);
+  progress("verify exact seed state before startup");
+  await state("seed");
   progress("start and check admission");
   await compose(["up", "--no-build", "--wait", "--wait-timeout", "120", "hub"], undefined, 150_000);
   const first = await inspect();
   await acceptance(first.url);
-  const before = await state();
+  const before = await state("first-ready");
   progress("refuse token replacement");
   const refused = await run(["docker", ...composeArgs, "run", "--rm", "-T", "--no-deps", "hub",
     "bun", "run", "docker/bootstrap-token.ts"], `${replacement}\n`);
