@@ -136,6 +136,7 @@ const fixtureConfigCheck = `
   const provider = effective.providers.smoke;
   if (Object.keys(effective.providers).join(',') !== 'smoke' || effective.defaultProvider !== 'smoke'
     || provider?.adapter !== 'openai-responses' || provider?.authMode !== 'local'
+    || provider?.allowPrivateNetwork !== true
     || provider?.baseUrl !== 'http://127.0.0.1:9/v1' || provider?.codexAccountMode !== undefined || provider?.apiKey
     || effective.runtimeRole !== 'hub' || effective.hostname !== '0.0.0.0' || effective.port !== 10100
     || effective.codexAutoStart !== false || effective.codexShimAutoRestore !== false) throw new Error('unsafe effective fixture config');
@@ -308,13 +309,18 @@ async function main() {
   await compose(["config", "--quiet"]);
   await build();
   progress("verify shipped config and seed loopback-only fixture");
-  seededConfigHash = await compose(["run", "--rm", "-T", "--no-deps", "hub", "bun", "-e",
+  const seeded = await run(["docker", ...composeArgs, "run", "--rm", "-T", "--no-deps", "hub", "bun", "-e",
     `
       import { readFileSync, writeFileSync } from 'node:fs';
       import { createHash } from 'node:crypto';
-      import { atomicWriteFile } from './src/config/atomic-write.ts';
+      // Exit codes are fixed diagnostic markers; never serialize the caught exception.
+      let seedStage = 70;
+      try {
+      const { atomicWriteFile } = await import('./src/config/atomic-write.ts');
+      seedStage = 71;
       const { shipped, catalog } = JSON.parse(await Bun.stdin.text());
       const path = '/home/bun/.opencodex/config.json';
+      seedStage = 72;
       if (readFileSync(path, 'utf8') !== shipped || readFileSync('docker/config.json', 'utf8') !== shipped) {
         throw new Error('shipped config mismatch');
       }
@@ -323,13 +329,27 @@ async function main() {
         || config.codexAutoStart !== false || config.codexShimAutoRestore !== false) throw new Error('shipped runtime contract');
       // Port 9 has no listener in this image. Replace all provider routes before any server starts;
       // even an admission regression cannot send these synthetic requests to a real provider.
-      config.providers = { smoke: { adapter: 'openai-responses', baseUrl: 'http://127.0.0.1:9/v1', authMode: 'local' } };
+      config.providers = { smoke: { adapter: 'openai-responses', baseUrl: 'http://127.0.0.1:9/v1', authMode: 'local', allowPrivateNetwork: true } };
       config.defaultProvider = 'smoke';
+      seedStage = 73;
+      const { validateConfigCandidate } = await import('./src/config.ts');
+      if (!validateConfigCandidate(config).ok) throw new Error('invalid fixture');
+      seedStage = 74;
       atomicWriteFile(path, JSON.stringify(config) + '\\n');
+      seedStage = 75;
       ${fixtureConfigCheck}
+      seedStage = 76;
       writeFileSync('/home/bun/.codex/opencodex-catalog.json', catalog, { mode: 0o600, flag: 'wx' });
+      seedStage = 77;
       console.log(createHash('sha256').update(readFileSync(path)).digest('hex'));
+      } catch { process.exitCode = seedStage; }
     `], JSON.stringify({ shipped: readFileSync(join(root, "docker/config.json"), "utf8"), catalog: fixture }));
+  const seedFailures: Record<number, string> = {
+    70: "imports", 71: "input", 72: "shipped config contract", 73: "fixture validation",
+    74: "atomic config write", 75: "effective config", 76: "catalog write", 77: "config hash",
+  };
+  check(seeded.code === 0, `seed failed: ${seedFailures[seeded.code ?? -1] ?? "unclassified child failure"} (exit ${seeded.code ?? "signal"})`);
+  seededConfigHash = seeded.out.trim();
   check(/^[a-f0-9]{64}$/.test(seededConfigHash), "invalid seeded config evidence");
   progress("bootstrap throwaway token");
   await compose(["run", "--rm", "-T", "--no-deps", "hub", "bun", "run", "docker/bootstrap-token.ts"], `${token}\n`);
