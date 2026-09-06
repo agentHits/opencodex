@@ -757,6 +757,12 @@ container usually has no unlocked keychain session, so requests would fail close
 `${ENV_VAR}` reference in the service environment there instead. Env references are left untouched
 by `store`.
 
+The `zhipu-bigmodel-responses` preset seeds `glm-5.3` and `glm-5-turbo` with
+`liveModels: false` for `https://open.bigmodel.cn/api/v1`. Its static roster and
+per-model context, effort, and summary metadata come from the
+[BigModel Responses guide](/guides/providers/#bigmodel-coding-plan-over-responses).
+The official local `models.json` example does not establish a live `/models` API.
+
 With `liveModels: false`, an empty or omitted `models` list seeds the configured `defaultModel`
 first, followed by `retainModels`; duplicate ids are removed while preserving first occurrence.
 A nonempty explicit `models` list instead seeds `models` followed by `retainModels`, without

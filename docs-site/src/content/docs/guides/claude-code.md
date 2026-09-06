@@ -513,11 +513,13 @@ The proxy translates every Anthropic Messages API request into the Codex Respons
 | Assistant text | `output_text` |
 | Assistant `tool_use` | `function_call` (`input` → JSON-stringified `arguments`) |
 | User `tool_result` | `function_call_output` (`is_error` → `[tool error]` prefix) |
-| `thinking` / `redacted_thinking` replay | Dropped |
+| `thinking` / `redacted_thinking` replay | `reasoning` items with bounded `ocxr1` envelopes for signatures and redacted payloads |
 | Function tools | `{type: "function"}` (`web_search*` → `{type: "web_search"}`) |
 | `tool_choice` | `auto`→`auto`, `none`→`none`, `any`→`required`, named function→`{type:"function",name}`, hosted WebSearch/web_search→`{type:"web_search"}` |
 | `max_tokens` | `max_output_tokens` |
 | `stop_sequences` | `stop` |
+
+Replay preserves non-hidden signed blocks (including empty thinking) and opaque redacted blocks on the intended Anthropic adapter. `hideThinkingSummary` remains unchanged: locally hidden signed text is not exposed to Claude clients, and lossless replay through that hidden Claude boundary is not established. Older combined reasoning envelopes cannot recover original block order once streaming text has been emitted. `claudeCode.compatibility: "enforce"` still rejects thinking replay. This does not establish live Anthropic acceptance or cache-hit improvements; [#3719](https://github.com/lidge-jun/opencodex/issues/3719) remains open.
 
 **Error cases (400):** malformed JSON; missing/empty `model`; missing/empty `messages`; unsupported
 role; `tool_result` without `tool_use_id`; `tool_use` without id/name; named `tool_choice` without
@@ -530,7 +532,7 @@ name.
 | `response.created` | `message_start` + `ping` |
 | Heartbeat | `ping` |
 | Text deltas | `content_block_start` → `content_block_delta` (text) → `content_block_stop` |
-| Reasoning summary/text | `thinking` block with synthetic signature |
+| Reasoning summary/text | `thinking` block with the replayed signature, or a bounded `ocxr1` fallback envelope |
 | Function-call frames | `tool_use` block with `input_json_delta` |
 | Terminal event | `message_delta` → `message_stop` |
 | EOF before terminal | 502-style `api_error` |
