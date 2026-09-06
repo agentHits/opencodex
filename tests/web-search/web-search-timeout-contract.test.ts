@@ -376,6 +376,8 @@ describe("web-search timeout runtime contracts", () => {
     const events: string[] = [];
     const deadlineController = new AbortController();
     const timeoutReason = new DOMException("Timeout elapsed", "TimeoutError");
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+    let deadlineCleared = false;
     const originalDeadline = abortModule.clearableDeadline;
     const deadlineSpy = spyOn(abortModule, "clearableDeadline").mockImplementation((timeoutMs, parent) => {
       if (timeoutMs !== connectTimeoutMs) return originalDeadline(timeoutMs, parent);
@@ -385,13 +387,21 @@ describe("web-search timeout runtime contracts", () => {
         signal,
         timeoutReason,
         didExpire: () => signal.aborted && signal.reason === timeoutReason,
-        clear: () => { deadlineClears++; },
+        clear: () => {
+          deadlineClears++;
+          deadlineCleared = true;
+          events.push("deadline-cleared");
+          if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+          expiryTimer = undefined;
+        },
       };
     });
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
+      if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+      expiryTimer = undefined;
       releaseCancel();
       deadlineController.abort(timeoutReason);
       deadlineSpy.mockRestore();
@@ -406,6 +416,13 @@ describe("web-search timeout runtime contracts", () => {
           cancel() {
             cancelCalls++;
             events.push("cancel-requested");
+            // Expire on the next timer task, after immediate rotation microtasks.
+            // An added timer wait or an awaited cancel cannot get a fresh budget.
+            if (!deadlineCleared) expiryTimer = setTimeout(() => {
+              expiryTimer = undefined;
+              events.push("deadline-expired");
+              deadlineController.abort(timeoutReason);
+            }, 0);
             return cancelGate;
           },
         }), { status: 429 });
@@ -424,11 +441,7 @@ describe("web-search timeout runtime contracts", () => {
         expect(cancelCalls).toBe(1);
         expect(cancelSettled).toBe(false);
         events.push("rotated-fetch");
-        const pending = hangingFetch(ctx);
-        // Expiry is driven only after rotation: awaiting cancel would deadlock the test.
-        events.push("deadline-expired");
-        deadlineController.abort(timeoutReason);
-        return pending;
+        return hangingFetch(ctx);
       },
       async *parseStream() { yield { type: "done" }; },
       async parseResponse() { return [{ type: "done" }]; },
@@ -450,7 +463,7 @@ describe("web-search timeout runtime contracts", () => {
       expect(deadlineCreations).toBe(1);
       expect(deadlineClears).toBe(1);
       expect(firstSignal?.reason).toBe(timeoutReason);
-      expect(events).toEqual(["cancel-requested", "rotated-fetch", "deadline-expired"]);
+      expect(events).toEqual(["cancel-requested", "rotated-fetch", "deadline-expired", "deadline-cleared"]);
       expect(response.status).toBe(504);
       expect(await response.json()).toEqual({
         error: {
