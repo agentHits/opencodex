@@ -291,6 +291,12 @@ unreadable, a non-loopback hub must not be accepted as ready. Never treat livene
 `docker compose down --volumes` as destructive: it deletes configuration, OAuth credentials, usage
 history, the data-plane token, and persisted Codex state together.
 
+Cross-platform CI builds the source image and checks startup, data-plane token admission, and
+container recreation using an isolated Compose project with throwaway credentials. It verifies that
+both named volumes and a synthetic catalog survive replacement. This check does not validate a
+real provider account, OAuth callback, custom mount migration, or every CPU architecture; perform
+the authenticated routed-response check above for your deployment.
+
 ## Rollback
 
 Inspect existing Serve mappings before changing them. `tailscale serve reset` removes every mapping
