@@ -118,7 +118,7 @@ import {
   type OAuthAccessSnapshot,
   UnsupportedOAuthProviderError,
 } from "../../oauth";
-import { captureOAuthAccountSelection, commitOAuthAccountSelection } from "../../oauth/store";
+import { captureOAuthAccountSelection, commitOAuthAccountSelection, credentialGeneration, getAccountCredentialWithStatus } from "../../oauth/store";
 import {
   ANTHROPIC_POOL_MAX_FAILOVERS_PER_REQUEST,
   anthropicSessionKeyFromParts,
@@ -359,7 +359,7 @@ import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/cat
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
 import { mapCodexAuthContextErrorToResponse, nativeMainRefreshFailureResponse } from "./codex-auth-error";
 import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
-import { fetchWithHeaderTimeout, providerFetch, safeHostLabel, safeOriginLabel, storedPoolReplayDispatchNotifier } from "./fetch-helpers";
+import { fetchWithHeaderTimeout, providerFetch, safeHostLabel, safeOriginLabel, storedPoolReplayDispatchNotifier, type ProviderFetchOptions } from "./fetch-helpers";
 import { classifyTransportFailureKind, transportErrorCode } from "../../lib/upstream-reachability";
 import {
   acquireUpstreamHostAdmission,
@@ -3676,6 +3676,7 @@ async function handleResponsesInner(
   let genericFailovers = 0;
   let oauthSelection = route.provider.authMode === "oauth"
     ? captureOAuthAccountSelection(route.providerName) : null;
+  let servingOAuthSnapshot: OAuthAccessSnapshot | undefined;
   const commitResolvedOAuthSelection = async (
     candidate: OAuthAccessSnapshot,
     proactive = false,
@@ -3706,6 +3707,7 @@ async function handleResponsesInner(
           { config, sessionKey: anthropicSessionKey, reason: anthropicReason, expectedCredentialGeneration: candidate.generation },
         )) return null;
         oauthSelection = committed;
+        servingOAuthSnapshot = candidate;
         forgetGenericFailoverRoster(route.providerName);
         return candidate;
       }
@@ -3790,10 +3792,58 @@ async function handleResponsesInner(
     // served it. All three rotation sites funnel through here, so this is the only re-stamp
     // needed -- and putting it anywhere else would let one of the three drift.
     stampOAuthAccountLabel(logCtx, route.providerName, route.provider, snapshot.accountId);
-    genericFailoverAccountId = snapshot.accountId;
+    if (route.providerName === "anthropic") {
+      anthropicPoolAccountId = snapshot.accountId;
+      logCtx.provider = formatAnthropicProviderForLog("anthropic", snapshot.accountId, config);
+    } else {
+      genericFailoverAccountId = snapshot.accountId;
+    }
     sentOAuthSnapshot = snapshot;
     replayOAuthCredentialSnapshot = { accountId: snapshot.accountId, generation: snapshot.generation };
     return true;
+  };
+  const oauthSelectionIsCurrent = (): boolean => {
+    if (route.provider.authMode !== "oauth") return true;
+    if (!oauthSelection || !servingOAuthSnapshot) return false;
+    const selected = captureOAuthAccountSelection(route.providerName);
+    const row = getAccountCredentialWithStatus(route.providerName, servingOAuthSnapshot.accountId);
+    return selected?.accountId === oauthSelection.accountId && selected?.revision === oauthSelection.revision
+      && !!row && !row.needsReauth && row.credential.expires > Date.now()
+      && credentialGeneration(row.credential) === servingOAuthSnapshot.generation;
+  };
+  const oauthDispatch = (wireRequest: AdapterRequest, requestParsed = parsed): ProviderFetchOptions["dispatchOverride"] => {
+    if (route.provider.authMode !== "oauth") return undefined;
+    return async (input, init, execute) => {
+      let destination = input;
+      let dispatchInit = init;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (oauthSelectionIsCurrent()) {
+          const fetchImpl = (route.provider as OcxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch ?? execute;
+          return fetchImpl(destination, dispatchInit);
+        }
+        if (!servingOAuthSnapshot || !await applyFailoverSnapshot(servingOAuthSnapshot, requestParsed)) {
+          throw new Error("OAuth account selection changed before dispatch");
+        }
+        const nextAdapter = resolveAdapter(resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire), config.cacheRetention);
+        const rebuilt = await nextAdapter.buildRequest(requestParsed, { headers: selectedForwardHeaders, translatorBudget });
+        const bodySize = checkOutboundBodySize(rebuilt.body, config.maxUpstreamBodyBytes);
+        if (!bodySize.admitted) {
+          rebuilt.releaseBodyObservation?.();
+          return formatErrorResponse(413, "outbound_body_too_large", describeOutboundBodyRefusal(bodySize));
+        }
+        const headers = new Headers(dispatchInit.headers);
+        for (const name of Object.keys(wireRequest.headers)) headers.delete(name);
+        for (const [name, value] of Object.entries(rebuilt.headers)) headers.set(name, value);
+        wireRequest.releaseBodyObservation?.();
+        Object.assign(wireRequest, rebuilt);
+        destination = rebuilt.url;
+        dispatchInit = { ...dispatchInit, method: rebuilt.method, headers, body: rebuilt.body };
+        bindRouteReasoningReplayScope({ parsed: requestParsed, providerName: route.providerName, provider: route.provider,
+          adapterName: nextAdapter.name, oauthCredentialSnapshot: replayOAuthCredentialSnapshot });
+        // The next iteration validates synchronously and calls fetch in that same turn.
+      }
+      throw new Error("OAuth account selection changed repeatedly before dispatch");
+    };
   };
   const anthropicSessionKey = route.providerName === "anthropic" && route.provider.authMode === "oauth"
     ? anthropicSessionKeyFromParts({
@@ -3909,22 +3959,11 @@ async function handleResponsesInner(
           // Only genuinely accountless adapter calls leave the context undefined and use local/env fallback.
           parsed._kiroAuthContext = { ...(resolved.kiro ?? {}) };
         }
-        // Antigravity (cloud-code-assist) needs the discovered Cloud Code Assist project id in the
-        // CCA envelope. Keep it paired with the token snapshot so an account rotation cannot mix
-        // a fresh token with project metadata re-read from a different credential generation.
+        // Project identity belongs to the admitted account on EVERY request, including
+        // the request after a pool transition made that account the persisted active one.
         if (route.provider.googleMode === "cloud-code-assist") {
-          // When pre-dispatch chose a DIFFERENT account, the configured project belongs to
-          // the account we did not use, and `!route.provider.project` would skip right past
-          // it — installing B's bearer alongside A's project. That is the #2841 pairing bug
-          // in its original shape, so the preferred-account path replaces the project
-          // unconditionally and refuses to dispatch at all if the chosen account has none.
-          // A project-less preferred account already fell back above, so by here the
-          // preferred path always has one.
-          if (usedPreferredAccount && resolved.projectId) {
-            route.provider = { ...route.provider, project: resolved.projectId };
-          } else if (!route.provider.project && resolved.projectId) {
-            route.provider = { ...route.provider, project: resolved.projectId };
-          }
+          if (!resolved.projectId) return formatErrorResponse(401, "authentication_error", publicOAuthAuthenticationErrorMessage(new Error("Cloud Code Assist account project is unavailable")));
+          route.provider = { ...route.provider, project: resolved.projectId };
         }
       }
     } catch (err) {
@@ -4596,6 +4635,7 @@ async function handleResponsesInner(
             body: request.body,
           }, recovery), upstream.signal, connectMs, parsed.stream,
             providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(request),
               providerName: route.providerName,
               modelId: route.modelId,
               onCodexWsQuota: codexWsQuotaObserver(authCtx, route.provider),
@@ -4673,6 +4713,7 @@ async function handleResponsesInner(
               body: request.body,
             }, innerRecovery), upstream.signal, connectMs, parsed.stream,
               providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(request),
                 providerName: route.providerName,
                 modelId: route.modelId,
                 onCodexWsQuota: codexWsQuotaObserver(authCtx, route.provider),
@@ -4778,6 +4819,7 @@ async function handleResponsesInner(
           // here on is a genuine transport attempt.
           storedPoolReplayDispatchNotifier(
             providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(request),
               providerName: route.providerName,
               modelId: route.modelId,
               onCodexWsQuota: codexWsQuotaObserver(authCtx, route.provider),
@@ -4897,6 +4939,7 @@ async function handleResponsesInner(
               body: request.body,
             }, recovery), upstream.signal, connectMs, parsed.stream,
               providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(request),
                 providerName: route.providerName,
                 modelId: route.modelId,
                 onCodexWsQuota: codexWsQuotaObserver(authCtx, route.provider),
@@ -4996,6 +5039,7 @@ async function handleResponsesInner(
               body: request.body,
             }, recovery), upstream.signal, connectMs, parsed.stream,
               providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(request),
                 providerName: route.providerName,
                 modelId: route.modelId,
                 onCodexWsQuota: codexWsQuotaObserver(authCtx, route.provider),
@@ -6073,6 +6117,24 @@ async function handleResponsesInner(
     const queue = createAdapterEventQueue({
       onBacklogExceeded: () => runTurnAbort.abort(),
     });
+    let selectionDispatchRefused = false;
+    let selectionDispatchRetries = 0;
+    const refreshRunTurnSelection = async (): Promise<void> => {
+      if (oauthSelectionIsCurrent()) return;
+      if (!servingOAuthSnapshot || !await applyFailoverSnapshot(servingOAuthSnapshot)) {
+        throw new Error("OAuth account selection changed before dispatch");
+      }
+      parsed._cursorIdentityScope = undefined;
+      parsed._cursorConversationId = undefined;
+      if (parsed._providerContinuation?.cursor) {
+        const { cursor: _oldCursor, ...rest } = parsed._providerContinuation;
+        parsed._providerContinuation = rest;
+      }
+      runTurnAdapter = resolveAdapter(resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire), config.cacheRetention);
+      bindRouteReasoningReplayScope({ parsed, providerName: route.providerName, provider: route.provider,
+        adapterName: runTurnAdapter.name, oauthCredentialSnapshot: replayOAuthCredentialSnapshot });
+      sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, runTurnAdapter.name, logCtx.accountLogLabel);
+    };
     // Initial admission must settle before the streaming Response commits HTTP 200.
     // Let the outer Responses facade preserve the local retryable-429 contract.
     try {
@@ -6096,7 +6158,9 @@ async function handleResponsesInner(
         if (!pacingSlotAcquired) {
           await waitForProviderRequestSlot(route.providerName, route.provider, route.modelId, runTurnAbort.signal);
         }
+        await refreshRunTurnSelection();
         noteAttemptSend(logCtx.activeAttempt, logCtx.usageLogInputTokens, recovery);
+        let firstPhysicalSend = true;
         const runTurnProviderFetch = providerFetch(
           route.provider,
           options.codexWsRuntimeIdentity,
@@ -6107,6 +6171,14 @@ async function handleResponsesInner(
             // Cursor HTTP/1.1 consumes it for RunSSE; every BidiAppend and redial then waits on
             // the same provider queue through this stateful wrapper.
             pacingSlotAcquired: true,
+            beforeDispatch: () => {
+              if (!firstPhysicalSend) return; // A started multi-message turn keeps its credential.
+              if (!oauthSelectionIsCurrent()) {
+                selectionDispatchRefused = true;
+                throw new Error("OAuth account selection changed before dispatch");
+              }
+              firstPhysicalSend = false;
+            },
           },
         );
         await runTurnAdapter.runTurn?.(
@@ -6145,6 +6217,11 @@ async function handleResponsesInner(
     const rotateRunTurnAdapterOnPreflight429 = async (
       error: Extract<AdapterEvent, { type: "error" }>,
     ): Promise<boolean> => {
+      if (selectionDispatchRefused && selectionDispatchRetries < 3) {
+        selectionDispatchRefused = false;
+        selectionDispatchRetries += 1;
+        try { await refreshRunTurnSelection(); return true; } catch { return false; }
+      }
       const status = error.status ?? adapterFailureFromMessage(error.message).httpStatus;
       if (
         status !== 429
@@ -6228,7 +6305,7 @@ async function handleResponsesInner(
     if (parsed.stream) {
       void runTurn();
       let eventSource: AsyncIterable<AdapterEvent> = queue.stream();
-      if (genericFailoverAccountId && isGenericOAuthFailoverEnabled(config, route.providerName)) {
+      if (route.provider.authMode === "oauth" || (genericFailoverAccountId && isGenericOAuthFailoverEnabled(config, route.providerName))) {
         // Preflight holds only heartbeats and the first meaningful event. A first-event 429 can be
         // replayed transparently; after any output reaches the bridge, a later error stays terminal.
         eventSource = await preflightRunTurnFailover(eventSource);
@@ -6311,7 +6388,7 @@ async function handleResponsesInner(
     await runTurn();
     const firstAttemptEvents = await queue.collect();
     let runTurnEvents: AdapterEvent[] = firstAttemptEvents;
-    if (genericFailoverAccountId && isGenericOAuthFailoverEnabled(config, route.providerName)) {
+    if (route.provider.authMode === "oauth" || (genericFailoverAccountId && isGenericOAuthFailoverEnabled(config, route.providerName))) {
       runTurnEvents = [];
       for await (const event of await preflightRunTurnFailover(
         (async function* () { yield* firstAttemptEvents; })(),
@@ -6502,6 +6579,7 @@ async function handleResponsesInner(
         timeoutMs: connectMs,
         stream: parsed.stream,
         executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(builtInitialRequest),
           providerName: route.providerName,
           modelId: route.modelId,
         }),
@@ -6527,6 +6605,7 @@ async function handleResponsesInner(
             body: builtInitialRequest.body,
           }, recovery), upstream.signal, connectMs, parsed.stream,
             providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(builtInitialRequest),
               providerName: route.providerName,
               modelId: route.modelId,
             }));
@@ -6622,6 +6701,7 @@ async function handleResponsesInner(
               timeoutMs: connectMs,
               stream: parsed.stream,
               executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(retryRequest),
                 providerName: route.providerName,
                 modelId: route.modelId,
               }),
@@ -6643,6 +6723,7 @@ async function handleResponsesInner(
                 method: retryRequest.method, headers: retryRequest.headers, body: retryRequest.body,
               }, recoveryKind), upstream.signal, connectMs, parsed.stream,
               providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(retryRequest),
                 providerName: route.providerName,
                 modelId: route.modelId,
               })),
@@ -7102,6 +7183,7 @@ async function handleResponsesInner(
             timeoutMs: connectMs,
             stream: nextParsed.stream,
             executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
               providerName: route.providerName,
               modelId: nextParsed.modelId,
             }),
@@ -7127,6 +7209,7 @@ async function handleResponsesInner(
               connectMs,
               nextParsed.stream,
               providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
                 providerName: route.providerName,
                 modelId: nextParsed.modelId,
               }),

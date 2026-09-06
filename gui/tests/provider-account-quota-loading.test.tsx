@@ -15,6 +15,93 @@ let respond: (url: string, signal?: AbortSignal | null, init?: RequestInit) => P
 const noop = async () => {};
 const reading = { fiveHourPercent: 21, weeklyPercent: 34, updatedAt: 1_700_000_000_000 };
 
+for (const kind of ["oauth", "api-key"] as const) {
+  for (const quotaMode of ["probe", "passive"] as const) {
+    test(`${kind} ${quotaMode} newer quota failure cannot be cleared by a pre-selection probe`, async () => {
+      let selected = "a";
+      const oldQuota = deferred<Response>();
+      const oldStarted = deferred<void>();
+      let probes = 0;
+      const rows = () => ["a", "b"].map(id => ({ id, masked: id, active: id === selected, quotaMode }));
+      respond = async (url, _signal, init) => {
+        if (init?.method === "PUT") { selected = "b"; return Response.json({ ok: true, activeAccountId: "b", activeId: "b" }); }
+        if (url.includes("quota=1")) {
+          if (++probes === 1) { oldStarted.resolve(); return oldQuota.promise; }
+          return new Response(null, { status: 503 });
+        }
+        return Response.json({ activeAccountId: selected, activeId: selected, accounts: rows(), keys: rows() });
+      };
+      const load = () => kind === "oauth" ? pools.fetchAccountSets(["fixture"], true) : pools.fetchKeyPools(["fixture"], true);
+      let old!: Promise<boolean>;
+      await act(async () => { old = load(); await oldStarted.promise; });
+      const before = rows();
+      await act(async () => {
+        if (kind === "oauth") await pools.switchAccount("fixture", before[1]);
+        else await pools.switchApiKey("fixture", before[1]);
+      });
+      await act(async () => { expect(await load()).toBe(false); });
+      await act(async () => {
+        const enriched = before.map(row => ({ ...row, quota: reading }));
+        oldQuota.resolve(Response.json({ activeAccountId: "a", activeId: "a", accounts: enriched, keys: enriched }));
+        expect(await old).toBe(false);
+      });
+      const current = kind === "oauth" ? pools.accountSets.fixture.accounts : pools.keyPools.fixture;
+      expect(current.find(row => row.active)?.id).toBe("b");
+      expect(current[0]).toMatchObject({ quotaPending: false, quotaUnavailable: true });
+      expect(current[0].quota).toBeUndefined();
+    });
+
+    for (const outcome of ["success", "unavailable", "null", "http-error"] as const) {
+      test(`${kind} ${quotaMode} manual selection preserves initial quota ownership (${outcome})`, async () => {
+        let selected = "a";
+        let ids = ["a", "b", "removed"];
+        const quota = deferred<Response>();
+        const started = deferred<void>();
+        const roster = () => ids.map(id => ({ id, masked: id, active: id === selected, quotaMode }));
+        respond = async (url, _signal, init) => {
+          if (init?.method === "PUT") {
+            selected = "b";
+            ids = ["a", "b", "new"];
+            return Response.json({ ok: true, activeAccountId: selected, activeId: selected });
+          }
+          if (url.includes("quota=1")) { started.resolve(); return quota.promise; }
+          return Response.json({ activeAccountId: selected, activeId: selected, accounts: roster(), keys: roster() });
+        };
+        let full!: Promise<boolean>;
+        await act(async () => {
+          full = kind === "oauth" ? pools.fetchAccountSets(["fixture"], true) : pools.fetchKeyPools(["fixture"], true);
+          await started.promise;
+        });
+        const before = roster();
+        const current = () => kind === "oauth" ? pools.accountSets.fixture.accounts : pools.keyPools.fixture;
+        expect(current()[0].quotaPending).toBe(quotaMode === "probe");
+        await act(async () => {
+          if (kind === "oauth") await pools.switchAccount("fixture", before[1]);
+          else await pools.switchApiKey("fixture", before[1]);
+        });
+        expect(current().find(row => row.active)?.id).toBe("b");
+        expect(current()[0].quotaPending).toBe(quotaMode === "probe");
+        const enriched = before.map(row => ({ ...row,
+          quota: outcome === "null" ? null : reading,
+          quotaUnavailable: outcome === "unavailable" || outcome === "null",
+        }));
+        await act(async () => {
+          quota.resolve(outcome === "http-error" ? new Response(null, { status: 503 })
+            : Response.json({ activeAccountId: "a", activeId: "a", accounts: enriched, keys: enriched }));
+          expect(await full).toBe(outcome === "success");
+        });
+        expect(current().map(row => row.id)).toEqual(["a", "b", "new"]);
+        expect(current().find(row => row.active)?.id).toBe("b");
+        expect(current()[0]).toMatchObject({ quotaPending: false, quotaUnavailable: outcome !== "success" });
+        expect(current()[0].quota).toEqual(outcome === "null" ? null : outcome === "http-error" ? undefined : reading);
+        expect(current()[2].quota).toBeUndefined();
+        expect(current()[2].quotaUnavailable).toBe(false);
+        expect(requests.filter(request => request.url.includes("quota=1"))).toHaveLength(1);
+      });
+    }
+  }
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });

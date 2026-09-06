@@ -432,7 +432,8 @@ describe("sidecar on429 wiring", () => {
     const end = coreSource.indexOf("\n  route.provider = resolveProviderTransport(", start);
     expect(end).toBeGreaterThan(start);
     const region = coreSource.slice(start, end);
-    expect(region).toContain("usedPreferredAccount && resolved.projectId");
+    expect(region).toContain("project: resolved.projectId");
+    expect(region).not.toContain("!route.provider.project");
     // A project-less preferred account falls BACK to the ordinary active-account resolution
     // rather than erroring: a preference must never turn a working request into a failure,
     // and Antigravity tolerates project discovery failing, so an account with no project is

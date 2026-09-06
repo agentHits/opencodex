@@ -6,8 +6,12 @@ const HEARTBEAT_MS = 15_000;
 const encoder = new TextEncoder();
 const connections = new Set<() => void>();
 
-/** Auth is enforced by the management boundary before this read-only stream is opened. */
-export function accountSelectionStream(request: Request): Response {
+/** The management boundary admits the request; every frame revalidates current authority. */
+export function accountSelectionStream(request: Request, validate: () => boolean): Response {
+  const authorized = () => {
+    try { return validate() === true; } catch { return false; }
+  };
+  if (!authorized()) return Response.json({ error: "Management session is no longer authorized" }, { status: 401 });
   if (connections.size >= MAX_SELECTION_STREAMS) {
     return Response.json({ error: "Too many account selection streams" }, {
       status: 429, headers: { "Retry-After": "15" },
@@ -31,6 +35,12 @@ export function accountSelectionStream(request: Request): Response {
       cleanup = close;
       const send = (frame: string) => {
         if (closed) return;
+        if (!authorized()) {
+          // Error clears queued frames as well, so a revoked consumer cannot drain them.
+          try { controller.error(new DOMException("Management session is no longer authorized", "NotAllowedError")); }
+          finally { close(); }
+          return;
+        }
         // Reconnection sends a ready event, so a slow reader can reconcile without an
         // unbounded queue or silently dropping a provider's latest invalidation.
         if (controller.desiredSize !== null && controller.desiredSize <= 0) { close(); return; }
@@ -46,6 +56,7 @@ export function accountSelectionStream(request: Request): Response {
         send(`event: account-selection\ndata: ${JSON.stringify(event)}\n\n`);
       });
       send(`event: ready\ndata: ${JSON.stringify({ revision: currentAccountSelectionRevision() })}\n\n`);
+      if (closed) return;
       heartbeat = setInterval(() => send(": heartbeat\n\n"), HEARTBEAT_MS);
       heartbeat.unref?.();
     },

@@ -131,7 +131,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
 
   if (url.pathname === "/api/accounts/events" && req.method === "GET") {
     const { accountSelectionStream } = await import("./account-selection-stream");
-    return accountSelectionStream(req);
+    return accountSelectionStream(req, () => ctx.sessionControl?.isCurrent(req, config) === true);
   }
 
   // Which providers support real OAuth login (drives the GUI's "Log in with …" buttons).

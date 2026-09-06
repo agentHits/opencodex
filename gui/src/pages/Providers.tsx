@@ -75,7 +75,7 @@ export function useQuotaRefreshCoordinator(apiBase: string) {
   return { quotaRefresh, invalidateProviderQuotas, settleQuotaRefresh, beginQuotaRefresh };
 }
 
-/** One authenticated SSE connection for the page. The existing scheduler owns recovery. */
+/** One authenticated SSE connection, with bounded reconnect backoff and scheduler recovery. */
 function useAccountSelectionEvents(
   apiBase: string,
   enabled: boolean,
@@ -87,14 +87,21 @@ function useAccountSelectionEvents(
   useEffect(() => {
     if (!enabled) return;
     let stopped = false;
-    type Connection = { controller: AbortController; reader?: ReadableStreamDefaultReader<Uint8Array>; lastActivity: number };
+    let retryTimer: ReturnType<typeof window.setTimeout> | null = null;
+    let retryDelay = 250;
+    type Connection = { controller: AbortController; reader?: ReadableStreamDefaultReader<Uint8Array>; lastActivity: number; openedAt?: number };
     let connection: Connection | null = null;
+    const clearRetry = () => {
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      retryTimer = null;
+    };
     const close = (current: Connection) => {
       current.controller.abort();
       void current.reader?.cancel().catch(() => {});
     };
     const connect = () => {
       if (stopped || connection) return;
+      clearRetry();
       const current: Connection = { controller: new AbortController(), lastActivity: Date.now() };
       connection = current;
       void (async () => {
@@ -109,6 +116,7 @@ function useAccountSelectionEvents(
           if (stopped || current.controller.signal.aborted) { await response.body.cancel(); return; }
           const reader = response.body.getReader();
           current.reader = reader;
+          current.openedAt = Date.now();
           const decoder = new TextDecoder();
           const revisions = new Map<string, number>();
           const pending = new Map<string, AccountSelectionTarget>();
@@ -165,10 +173,19 @@ function useAccountSelectionEvents(
             if (buffer.length + frameSize > 16_384) throw new Error("Account selection event too large");
           }
         } catch {
-          // Authentication recovery is owned by api.ts; disconnected streams use the shared tick.
+          // api.ts owns authentication. Transport failures follow the same retry path as EOF.
         } finally {
           close(current);
-          if (connection === current) connection = null;
+          if (connection === current) {
+            connection = null;
+            if (!stopped) {
+              // Only a stable connection resets backoff; repeated ready-then-EOF cannot spin.
+              if (current.openedAt !== undefined && Date.now() - current.openedAt >= 10_000) retryDelay = 250;
+              const delay = retryDelay;
+              retryDelay = Math.min(retryDelay * 2, 5_000);
+              retryTimer = window.setTimeout(() => { retryTimer = null; connect(); }, delay);
+            }
+          }
         }
       })();
     };
@@ -182,6 +199,7 @@ function useAccountSelectionEvents(
     return () => {
       stopped = true;
       recoverRef.current = () => {};
+      clearRetry();
       if (connection) close(connection);
     };
   }, [apiBase, enabled]);
@@ -365,7 +383,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
     return refreshAccountRosters(target);
   }, [refreshAccountRosters, oauthCardProviders, keyCardProviders]);
   const recoverSelectionStream = useAccountSelectionEvents(apiBase, config !== null, refreshSelection);
-  const rosterKey = JSON.stringify([apiBase, [...oauthCardProviders].sort(), [...keyCardProviders].sort()]);
+  const rosterKey = JSON.stringify([apiBase, oauthCardProviders.toSorted(), keyCardProviders.toSorted()]);
   const rosterRecoveryKeyRef = useRef<string | null>(null);
   useKeyedClientResource(`provider-rosters:${rosterKey}`, [rosterKey], async signal => {
     // Existing bootstrap effects own the first enriched reads. This resource is recovery only.

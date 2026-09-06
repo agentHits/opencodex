@@ -71,7 +71,9 @@ interface AffinityEntry {
 const upstreamHealth = new Map<string, AccountHealth>();
 const sessionAffinity = new Map<string, AffinityEntry>();
 type OAuthAccountSelection = NonNullable<ReturnType<typeof captureOAuthAccountSelection>>;
-let manualPreference: OAuthAccountSelection | null = null;
+// Undefined means this runtime has not admitted a selection yet; null means consumed.
+// The startup baseline comes from the authoritative store, never a second persisted pin.
+let manualPreference: OAuthAccountSelection | null | undefined;
 
 function normalizeAffinityComponent(value: string | null | undefined): string {
   const normalized = value?.trim() ?? "";
@@ -156,7 +158,7 @@ export function sweepExpiredAnthropicRoutingHealth(now = Date.now()): number {
 export function clearAnthropicAccountPoolState(): void {
   upstreamHealth.clear();
   sessionAffinity.clear();
-  manualPreference = null;
+  manualPreference = undefined;
   quorumCache = null;
 }
 
@@ -533,6 +535,12 @@ export function resolveAnthropicAccountForSession(
   const set = getAccountSet(PROVIDER);
   if (!set || set.accounts.length === 0) return { accountId: null, reason: "none" };
 
+  if (manualPreference === undefined) {
+    manualPreference = set.selectionRevision !== undefined
+      ? { accountId: set.activeAccountId, revision: set.selectionRevision }
+      : null;
+  }
+
   if (!isAnthropicAccountPoolEnabled(config)) {
     return { accountId: set.activeAccountId, reason: "pool-disabled" };
   }
@@ -743,8 +751,8 @@ export function commitAnthropicSelectionRouting(
     }
     bindAnthropicSessionAffinity(options.sessionKey, accountId);
   }
-  if (manualPreference?.accountId === expectedSelection.accountId
-    && manualPreference.revision === expectedSelection.revision) manualPreference = null;
+  if (manualPreference === undefined || (manualPreference?.accountId === expectedSelection.accountId
+    && manualPreference.revision === expectedSelection.revision)) manualPreference = null;
   return true;
 }
 

@@ -12,6 +12,7 @@ const actualResolver = await import("../../src/server/adapter-resolve");
 const actualResolveAdapter = actualResolver.resolveAdapter;
 let attempts: AdapterEvent[][] = [];
 let attemptKeys: string[] = [];
+let attemptProjects: Array<string | undefined> = [];
 /** Set by the delivery test: an attempt that emits, then blocks before completing the turn. */
 let slowAttempt: ((emit: (event: AdapterEvent) => void) => Promise<void>) | undefined;
 
@@ -25,6 +26,7 @@ function fixtureAdapter(provider: OcxProviderConfig): ProviderAdapter {
     async runTurn(_parsed, _incoming, emit) {
       const index = attemptKeys.length;
       attemptKeys.push(provider.apiKey ?? "");
+      attemptProjects.push(provider.project);
       if (slowAttempt) return await slowAttempt(emit);
       for (const event of attempts[index] ?? []) emit(event);
     },
@@ -34,7 +36,7 @@ function fixtureAdapter(provider: OcxProviderConfig): ProviderAdapter {
 mock.module("../../src/server/adapter-resolve", () => ({
   ...actualResolver,
   resolveAdapter(provider: OcxProviderConfig, cacheRetention?: "none" | "short" | "long") {
-    if (provider.adapter === "cursor") return fixtureAdapter(provider);
+    if (provider.adapter === "cursor" || provider.googleMode === "cloud-code-assist") return fixtureAdapter(provider);
     return actualResolveAdapter(provider, cacheRetention);
   },
 }));
@@ -88,6 +90,7 @@ beforeEach(() => {
   clearGenericFailoverHealth();
   attempts = [];
   attemptKeys = [];
+  attemptProjects = [];
   slowAttempt = undefined;
 });
 
@@ -99,6 +102,30 @@ afterEach(() => {
 });
 
 describe("#2568 adapter-event OAuth failover", () => {
+  test("every CCA request pairs the persisted active account with its own project", async () => {
+    for (const id of ["a", "b"]) await saveCredential("google-antigravity", {
+      access: `ga-access-${id}`, refresh: `ga-refresh-${id}`, expires: Date.now() + 3_600_000,
+      accountId: id, projectId: `project-${id}`,
+    });
+    const cfg = config();
+    cfg.defaultProvider = "google-antigravity";
+    cfg.providers = { "google-antigravity": { ...cfg.providers.cursor!, googleMode: "cloud-code-assist", project: "project-a" } };
+    attempts = [
+      [{ type: "text_delta", text: "first" }, { type: "done" }],
+      [{ type: "text_delta", text: "second" }, { type: "done" }],
+    ];
+    for (let i = 0; i < 2; i++) {
+      const req = new Request("http://localhost/v1/responses", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "google-antigravity/model", input: "answer", stream: false }),
+      });
+      const res = await handleResponses(req, cfg, { model: "", provider: "" });
+      const responseBody = await res.text();
+      expect(res.status, responseBody).toBe(200);
+    }
+    expect(attemptKeys).toEqual(["ga-access-b", "ga-access-b"]);
+    expect(attemptProjects).toEqual(["project-b", "project-b"]);
+  });
   for (const stream of [true, false]) {
     test(`${stream ? "streaming" : "non-streaming"} first-event 429 rotates and replays`, async () => {
       await seedAccounts(2);

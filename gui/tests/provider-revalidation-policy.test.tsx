@@ -231,6 +231,7 @@ for (const kind of ["oauth", "api-key"] as const) {
     let stream!: ReadableStreamDefaultController<Uint8Array>;
     let streamSignal: AbortSignal | null | undefined;
     let subscriptions = 0;
+    let rejectConnection = false;
     let cancelled = false;
     const reads: string[] = [];
     const encoder = new TextEncoder();
@@ -246,6 +247,7 @@ for (const kind of ["oauth", "api-key"] as const) {
       if (url.pathname === "/api/accounts/events") {
         subscriptions += 1;
         streamSignal = init?.signal;
+        if (rejectConnection) return new Response(null, { status: 503 });
         return new Response(new ReadableStream<Uint8Array>({
           start(controller) { stream = controller; }, cancel() { cancelled = true; },
         }), { headers: { "Content-Type": "text/event-stream" } });
@@ -296,19 +298,68 @@ for (const kind of ["oauth", "api-key"] as const) {
       send("account-selection", { provider: "unknown-provider", kind, revision: 2 });
     });
     expect(reads).toHaveLength(afterEvent);
-    // A disconnected connection is recovered by the existing scheduler's visibility wake.
+    // Only the reconnect timeout advances. No 30-second scheduler tick or visibility wake.
+    const retries = new Map<number, { run: () => void; delay: number }>();
+    let timerId = 10_000;
+    const setTimeoutBefore = testWindow.setTimeout.bind(testWindow);
+    const clearTimeoutBefore = testWindow.clearTimeout.bind(testWindow);
+    Object.defineProperty(testWindow, "setTimeout", { configurable: true, value: (run: () => void, delay: number) => {
+      if (delay > 5_000) return setTimeoutBefore(run, delay);
+      const id = ++timerId;
+      retries.set(id, { run, delay });
+      return id;
+    } });
+    Object.defineProperty(testWindow, "clearTimeout", { configurable: true, value: (id: number) => {
+      if (!retries.delete(id)) clearTimeoutBefore(id);
+    } });
+    const retry = async (delay: number) => {
+      expect(retries.size).toBe(1);
+      const [id, pending] = [...retries][0];
+      expect(pending.delay).toBe(delay);
+      retries.delete(id);
+      await act(async () => { pending.run(); });
+    };
     await act(async () => { stream.close(); });
     selected = "a";
-    for (const state of ["hidden", "visible"]) {
-      Object.defineProperty(testWindow.document, "visibilityState", { configurable: true, value: state });
-      await act(async () => { testWindow.document.dispatchEvent(new testWindow.Event("visibilitychange")); });
-    }
+    await retry(250);
     expect(subscriptions).toBe(2);
     await act(async () => { send("ready", { revision: 0 }); });
     expect(container.querySelector(".pwi-auth-acct--active")?.textContent).toContain("Choice A");
     expect(quotaReads()).toBe(initialQuotas);
+
+    await act(async () => { stream.error(new Error("connection interrupted")); });
+    rejectConnection = true;
+    await retry(500);
+    expect(subscriptions).toBe(3);
+    for (const delay of [1_000, 2_000, 4_000, 5_000]) await retry(delay);
+    expect(subscriptions).toBe(7);
+    rejectConnection = false;
+    await retry(5_000);
+    expect(subscriptions).toBe(8);
+    selected = "b";
+    await act(async () => { send("ready", { revision: 0 }); });
+    expect(container.querySelector(".pwi-auth-acct--active")?.textContent).toContain("Choice B");
+    expect(quotaReads()).toBe(initialQuotas);
+
+    // Cleanup cancels scheduled retries, and a callback already dequeued cannot orphan a loop.
+    await act(async () => { stream.close(); });
+    expect(retries.size).toBe(1);
+    const queuedRetry = [...retries.values()][0].run;
+    await act(async () => { root!.unmount(); root = null; });
+    expect(retries.size).toBe(0);
+    await act(async () => { queuedRetry(); });
+    expect(subscriptions).toBe(8);
+    expect(streamSignal?.aborted).toBe(true);
+    // Closed/error streams need no cancel callback; also prove cleanup of a live reader.
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<LanguageProvider><Providers apiBase="" /></LanguageProvider>);
+    });
+    expect(subscriptions).toBe(9);
+    expect(streamSignal?.aborted).toBe(false);
     await act(async () => { root!.unmount(); root = null; });
     expect(streamSignal?.aborted).toBe(true);
     expect(cancelled).toBe(true);
+    expect(retries.size).toBe(0);
   });
 }

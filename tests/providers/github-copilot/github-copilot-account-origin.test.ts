@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,37 @@ const GITHUB_USER_URL = "https://api.github.com/user";
 const originalFetch = globalThis.fetch;
 const originalHome = process.env.OPENCODEX_HOME;
 let home = "";
+let beforeBuildReturns: (() => Promise<void>) | undefined;
+let beforePacingReturns: (() => Promise<void>) | undefined;
+const actualPacing = await import("../../../src/providers/request-pacing");
+const originalWaitForSlot = actualPacing.waitForProviderRequestSlot;
+mock.module("../../../src/providers/request-pacing", () => ({
+  ...actualPacing,
+  waitForProviderRequestSlot: async (...args: Parameters<typeof originalWaitForSlot>) => {
+    const result = await originalWaitForSlot(...args);
+    const gate = beforePacingReturns;
+    beforePacingReturns = undefined;
+    await gate?.();
+    return result;
+  },
+}));
+const actualAdapterResolver = await import("../../../src/server/adapter-resolve");
+const originalResolveAdapter = actualAdapterResolver.resolveAdapter;
+mock.module("../../../src/server/adapter-resolve", () => ({
+  ...actualAdapterResolver,
+  resolveAdapter: (...args: Parameters<typeof originalResolveAdapter>) => {
+    const adapter = originalResolveAdapter(...args);
+    const build = adapter.buildRequest.bind(adapter);
+    adapter.buildRequest = async (...buildArgs) => {
+      const built = await build(...buildArgs);
+      const gate = beforeBuildReturns;
+      beforeBuildReturns = undefined;
+      await gate?.();
+      return built;
+    };
+    return adapter;
+  },
+}));
 
 type Wire = "chat" | "responses";
 
@@ -146,6 +177,8 @@ function installFetch(options: {
 }
 
 beforeEach(() => {
+  beforeBuildReturns = undefined;
+  beforePacingReturns = undefined;
   home = mkdtempSync(join(tmpdir(), "ocx-copilot-origin-"));
   process.env.OPENCODEX_HOME = home;
   clearGenericFailoverHealth();
@@ -161,6 +194,24 @@ afterEach(() => {
 
 describe("GitHub Copilot bearer/origin snapshot atomicity", () => {
   for (const wire of ["chat", "responses"] as const) {
+    test(`${wire} revalidates selection after pacing and before physical dispatch`, async () => {
+      const accounts = await seedAccounts();
+      beforePacingReturns = async () => { await setActiveAccount("github-copilot", accounts.b); };
+      const observed = installFetch({ wire, statuses: [200], switchOn: "never" });
+      const response = await handleResponses(request(wire), config(wire), { model: "", provider: "" });
+      await response.text();
+      expect(response.status).toBe(200);
+      expect(observed.dispatches).toEqual([{ origin: ACCOUNT_B_ORIGIN, authorization: bearer("copilot-access-b") }]);
+    });
+    test(`${wire} rebuilds after a manual selection during asynchronous request building`, async () => {
+      const accounts = await seedAccounts();
+      beforeBuildReturns = async () => { await setActiveAccount("github-copilot", accounts.b); };
+      const observed = installFetch({ wire, statuses: [200], switchOn: "never" });
+      const response = await handleResponses(request(wire), config(wire), { model: "", provider: "" });
+      await response.text();
+      expect(response.status).toBe(200);
+      expect(observed.dispatches).toEqual([{ origin: ACCOUNT_B_ORIGIN, authorization: bearer("copilot-access-b") }]);
+    });
     test(`${wire} initial admission follows a newer manual selection with its matching origin`, async () => {
       const accounts = await seedAccounts(0);
       const observed = installFetch({

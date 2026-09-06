@@ -79,6 +79,9 @@ async function seedTwoAccounts() {
   const a = set.accounts.find(acc => acc.credential.accountId === "uuid-aaaa")!;
   const b = set.accounts.find(acc => acc.credential.accountId === "uuid-bbbb")!;
   await setActiveAccount("anthropic", a.id);
+  // Ordinary policy cases start after the initial stored selection has been admitted.
+  // Restart cases explicitly clear runtime state below to exercise first admission again.
+  await admitAnthropic("", cfg(false));
   return { aId: a.id, bId: b.id };
 }
 
@@ -133,10 +136,31 @@ async function seedThreeAccounts() {
   const b = set.accounts.find(acc => acc.credential.accountId === "uuid-bbbb")!;
   const c = set.accounts.find(acc => acc.credential.accountId === "uuid-cccc")!;
   await setActiveAccount("anthropic", a.id);
+  await admitAnthropic("", cfg(false));
   return { aId: a.id, bId: b.id, cId: c.id };
 }
 
 describe("anthropic account pool", () => {
+  test.each(["round-robin", "quota"] as const)("persisted manual choice survives restart before the first %s dispatch", async strategy => {
+    const { aId, bId } = await seedTwoAccounts();
+    setCachedProviderAccountQuotaForTests("anthropic", aId, { fiveHourPercent: 11 });
+    setCachedProviderAccountQuotaForTests("anthropic", bId, { fiveHourPercent: 30 });
+    await setActiveAccount("anthropic", bId);
+    resetAnthropicRoutingForManualSelection(bId);
+    const persisted = captureOAuthAccountSelection("anthropic");
+    // A process restart loses both local preference and the shared RR cursor.
+    clearAnthropicAccountPoolState();
+    clearPoolRotationState();
+    const config = cfg(true, 20, { strategy, stickyLimit: 1 });
+    expect(resolveAnthropicAccountForSession("restart-first", config).accountId).toBe(bId);
+    expect(resolveAnthropicAccountForSession("restart-proposal", config).accountId).toBe(bId);
+    expect(captureOAuthAccountSelection("anthropic")).toEqual(persisted);
+    expect((await admitAnthropic("restart-first", config)).accountId).toBe(bId);
+    // Once the authoritative first selection commits, the ordinary algorithm resumes.
+    expect((await admitAnthropic("restart-next", config)).accountId).toBe(aId);
+    expect(resolveAnthropicAccountForSession("restart-first", config).accountId).toBe(bId);
+  });
+
   test("pool-off 429 recovery commits the replacement and notifies before dispatch", async () => {
     const { aId, bId } = await seedTwoAccounts();
     const config = cfg(false);
