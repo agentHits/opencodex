@@ -166,6 +166,14 @@ See [Combos](/guides/combos/) for target strategies, cooldowns, aliases, and rou
 
 ### Logs, usage, and storage
 
+`GET /api/logs` accepts an optional opaque `cursor` from its previous response. The envelope preserves
+`logs`, `total`, `generatedAt` and `timeZone`, and adds `cursor` and `reset`. Without a cursor it returns
+the full filtered window. A valid unchanged prefix returns only appended rows; `reset: true` replaces
+the client window after edits, eviction, query changes or restart. Invalid cursors return HTTP 400 with
+`error.code: "invalid_cursor"`. Authentication is unchanged. The dashboard falls back to full snapshots
+for older servers. This reduces response bytes for stable windows; server projection remains bounded
+by the current window size.
+
 | Method and path | Purpose | Notable errors |
 | --- | --- | --- |
 | `GET /api/logs` | Query filtered in-memory request logs | — |
