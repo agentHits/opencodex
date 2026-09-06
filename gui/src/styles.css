@@ -2672,6 +2672,7 @@ button.prov-account-row.active { cursor: default; }
 .model-display-name-current > .text-label { grid-column: 1 / -1; }
 .model-display-name-current strong { min-width: 0; overflow-wrap: anywhere; }
 .model-display-name-dialog > .input { margin-bottom: 6px; }
+.model-display-name-dialog > .small { text-wrap: balance; }
 .model-display-name-error {
   margin-top: 8px;
   color: var(--red);
