@@ -8,6 +8,7 @@ import {
   isClientClosedMessage,
   isCyberPolicyCode,
   isCyberPolicyMessage,
+  isRateLimitOrQuotaFailureMessage,
   upstreamErrorMessageFromPayload,
 } from "../lib/errors";
 import { CODEX_CONFIG_PATH, readRootTomlString } from "../codex/paths";
@@ -852,7 +853,7 @@ function captureTerminalHttpStatus(
     last_error?: { type?: unknown; code?: unknown; message?: unknown };
     response?: {
       error?: { type?: unknown; code?: unknown; message?: unknown };
-      incomplete_details?: { code?: unknown; message?: unknown };
+      incomplete_details?: { code?: unknown; message?: unknown; reason?: unknown };
     };
   },
 ): void {
@@ -861,7 +862,9 @@ function captureTerminalHttpStatus(
   if (type !== "response.failed" && type !== "response.incomplete" && type !== "error") return;
   const responseError = json.response?.error;
   const responseDetails = json.response?.incomplete_details;
-  const candidates = [json.error, json.last_error, responseError, responseDetails, json];
+  const candidates: Array<{ type?: unknown; code?: unknown; message?: unknown } | undefined> = [
+    json.error, json.last_error, responseError, responseDetails, json,
+  ];
   const policy = candidates.some(candidate => (
     candidate?.code === null || typeof candidate?.code === "string"
   ) && isCyberPolicyCode(candidate.code as string | null | undefined))
@@ -873,6 +876,29 @@ function captureTerminalHttpStatus(
   if (policy) {
     logCtx.terminalErrorCode = CYBER_POLICY_ERROR_CODE;
     logCtx.terminalHttpStatus = 400;
+    return;
+  }
+  // A quota terminal can carry only a structured reason, without an error message.
+  // Keep this separate from normal output limits and from the policy precedence above.
+  const quotaTag = (value: unknown): boolean => value === "usage_limit_reached"
+    || value === "rate_limit_exceeded" || value === "insufficient_quota";
+  const structuredRefusal = candidates.some(candidate => [400, 401, 403, 499].includes(
+    httpStatusFromTerminalError({
+      type: typeof candidate?.type === "string" ? candidate.type : undefined,
+      code: typeof candidate?.code === "string" ? candidate.code : undefined,
+    }),
+  ));
+  const ordinaryIncompleteReason = typeof responseDetails?.reason === "string"
+    && ["max_output_tokens", "content_filter", "steered", "upstream_stall_timeout", "adapter_eof"].includes(responseDetails.reason);
+  if (type === "response.incomplete" && !structuredRefusal && (quotaTag(responseDetails?.reason) || candidates.some(candidate =>
+    quotaTag(candidate?.code)
+    || quotaTag(candidate?.type) || candidate?.type === "rate_limit_error"
+    || (!ordinaryIncompleteReason && typeof candidate?.message === "string" && isRateLimitOrQuotaFailureMessage(candidate.message))
+  ))) {
+    // The shared quota classifier also accepts a numeric HTTP status as its message.
+    // Preserve explicit payment-required evidence rather than relabeling it as 429.
+    logCtx.terminalHttpStatus = candidates.some(candidate => typeof candidate?.message === "string"
+      && Number(candidate.message.trim()) === 402) ? 402 : 429;
     return;
   }
   if (type !== "response.failed" || !responseError || typeof responseError !== "object") return;
@@ -903,6 +929,9 @@ export function httpStatusForRequestLogTerminal(
   status: ResponsesTerminalStatus,
   logCtx?: RequestLogContext,
 ): number {
+  if (status === "incomplete" && (logCtx?.terminalHttpStatus === 429 || logCtx?.terminalHttpStatus === 402)) {
+    return logCtx.terminalHttpStatus;
+  }
   /**
    * [Decision Log]
    * - 목적과 의도: Keep request logs aligned with the successful HTTP/SSE contract.
