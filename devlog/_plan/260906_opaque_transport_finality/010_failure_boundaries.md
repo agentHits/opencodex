@@ -52,3 +52,16 @@ byte bounds, no-persistence and one-shot recovery tests remain.
 
 Independent plan/source/final review; exact parent and cascaded child hosted
 Linux/macOS/gates CI. Final Windows six-shard and release gates remain mandatory.
+
+## Usage-marker parity amendment
+
+Source review confirms the account-health blocker is closed by failed EOF. The
+existing eager callback still labels every synthetic failure as streamAborted,
+though a clean EOF after an explicit upstream error is a semantic failure, not a
+body-read reset (PersistedUsageAttempt documents that distinction). Criterion c-2
+also requires usage outcome parity, so include this small related correction:
+relay-eager passes optional upstream_error provenance only for that clean-EOF tail;
+core records its semantic failed status without streamAborted. Ordinary reset
+callbacks retain their one-argument shape, 502 and streamAborted. Add request-level
+tee/eager assertions for repeated bare errors versus actual reset; do not infer
+this marker from a stale log message or change real-terminal precedence.
