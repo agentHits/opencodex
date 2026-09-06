@@ -127,6 +127,12 @@ Worker cannot restore unrelated API keys or provider settings from a snapshot re
 If that metadata write is unavailable after cleanup has already completed, the job retains the
 cleanup outcome and exposes a bounded persistence error instead of relabeling the run as a Worker failure.
 
+Cleanup manifests and satellite backups share the stage-local atomic publisher: an exclusive
+private temporary file is fully written and file-synced before the existing Windows-tolerant
+rename replaces the destination. Handled publication failures retain the previous record;
+directory syncing remains best-effort. This does not make a partial permanent purge reversible:
+restore still fails closed when a recorded logical entry has no surviving file.
+
 Windows secret-file hardening resolves the effective token SID through an absolute, trusted
 PowerShell path before granting the owner and removing inherited broad ACL entries. The normal
 path obtains System32 from `GetSystemDirectoryW`. Windows ARM64 Bun builds that cannot execute

@@ -239,6 +239,10 @@ Storage cleanup endpoints can move or permanently remove archived session data. 
 first and submit the returned digest. Prefer quarantine when recovery may be needed.
 :::
 
+Cleanup recovery manifests are published atomically, preserving the previous complete record
+if a replacement fails before publication. This does not reverse a permanent purge: restore
+can still fail when a recorded session has no surviving rollout file.
+
 ### Models and catalog
 
 | Method and path | Purpose | Notable errors |
