@@ -77,6 +77,39 @@ describe("request log metadata", () => {
     expect(attempt.credentialSource).toBeUndefined();
   });
 
+  test("seal same identity preserves credentialSource; provider or adapter change clears it", () => {
+    const attempt = beginRequestAttempt(1, "xai", "grok-test", "openai-chat");
+    recordAttemptCredentialSource(attempt, "xai", {
+      adapter: "openai-chat", authMode: "key", baseUrl: "https://api.x.ai/v1",
+    });
+    expect(attempt.credentialSource).toBe("xai-api-key");
+    sealRequestAttemptIdentity(attempt, "xai", "openai-chat");
+    expect(attempt.credentialSource).toBe("xai-api-key");
+    expect(attempt.provider).toBe("xai");
+    expect(attempt.adapter).toBe("openai-chat");
+
+    sealRequestAttemptIdentity(attempt, "custom", "openai-chat");
+    expect(attempt.credentialSource).toBeUndefined();
+    expect(attempt.provider).toBe("custom");
+
+    recordAttemptCredentialSource(attempt, "xai", {
+      adapter: "openai-chat", authMode: "key", baseUrl: "https://api.x.ai/v1",
+    });
+    attempt.provider = "xai";
+    expect(attempt.credentialSource).toBe("xai-api-key");
+    sealRequestAttemptIdentity(attempt, "xai", "openai-responses");
+    expect(attempt.credentialSource).toBeUndefined();
+    expect(attempt.adapter).toBe("openai-responses");
+  });
+
+  test("recordAttemptCredentialSource fourth adapterName rejects unsupported even when config adapter is openai-chat", () => {
+    const attempt = beginRequestAttempt(1, "xai", "grok-test", "openai-chat");
+    recordAttemptCredentialSource(attempt, "xai", {
+      adapter: "openai-chat", authMode: "key", baseUrl: "https://api.x.ai/v1",
+    }, "anthropic");
+    expect(attempt.credentialSource).toBeUndefined();
+  });
+
   test("combo logging keeps credential provenance on physical attempts only", () => {
     const a = beginRequestAttempt(1, "xai", "grok-test", "openai-chat");
     const b = beginRequestAttempt(2, "openai", "gpt-test", "openai-responses");
