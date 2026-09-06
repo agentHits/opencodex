@@ -43,3 +43,7 @@ recovery case. Recovery credentials still go only to its existing fixed backend,
 and explicit opt-in, loopback/caller guards and no-persist policy remain unchanged.
 Introducing a new URL policy only for this combo branch would contradict the
 existing configured-provider contract without evidence of a distinct boundary.
+
+Also update the English guides/sub-agent-surface.md paragraph that currently says
+combo routing is unchanged and native-only. The configuration pages alone would
+leave that guide contradicting the newly reachable opt-in routed recovery path.
