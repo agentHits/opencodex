@@ -23,6 +23,8 @@ import {
   requestLogEntryFromPersistedUsage,
   sealRequestAttemptIdentity,
   recordAttemptCredentialSource,
+  inspectResponseLogSsePayload,
+  httpStatusForRequestLogTerminal,
   type RequestLogContext,
 } from "../../src/server/request-log";
 import { handleResponses } from "../../src/server/responses";
@@ -106,6 +108,39 @@ describe("request log metadata", () => {
       expect(JSON.stringify(getRequestLogEntries())).not.toContain("private-");
     } finally { clearRequestLogsForTests(); }
   });
+  test("incomplete quota evidence preserves an explicit HTTP 402 message", () => {
+    const log: RequestLogContext = { model: "gpt-test", provider: "openai" };
+    inspectResponseLogSsePayload(log, JSON.stringify({
+      type: "response.incomplete",
+      response: { incomplete_details: { message: "402" } },
+    }));
+    expect(log.terminalHttpStatus).toBe(402);
+    expect(httpStatusForRequestLogTerminal("incomplete", log)).toBe(402);
+  });
+
+  test("normal structured incomplete reason wins over quota-like display text", () => {
+    const log: RequestLogContext = { model: "gpt-test", provider: "openai" };
+    inspectResponseLogSsePayload(log, JSON.stringify({
+      type: "response.incomplete",
+      response: { incomplete_details: { reason: "max_output_tokens", message: "Token usage limit reached" } },
+    }));
+    expect(log.terminalHttpStatus).toBeUndefined();
+    expect(log.terminalIncompleteReason).toBe("max_output_tokens");
+  });
+
+  for (const error of [
+    { type: "authentication_error", message: "Usage limit lookup requires renewed authentication" },
+    { code: "invalid_api_key", message: "Usage limit unavailable for this credential" },
+  ]) {
+    test(`structured auth failure wins over quota wording: ${JSON.stringify(error)}`, () => {
+      const failed: RequestLogContext = { model: "gpt-test", provider: "openai" };
+      inspectResponseLogSsePayload(failed, JSON.stringify({ type: "response.failed", response: { error } }));
+      expect(failed.terminalHttpStatus).toBe(401);
+      const incomplete: RequestLogContext = { model: "gpt-test", provider: "openai" };
+      inspectResponseLogSsePayload(incomplete, JSON.stringify({ type: "response.incomplete", response: { error } }));
+      expect(incomplete.terminalHttpStatus).toBeUndefined();
+    });
+  }
 
   test("upstream credential attribution requires the resolved canonical xAI transport", () => {
     const attempt = beginRequestAttempt(1, "xai", "grok-test", "openai-chat");

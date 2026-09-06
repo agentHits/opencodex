@@ -1685,3 +1685,41 @@ dispatch. Selection revisions fence stale retries and reselection; request ident
 actual committed account/key. Generic proactive selection is opt-in and preserves a healthy active
 account, while reactive429 recovery remains enabled even with the pool off. Post-commit selection
 events immediately invalidate dashboard roster state; see`05_gui-and-management-api.md`.
+
+
+### Incomplete quota terminals
+
+A native forward response that ends with quota or rate-limit evidence in an
+`incomplete` terminal records account quota failure and spawn-fallback health.
+Structured `incomplete_details.reason` and error codes are accepted without a
+message; ordinary output-limit, filtering, steering and stall incompletes do not
+cool an account. Cyber-policy classification retains precedence. The terminal is
+not replayed after output, and fixed-account request selection remains fixed.
+
+Remote compact requests release the server request-idle timeout only after a complete
+JSON object with a valid model has been read. Partial or invalid uploads retain
+the listener guard; admitted compaction then uses the upstream operation's own
+deadlines and client cancellation.
+
+Buffered routed compaction treats nonempty text and reasoning deltas as progress
+without exposing partial summary text. Comments, empty deltas and gateway
+keepalives do not reset the adapter-event stall watchdog. The default stall
+timeout stays 300 seconds; encrypted compaction content is preserved unchanged.
+
+Native compact response buffering also enforces a body-byte inactivity deadline
+using `stallTimeoutSec` (300 seconds by default). Nonempty chunks reset that
+deadline; a stalled body returns HTTP 504, client cancellation retains HTTP 499,
+and cleanup does not wait for a stuck upstream cancellation promise. The 32 MiB
+response ceiling and the original body bytes are preserved.
+
+A canonical upstream WebSocket refused-create error can become an HTTP 4xx only
+before the response is committed and after stream correlation checks. Permitted
+quota headers are bounded and rebuilt without upstream framing headers; the JSON
+response is not cacheable. Post-commit and 5xx errors keep the no-resend path.
+
+When encrypted agent-task recovery refuses a routed task, its existing 400 error
+can include a bounded `recovery_reason`: `unsupported_envelope`,
+`admission_denied`, `recovery_unavailable`, `caller_cancelled`, or `input_changed`.
+The field is omitted when no classified recovery result exists.
+`recovery_unavailable` includes cache/singleflight capacity and does not prove an
+upstream request was attempted. No retry or broader envelope acceptance is enabled.
