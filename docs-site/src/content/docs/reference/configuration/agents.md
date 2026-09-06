@@ -207,8 +207,10 @@ delegation when they are not.
 This recovery path applies to direct-routed children and encrypted combo `NEW_TASK` spawns. At
 most 32 recovery requests can be active at once; additional misses fail closed. A combo with an
 available canonical native target still sends ciphertext directly; recovery runs only when no
-native target is selectable. Failed recovery, exhausted targets, or unavailable targets still fail
-closed without forwarding ciphertext to a routed provider.
+native target is selectable. After a stored Pool account's refresh and same-account replay are
+exhausted, recovery can use the incoming caller credential for one available routed target without
+trying another native account. Policy refusals remain terminal. Failed recovery, exhausted targets,
+or unavailable targets still fail closed without forwarding ciphertext to a routed provider.
 
 ## Effort caps
 
