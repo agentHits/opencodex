@@ -598,13 +598,13 @@ describe("DeepSeek Responses endpoint contract", () => {
     }
   });
 
-  test("a provider-wide empty ladder removes even non-string raw effort", () => {
+  test("a provider-wide empty ladder removes schema-valid raw effort", () => {
     const keyed = { adapter: "openai-responses", baseUrl: "https://example.test/v1", authMode: "key" as const };
-    const raw = { model: "model", input: "ping", reasoning: { effort: 123, summary: "auto" } };
+    const raw = { model: "model", input: "ping", reasoning: { effort: "high", summary: "auto" } };
     const wire = JSON.parse(createResponsesPassthroughAdapter({ ...keyed, reasoningEfforts: [] })
       .buildRequest(parseRequest(raw)).body);
     expect(wire.reasoning).toEqual({ summary: "auto" });
-    expect(raw.reasoning.effort).toBe(123);
+    expect(raw.reasoning.effort).toBe("high");
   });
 
   test("empty-ladder repair preserves unknown, non-rankable and native forward effort behavior", () => {
