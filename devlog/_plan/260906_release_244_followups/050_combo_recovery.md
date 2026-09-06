@@ -17,3 +17,38 @@ Before: a merely configured native target suppresses recovery even when not usab
 Remote tests cover native disabled/cooldown, native 401 exhaustion, canonical summary exhausted with eligible account, noncanonical quota veto, caller eligibility, cooldown waiting, all targets unavailable skips recovery, recovery failure never dispatches plaintext/ciphertext, aborted recovery at both sites returns cancellation, no retry after client output. Preserve 32-inflight and no-persist safeguards where owned by recovery helper.
 CodeRabbit HTTPS-only suggestion is assessed against existing http provider policy: do not invent combo-only URL permission changes. Record evidence-backed rebuttal or a narrowly necessary fix during P/security audit. This carry does not change provider URL policy or credentials. Exact-head CI + independent security review required; no live Kiro or local suites.
 
+
+## Current composition and cancellation amendment
+
+The lower stack PR #3753 is merged as b9f2acc82 from cd6d4d346 (full
+CI34020474748 and independent security/final reviews passed). Source #3706 remains c311e9598; its source-only
+patch applies cleanly to this foundation. Preserve every opaque preflight and
+client-reader repair; only handleComboResponses changes in core.
+
+At the initial unreadable-task recovery site, a false helper result returns 499
+when the caller signal is aborted, otherwise the existing unreadable-task 400.
+At native exhaustion, recheck caller cancellation after routed-target waiting and
+recovery, before adopting the last native failure. A successful helper remains
+one-shot; normal failed recovery preserves the prior failure and never dispatches
+unreadable ciphertext or persists recovered plaintext. Add deterministic abort
+fixtures at both recovery sites using the existing fake upstream boundary.
+
+Canonical forward providers defer account/model quota admission to the existing
+native selector; caller eligibility, target cooldowns and attempted exclusions
+still apply. Noncanonical hosts and third-party cached quota remain filtered.
+
+No combo-only HTTPS restriction is added: this routes recovered content through
+the same operator-configured provider transport as the already-supported all-routed
+recovery case. Recovery credentials still go only to its existing fixed backend,
+and explicit opt-in, loopback/caller guards and no-persist policy remain unchanged.
+Introducing a new URL policy only for this combo branch would contradict the
+existing configured-provider contract without evidence of a distinct boundary.
+
+Also update the English guides/sub-agent-surface.md paragraph that currently says
+combo routing is unchanged and native-only. The configuration pages alone would
+leave that guide contradicting the newly reachable opt-in routed recovery path.
+
+The parent now also preserves native preflight read resets/cancellation and
+tee/eager failed terminal accounting, including semantic streamAborted parity.
+The combo delta remains unchanged through that cascade; a fresh composition
+review confirmed the same patch and the complete child runtime passed CI34020475627.
