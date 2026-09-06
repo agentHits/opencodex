@@ -6,6 +6,7 @@ import { saveConfig } from "../../src/config";
 import { startServer } from "../../src/server";
 import { handleResponses } from "../../src/server/responses";
 import { isEagerRelaySseResponse } from "../../src/server/relay";
+import { createGrokResponsesControlFrameBlockRewrite } from "../../src/server/grok-responses-control-frame";
 import type { OcxConfig } from "../../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -117,6 +118,61 @@ afterEach(async () => {
   await isolated.restore();
   removeTreeWithRetry(TEST_DIR);
 });
+
+for (const controlType of ["codex.rate_limits", "codex.response.metadata"]) {
+  describe(`Grok control frame ${controlType}`, () => {
+    test.each(["{}", "not-json"])("filters an event-only discriminator with payload %s", payload => {
+      const rewrite = createGrokResponsesControlFrameBlockRewrite();
+      expect(rewrite(`event: ${controlType}\ndata: ${payload}`)).toEqual([]);
+    });
+
+    test("filters a data-only discriminator without an event field", () => {
+      const rewrite = createGrokResponsesControlFrameBlockRewrite();
+      expect(rewrite(`data: {"type":"${controlType}"}`)).toEqual([]);
+    });
+
+    test.each(["{}", "not-json"])("filters the last event field with payload %s", payload => {
+      const rewrite = createGrokResponsesControlFrameBlockRewrite();
+      expect(rewrite(`event: message\nevent: ${controlType}\ndata: ${payload}`)).toEqual([]);
+    });
+
+    test("preserves completion when the last event field overrides a control type", () => {
+      const block = `event: ${controlType}\nevent: response.completed\ndata: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`;
+      expect(createGrokResponsesControlFrameBlockRewrite()(block)).toEqual([block]);
+    });
+
+    test.each(["event:", "event: ", "event"])("honors the empty reset %s", reset => {
+      const block = `event: ${controlType}\n${reset}\ndata: {}`;
+      expect(createGrokResponsesControlFrameBlockRewrite()(block)).toEqual([block]);
+    });
+
+    test("still filters the JSON type after an empty event reset", () => {
+      const block = `event: ${controlType}\nevent:\ndata: {"type":"${controlType}"}`;
+      expect(createGrokResponsesControlFrameBlockRewrite()(block)).toEqual([]);
+    });
+
+    test.each([`event:  ${controlType}`, `event:\t${controlType}`, `event: ${controlType} `])(
+      "preserves significant event-value whitespace in %s",
+      eventLine => {
+        const block = `${eventLine}\ndata: {}`;
+        expect(createGrokResponsesControlFrameBlockRewrite()(block)).toEqual([block]);
+      },
+    );
+
+    test("recognizes a CRLF event field without an optional space", () => {
+      expect(createGrokResponsesControlFrameBlockRewrite()(`event:message\r\nevent:${controlType}\r\ndata: {}`)).toEqual([]);
+    });
+
+    test("does not retain the event type across blocks or consume ordinary content", () => {
+      const rewrite = createGrokResponsesControlFrameBlockRewrite();
+      expect(rewrite(`event: ${controlType}\ndata: {}`)).toEqual([]);
+      for (const block of ["data: {}", "data: not-json", ": heartbeat", "data: [DONE]",
+        `data: {"type":"response.output_text.delta","delta":"${controlType}"}`]) {
+        expect(rewrite(block)).toEqual([block]);
+      }
+    });
+  });
+}
 
 describe("responsesSnapshotRepair through /v1/responses", () => {
   test.skipIf(process.platform !== "darwin")(
@@ -341,9 +397,9 @@ describe("responsesSnapshotRepair through /v1/responses", () => {
       await server.stop(true);
     }
   });
-  test("the Grok marker filters Codex control frames at the client boundary", async () => {
+  test.each([true, false])("the Grok marker filters Codex control frames at the client boundary (event names: %s)", async includeEventNames => {
     const gateway = "https://grok-control-frame.example.test";
-    stubSparseGateway(gateway, GROK_CONTROL_FRAME_EVENTS, true);
+    stubSparseGateway(gateway, GROK_CONTROL_FRAME_EVENTS, includeEventNames);
     saveConfig({
       port: 0,
       defaultProvider: "sparse",

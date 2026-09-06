@@ -14,12 +14,17 @@ const GROK_CONTROL_FRAME_TYPES: Record<string, true> = {
  */
 export function createGrokResponsesControlFrameBlockRewrite(): SseBlockRewrite {
   return (block) => {
-    const eventName = block
-      .split(/\r?\n/)
-      .find(line => line.startsWith("event:"))
-      ?.slice("event:".length)
-      .trim();
-    if (GROK_CONTROL_FRAME_TYPES[eventName ?? ""] === true) return [];
+    let eventName = "";
+    // SSE overwrites the event type on every event field, including empty resets.
+    // Like sseDataPayload, remove only one optional ASCII space after the colon.
+    for (const line of block.split(/\r?\n/)) {
+      if (line === "event") eventName = "";
+      else if (line.startsWith("event:")) {
+        const value = line.slice("event:".length);
+        eventName = value.startsWith(" ") ? value.slice(1) : value;
+      }
+    }
+    if (GROK_CONTROL_FRAME_TYPES[eventName] === true) return [];
 
     const payload = sseDataPayload(block);
     if (payload === null || payload === "[DONE]") return [block];
