@@ -1817,10 +1817,20 @@ describe("established-history external task input (#3807)", () => {
     return captured;
   }
 
-  function expectHistory(sent: Record<string, unknown>, tail: Array<Record<string, unknown>> = []) {
+  function expectHistory(
+    sent: Record<string, unknown>,
+    tail: Array<Record<string, unknown>> = [],
+    withToolCatalog = true,
+  ) {
     const messages = sent.messages as Array<Record<string, unknown>>;
-    expect(messages).toHaveLength(wireHistory.length + tail.length);
-    expect(messages).toMatchObject([...wireHistory, ...tail]);
+    // Ordinary non-OpenAI chat turns prepend catalog guidance; compaction removes
+    // context.tools before translation. Require that exact prefix, not arbitrary extras.
+    const prefix = withToolCatalog ? [{
+      role: "system",
+      content: expect.stringContaining("Valid tool names for this turn are exactly `read_value`."),
+    }] : [];
+    expect(messages).toHaveLength(prefix.length + wireHistory.length + tail.length);
+    expect(messages).toMatchObject([...prefix, ...wireHistory, ...tail]);
     // Exactly one original pair: delivery must not acquire a synthesized tool identity.
     expect(messages.flatMap(message => message.tool_calls ?? [])).toEqual(wireHistory[1]!.tool_calls);
     expect(messages.filter(message => message.role === "tool")).toEqual([wireHistory[2]]);
@@ -1882,7 +1892,7 @@ describe("established-history external task input (#3807)", () => {
       expect(captured).toHaveLength(1);
       expectHistory(captured[0]!, [
         { role: "user", content: expect.stringContaining("CONTEXT CHECKPOINT COMPACTION") },
-      ]);
+      ], false);
       expect(captured[0]!.tools).toBeUndefined();
       expect(JSON.stringify(captured)).not.toContain("compaction_trigger");
       if (version === "v2 trigger") {
