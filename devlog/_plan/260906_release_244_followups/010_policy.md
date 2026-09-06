@@ -16,3 +16,6 @@ CI test fixture: authorized admin and maintain actors with no second approval on
 ## Trust / bypass record
 Assets repository integration history; entry script and authenticated GitHub rules API; boundary contributor metadata versus trusted dev roster/live permissions. E7 human policy plus E8 GitHub branch rules; admin can alter rules outside this helper, so helper is an early review check, not universal enforcement. PR bypass does not remove deletion/non-fast-forward rules outside PRs. Security review recorded independently in scratch; final disposition may be published after diff is public.
 
+
+## Policy-cycle P refresh and delegation
+Current dev remains the roadmap baseline; source helper and ruleset snapshots were reread. The preceding D locked the roadmap and made policy the next cycle. Worker owns only scripts/ci/assert-mergeable-review.sh and tests/ci-workflows/assert-mergeable-review.test.ts; main owns MAINTAINERS.md, AGENTS.md, contributing.md, structure/06_docs-and-release.md and GitHub settings. No overlapping writes or local tests. An independent reviewer audits the final script/docs delta before remote CI and dev-only ruleset application.
