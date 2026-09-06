@@ -601,7 +601,7 @@ describe("GitHub Actions hardening", () => {
     expect(ci.jobs?.ci?.needs).toContain("docker-smoke");
     const typecheck = ci.jobs?.gates?.steps?.find(step => step.name === "Typecheck");
     expect(hasExactShellCommand(typecheck?.run,
-      "bun x tsc --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --types bun-types --skipLibCheck scripts/ci/docker-smoke.ts",
+      "bun x tsc --ignoreConfig --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --types bun-types --skipLibCheck scripts/ci/docker-smoke.ts",
     )).toBe(true);
   });
 
