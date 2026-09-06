@@ -66,6 +66,63 @@ afterEach(() => {
 });
 
 describe("multiauth accounts API", () => {
+  test("selection events require management authentication", async () => {
+    const server = startServer(0);
+    try {
+      const response = await originalFetch(new URL("/api/accounts/events", server.url));
+      expect(response.status).toBe(401);
+      await response.body?.cancel();
+    } finally { await server.stop(true); }
+  });
+
+  test("selection event streams bound subscribers and release cancelled connections", async () => {
+    const { accountSelectionStream } = await import("../../src/server/management/account-selection-stream");
+    const streams: Response[] = [];
+    try {
+      for (let i = 0; i < 64; i++) {
+        const response = accountSelectionStream(new Request("http://localhost/api/accounts/events"));
+        expect(response.status).toBe(200);
+        streams.push(response);
+      }
+      expect(accountSelectionStream(new Request("http://localhost/api/accounts/events")).status).toBe(429);
+    } finally {
+      await Promise.all(streams.map(response => response.body!.cancel()));
+    }
+    const response = accountSelectionStream(new Request("http://localhost/api/accounts/events"));
+    expect(response.status).toBe(200);
+    await response.body!.cancel();
+  });
+
+  test("selection events notify only after the new active account is committed", async () => {
+    const server = startServer(0);
+    const abort = new AbortController();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await fetch(new URL("/api/accounts/events", server.url), { signal: abort.signal });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+      reader = response.body!.getReader();
+      const ready = new TextDecoder().decode((await reader.read()).value);
+      expect(ready).toContain("event: ready");
+      const eventRead = reader.read();
+      const selected = await fetch(new URL("/api/oauth/accounts/active", server.url), {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "anthropic", accountId: "bbbb2222" }),
+      });
+      expect(selected.status).toBe(200);
+      const notification = new TextDecoder().decode((await eventRead).value);
+      expect(notification).toContain("event: account-selection");
+      expect(notification).toContain('"provider":"anthropic"');
+      expect(notification).not.toContain("bbbb2222");
+      expect(notification).not.toContain("t2");
+      expect(getAccountSet("anthropic")?.activeAccountId).toBe("bbbb2222");
+    } finally {
+      await reader?.cancel();
+      abort.abort();
+      await server.stop(true);
+    }
+  });
+
   test("GET lists masked accounts with active flag", async () => {
     const server = startServer(0);
     try {

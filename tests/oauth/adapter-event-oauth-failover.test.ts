@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProviderAdapter } from "../../src/adapters/base";
 import { clearGenericFailoverHealth } from "../../src/oauth/generic-account-failover";
-import { saveCredential } from "../../src/oauth/store";
+import { getAccountSet, getCredential, saveCredential, setActiveAccount } from "../../src/oauth/store";
 import type { AdapterEvent, OcxConfig, OcxProviderConfig } from "../../src/types";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -113,8 +113,27 @@ describe("#2568 adapter-event OAuth failover", () => {
       expect(attemptKeys).toEqual(["cursor-access-1", "cursor-access-0"]);
       expect(body).toContain("alternate answer");
       expect(body).not.toContain("Cursor rate limit exceeded");
+      expect(getCredential("cursor")?.access).toBe("cursor-access-0");
     });
   }
+
+  test("a newer manual choice wins a pending request's 429 proposal", async () => {
+    await seedAccounts(3);
+    const accounts = getAccountSet("cursor")!.accounts;
+    slowAttempt = async emit => {
+      if (attemptKeys.length === 1) {
+        await setActiveAccount("cursor", accounts[1]!.id);
+        emit({ type: "error", message: "Cursor rate limit exceeded: resource_exhausted" });
+      } else {
+        emit({ type: "text_delta", text: "manual choice answered" });
+        emit({ type: "done" });
+      }
+    };
+    const response = await handleResponses(request(false), config(false), { model: "", provider: "" });
+    expect(await response.text()).toContain("manual choice answered");
+    expect(attemptKeys).toEqual(["cursor-access-2", "cursor-access-1"]);
+    expect(getCredential("cursor")?.access).toBe("cursor-access-1");
+  });
 
   test("a single account is a strict no-op", async () => {
     await seedAccounts(1);

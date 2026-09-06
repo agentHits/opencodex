@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import Providers from "../src/pages/Providers";
 import { LanguageProvider } from "../src/i18n/provider";
-import { clearClientResourceStoresForTests } from "../src/client-resource";
+import { clearClientResourceStoresForTests, pollBucketCountForTests } from "../src/client-resource";
 
 /**
  * Quota revalidation policy.
@@ -19,7 +19,7 @@ import { clearClientResourceStoresForTests } from "../src/client-resource";
  */
 
 const globals = ["document", "window", "navigator", "localStorage", "sessionStorage", "fetch", "IS_REACT_ACT_ENVIRONMENT"] as const;
-let previousGlobals: Record<(typeof globals)[number], unknown>;
+let previousGlobals: Record<(typeof globals)[number], PropertyDescriptor | undefined>;
 let testWindow: Window;
 let container: HTMLElement;
 let root: Root | null = null;
@@ -28,7 +28,7 @@ let quotaCalls: string[] = [];
 const PROVIDERS = ["anthropic", "cursor", "kimi"];
 
 beforeEach(() => {
-  previousGlobals = Object.fromEntries(globals.map(k => [k, Reflect.get(globalThis, k)])) as typeof previousGlobals;
+  previousGlobals = Object.fromEntries(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)])) as typeof previousGlobals;
   clearClientResourceStoresForTests();
   testWindow = new Window({ url: "http://localhost/#providers" });
   Object.defineProperty(testWindow.navigator, "language", { configurable: true, value: "en-US" });
@@ -100,7 +100,9 @@ afterEach(async () => {
   }
   clearClientResourceStoresForTests();
   for (const key of globals) {
-    Object.defineProperty(globalThis, key, { configurable: true, value: previousGlobals[key] });
+    const descriptor = previousGlobals[key];
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else Reflect.deleteProperty(globalThis, key);
   }
 });
 
@@ -219,5 +221,94 @@ for (const kind of ["oauth", "key", "codex"] as const) {
     expect(container.textContent).toContain("Refreshing...");
     await act(async () => { finishAccounts(Response.json(accountBody)); });
     expect(container.textContent).toContain("Quota check completed");
+  });
+}
+
+for (const kind of ["oauth", "api-key"] as const) {
+  test(`${kind} selection event updates the rendered active row without a poll tick or quota probe`, async () => {
+    const name = kind === "oauth" ? "cursor" : "deepseek";
+    let selected = "a";
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    let streamSignal: AbortSignal | null | undefined;
+    let subscriptions = 0;
+    let cancelled = false;
+    const reads: string[] = [];
+    const encoder = new TextEncoder();
+    const send = (event: string, data: unknown) => {
+      const bytes = encoder.encode(`event: ${event}\r\ndata: ${JSON.stringify(data)}\r\n\r\n`);
+      // Network chunks need not end on either a line or an event boundary.
+      stream.enqueue(bytes.slice(0, 11));
+      stream.enqueue(bytes.slice(11));
+    };
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      reads.push(url.pathname + url.search);
+      if (url.pathname === "/api/accounts/events") {
+        subscriptions += 1;
+        streamSignal = init?.signal;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { stream = controller; }, cancel() { cancelled = true; },
+        }), { headers: { "Content-Type": "text/event-stream" } });
+      }
+      if (url.pathname === "/api/config") return Response.json({ port: 10100, defaultProvider: name, providers: {
+        [name]: { adapter: "openai-chat", authMode: kind === "oauth" ? "oauth" : "key", hasApiKey: kind === "api-key", baseUrl: "https://fixture.test/v1" },
+      } });
+      if (url.pathname === "/api/oauth/providers") return Response.json({ providers: kind === "oauth" ? [name] : [] });
+      if (url.pathname === "/api/oauth/status") return Response.json({ loggedIn: true });
+      if (url.pathname === "/api/oauth/accounts" || url.pathname === "/api/providers/keys") {
+        const rows = ["a", "b"].map(id => ({ id, alias: `Choice ${id.toUpperCase()}`, label: `Choice ${id.toUpperCase()}`, masked: id,
+          active: selected === id, quotaMode: "probe", ...(url.searchParams.has("quota") ? {
+            quota: { fiveHourPercent: id === "a" ? 30 : 11, updatedAt: 1_700_000_000_000 },
+          } : {}),
+        }));
+        return Response.json({ activeAccountId: selected, activeId: selected, accounts: rows, keys: rows });
+      }
+      if (url.pathname === "/api/codex-auth/accounts") return Response.json({ accounts: [] });
+      if (url.pathname === "/api/codex-auth/active") return Response.json({ activeCodexAccountId: null });
+      if (url.pathname === "/api/provider-quotas") return Response.json({ reports: [] });
+      if (url.pathname === "/api/selected-models") return Response.json({ models: {} });
+      if (url.pathname === "/api/usage") return Response.json({ providers: [], models: [] });
+      return Response.json({});
+    } });
+    await act(async () => { root = createRoot(container); root.render(<LanguageProvider><Providers apiBase="" /></LanguageProvider>); });
+    await act(async () => { container.querySelector<HTMLButtonElement>(".providers-workspace-rail-row")!.click(); });
+    const accountsTab = Array.from(container.querySelectorAll<HTMLButtonElement>("[role=tab]"))
+      .find(button => /Accounts|Keys/.test(button.textContent ?? ""));
+    expect(accountsTab).toBeDefined();
+    await act(async () => { accountsTab!.click(); });
+    expect(container.querySelector(".pwi-auth-acct--active")?.textContent).toContain("Choice A");
+    expect(subscriptions).toBe(1);
+    const quotaReads = () => reads.filter(path => path.includes("quota=1") || path.startsWith("/api/provider-quotas")).length;
+    const initialQuotas = quotaReads();
+    const initialReads = reads.length;
+    await act(async () => { send("ready", { revision: 0 }); });
+    expect(reads.length).toBeGreaterThan(initialReads);
+    selected = "b";
+    await act(async () => { send("account-selection", { provider: name, kind, revision: 1 }); });
+    expect(container.querySelector(".pwi-auth-acct--active")?.textContent).toContain("Choice B");
+    expect(container.querySelector(".pwi-auth-acct--active")?.textContent).not.toContain("Choice A");
+    expect(quotaReads()).toBe(initialQuotas);
+    expect(subscriptions).toBe(1);
+    expect(pollBucketCountForTests()).toBe(1);
+    const afterEvent = reads.length;
+    await act(async () => {
+      send("account-selection", { provider: name, kind, revision: 1 });
+      send("account-selection", { provider: "unknown-provider", kind, revision: 2 });
+    });
+    expect(reads).toHaveLength(afterEvent);
+    // A disconnected connection is recovered by the existing scheduler's visibility wake.
+    await act(async () => { stream.close(); });
+    selected = "a";
+    for (const state of ["hidden", "visible"]) {
+      Object.defineProperty(testWindow.document, "visibilityState", { configurable: true, value: state });
+      await act(async () => { testWindow.document.dispatchEvent(new testWindow.Event("visibilitychange")); });
+    }
+    expect(subscriptions).toBe(2);
+    await act(async () => { send("ready", { revision: 0 }); });
+    expect(container.querySelector(".pwi-auth-acct--active")?.textContent).toContain("Choice A");
+    expect(quotaReads()).toBe(initialQuotas);
+    await act(async () => { root!.unmount(); root = null; });
+    expect(streamSignal?.aborted).toBe(true);
+    expect(cancelled).toBe(true);
   });
 }

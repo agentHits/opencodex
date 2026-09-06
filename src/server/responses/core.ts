@@ -118,18 +118,19 @@ import {
   type OAuthAccessSnapshot,
   UnsupportedOAuthProviderError,
 } from "../../oauth";
+import { captureOAuthAccountSelection, commitOAuthAccountSelection } from "../../oauth/store";
 import {
   ANTHROPIC_POOL_MAX_FAILOVERS_PER_REQUEST,
   anthropicSessionKeyFromParts,
-  bindAnthropicSessionAffinity,
+  commitAnthropicSelectionRouting,
   formatAnthropicProviderForLog,
-  getAnthropicPoolAccessToken,
+  getAnthropicPoolAccessSnapshot,
   getAnthropicPoolRetryAfterSeconds,
   isAnthropicAccountPoolEnabled,
   hasAnthropicFailoverQuorum,
-  promoteAnthropicActiveAccount,
   resolveAnthropicAccountForSession,
   rotateAnthropicAccountOn429,
+  type AnthropicAccountSelectionReason,
 } from "../../oauth/anthropic-routing";
 import { stampOAuthAccountLabel } from "../../providers/label";
 import {
@@ -3673,6 +3674,52 @@ async function handleResponsesInner(
   // the request actually used, so a concurrent rotation cannot cool an innocent replacement.
   let genericFailoverAccountId: string | null = null;
   let genericFailovers = 0;
+  let oauthSelection = route.provider.authMode === "oauth"
+    ? captureOAuthAccountSelection(route.providerName) : null;
+  const commitResolvedOAuthSelection = async (
+    candidate: OAuthAccessSnapshot,
+    proactive = false,
+    anthropicReason?: AnthropicAccountSelectionReason,
+  ): Promise<OAuthAccessSnapshot | null> => {
+    const maxSelectionAttempts = 3;
+    for (let attempt = 0; attempt < maxSelectionAttempts; attempt++) {
+      if (!oauthSelection) return null;
+      const proactiveEnabled = route.providerName === "anthropic"
+        ? isAnthropicAccountPoolEnabled(config)
+        : (config.providers[route.providerName]?.oauthAccountFailover?.enabled
+          ?? config.oauthAccountFailover?.enabled) === true;
+      if (proactive && candidate.accountId !== oauthSelection.accountId && !proactiveEnabled) {
+        oauthSelection = captureOAuthAccountSelection(route.providerName);
+        if (!oauthSelection) return null;
+        candidate = route.providerName === "anthropic"
+          ? await getAnthropicPoolAccessSnapshot(oauthSelection.accountId)
+          : await getValidAccessSnapshotForAccount(route.providerName, oauthSelection.accountId, { requireUsableAccount: true });
+      }
+      const committed = await commitOAuthAccountSelection(route.providerName, candidate.accountId, {
+        expectedSelection: oauthSelection,
+        expectedCredentialGeneration: candidate.generation,
+        requireUsableAccount: true,
+      });
+      if (committed) {
+        if (route.providerName === "anthropic" && !commitAnthropicSelectionRouting(
+          candidate.accountId, oauthSelection, committed,
+          { config, sessionKey: anthropicSessionKey, reason: anthropicReason, expectedCredentialGeneration: candidate.generation },
+        )) return null;
+        oauthSelection = committed;
+        forgetGenericFailoverRoster(route.providerName);
+        return candidate;
+      }
+      // A newer manual choice wins over this request's old proposal, including A→B→A.
+      // Resolve that choice, not the rejected candidate, before trying admission again.
+      oauthSelection = captureOAuthAccountSelection(route.providerName);
+      if (!oauthSelection) return null;
+      candidate = route.providerName === "anthropic"
+        ? await getAnthropicPoolAccessSnapshot(oauthSelection.accountId)
+        : await getValidAccessSnapshotForAccount(route.providerName, oauthSelection.accountId, { requireUsableAccount: true });
+      if (route.provider.googleMode === "cloud-code-assist" && !candidate.projectId) return null;
+    }
+    return null;
+  };
   /**
    * Config generation captured where the serving credential is RESOLVED, not where the
    * quota is written. A streaming turn is a long await, so a generation captured at write
@@ -3701,11 +3748,14 @@ async function handleResponsesInner(
    *   tolerates project discovery failing, so a stored account can legitimately have no project;
    *   sending that account's bearer with the FAILED account's project is worse than not rotating.
    */
-  const applyFailoverSnapshot = (
+  const applyFailoverSnapshot = async (
     snapshot: OAuthAccessSnapshot,
     retryParsed: OcxParsedRequest = parsed,
-  ): boolean => {
+  ): Promise<boolean> => {
     if (route.provider.googleMode === "cloud-code-assist" && !snapshot.projectId) return false;
+    const committed = await commitResolvedOAuthSelection(snapshot);
+    if (!committed) return false;
+    snapshot = committed;
     let rotatedProvider: OcxProviderConfig = { ...route.provider, apiKey: snapshot.accessToken };
     if (route.providerName === "github-copilot") {
       rotatedProvider = resolveProviderTransport(
@@ -3729,6 +3779,9 @@ async function handleResponsesInner(
     // served it. All three rotation sites funnel through here, so this is the only re-stamp
     // needed -- and putting it anywhere else would let one of the three drift.
     stampOAuthAccountLabel(logCtx, route.providerName, route.provider, snapshot.accountId);
+    genericFailoverAccountId = snapshot.accountId;
+    sentOAuthSnapshot = snapshot;
+    replayOAuthCredentialSnapshot = { accountId: snapshot.accountId, generation: snapshot.generation };
     return true;
   };
   const anthropicSessionKey = route.providerName === "anthropic" && route.provider.authMode === "oauth"
@@ -3756,12 +3809,11 @@ async function handleResponsesInner(
           }
           return formatErrorResponse(401, "authentication_error", "No eligible Anthropic OAuth account available");
         }
-        const accessToken = await getAnthropicPoolAccessToken(selection.accountId);
-        anthropicPoolAccountId = selection.accountId;
-        bindAnthropicSessionAffinity(anthropicSessionKey, selection.accountId);
-        promoteAnthropicActiveAccount(selection.accountId);
-        route.provider = { ...route.provider, apiKey: accessToken };
-        logCtx.provider = formatAnthropicProviderForLog("anthropic", selection.accountId, config);
+        const admitted = await commitResolvedOAuthSelection(await getAnthropicPoolAccessSnapshot(selection.accountId), true, selection.reason);
+        if (!admitted) return formatErrorResponse(409, "conflict_error", "OAuth account selection changed; retry the request");
+        anthropicPoolAccountId = admitted.accountId;
+        route.provider = { ...route.provider, apiKey: admitted.accessToken };
+        logCtx.provider = formatAnthropicProviderForLog("anthropic", admitted.accountId, config);
       } else {
         // Prefer the account with known headroom BEFORE the first attempt. Rotation alone
         // only reacts to a 429, so a turn could open on an account a previous probe already
@@ -3810,6 +3862,10 @@ async function handleResponsesInner(
           resolved = await getValidAccessTokenSnapshot(route.providerName);
           usedPreferredAccount = false;
         }
+        const admitted = await commitResolvedOAuthSelection(resolved, true);
+        if (!admitted) return formatErrorResponse(409, "conflict_error", "OAuth account selection changed; retry the request");
+        if (admitted.accountId !== resolved.accountId) usedPreferredAccount = true;
+        resolved = admitted;
         replayOAuthCredentialSnapshot = {
           accountId: resolved.accountId,
           generation: resolved.generation,
@@ -4868,13 +4924,10 @@ async function handleResponsesInner(
         try { snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId); }
         catch { /* Keep the original 429 body readable when the next credential is unavailable. */ }
       }
-      if (snapshot && applyFailoverSnapshot(snapshot)) {
-        genericFailoverAccountId = snapshot.accountId;
+      if (snapshot && await applyFailoverSnapshot(snapshot)) {
         genericFailovers += 1;
-        sentOAuthSnapshot = snapshot;
-        replayOAuthCredentialSnapshot = { accountId: snapshot.accountId, generation: snapshot.generation };
         route.provider = resolveProviderTransport(
-          route.providerName, route.provider, parsed.options.promptCacheKey, snapshot.apiBaseUrl,
+          route.providerName, route.provider, parsed.options.promptCacheKey, sentOAuthSnapshot?.apiBaseUrl,
         );
         bindRouteReasoningReplayScope({
           parsed, providerName: route.providerName, provider: route.provider,
@@ -5751,9 +5804,8 @@ async function handleResponsesInner(
       if (!nextAccountId) return null;
       try {
         const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
-        genericFailoverAccountId = nextAccountId;
         genericFailovers += 1;
-        if (!applyFailoverSnapshot(snapshot)) return null;
+        if (!await applyFailoverSnapshot(snapshot)) return null;
       } catch {
         return null;
       }
@@ -5777,12 +5829,12 @@ async function handleResponsesInner(
         // carries none, and getAnthropicPoolAccessToken is what enforces its fail-closed
         // local-cli credential rule. Both existing Anthropic rotation sites apply the token the
         // same way.
-        const accessToken = await getAnthropicPoolAccessToken(nextAccountId);
-        anthropicPoolAccountId = nextAccountId;
+        const admitted = await commitResolvedOAuthSelection(await getAnthropicPoolAccessSnapshot(nextAccountId));
+        if (!admitted) throw new Error("OAuth selection changed during recovery");
+        anthropicPoolAccountId = admitted.accountId;
         anthropicPoolFailovers += 1;
-        route.provider = { ...route.provider, apiKey: accessToken };
-        promoteAnthropicActiveAccount(nextAccountId);
-        logCtx.provider = formatAnthropicProviderForLog("anthropic", nextAccountId, config);
+        route.provider = { ...route.provider, apiKey: admitted.accessToken };
+        logCtx.provider = formatAnthropicProviderForLog("anthropic", admitted.accountId, config);
       } catch {
         return null;
       }
@@ -6098,9 +6150,8 @@ async function handleResponsesInner(
       if (!nextAccountId) return false;
       try {
         const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
-        genericFailoverAccountId = nextAccountId;
         genericFailovers += 1;
-        if (!applyFailoverSnapshot(snapshot)) return false;
+        if (!await applyFailoverSnapshot(snapshot)) return false;
         // A Cursor conversation/checkpoint is credential-scoped. The failed attempt emitted no
         // client-visible bytes, so replay is safe, but carrying its account identity into the next
         // account would not be. Let the rotated adapter derive a fresh identity and conversation.
@@ -6785,13 +6836,13 @@ async function handleResponsesInner(
         if (!nextAccountId) break;
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
         try {
-          const accessToken = await getAnthropicPoolAccessToken(nextAccountId);
-          anthropicPoolAccountId = nextAccountId;
+          const admitted = await commitResolvedOAuthSelection(await getAnthropicPoolAccessSnapshot(nextAccountId));
+          if (!admitted) throw new Error("OAuth selection changed during recovery");
+          anthropicPoolAccountId = admitted.accountId;
           anthropicPoolFailovers += 1;
-          route.provider = { ...route.provider, apiKey: accessToken };
+          route.provider = { ...route.provider, apiKey: admitted.accessToken };
           invalidateSameTargetRequest();
-          promoteAnthropicActiveAccount(nextAccountId);
-          logCtx.provider = formatAnthropicProviderForLog("anthropic", nextAccountId, config);
+          logCtx.provider = formatAnthropicProviderForLog("anthropic", admitted.accountId, config);
           activeAdapter = resolveAdapter(
             resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
             config.cacheRetention,
@@ -6832,9 +6883,8 @@ async function handleResponsesInner(
           // projectId with its token and Kiro carries routing metadata, so a token-only swap
           // would mix one account's credential with another's routing data.
           const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
-          genericFailoverAccountId = nextAccountId;
-          genericFailovers += 1;
-          if (!applyFailoverSnapshot(snapshot)) break;
+            genericFailovers += 1;
+          if (!await applyFailoverSnapshot(snapshot)) break;
           invalidateSameTargetRequest();
           activeAdapter = resolveAdapter(
             resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
@@ -7197,13 +7247,13 @@ async function handleResponsesInner(
         if (nextAccountId) {
           try { void response.body?.cancel().catch(() => {}); } catch { /* already closed */ }
           try {
-            const accessToken = await getAnthropicPoolAccessToken(nextAccountId);
-            anthropicPoolAccountId = nextAccountId;
+            const admitted = await commitResolvedOAuthSelection(await getAnthropicPoolAccessSnapshot(nextAccountId));
+            if (!admitted) throw new Error("OAuth selection changed during recovery");
+            anthropicPoolAccountId = admitted.accountId;
             anthropicPoolFailovers += 1;
-            route.provider = { ...route.provider, apiKey: accessToken };
+            route.provider = { ...route.provider, apiKey: admitted.accessToken };
             invalidateSameTargetRequest();
-            promoteAnthropicActiveAccount(nextAccountId);
-            logCtx.provider = formatAnthropicProviderForLog("anthropic", nextAccountId, config);
+            logCtx.provider = formatAnthropicProviderForLog("anthropic", admitted.accountId, config);
             activeAdapter = resolveAdapter(
               resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
               config.cacheRetention,
@@ -7242,9 +7292,8 @@ async function handleResponsesInner(
             // metadata, so a token-only swap would mix one account's credential with another's
             // routing data.
             const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
-            genericFailoverAccountId = nextAccountId;
-            genericFailovers += 1;
-            if (applyFailoverSnapshot(snapshot, nextParsed)) {
+                genericFailovers += 1;
+            if (await applyFailoverSnapshot(snapshot, nextParsed)) {
               invalidateSameTargetRequest();
               activeAdapter = resolveAdapter(
                 resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { saveConfig } from "../../src/config";
+import { loadConfig, saveConfig } from "../../src/config";
 import { clearKeyCooldowns } from "../../src/providers/key-failover";
 import { deriveXaiConvId } from "../../src/providers/xai-transport";
 import { clearReasoningReplayCacheForTests } from "../../src/responses/reasoning-replay-cache";
@@ -38,6 +38,42 @@ afterEach(() => {
 });
 
 describe("server 429 key failover (end-to-end)", () => {
+  test.each(["responses", "chat/completions"])("%s carries the configured env-key identity through 429 recovery", async inbound => {
+    const seen: string[] = [];
+    process.env.OCX_SELECTION_E2E_KEY = "synthetic-env-first";
+    upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+      seen.push(req.headers.get("authorization") ?? "");
+      if (seen.length === 1) return Response.json({ error: { message: "rate limited" } }, { status: 429 });
+      return Response.json({ id: "chatcmpl-env", object: "chat.completion",
+        choices: [{ index: 0, message: { role: "assistant", content: "recovered" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    } });
+    saveConfig({ port: 0, hostname: "127.0.0.1", defaultProvider: "pooled", providers: { pooled: {
+      adapter: "openai-chat", baseUrl: `http://127.0.0.1:${upstream.port}/v1`, allowPrivateNetwork: true,
+      authMode: "key", apiKey: "${OCX_SELECTION_E2E_KEY}", apiKeyPool: [
+        { id: "first", key: "${OCX_SELECTION_E2E_KEY}" }, { id: "second", key: "synthetic-second" },
+      ],
+    } } } as OcxConfig);
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL(`/v1/${inbound}`, server.url), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "pooled/test", stream: false,
+          ...(inbound === "responses" ? { input: "hello" } : { messages: [{ role: "user", content: "hello" }] }),
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("recovered");
+      expect(seen).toEqual(["Bearer synthetic-env-first", "Bearer synthetic-second"]);
+      expect(loadConfig().providers.pooled.apiKey).toBe("synthetic-second");
+      expect(loadConfig().providers.pooled._apiKeyAttempt).toBeUndefined();
+    } finally {
+      await server.stop(true);
+      delete process.env.OCX_SELECTION_E2E_KEY;
+    }
+  });
+
   test("xAI API-key rotation preserves cache affinity and never adds OAuth CLI headers", async () => {
     const originalFetch = globalThis.fetch;
     const promptCacheKey = "codex-session-high-entropy-429-e2e";
