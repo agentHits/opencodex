@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   comboStreamPayloadCommitsOutput,
   preflightComboStreamResponse,
@@ -12,6 +12,41 @@ const sse = (...payloads: unknown[]): Response => new Response(
 );
 
 const preflightChunkLimit = Math.max(1, Math.ceil(MAX_CLIENT_SSE_FRAME_BYTES / 1024));
+
+function prefixThenReadError(prefix: Uint8Array, error: Error): {
+  response: Response;
+  cancelSpy: () => ReturnType<typeof spyOn> | undefined;
+} {
+  let sentPrefix = false;
+  let cancelSpy: ReturnType<typeof spyOn> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (!sentPrefix) {
+        sentPrefix = true;
+        controller.enqueue(prefix);
+        return;
+      }
+      return Promise.reject(error);
+    },
+  });
+  const originalGetReader = stream.getReader.bind(stream);
+  stream.getReader = (() => {
+    const reader = originalGetReader();
+    cancelSpy = spyOn(reader, "cancel");
+    return reader;
+  }) as ReadableStream<Uint8Array>["getReader"];
+  return {
+    response: new Response(stream, { headers: { "content-type": "text/event-stream" } }),
+    cancelSpy: () => cancelSpy,
+  };
+}
+
+const createdPrefix = new TextEncoder().encode(`data: ${JSON.stringify({
+  type: "response.created",
+  response: { id: "r1", status: "in_progress" },
+})}
+
+`);
 
 describe("combo stream preflight", () => {
   test("keeps only lifecycle preamble replayable and treats unknown output conservatively", () => {
@@ -397,4 +432,35 @@ describe("combo stream preflight", () => {
       expect(await result.response.text()).toBe(body);
     }
   });
+
+  test("default reader.read rejection still throws and does not cancel the reader", async () => {
+    const readError = new Error("preflight-read-reset");
+    const source = prefixThenReadError(createdPrefix, readError);
+    await expect(preflightComboStreamResponse(source.response, { model: "m1", provider: "a" }))
+      .rejects.toBe(readError);
+    expect(source.cancelSpy()).toBeDefined();
+    expect(source.cancelSpy()!.mock.calls).toHaveLength(0);
+  });
+
+  test("replayReadErrors accepts a reconstructed prefix and the same reader.read error", async () => {
+    const readError = new Error("preflight-read-reset");
+    const source = prefixThenReadError(createdPrefix, readError);
+    const result = await preflightComboStreamResponse(
+      source.response,
+      { model: "m1", provider: "a" },
+      undefined,
+      { replayReadErrors: true },
+    );
+    expect(result.kind).toBe("accepted");
+    expect(source.cancelSpy()).toBeDefined();
+    expect(source.cancelSpy()!.mock.calls).toHaveLength(0);
+    const reader = result.response.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(first.value).toEqual(createdPrefix);
+    await expect(reader.read()).rejects.toBe(readError);
+    expect(source.cancelSpy()).toBeDefined();
+    expect(source.cancelSpy()!.mock.calls).toHaveLength(0);
+  });
+
 });
