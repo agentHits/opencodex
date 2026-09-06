@@ -42,6 +42,10 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+function fixtureDiagnostics(value: string): string {
+  return CRASH_SIGNATURES.reduce((text, signature) => text.replaceAll(signature, "[simulated crash]"), value);
+}
+
 function macosTestBlock(shard: number): string {
   const workflow = Bun.YAML.parse(readFileSync(repoPath(".github/workflows/ci.yml"), "utf8")) as {
     jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
@@ -135,12 +139,14 @@ function runShard(shard: number, options: FixtureOptions = {}) {
     });
     pid = result.pid;
     interrupted = Boolean(result.error || result.signal);
-    if (result.error) throw result.error;
-    if (result.signal) throw new Error(`macOS shell terminated by ${result.signal}: ${result.stderr}`);
+    if (result.error) {
+      throw new Error(`macOS shell harness failed: ${(result.error as NodeJS.ErrnoException).code ?? result.error.name}`);
+    }
+    if (result.signal) throw new Error(`macOS shell terminated by ${result.signal}: ${fixtureDiagnostics(result.stderr)}`);
     const invocations: Invocation[] = existsSync(log)
       ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line))
       : [];
-    return { status: result.status, output: result.stdout + result.stderr, invocations };
+    return { status: result.status, output: fixtureDiagnostics(result.stdout + result.stderr), invocations };
   } finally {
     // A shell timeout must not leave its tee/fake-Bun descendants behind.
     try {
@@ -228,17 +234,19 @@ describe.skipIf(process.platform === "win32")("macOS serial lane shell ownership
       expect(targets(calls.at(-1)!, target)).toBe(true);
     }, SPAWN_BUDGET_MS);
 
-    test.each(CRASH_SIGNATURES)(`${target}: retries one runtime crash (%s), then finishes`, signature => {
-      const run = runShard(1, { target, outcomes: ["crash"], crashSignature: signature });
-      expect(run.status, run.output).toBe(0);
-      const calls = testCalls(run);
-      const attempts = calls.filter(call => targets(call, target));
-      expect(attempts).toHaveLength(2);
-      expect(attempts[0]!.argv).toEqual(attempts[1]!.argv);
-      expect(new Set(calls.map(call => call.pid)).size).toBe(calls.length);
-      expect(calls).toHaveLength(4); // Main plus two owned serial files plus one retry.
-      expect(targets(calls.at(-1)!, SERIAL_FILES[2]!)).toBe(true);
-    }, SPAWN_BUDGET_MS);
+    for (const [caseIndex, signature] of CRASH_SIGNATURES.entries()) {
+      test(`${target}: retries one runtime crash (case ${caseIndex + 1}), then finishes`, () => {
+        const run = runShard(1, { target, outcomes: ["crash"], crashSignature: signature });
+        expect(run.status, run.output).toBe(0);
+        const calls = testCalls(run);
+        const attempts = calls.filter(call => targets(call, target));
+        expect(attempts).toHaveLength(2);
+        expect(attempts[0]!.argv).toEqual(attempts[1]!.argv);
+        expect(new Set(calls.map(call => call.pid)).size).toBe(calls.length);
+        expect(calls).toHaveLength(4); // Main plus two owned serial files plus one retry.
+        expect(targets(calls.at(-1)!, SERIAL_FILES[2]!)).toBe(true);
+      }, SPAWN_BUDGET_MS);
+    }
 
     test(`${target}: a repeated crash fails after exactly one retry`, () => {
       const run = runShard(1, { target, outcomes: ["crash", "crash"] });
