@@ -190,6 +190,7 @@ const stateProbe = `
   if (!['seed', 'first-ready', 'steady'].includes(phase)) throw new Error('invalid state phase');
   ${fixtureConfigCheck}
   const homes = ['/home/bun/.opencodex', '/home/bun/.codex'];
+  if (process.env.OCX_SERVICE !== '1') throw new Error('image service lifecycle mode missing');
   const uid = process.getuid();
   if (uid === 0) throw new Error('root user');
   const status = readFileSync('/proc/self/status', 'utf8');
