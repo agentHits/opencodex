@@ -84,6 +84,27 @@ uniquement si la liste d'autorisation de son fournisseur l'inclut — ou si aucu
 s'il n'est pas désactivé. Activer un modèle réconcilie atomiquement les deux filtres ; **Tout activer** efface
 la liste d'autorisation du fournisseur afin que les modèles découverts ultérieurement soient eux aussi actifs.
 
+### Gérer les modèles dans l’espace fournisseur
+
+Dans l’onglet **Modèles** d’un fournisseur, **Supprimer** retire la définition personnalisée
+stockée. Le modèle natif ou découvert sous-jacent peut alors réapparaître ; le nombre de modèles
+peut donc rester identique. **Masquer** change uniquement la visibilité dans le catalogue, sans
+supprimer la définition ni modifier la politique de routage direct. **Gérer la visibilité dans
+Modèles** ouvre la page **Modèles** pour rétablir la visibilité, même si l’onglet du fournisseur
+ne contient plus aucune ligne.
+
+**Ajouter** enregistre une définition personnalisée sans effacer un masquage existant ni les
+règles de sélection du fournisseur. Un modèle enregistré peut donc rester masqué. Si le modèle
+est déjà connu, gérez sa visibilité dans **Modèles**. Un enregistrement confirmé reste valable
+même si l’actualisation du catalogue échoue : suivez le message d’actualisation au lieu d’ajouter
+le modèle à nouveau. Si la modification n’est pas confirmée, actualisez l’état des modèles avant
+de réessayer.
+
+Le compteur du fournisseur indique le nombre d’entrées uniques non désactivées dans l’inventaire
+courant renvoyé par le serveur, avant recherche ou limitation de l’affichage. Il ne mesure ni la
+liste d’autorisation ni les résultats de découverte en direct et ne prouve pas l’origine d’une
+entrée. Les badges de sélection et les informations de découverte restent distincts.
+
 ## Sélecteur de délégation et routage des créations de sous-agents
 
 Le sélecteur **Délégation de sous-agent** du tableau de bord enregistre `injectionModel` et, facultativement,

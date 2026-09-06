@@ -40,6 +40,22 @@ TOML temporal scalars cannot survive the JSON-cloned merge representation with t
 intact. The common parser refuses documents containing them before either status or mutation
 proceeds, including nested arrays and inline tables. Quoted date strings remain supported.
 
+## Catalog visibility
+
+Management export and CLI export apply the canonical routed catalog visibility filter before
+serialization: provider selections, disabled models, and pending initial selection all constrain
+the client roster. The full management list remains available for selection. Native rows retain
+their existing visibility rules.
+
+## Owned catalog convergence
+
+Visibility, selected-model and preset writes refresh already-owned Pi/Aside contributions after
+persisting the selection. Explicit sync refreshes MCode, Pi and Aside. The shared catalog-refresh
+fan-out loads the filtered roster lazily once, leaves unowned clients alone, and reports each
+refusal independently. Existing coordinated writers retain all no-clobber and ownership checks.
+Implicit refresh operations use distinct flight keys: overlapping desired catalogs return busy
+rather than joining a write of a different catalog and reporting false success.
+
 ## Fast model selectors
 
 The serving proxy resolves `fastRowAvailable` on every management model row, including its
@@ -185,3 +201,16 @@ apply, rotation/recovery or restoration; there is no automatic process restart o
 a running app discarded a key. Local disconnect does not revoke the hub key or remove arbitrary
 external copies. Model-list snapshot version 1 remains a read-only contract, not a new lifecycle
 or profile-upload API. Thinking replay and prompt caching remain separate in #3719.
+
+## Aside profile ownership
+
+Aside discovery projects only registered numeric account IDs, labels and current status. Catalog
+paths derive from the configured root/u/id, never from browser profilePath. Guarded filesystem
+identity and IO apply to status and writes; internal resolved path pairs survive async freezing.
+
+`asideProfileSync` owns desired all-profile defaults and per-profile overrides. The legacy
+connection defaults all profiles on; explicit per-profile changes materialize that default and
+pin one legacy root owner before changing it. Sibling stores remain independent. Policy saves
+precede coordinated writes under one scoped flight, and actual file state/refusals remain
+separate. Restore reconciles target intent from validated snapshot ownership without changing
+sibling policy. Profile journal views retain source-store provenance for older legacy entries.

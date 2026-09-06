@@ -12,7 +12,7 @@ import { enforceAnthropicImageLimits, sniffImageDimensions } from "../adapters/a
 import { normalizeAnthropicImages } from "../adapters/anthropic-image-normalize";
 import { AnthropicRequestError, anthropicToResponsesTranslation, extractOcxEffortDirective, extractOcxRouteDirective, resolveInboundModel, type ClaudeCacheKeySource } from "../claude/inbound";
 import { isKnownDesktop3pModelId, resolveDesktop3pAlias } from "../claude/desktop-3p";
-import { resolveAlias } from "../claude/alias";
+import { resolveAlias, claudeCodeNativeAlias } from "../claude/alias";
 import { recordDesktopRequest } from "../claude/desktop-health";
 import { stripOneMillionMarker } from "../claude/context-windows";
 import { captureClaudeInbound } from "../claude/inbound-debug";
@@ -85,6 +85,13 @@ function decodeClaudeFastSelector(raw: string, cc?: OcxConfig["claudeCode"]): st
   if (exact !== model && !resolveDesktop3pAlias(bare)) return exact;
   const decodedBase = resolveInboundModel(bare, cc);
   return decodedBase === bare ? exact : `${decodedBase}--fast`;
+}
+
+/** Restore the reversible Fable picker alias before Anthropic passthrough checks. */
+function decodeFablePickerAlias(raw: string, cc?: OcxConfig["claudeCode"]): string {
+  const decoded = resolveInboundModel(raw, cc);
+  if (!decoded.startsWith("claude-fable-")) return raw;
+  return claudeCodeNativeAlias(decoded) === raw ? decoded : raw;
 }
 
 function isRec(v: unknown): v is Rec {
@@ -658,6 +665,9 @@ async function handleClaudeMessagesWithBudget(
       }
     }
     if (isRec(anthropicBody) && typeof anthropicBody.model === "string") {
+      anthropicBody.model = decodeFablePickerAlias(anthropicBody.model, config.claudeCode);
+    }
+    if (isRec(anthropicBody) && typeof anthropicBody.model === "string") {
       requestedModel = anthropicBody.model;
       // Decode for Fast only. A Claude alias is `claude-ocx-<provider>--<model>`, so it
       // already uses `--` as its own separator: stripping the marker off the RAW alias would
@@ -1088,6 +1098,8 @@ export async function handleClaudeCountTokens(
       model = stripOneMillionMarker(countRoute);
       raw.model = model;
     }
+    model = decodeFablePickerAlias(model, config.claudeCode);
+    raw.model = model;
     // Fast-only: count_tokens never parsed an effort row, so it must not start. It returns a
     // token estimate and sends no tier, so only the IDENTITY is corrected - without this the
     // synthetic id reaches native passthrough as a model Anthropic has never heard of.

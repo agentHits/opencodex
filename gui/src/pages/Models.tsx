@@ -10,6 +10,7 @@ import type { TFn, TKey } from "../i18n/shared";
 import { modelLabel } from "../model-display";
 import { formatNamespacedModelId, formatProviderDisplayName, providerDisplaySlug } from "../provider-icons";
 import { readJsonIfOk, readJsonOrThrow } from "../fetch-json";
+import { describeIntegrationRefusalParts } from "./integrations/refusal-copy";
 import { readSessionListCache, writeSessionListCache } from "../session-list-cache";
 import { setClientResourceData } from "../client-resource";
 import { createBoundedFetch } from "../bounded-fetch";
@@ -37,6 +38,8 @@ import {
   fetchSelectedModels,
   modelVisible,
   putModelVisibility,
+  clientCatalogRefreshFailures,
+  type ClientCatalogRefreshFailure,
   shouldApplyLoadGeneration,
   type ProviderModelMap,
   type ModelVisibilityScope,
@@ -222,6 +225,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
   const [collapsed, setCollapsed] = useState<Set<string>>(() => initialCollapsed ?? new Set());
   const needsDefaultCollapseRef = useRef(initialCollapsed === null);
   const [status, setStatus] = useState("");
+  const [integrationFailures, setIntegrationFailures] = useState<ClientCatalogRefreshFailure[]>([]);
   const [ok, setOk] = useState(false);
   // Feedback generation: a repeated identical message (same success string, same validation
   // error) must still re-arm the toast timer. Clearing `status` alone is not enough — a
@@ -244,6 +248,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
   }, [status, ok, feedbackGen]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const catalogMutationRef = useRef(false);
   const loadGenerationRef = useRef(0);
   const loadPendingRef = useRef(false);
   // multi_agent_v2 / ultra gate. null = endpoint unavailable (older proxy build) -> section hidden.
@@ -700,6 +705,8 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
     targets: ModelVisibilityTarget[],
     enabled: boolean,
   ) => {
+    if (catalogMutationRef.current) return;
+    catalogMutationRef.current = true;
     ++loadGenerationRef.current;
     setBusy(true);
     busyRef.current = true;
@@ -708,6 +715,10 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
     try {
       const response = await putModelVisibility(apiBase, scope, provider, targets, enabled);
       if (!response.ok) errorKey = "models.saveFailed";
+      else {
+        const failures = clientCatalogRefreshFailures(await response.json());
+        if (failures !== undefined) setIntegrationFailures(failures);
+      }
     } catch {
       errorKey = "models.networkError";
     } finally {
@@ -721,6 +732,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
       }
       setBusy(false);
       busyRef.current = false;
+      catalogMutationRef.current = false;
     }
   };
 
@@ -968,8 +980,11 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
   };
 
   const applyPreset = async (provider: string, mode: "preset" | "all") => {
-    if (presetBusy) return;
+    if (catalogMutationRef.current) return;
+    catalogMutationRef.current = true;
     setPresetBusy(provider);
+    setBusy(true);
+    busyRef.current = true;
     try {
       const bounded = createBoundedFetch(30_000);
       const r = await fetch(`${apiBase}/api/model-presets`, {
@@ -978,12 +993,15 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
         body: JSON.stringify({ provider, mode }),
         signal: bounded.signal,
       });
-      const res = await readJsonIfOk<{ fallback?: string; selected?: string[] }>(r) ?? {};
+      const res = await readJsonOrThrow<{ fallback?: string; selected?: string[]; clientIntegrations?: unknown }>(r, t("models.saveFailed"));
+      if (!res) throw new Error(t("models.saveFailed"));
       if (res.fallback === "preset-empty") {
         // Never silently narrow to nothing: the server kept the previous selection, so say so
         // rather than showing a success that changed nothing.
         publishFeedback(false, t("models.presetEmpty", { provider }));
       } else {
+        const failures = clientCatalogRefreshFailures(res);
+        if (failures !== undefined) setIntegrationFailures(failures);
         publishFeedback(true, mode === "all"
           ? t("models.presetClearedToast", { provider })
           : t("models.presetAppliedToast", { provider, count: String(res.selected?.length ?? 0) }));
@@ -993,6 +1011,9 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
       publishFeedback(false, error instanceof Error ? error.message : String(error));
     } finally {
       setPresetBusy(null);
+      setBusy(false);
+      busyRef.current = false;
+      catalogMutationRef.current = false;
     }
   };
 
@@ -1273,7 +1294,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
                // control — a provider with nothing to curate would show a dead switch.
                const preset = presets[provider];
                if (!preset) return null;
-               const busyHere = presetBusy === provider;
+               const busyHere = busy || presetBusy !== null;
                const stale = preset.mode === "custom"
                  && preset.appliedVersion !== undefined
                  && preset.appliedVersion < preset.availableVersion;
@@ -2122,6 +2143,17 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
       )}
       {/* Keep the last-good catalog interactive but make a failed revalidation explicit. */}
       {catalogState.showError && <Notice tone="err">{t("models.loadFail")}</Notice>}
+      {integrationFailures.length > 0 && <div className="models-integration-warning">
+        <Notice tone="warn">
+          {t("models.integrationRefreshWarning")}
+          <ul>{integrationFailures.map(row => <li key={`${row.client}:${row.profileId ?? "all"}`}>
+            {row.client}{row.profileId === undefined ? "" : `:${row.profileId}`}: {describeIntegrationRefusalParts(t, {
+              clientId: row.client, message: row.reason === "integration_mutation_busy" ? t("integrations.error.busy") : row.reason,
+              reason: row.refusalReason, snapshotPath: row.snapshotPath, residual: row.residual,
+            })}
+          </li>)}</ul>
+        </Notice>
+      </div>}
       <div className="models-workspace-root" aria-busy={catalogState.refreshing || undefined}>
         <aside className="models-workspace-rail" aria-label={t("nav.models")}>
           <div className="models-workspace-rail-header">

@@ -141,6 +141,25 @@ new or that every upstream measurement was refreshed.
 
 The **Models** switches show final Codex visibility: a routed model is on only when its provider allowlist includes it (or no allowlist is set) and it is not disabled. Turning a model on reconciles both filters atomically; **All on** clears the provider allowlist so newly discovered models are also on.
 
+### Managing models in a provider workspace
+
+In a provider’s **Models** tab, **Delete** removes the stored custom definition. An underlying
+native or live-discovered model may then appear again, so the model count can stay the same.
+**Hide** changes catalog visibility only: it does not delete the definition or change direct
+routing policy. Use **Manage visibility in Models** to open the **Models** page and restore
+visibility, even when the provider tab has no rows left.
+
+**Add** saves a custom definition; it does not clear an existing hide or provider selection rule.
+A saved model can therefore remain hidden. If the model is already known, manage its visibility
+in **Models**. A confirmed save with a failed catalog refresh is still saved: follow the refresh
+message instead of adding it again. If the change cannot be confirmed, refresh the model state
+before retrying.
+
+The provider’s model count is the number of unique, non-disabled entries in the current model
+inventory returned by the server, before search or display truncation. It is not the provider
+allowlist size, a live-discovery count, or proof that an entry was discovered upstream. Selection
+badges and discovery information remain separate from that count.
+
 ## Delegation picker vs spawn routing
 
 The Dashboard's **Sub-agent delegation** picker stores `injectionModel` and, optionally,
