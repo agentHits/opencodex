@@ -24,6 +24,22 @@ async function waitForOutput(
   }
 }
 
+/** Continue reading after prompt inspection; Response rejects an already disturbed stream. */
+async function remainingOutput(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return output + decoder.decode();
+      output += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 describe("ocx init piped stdin (#754)", () => {
   const dirs: string[] = [];
   const coordinators: string[] = [];
@@ -93,7 +109,7 @@ describe("ocx init piped stdin (#754)", () => {
     const bytes = '\uFEFF{ "port":21002, "providers":{}, "defaultProvider":"openai", "customNote":"keep" }\n';
     writeFileSync(join(home, "config.json"), bytes);
     const proc = launch(home, command);
-    const stdout = new Response(proc.stdout).text();
+    const stdout = remainingOutput(proc.stdout);
     const stderr = new Response(proc.stderr).text();
     try {
       expect(await proc.exited).toBe(0);
@@ -108,7 +124,7 @@ describe("ocx init piped stdin (#754)", () => {
     const home = makeHome();
     writeFileSync(join(home, "config.json"), bytes);
     const proc = launch(home);
-    const stdout = new Response(proc.stdout).text();
+    const stdout = remainingOutput(proc.stdout);
     const stderr = new Response(proc.stderr).text();
     try {
       expect(await proc.exited).toBe(1);
@@ -131,7 +147,7 @@ describe("ocx init piped stdin (#754)", () => {
       writeFileSync(join(home, "config.json"), winner, { flag: "wx" });
       proc.stdin.write("21001\n");
       await proc.stdin.flush();
-      const stdout = new Response(proc.stdout).text();
+      const stdout = remainingOutput(proc.stdout);
       expect(await proc.exited).toBe(1);
       expect(await stderr).toContain("keeping it");
       const rest = await stdout;
@@ -238,7 +254,7 @@ describe("ocx init piped stdin (#754)", () => {
         await waitForOutput(proc.stdout, "INIT_NATIVE_LOCK_WAITING");
         expect(readFileSync(nativeConfig, "utf8")).toBe(sentinel);
         proc.kill("SIGINT");
-        const stdout = new Response(proc.stdout).text();
+        const stdout = remainingOutput(proc.stdout);
         expect(await proc.exited).toBe(130);
         const rest = await stdout;
         expect(rest).toContain("INIT_NATIVE_HOLDER_RELEASED");
@@ -272,7 +288,7 @@ describe("ocx init piped stdin (#754)", () => {
         proc.stdin.write("n\n");
         await proc.stdin.flush();
       }
-      const stdout = new Response(proc.stdout).text();
+      const stdout = remainingOutput(proc.stdout);
       expect(await proc.exited).toBe(cancel ? 1 : 0);
       const rest = await stdout;
       if (cancel) {
