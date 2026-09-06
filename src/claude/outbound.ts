@@ -559,7 +559,10 @@ export function responsesSseToAnthropicSse(
                 if (env?.sig) open.reasoningSig = env.sig;
                 closeOpenBlock();
               }
-              if (red.length > 0) ensureStarted();
+              if (red.length > 0) {
+                ensureStarted();
+                closeOpenBlock();
+              }
               for (const data of red) {
                 const idx = blockIndex++;
                 emit("content_block_start", { type: "content_block_start", index: idx, content_block: { type: "redacted_thinking", data } });
@@ -806,10 +809,14 @@ export function responsesJsonToAnthropicMessage(json: unknown, model: string): R
         }
         const encrypted = typeof raw.encrypted_content === "string" ? raw.encrypted_content : "";
         const env = encrypted ? decodeReasoningEnvelope(encrypted) : null;
+        // Legacy combined envelopes place redacted blocks before the signed block,
+        // matching the Anthropic adapter. New bridge output uses separate items.
+        for (const data of env?.red ?? []) content.push({ type: "redacted_thinking", data });
+        // env.txt may be locally hidden text. Do not expose it here or manufacture
+        // a new signed continuity carrier; hidden-summary replay remains limited.
         if (parts.length > 0 || env?.sig) {
           content.push({ type: "thinking", thinking: parts.join("\n\n"), signature: env?.sig ?? encodeReasoningEnvelope({ txt: parts.join("\n\n") }) });
         }
-        for (const data of env?.red ?? []) content.push({ type: "redacted_thinking", data });
         break;
       }
       case "function_call": {

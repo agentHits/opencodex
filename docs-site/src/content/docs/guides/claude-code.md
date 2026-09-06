@@ -519,6 +519,8 @@ The proxy translates every Anthropic Messages API request into the Codex Respons
 | `max_tokens` | `max_output_tokens` |
 | `stop_sequences` | `stop` |
 
+Replay preserves non-hidden signed blocks (including empty thinking) and opaque redacted blocks on the intended Anthropic adapter. `hideThinkingSummary` remains unchanged: locally hidden signed text is not exposed to Claude clients, and lossless replay through that hidden Claude boundary is not established. Older combined reasoning envelopes cannot recover original block order once streaming text has been emitted. `claudeCode.compatibility: "enforce"` still rejects thinking replay. This does not establish live Anthropic acceptance or cache-hit improvements; [#3719](https://github.com/lidge-jun/opencodex/issues/3719) remains open.
+
 **Error cases (400):** malformed JSON; missing/empty `model`; missing/empty `messages`; unsupported
 role; `tool_result` without `tool_use_id`; `tool_use` without id/name; named `tool_choice` without
 name.

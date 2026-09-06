@@ -412,6 +412,8 @@ Claude Code의 `/effort` 설정은 어댑터에서도 유지돼요.
 | `max_tokens` | `max_output_tokens` |
 | `stop_sequences` | `stop` |
 
+의도한 Anthropic 어댑터에서는 숨기지 않은 서명 블록(빈 thinking 포함)과 불투명 redacted 블록을 보존해요. `hideThinkingSummary` 정책은 유지돼요. 로컬에서 숨긴 서명 텍스트를 Claude 클라이언트에 노출하지 않으며, 이 숨김 경계를 통한 무손실 재생은 아직 보장하지 않아요. 이전 결합 봉투는 스트리밍 텍스트가 이미 전송됐다면 원래 블록 순서를 복원할 수 없어요. `claudeCode.compatibility: "enforce"`는 여전히 thinking 재생을 거절해요. 실제 Anthropic 수락이나 캐시 적중 개선을 증명한 것은 아니며 [#3719](https://github.com/lidge-jun/opencodex/issues/3719)는 열어 둬요.
+
 **오류 조건(400):** 잘못된 JSON, 누락되거나 빈 `model`, 누락되거나 빈 `messages`, 지원하지 않는
 role, `tool_use_id` 없는 `tool_result`, id/name 없는 `tool_use`, name 없는 이름 지정 `tool_choice`예요.
 

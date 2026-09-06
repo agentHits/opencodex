@@ -350,6 +350,8 @@ Claude Code 的 `/effort` 设置会完整保留并传递给适配器：
 | `max_tokens` | `max_output_tokens` |
 | `stop_sequences` | `stop` |
 
+在预期的 Anthropic 适配器上，保留未隐藏的签名块（包括空 thinking）和不透明的 redacted 块。`hideThinkingSummary` 策略不变：不会向 Claude 客户端公开本地隐藏的签名文本，尚未证明经过此隐藏边界的无损重放。旧版组合信封在流式文本发出后无法恢复原始块顺序。`claudeCode.compatibility: "enforce"` 仍拒绝 thinking 重放。这不证明真实 Anthropic 接受请求或缓存命中改善；[#3719](https://github.com/lidge-jun/opencodex/issues/3719) 仍未关闭。
+
 **错误情况（400）：**JSON 格式错误；缺少/空的 `model`；缺少/空的 `messages`；不支持的
 role；`tool_result` 缺少 `tool_use_id`；`tool_use` 缺少 id/name；指定名称的 `tool_choice`
 缺少 name。

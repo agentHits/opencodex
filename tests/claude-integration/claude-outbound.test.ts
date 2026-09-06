@@ -1179,6 +1179,23 @@ describe("sanitizeWebSearchInput (#381)", () => {
     expect(events[2].data.content_block).toEqual({ type: "redacted_thinking", data: "opaque" });
   });
 
+  test("redacted reasoning closes an open text block before opening its opaque block", async () => {
+    const events = await collectEvents(responsesSseToAnthropicSse(streamFrom([
+      sse("response.output_text.delta", { delta: "text" }),
+      sse("response.output_item.done", {
+        item: { type: "reasoning", id: "rs_red", encrypted_content: encodeReasoningEnvelope({ red: ["opaque"] }) },
+      }),
+      sse("response.completed", { response: { status: "completed", usage: {} } }),
+    ].join("")), "m"));
+    expect(events.filter(event => event.name === "content_block_start" || event.name === "content_block_stop")
+      .map(event => ({ name: event.name, index: event.data.index }))).toEqual([
+      { name: "content_block_start", index: 0 },
+      { name: "content_block_stop", index: 0 },
+      { name: "content_block_start", index: 1 },
+      { name: "content_block_stop", index: 1 },
+    ]);
+  });
+
   test("signature-only reasoning emits an empty thinking block with the genuine signature", async () => {
     const events = await collectEvents(responsesSseToAnthropicSse(streamFrom([
       sse("response.output_item.done", {
