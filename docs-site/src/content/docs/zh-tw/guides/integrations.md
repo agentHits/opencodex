@@ -53,6 +53,11 @@ macOS 私有偏好設定僅提供 Pro 狀態提示；Windows 完全不讀取該�
 但不保證 YAML 格式與註解不變。格式說明見
 [manual.raycast.com/ai/custom-providers](https://manual.raycast.com/ai/custom-providers)。
 
+Raycast CLI 匯出與儀表板下載會使用執行中伺服器的目標位址和准入規則，包含已設定的
+無驗證 loopback listener。`ocx ensure` 不會以可能與執行中伺服器不同的已儲存設定快照
+重新整理 Raycast；伺服器啟動與明確執行的同步仍會更新目錄。
+
+
 路徑遵循客戶端自己的環境覆寫（environment override）。對 OMP 而言，`OMP_PROFILE` 以存在與否優先於 `PI_PROFILE`，即使明確為空也一樣。具名 profile 會把 `PI_CONFIG_DIR` 當作相對於使用者家目錄的目錄名稱，並忽略 `PI_CODING_AGENT_DIR`；沒有具名 profile 時，`PI_CODING_AGENT_DIR` 勝出。OMP 支援 provider 層級的 headers，但這個最初的整合刻意只支援 loopback；遠端 `x-opencodex-api-key` 的連線設定被延後。搬移過的 `HERMES_HOME`、`KIMI_CODE_HOME` 與 `XDG_CONFIG_HOME` 路徑同樣會被遵循，而非猜測。表格列出每個客戶端的預設值。
 
 對原生 OpenAI 模型，產生的 OMP 區塊會選用其模型層級的 Responses API，保留圖片輸入與 reasoning-effort 控制。路由模型則維持 provider 的 Chat Completions 方言，讓它們既有的 adapters 保持相容。

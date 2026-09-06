@@ -580,7 +580,9 @@ async function handleEnsure(options: { existingIsSuccess?: boolean } = {}): Prom
         return null;
       });
       if (synced?.status === "skipped") console.log("   Codex integration OFF; startup left Codex native.");
-      await refreshOwnedRaycastCatalog(config, live.port);
+      // Do not refresh Raycast from saved config here: live bind/admission and
+      // secondary-listener settings may differ. Explicit sync or server startup
+      // owns catalog refresh; ensure must not overwrite a working destination.
       // Ensure env file exists for already-running proxy (may have been deleted or pre-dates this feature).
       const systemEnv = await injectSystemEnv(live.port, config).catch(() => ({ injected: false }));
       reportShellHookFailure(reconcileShellHook(systemEnv.injected));
@@ -625,7 +627,8 @@ async function handleEnsure(options: { existingIsSuccess?: boolean } = {}): Prom
     return null;
   });
   if (synced?.status === "skipped") console.log("   Codex integration OFF; startup left Codex native.");
-  await refreshOwnedRaycastCatalog(config, port);
+  // The child performs Raycast refresh with its actual startup config. The
+  // parent's pre-spawn snapshot is not authoritative for a client-file write.
   // The child opens /healthz before its best-effort roster reconcile. Await the same idempotent
   // operation in the parent so `ocx ensure` cannot report success while stale ocx-*.md files are
   // still observable. Always use the live port, including fallback-port starts.

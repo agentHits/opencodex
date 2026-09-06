@@ -62,6 +62,12 @@ la prise en charge des outils pour chaque modèle. Les valeurs des autres fourni
 préservées, sans garantie pour les commentaires ou la mise en forme YAML. Le format est documenté sur
 [manual.raycast.com/ai/custom-providers](https://manual.raycast.com/ai/custom-providers).
 
+Les exports Raycast en CLI et les téléchargements utilisent la destination et la politique
+d’admission du serveur actif, y compris son listener de bouclage sans authentification.
+`ocx ensure` ne réactualise pas Raycast depuis sa copie de configuration enregistrée, qui peut
+différer du serveur actif. Le démarrage du serveur et la synchronisation explicite restent disponibles.
+
+
 Les chemins respectent les variables de remplacement propres à chaque client, lorsqu'elles existent. Pour
 OMP, la présence de `OMP_PROFILE` l'emporte sur `PI_PROFILE`, même si sa valeur est explicitement vide. Un
 profil nommé emploie `PI_CONFIG_DIR` comme nom de répertoire relatif au dossier personnel de l'utilisateur

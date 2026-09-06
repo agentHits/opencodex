@@ -92,6 +92,12 @@ Provider values are preserved; YAML formatting and comments are not guaranteed t
 The format is documented at
 [manual.raycast.com/ai/custom-providers](https://manual.raycast.com/ai/custom-providers).
 
+Raycast CLI exports and dashboard downloads use the running server's destination and
+admission policy, including a configured unauthenticated loopback listener. `ocx ensure`
+does not refresh Raycast from its saved configuration snapshot: that can differ from the
+running server. Server startup and explicit sync remain the catalog refresh paths.
+
+
 Cursor has a tab but is not one of these switches. Regular Cursor calls custom endpoints from
 its own backend, so a loopback proxy is unreachable without a public tunnel, and Cursor's
 separate Private Inference build is configured inside Cursor. The **Cursor** tab is read-only:

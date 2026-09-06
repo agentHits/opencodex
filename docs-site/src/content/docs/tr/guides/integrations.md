@@ -66,6 +66,12 @@ değerleri korunur; YAML biçimlendirmesi ve yorumlarının korunması garanti e
 [manual.raycast.com/ai/custom-providers](https://manual.raycast.com/ai/custom-providers)
 adresinde belgelenmiştir.
 
+Raycast CLI dışa aktarmaları ve panel indirmeleri, yapılandırılmış kimlik doğrulamasız
+geri döngü dinleyicisi dahil çalışan sunucunun adresini ve kabul politikasını kullanır.
+`ocx ensure`, çalışan sunucudan farklı olabilecek kayıtlı yapılandırma kopyasıyla Raycast'i
+yenilemez. Sunucu başlangıcı ve açık senkronizasyon katalog yenilemeye devam eder.
+
+
 Yollar, varsa her istemcinin kendi ortam geçersiz kılmalarını dikkate alır. OMP
 için `OMP_PROFILE`, açıkça boş olduğunda bile varlığıyla `PI_PROFILE`'a üstün
 gelir. Adlandırılmış bir profil, `PI_CONFIG_DIR`'i kullanıcının ev dizinine göre
