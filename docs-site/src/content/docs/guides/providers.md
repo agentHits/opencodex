@@ -601,8 +601,13 @@ The preset uses a **static roster** (`liveModels: false`) taken from the
 | `glm-5.3` | 1,048,576 | `low`, `high`, `max` | `max` | Supported |
 | `glm-5-turbo` | 204,800 | None (empty list) | `max` | Supported |
 
-Both entries declare text input. The default model is `glm-5.3`; Responses reasoning
-content is preserved on replay. The existing Codex export adds its compatibility
+Both entries declare upstream text-only input. The Codex catalog advertises text and
+image because opencodex's existing vision sidecar can describe images for text-only
+models. Image handling requires an available, enabled vision sidecar; this does not
+declare native BigModel image support.
+
+The default model is `glm-5.3`; Responses reasoning content is preserved on replay.
+The existing Codex export adds its compatibility
 `ultra` tier to GLM-5.3 and omits Turbo's default-effort field because Turbo has no
 selectable ladder; the provider metadata still records `max` for both models.
 For Turbo, outgoing Responses requests omit `reasoning.effort`, including a caller's

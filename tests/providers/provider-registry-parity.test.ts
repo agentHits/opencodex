@@ -458,6 +458,8 @@ describe("provider registry parity", () => {
     });
     expect(registry.modelDiscovery).toBeUndefined();
     expect(registry.preserveReasoningContentModels).toBeUndefined();
+    const upstreamModalities = { "glm-5.3": ["text"], "glm-5-turbo": ["text"] };
+    expect(registry.modelInputModalities).toEqual(upstreamModalities);
     expect(KEY_LOGIN_PROVIDERS[id]).toMatchObject({
       models: ["glm-5.3", "glm-5-turbo"], liveModels: false, apiKeyValidation: "unknown",
     });
@@ -468,11 +470,14 @@ describe("provider registry parity", () => {
     const models = provider.models!.map(modelId => applyProviderConfigHints(id, provider, {
       provider: id, id: modelId,
     }));
+    // The official upstream declaration stays text-only. Catalog hints add image for the
+    // existing vision sidecar (vision/eligibility.ts), not native BigModel image support.
+    expect(provider.modelInputModalities).toEqual(upstreamModalities);
     expect(models).toMatchObject([
       { id: "glm-5.3", contextWindow: 1_048_576, reasoningEfforts: ["low", "high", "max"],
-        defaultReasoningEffort: "max", supportsReasoningSummaries: true, inputModalities: ["text"] },
+        defaultReasoningEffort: "max", supportsReasoningSummaries: true, inputModalities: ["text", "image"] },
       { id: "glm-5-turbo", contextWindow: 204_800, reasoningEfforts: [],
-        defaultReasoningEffort: "max", supportsReasoningSummaries: true, inputModalities: ["text"] },
+        defaultReasoningEffort: "max", supportsReasoningSummaries: true, inputModalities: ["text", "image"] },
     ]);
     const entries = buildCatalogEntries(nativeTemplate(), [], models);
     for (const [modelId, window, efforts] of [
@@ -482,6 +487,7 @@ describe("provider registry parity", () => {
       const entry = entries.find(row => row.slug === `${id}/${modelId}`);
       expect(entry).toMatchObject({
         context_window: window, supports_reasoning_summaries: true,
+        input_modalities: ["text", "image"],
       });
       // Existing export policy adds a compatibility ultra tier and omits the default
       // for empty ladders. The provider/CatalogModel defaults above remain official max.
