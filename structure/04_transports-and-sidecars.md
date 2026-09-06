@@ -393,6 +393,25 @@ Native passthrough SSE has TWO shapes, selected per request in
   inspection side-effect set (shared `createSseInspector` factory in `relay.ts`)
   including the #44 late-terminal semantics.
 
+Both client readers also retain a bounded, redacted message from a bare upstream
+`error` event. If EOF arrives without a real Responses terminal, they synthesize
+one `response.failed` with that message instead of replacing it with `adapter_eof`.
+The delivering reader owns this evidence; an asynchronous tee inspection branch
+cannot reliably supply it before EOF. Inspection independently applies the same
+bare-error rule when EOF arrives, so account health records failure instead of
+clearing avoidance as if the turn had succeeded. Existing real terminals and
+caller cancellation retain precedence on both branches. Native recovery preflight
+also preserves a rejected body reader and its bounded prefix for the normal
+mid-stream failure path; it does not turn that rejection into a decrypt retry.
+
+Native Responses may rebuild once when encrypted function/custom-tool output or
+agent-message content receives the exact known decrypt rejection before output
+commits. Recovery replaces only encrypted parts with an omission marker, preserves
+the raw request object used by continuation persistence guards, and uses the same
+adapter and cancellation path. A missing Content-Type is allowed only under the
+existing successful streaming condition. Default combo preflight classification
+is unchanged; only the native recovery caller supplies the exact error predicate.
+
 Both shapes carry the inbound caller-abort signal separately from the turn/shutdown
 controller. A caller-driven read rejection is 499/client_cancel without pool penalty;
 a genuine upstream reset remains synthetic 502. An already received terminal, including

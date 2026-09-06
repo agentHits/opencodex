@@ -172,6 +172,19 @@ for the full trust boundary and configuration.
 Combo routing remains unchanged and continues to consider only canonical native ChatGPT targets for
 encrypted tasks.
 
+## Rejected encrypted history
+
+An upstream Responses server can reject encrypted parts in earlier function/custom-tool
+output or `agent_message` content with `Encrypted function output content could not be decrypted or decoded.`. Before
+any output is committed, opencodex replaces those parts with `[encrypted content omitted]`
+and rebuilds the request once. The surrounding readable content stays intact; the
+omitted content is not decrypted or recovered by this retry.
+
+If the rebuilt request receives another bare SSE `error` followed by EOF, both relay
+modes preserve the error message in a `response.failed` terminal instead of reporting
+`adapter_eof`. Other upstream `response.failed` events remain SSE failures. This history
+recovery does not change the encrypted v2 task-delivery restrictions described above.
+
 ## Changing the mode
 
 ### GUI
