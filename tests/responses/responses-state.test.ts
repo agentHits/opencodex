@@ -1427,16 +1427,27 @@ describe("Responses previous_response_id state", () => {
       return { success: true, exitCode: 0, timedOut: false, stdout: "" };
     });
     setResponseStateByteCapForTests(1_024);
-    rememberLarge("resp_shutdown_fallback", "f".repeat(2 * 1024 * 1024 + 4_096));
-    await started;
-
+    let restoreClock: (() => void) | undefined;
     try {
+      rememberLarge("resp_shutdown_fallback", "f".repeat(2 * 1024 * 1024 + 4_096));
+      await started;
+      // ACL/spill clocks alone do not control the shutdown reserve: state.ts
+      // uses Date.now(). Keep its 80 ms budget independent of real disk latency.
+      // The real 40 ms drain timer still fires while publication stays gated.
+      const shutdownNow = Date.now();
+      const nowSpy = spyOn(Date, "now").mockReturnValue(shutdownNow);
+      restoreClock = () => { nowSpy.mockRestore(); };
       await flushResponseState();
       expect(synchronousCalls).toBeGreaterThan(0);
       expect(pendingResponseSpillMetricsForTests()).toEqual({ count: 0, bytes: 0 });
       expect(responseStateMetrics()).toMatchObject({ residentCount: 0, spillStubCount: 1 });
     } finally {
       release();
+      try {
+        await awaitResponseSpillPublicationTailForTests();
+      } finally {
+        restoreClock?.();
+      }
     }
   });
 
