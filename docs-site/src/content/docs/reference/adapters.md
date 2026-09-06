@@ -261,6 +261,13 @@ header and does not guarantee a provider cache hit.
 
 - Builds Kiro `conversationState`, maps Codex tools and tool results, and sends image blocks supported
   by the Kiro wire.
+- Coalesces adjacent outputs from the same original tool call into one Kiro result. Text remains
+  ordered, images retain the existing per-message limits, and any error flag remains set. User,
+  developer, assistant or another tool's output ends the group. Distinct original IDs that map
+  to the same normalized Kiro ID are rejected.
+- Combined outputs keep real text and failure information without inserting an empty-output hint
+  for a later blank chunk. A single result keeps its existing normalization; an entirely text-empty
+  group receives one fallback, with neutral wording when images or an error flag are present.
 - Treats a client `parallel_tool_calls: true` value as permission rather than a wire requirement.
   Kiro remains serialized: the routed catalog advertises no parallel-tool capability and the
   adapter sends no parallel-control field upstream, but ordinary Codex tool turns are not rejected
