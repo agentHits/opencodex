@@ -15,7 +15,13 @@ let testRoot = "";
 let previousOpencodexHome: string | undefined;
 
 function config(port = 10100): OcxConfig {
-  return { port, providers: {}, defaultProvider: "openai" };
+  // Initial publication validates the candidate before reaching the filesystem;
+  // unlike a replacing save, it cannot accept a dangling default provider.
+  return {
+    port,
+    providers: { openai: { adapter: "openai-chat", baseUrl: "https://example.test/v1" } },
+    defaultProvider: "openai",
+  };
 }
 
 async function waitForPath(path: string): Promise<void> {
@@ -147,6 +153,15 @@ test("a throwing mutation releases the lock and leaves writers available", () =>
 });
 
 const initTemps = () => readdirSync(testRoot).filter(name => name.includes(".ocx.") && name.endsWith(".tmp"));
+
+test("initial publication rejects a missing default provider before writing candidate bytes", () => {
+  let wrote = false;
+  expect(() => initializePersistedConfigIfMissing({ ...config(), providers: {} }, {
+    write() { wrote = true; },
+  })).toThrow("Initial configuration is invalid.");
+  expect(wrote).toBe(false);
+  expect(existsSync(getConfigPath())).toBe(false);
+});
 
 test("initial creation keeps candidate values and existing bytes; the explicit saver still updates", () => {
   const candidate = { ...config(21001), operatorNote: "keep unknown fields" };
