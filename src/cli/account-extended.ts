@@ -367,6 +367,7 @@ export async function cmdAutoSwitch(args: string[], deps: AccountDeps): Promise<
   if (threshold !== undefined && (!Number.isInteger(threshold) || threshold < 0 || threshold > 100)) {
     return usage("Error: threshold must be an integer 0-100");
   }
+  let settings: Record<string, unknown> = {};
   const baseUrl = await resolveBaseUrl(deps);
   if (!baseUrl) return proxyUnreachable();
   if (action === "status") {
@@ -378,6 +379,7 @@ export async function cmdAutoSwitch(args: string[], deps: AccountDeps): Promise<
     if (response.status !== 200 || (!genericPool && typeof response.json.autoSwitchThreshold !== "number")) {
       return apiError(response.json, "failed to read auto-switch status", response.status);
     }
+    settings = response.json;
     threshold = typeof response.json.autoSwitchThreshold === "number" ? response.json.autoSwitchThreshold : 0;
   } else {
     const response = genericPool
@@ -385,6 +387,26 @@ export async function cmdAutoSwitch(args: string[], deps: AccountDeps): Promise<
       : await apiJson(deps, baseUrl, "PUT", "/api/codex-auth/auto-switch", { threshold });
     if (response.status === 0) return proxyUnreachable(response.transportError);
     if (response.status !== 200) return apiError(response.json, "failed to update auto-switch", response.status);
+    settings = response.json;
+  }
+  if (genericPool) {
+    // Generic thresholds are stored independently of the enabled override. The
+    // latter may inherit global preference and never disables reactive rotation.
+    const stored = settings.autoSwitchThreshold;
+    const storedThreshold = typeof stored === "number" && Number.isInteger(stored) && stored >= 0 && stored <= 100
+      ? stored : null;
+    const poolEnabled = typeof settings.enabled === "boolean" ? settings.enabled : null;
+    const inert = typeof settings.inert === "boolean" ? settings.inert : null;
+    const enabled = inert === false && poolEnabled === true && storedThreshold !== null && storedThreshold > 0;
+    if (wantsJson) {
+      console.log(JSON.stringify({ provider: name, autoSwitchThreshold: storedThreshold, enabled, poolEnabled, inert }, null, 2));
+    } else if (inert !== false) {
+      const value = storedThreshold === null ? "unset" : `${storedThreshold}%`;
+      console.log(`auto-switch: ${inert === true ? "inactive" : "unavailable"} (stored threshold ${value}; ${inert === true ? "not applied by this pool" : "threshold support is unknown"})`);
+    } else {
+      console.log(enabled ? `auto-switch: on (threshold ${storedThreshold}%)` : "auto-switch: off");
+    }
+    return 0;
   }
   const enabled = threshold! > 0;
   if (wantsJson) console.log(JSON.stringify({ provider: name, autoSwitchThreshold: threshold, enabled }, null, 2));
