@@ -126,6 +126,20 @@ const fixture = JSON.stringify({ models: [{
 const token = randomBytes(32).toString("hex");
 const replacement = randomBytes(32).toString("hex");
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+let seededConfigHash = "";
+
+// Check the loader, including its schema-repair/default-provider fallback, before server startup
+// and again in each running container. This isolates synthetic inference, not all process egress.
+const fixtureConfigCheck = `
+  const { loadConfig } = await import('./src/config.ts');
+  const effective = loadConfig();
+  const provider = effective.providers.smoke;
+  if (Object.keys(effective.providers).join(',') !== 'smoke' || effective.defaultProvider !== 'smoke'
+    || provider?.adapter !== 'openai-responses' || provider?.authMode !== 'local'
+    || provider?.baseUrl !== 'http://127.0.0.1:9/v1' || provider?.codexAccountMode !== undefined || provider?.apiKey
+    || effective.runtimeRole !== 'hub' || effective.hostname !== '0.0.0.0' || effective.port !== 10100
+    || effective.codexAutoStart !== false || effective.codexShimAutoRestore !== false) throw new Error('unsafe effective fixture config');
+`;
 
 interface Container {
   Id: string;
@@ -169,6 +183,7 @@ async function inspect() {
 const stateProbe = `
   import { readFileSync, statSync, writeFileSync } from 'node:fs';
   import { createHash } from 'node:crypto';
+  ${fixtureConfigCheck}
   const homes = ['/home/bun/.opencodex', '/home/bun/.codex'];
   const uid = process.getuid();
   if (uid === 0) throw new Error('root user');
@@ -192,6 +207,7 @@ const stateProbe = `
 async function state() {
   const hashes = JSON.parse(await compose(["exec", "-T", "hub", "bun", "-e", stateProbe])) as string[];
   check(hashes.length === 3 && hashes.every(hash => /^[a-f0-9]{64}$/.test(hash)), "invalid state evidence");
+  check(hashes[0] === seededConfigHash, "seeded config changed");
   check(hashes[1] === sha256(`${token}\n`) && hashes[2] === sha256(fixture), "token/catalog changed");
   return JSON.stringify(hashes);
 }
@@ -280,8 +296,6 @@ async function main() {
   writeFileSync(join(scratch, "empty.env"), "", { mode: 0o600 });
   writeFileSync(join(scratch, "override.json"), JSON.stringify({
     services: { hub: { image, restart: "no" } },
-    // Block upstream egress even if an admission regression reaches a provider path.
-    networks: { default: { internal: true } },
   }), { mode: 0o600 });
   env = {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin", TMPDIR: scratch,
@@ -293,10 +307,32 @@ async function main() {
   progress("validate and build");
   await compose(["config", "--quiet"]);
   await build();
-  progress("bootstrap and seed synthetic catalog");
+  progress("verify shipped config and seed loopback-only fixture");
+  seededConfigHash = await compose(["run", "--rm", "-T", "--no-deps", "hub", "bun", "-e",
+    `
+      import { readFileSync, writeFileSync } from 'node:fs';
+      import { createHash } from 'node:crypto';
+      import { atomicWriteFile } from './src/config/atomic-write.ts';
+      const { shipped, catalog } = JSON.parse(await Bun.stdin.text());
+      const path = '/home/bun/.opencodex/config.json';
+      if (readFileSync(path, 'utf8') !== shipped || readFileSync('docker/config.json', 'utf8') !== shipped) {
+        throw new Error('shipped config mismatch');
+      }
+      const config = JSON.parse(shipped);
+      if (config.runtimeRole !== 'hub' || config.hostname !== '0.0.0.0' || config.port !== 10100
+        || config.codexAutoStart !== false || config.codexShimAutoRestore !== false) throw new Error('shipped runtime contract');
+      // Port 9 has no listener in this image. Replace all provider routes before any server starts;
+      // even an admission regression cannot send these synthetic requests to a real provider.
+      config.providers = { smoke: { adapter: 'openai-responses', baseUrl: 'http://127.0.0.1:9/v1', authMode: 'local' } };
+      config.defaultProvider = 'smoke';
+      atomicWriteFile(path, JSON.stringify(config) + '\\n');
+      ${fixtureConfigCheck}
+      writeFileSync('/home/bun/.codex/opencodex-catalog.json', catalog, { mode: 0o600, flag: 'wx' });
+      console.log(createHash('sha256').update(readFileSync(path)).digest('hex'));
+    `], JSON.stringify({ shipped: readFileSync(join(root, "docker/config.json"), "utf8"), catalog: fixture }));
+  check(/^[a-f0-9]{64}$/.test(seededConfigHash), "invalid seeded config evidence");
+  progress("bootstrap throwaway token");
   await compose(["run", "--rm", "-T", "--no-deps", "hub", "bun", "run", "docker/bootstrap-token.ts"], `${token}\n`);
-  await compose(["run", "--rm", "-T", "--no-deps", "hub", "bun", "-e",
-    "import { writeFileSync } from 'node:fs'; writeFileSync('/home/bun/.codex/opencodex-catalog.json', await Bun.stdin.text(), { mode: 0o600, flag: 'wx' });"], fixture);
   progress("start and check admission");
   await compose(["up", "--no-build", "--wait", "--wait-timeout", "120", "hub"], undefined, 150_000);
   const first = await inspect();
