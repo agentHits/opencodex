@@ -46,6 +46,9 @@ beforeEach(() => {
   }));
   globalThis.fetch = (async (input, init) => {
     const url = String(input);
+    if (url.endsWith("/api/subagent-models") && init?.method !== "PUT") {
+      return Response.json({ pickerAvailable: ["anthropic/claude-sonnet-5", "anthropic/claude-opus-4-5"], pickerOrder: [], pickerOrderMode: null });
+    }
     if (url.endsWith("/api/models")) {
       return Response.json([
         { provider: "anthropic", id: "claude-sonnet-5", namespaced: "anthropic/claude-sonnet-5", disabled: false },
@@ -452,4 +455,141 @@ test.each(["preset", "visibility"] as const)("an in-flight %s mutation blocks th
   expect(writes).toEqual(expectedWrites);
   expect(container.querySelector(".models-integration-warning")).toBeNull();
   expect(container.querySelector(".action-toast.notice-ok")).not.toBeNull();
+});
+
+
+function pickerApply(): HTMLButtonElement {
+  return [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Apply order")!;
+}
+async function choosePickerOrder(label: string): Promise<void> {
+  const selector = container.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="Picker order"]')!;
+  await act(async () => { selector.click(); });
+  const option = [...testWindow.document.querySelectorAll('[role="option"]')].find(node => node.textContent === label)!;
+  await act(async () => { (option as unknown as HTMLButtonElement).click(); });
+}
+
+test("picker applies only picker fields, keeps Most used on reload, and surfaces refresh pending", async () => {
+  const baseFetch = globalThis.fetch;
+  const available = ["anthropic/claude-sonnet-5", "anthropic/claude-opus-4-5"];
+  let saved: { pickerOrder: string[]; pickerOrderMode: string | null } = { pickerOrder: [], pickerOrderMode: null };
+  let usageCalls = 0;
+  const writes: unknown[] = [];
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/subagent-models")) {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)); writes.push(body); saved = body;
+        return Response.json({ ok: true, ...saved, catalogRefresh: { status: "skipped", reason: "busy", retryable: true } });
+      }
+      return Response.json({ pickerAvailable: available, ...saved });
+    }
+    if (url.includes("/api/usage?")) { usageCalls++; return Response.json({ models: [
+      { provider: "anthropic", model: "claude-sonnet-5", requests: 8 },
+    ] }); }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  await mountModelsForRefreshWarning();
+  await waitForModelsFeedback(() => !!pickerApply() && !pickerApply().disabled);
+  expect(usageCalls).toBe(0);
+  await choosePickerOrder("Most used snapshot");
+  await act(async () => { pickerApply().click(); });
+  await waitForModelsFeedback(() => writes.length === 1 && !!container.querySelector(".action-toast"));
+  expect(writes).toEqual([{ pickerOrder: available, pickerOrderMode: "most-used" }]);
+  expect(container.querySelector(".action-toast")?.textContent).toContain("catalog refresh is pending");
+  expect(usageCalls).toBe(1);
+  await act(async () => { root!.unmount(); });
+  root = null;
+  await mountModelsForRefreshWarning();
+  await waitForModelsFeedback(() => container.querySelector('[aria-label="Picker order"]')?.textContent?.includes("Most used snapshot") === true);
+  expect(usageCalls).toBe(1);
+});
+
+test("picker Default can clear a saved order when no models are currently available", async () => {
+  const baseFetch = globalThis.fetch;
+  let written: unknown;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).endsWith("/api/subagent-models")) {
+      if (init?.method === "PUT") {
+        written = JSON.parse(String(init.body));
+        return Response.json({ ok: true, pickerOrder: [], pickerOrderMode: null,
+          catalogRefresh: { status: "committed", degraded: false, changed: true, notices: [] } });
+      }
+      return Response.json({ pickerAvailable: [], pickerOrder: ["gone/model"], pickerOrderMode: "most-used" });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  await mountModelsForRefreshWarning();
+  await waitForModelsFeedback(() => container.querySelector<HTMLButtonElement>('[aria-label="Picker order"]')?.disabled === false);
+  await choosePickerOrder("Default");
+  expect(pickerApply().disabled).toBe(false);
+  await act(async () => { pickerApply().click(); });
+  await waitForModelsFeedback(() => written !== undefined);
+  expect(written).toEqual({ pickerOrder: null, pickerOrderMode: null });
+});
+
+test("malformed picker save remains retryable and never publishes success", async () => {
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => String(input).endsWith("/api/subagent-models") && init?.method === "PUT"
+    ? Response.json({ ok: true }) : baseFetch(input, init)) as typeof fetch;
+  await mountModelsForRefreshWarning();
+  await waitForModelsFeedback(() => !!pickerApply() && !pickerApply().disabled);
+  await choosePickerOrder("Group by provider");
+  await act(async () => { pickerApply().click(); });
+  await waitForModelsFeedback(() => !!container.querySelector(".action-toast") && !pickerApply().disabled);
+  expect(container.querySelector(".action-toast.notice-ok")).toBeNull();
+  expect(container.querySelector('[aria-label="Picker order"]')?.textContent).toContain("Group by provider");
+});
+
+
+test("a late picker GET cannot overwrite a saved order or its session cache", async () => {
+  const baseFetch = globalThis.fetch;
+  const available = ["anthropic/claude-sonnet-5", "anthropic/claude-opus-4-5"];
+  const old = { pickerAvailable: available, pickerOrder: [], pickerOrderMode: null };
+  testWindow.sessionStorage.setItem("ocx.models.catalog.v1:http://localhost:picker-order", JSON.stringify(old));
+  let releaseGet!: (response: Response) => void;
+  let writes = 0;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).endsWith("/api/subagent-models")) {
+      if (init?.method === "PUT") {
+        writes++;
+        return Response.json({ ok: true, ...JSON.parse(String(init.body)),
+          catalogRefresh: { status: "committed", changed: true, degraded: false, notices: [] } });
+      }
+      return new Promise<Response>(resolve => { releaseGet = resolve; });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  await mountModelsForRefreshWarning();
+  await waitForModelsFeedback(() => !!releaseGet && !!pickerApply() && !pickerApply().disabled);
+  await choosePickerOrder("Group by provider");
+  const button = pickerApply();
+  await act(async () => { button.click(); button.click(); });
+  await waitForModelsFeedback(() => writes === 1 && !!container.querySelector(".action-toast.notice-ok"));
+  await act(async () => { releaseGet(Response.json(old)); });
+  expect(container.querySelector('[aria-label="Picker order"]')?.textContent).toContain("Group by provider");
+  const cached = JSON.parse(testWindow.sessionStorage.getItem("ocx.models.catalog.v1:http://localhost:picker-order")!);
+  expect(cached.pickerOrderMode).toBe("provider");
+  expect(cached.pickerOrder).toEqual(["anthropic/claude-opus-4-5", "anthropic/claude-sonnet-5"]);
+});
+
+test("leaving Models aborts its pending picker save", async () => {
+  const baseFetch = globalThis.fetch;
+  let signal: AbortSignal | null | undefined;
+  let finish!: (response: Response) => void;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).endsWith("/api/subagent-models") && init?.method === "PUT") {
+      signal = init.signal;
+      return new Promise<Response>(resolve => { finish = resolve; });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  await mountModelsForRefreshWarning();
+  await waitForModelsFeedback(() => !!pickerApply() && !pickerApply().disabled);
+  await act(async () => { pickerApply().click(); });
+  await waitForModelsFeedback(() => !!finish);
+  await act(async () => { root!.unmount(); });
+  root = null;
+  expect(signal?.aborted).toBe(true);
+  await act(async () => { finish(Response.json({ ok: true, pickerOrder: [], pickerOrderMode: null })); });
+  expect(container.querySelector(".action-toast")).toBeNull();
 });
