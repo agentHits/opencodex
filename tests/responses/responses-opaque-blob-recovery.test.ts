@@ -647,10 +647,21 @@ describe("opaque blob recovery through /v1/responses", () => {
           sends += 1;
           return streamedFunctionOutputDecryptErrorEvent(flat);
         }, { preconnect: originalFetch.preconnect });
+        const logCtx: RequestLogContext = { model: "", provider: "" };
+        const terminals: string[] = [];
+        let markTerminal!: () => void;
+        const terminal = new Promise<void>(resolve => { markTerminal = resolve; });
         const response = await handleResponses(agentMessageRequest(true), {
           ...config(), streamMode,
-        }, { model: "", provider: "" });
+        }, logCtx, { onNativePassthroughTerminal: status => {
+          terminals.push(status);
+          markTerminal();
+        } });
         const body = await response.text();
+        await terminal;
+        expect(terminals).toEqual(["failed"]);
+        expect(logCtx.activeAttempt).toBeDefined();
+        expect(logCtx.activeAttempt?.streamAborted).not.toBe(true);
         expect(sends).toBe(2);
         expect(body).toContain(FUNCTION_OUTPUT_DECRYPT_MESSAGE);
         expect(body).not.toContain("adapter_eof");
@@ -813,10 +824,19 @@ data: ${JSON.stringify(created)}
       }, { preconnect: originalFetch.preconnect }) as typeof fetch;
 
       const logCtx: RequestLogContext = { model: "", provider: "" };
+      const terminals: string[] = [];
+      let markTerminal!: () => void;
+      const terminal = new Promise<void>(resolve => { markTerminal = resolve; });
       const response = await handleResponses(functionOutputRequest(true), {
         ...config(), streamMode,
-      }, logCtx);
+      }, logCtx, { onNativePassthroughTerminal: status => {
+        terminals.push(status);
+        markTerminal();
+      } });
       const body = await response.text();
+      await terminal;
+      expect(terminals).toEqual(["failed"]);
+      expect(logCtx.activeAttempt?.streamAborted).toBe(true);
       expect(response.status).toBe(200);
       expect(body).toContain("response.failed");
       expect(body).toContain('"code":"upstream_reset"');
