@@ -22,3 +22,28 @@ Existing maintainer CHANGES_REQUESTED targeted older 2d90f9684 reader race; inde
 
 Owner explicitly requests stacked PR workflow; use this relay foundation before combo-recovery and Grok terminal integration as an integration-validation stack, even though fixes are independently useful. Each layer remains independently tested via exact-head ci.yml runtime/gates. Security analysis stays scratch until public diff; no live Kiro.
 
+
+## Current-dev carry amendment (2026-09-06)
+
+The carry starts at adb696197 after the task-input, Kiro and fixture layers.
+The source remains 2396829bd. The current core rewrite order also contains
+tool-search restoration and function completion repair; preserve both and the
+shared prompt-cache cohort field. Source review is not current-head approval.
+
+Default two-argument preflight callers keep their previous event classification.
+Only the explicitly supplied exact decrypt predicate may make a matching bare
+error replayable; unrelated errors still commit the stream, and an existing
+unrelated response.failed stays an SSE terminal. The retry predicate accepts
+only error/failed/incomplete envelopes, never output events carrying a message.
+The new failed tail uses existing redactSecretString before the 512-character
+limit. Test bounded synthesized messages in tee and eager paths with synthetic
+credential canaries; retain original upstream frame passthrough semantics.
+
+This cohesive carry exceeds the default 500-line review size because the source
+includes a large request-level regression matrix. Keep source and regression
+commits distinct inside this one layer, with independent protocol/security review;
+splitting the tests into a later PR would leave recovery unverified. Existing
+large core/relay files retain their current ownership for this bounded carry:
+no export moves or broad refactor amid replay/cancellation changes. A new generic
+retry abstraction or core extraction would enlarge the behavior under review.
+Remote CI verifies all source and tests together; no local suite/typecheck/build.
