@@ -23,7 +23,7 @@ import { removeTreeWithRetry } from "../helpers/remove-tree";
 let testDir = "";
 let previousHome: string | undefined;
 let isolatedCodexHome: IsolatedCodexHome | null = null;
-let upstream: ReturnType<typeof Bun.serve>;
+let upstream: ReturnType<typeof Bun.serve> | undefined;
 
 function umansKeyConfig(baseUrl: string, port = 0): OcxConfig {
   return {
@@ -57,15 +57,19 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await upstream.stop(true);
-  // The overlay registry is module-level; reset it so rows added through the
-  // live provider update path cannot leak into later tests in a shared run.
-  refreshUserCostOverlays({ providers: {} } as unknown as OcxConfig);
-  if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
-  else process.env.OPENCODEX_HOME = previousHome;
-  isolatedCodexHome?.restore();
-  isolatedCodexHome = null;
-  if (testDir) removeTreeWithRetry(testDir);
+  try {
+    await upstream?.stop(true);
+  } finally {
+    upstream = undefined;
+    // The overlay registry is module-level; reset it so rows added through the
+    // live provider update path cannot leak into later tests in a shared run.
+    refreshUserCostOverlays({ providers: {} } as unknown as OcxConfig);
+    if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+    else process.env.OPENCODEX_HOME = previousHome;
+    isolatedCodexHome?.restore();
+    isolatedCodexHome = null;
+    if (testDir) removeTreeWithRetry(testDir);
+  }
 });
 
 describe("CLI key-login live-update overlay preservation", () => {
@@ -95,7 +99,7 @@ describe("CLI key-login live-update overlay preservation", () => {
 
       const config = loadConfig();
       const replacement = {
-        ...providerConfigFromKeyLoginProvider(KEY_LOGIN_PROVIDERS.umans, "sk-rotated", upstream.url.toString()),
+        ...providerConfigFromKeyLoginProvider(KEY_LOGIN_PROVIDERS.umans, "sk-rotated", config.providers.umans!.baseUrl),
         allowPrivateNetwork: true,
       };
       let reload: LocalProviderReloadResult | null = null;
