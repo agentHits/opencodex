@@ -32,6 +32,18 @@ Start with **base**. Choose **v1** when cross-provider delegation must work pred
 only when you specifically want its newer session model across every catalog entry.
 :::
 
+## External task input
+
+Codex can deliver a task's initial input or follow-up in a result-shaped envelope
+without a `call_id`. On translated routes, OpenCodex recognizes only the complete
+`function_call_output` shape with nonblank `id`, `name` and `namespace` and supported
+text/image output, then treats it as a user turn. This also starts the new conversation
+boundary during continuation and clears pending reasoning from the preceding turn.
+
+Malformed, empty, opaque or incomplete envelopes still fail validation. Actual tool
+results keep their required `call_id`; native passthrough and compaction retain their
+existing raw-input handling. See [the adapter contract](/reference/adapters/#external-task-input-on-translated-responses-routes).
+
 ## How it works
 
 The selected mode controls the `multi_agent_version` field in every catalog entry Codex reads:
