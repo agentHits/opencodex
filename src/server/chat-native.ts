@@ -185,7 +185,7 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
     retainedRequestBytes = bytes;
   };
   const buildActiveRequest = () => {
-    recordAttemptCredentialSource(attempt, route.providerName, activeProvider);
+    recordAttemptCredentialSource(attempt, route.providerName, activeProvider, activeAdapter.name);
     return buildOpenAIChatPassthroughRequest(
       activeProvider,
       options.chatBody,
