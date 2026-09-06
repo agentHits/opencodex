@@ -1,0 +1,7 @@
+# Publish and deliver verified manual chain
+
+Prerequisite: wp1 accepted-source review and successful final-head remote validation, or source-grounded defer outcome. Publish ordinary PRs targeting dev then the parent branch, using every repository template section. Bodies name source PRs, own layer-only diff, exact final combined CI evidence and explicit lower-layer CI deferral per owner instruction. Do not attest local CI. Preserve original contributor trailers in commits; admin merge with merge commits preserves their identity.
+
+Read live native-stack membership and head/base identity before merge. Never register a native stack. Parent merges to dev first; retain its branch, retarget child to dev, verify current head and ancestry. If integration tree changes materially, refresh final combined CI before landing. Use --admin and --match-head-commit exact guard. Do not merge into the parent branch by mistake. Refresh origin/dev and prove each merge SHA ancestor. Close superseded source PRs only after equivalent fix is actually landed, with credit and replacement link. Keep #3807 and #3719 open if real reproduction/cache acceptance remains unmet. No release or deployment.
+
+Record final PR URLs, source-to-delivery mapping, commit authors/trailers, CI run and exact SHA, review verdicts, remaining limitations and preserved dirty-work evidence. No fabricated status checks. Completion: every candidate has an honest disposition, accepted work is landed, unresolved diagnostics explicitly deferred under user direction.
