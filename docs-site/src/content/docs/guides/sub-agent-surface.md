@@ -169,8 +169,11 @@ byte-for-byte fidelity is not guaranteed. It rejects generic/API-key proxy calle
 `unreadable_encrypted_agent_task` on any failure. See
 [Agent configuration: Encrypted v2 task recovery](/reference/configuration/agents/#encrypted-v2-task-recovery)
 for the full trust boundary and configuration.
-Combo routing remains unchanged and continues to consider only canonical native ChatGPT targets for
-encrypted tasks.
+Combo routing prefers a selectable canonical native ChatGPT target for encrypted tasks. If none
+is usable, or native authorization attempts are exhausted, an explicitly enabled recovery may
+make the task readable for one available routed target. All recovery trust and no-persistence
+guards above still apply; a configured but disabled or cooling native target does not block this
+fallback, and cancellation never becomes an unreadable-task error.
 
 ## Rejected encrypted history
 
