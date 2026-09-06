@@ -16,7 +16,7 @@ test("Most used counts only requested identities, ignoring representative resolv
     { provider: "alpha", model: "zeta", resolvedModel: "alpha", requests: 4 },
     { provider: "alpha", model: "alpha/zeta", requests: 4 },
     { provider: "zeta", model: "missing", resolvedModel: "beta", requests: 3 },
-  ])).toEqual(["alpha/zeta", "zeta/beta", "alpha/alpha"]);
+  ])).toEqual(["alpha/zeta", "alpha/alpha", "zeta/beta"]);
   expect(modelPickerOrder("most-used", models, [])).toEqual(["alpha/alpha", "alpha/zeta", "zeta/beta"]);
 });
 test("raw slash-bearing ids resolve through observed canonical identities, never guessed namespaces", () => {
