@@ -102,9 +102,9 @@ describe("CLI key-login live-update overlay preservation", () => {
         ...providerConfigFromKeyLoginProvider(KEY_LOGIN_PROVIDERS.umans, "sk-rotated", config.providers.umans!.baseUrl),
         allowPrivateNetwork: true,
       };
-      let reload: LocalProviderReloadResult | null = null;
-      const merged = await commitKeyLoginProvider(config, "umans", replacement, result => { reload = result; });
-      expect(reload).toEqual({ kind: "reloaded" });
+      const reloads: Array<LocalProviderReloadResult | null> = [];
+      const merged = await commitKeyLoginProvider(config, "umans", replacement, result => { reloads.push(result); });
+      expect(reloads).toEqual([{ kind: "reloaded" }]);
       expect(merged.modelCosts).toEqual(edited.providers.umans!.modelCosts);
 
       // Reload treats disk as authoritative and never re-saves it.
