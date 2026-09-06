@@ -73,7 +73,7 @@ host and port over a LAN IP or an alias.
 Overview uses matching status cards and full-width settings rows. On wide screens, labels share
 one column and model/effort controls share another. On narrower screens, controls move below their
 labels in the same reading order. Long version labels are shortened visually; hover the version
-badge or the Version card to read the full value.
+badge or the version value to read the full value.
 
 ## What you can do
 
