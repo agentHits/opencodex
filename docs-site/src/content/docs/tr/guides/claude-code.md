@@ -588,6 +588,8 @@ dönüştürür:
 | `max_tokens` | `max_output_tokens` |
 | `stop_sequences` | `stop` |
 
+Hedeflenen Anthropic adaptöründe gizlenmemiş imzalı bloklar (boş thinking dahil) ve opak redacted blokları korunur. `hideThinkingSummary` değişmez: yerel olarak gizlenen imzalı metin Claude istemcilerine gösterilmez; bu sınır üzerinden kayıpsız yeniden oynatma doğrulanmamıştır. Eski birleşik zarflarda metin akışla gönderildikten sonra özgün blok sırası geri getirilemez. `claudeCode.compatibility: "enforce"` thinking yeniden oynatmasını hâlâ reddeder. Bu, gerçek Anthropic kabulünü veya önbellek iyileşmesini kanıtlamaz; [#3719](https://github.com/lidge-jun/opencodex/issues/3719) açık kalır.
+
 **Hata durumları (400):** hatalı biçimlendirilmiş JSON; eksik/boş `model`;
 eksik/boş `messages`; desteklenmeyen rol; `tool_use_id` içermeyen `tool_result`;
 kimlik/ad içermeyen `tool_use`; ad içermeyen adlandırılmış `tool_choice`.

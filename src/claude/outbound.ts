@@ -234,6 +234,9 @@ export function responsesSseToAnthropicSse(
   let bufferBytes = 0;
   let started = false;
   let terminated = false;
+  // Starting termination can still throw while closing a block or emitting its
+  // terminal frame. Only a delivered terminal forbids the bounded overflow error.
+  let terminalDelivered = false;
   let cancelled = false;
   let blockIndex = 0;
   let open: OpenBlock | null = null;
@@ -338,6 +341,7 @@ export function responsesSseToAnthropicSse(
           usage: anthropicUsage(usage, webSearchRequests),
         });
         emit("message_stop", { type: "message_stop" });
+        terminalDelivered = true;
       };
       // upstreamDerived: transient upstream statuses become overloaded_error so the
       // Anthropic-SDK client retries with backoff; proxy-internal exceptions stay
@@ -346,12 +350,15 @@ export function responsesSseToAnthropicSse(
       // resets reach the reader catch (no failed-tail relay) and stay api_error —
       // same as today, deliberate residual.
       const fail = (status: number, message: string, upstreamDerived = false, code?: string) => {
-        if (terminated) return;
+        // finish/fail sets terminated before closeOpenBlock. A closure-time
+        // allocation failure must still emit one error, without retrying closure.
+        if (terminated && (code !== "translation_buffer_limit" || terminalDelivered)) return;
         terminated = true;
         if (code === "translation_buffer_limit") {
           releaseThinkingBuffer(open);
           if (open?.callId) translatorBudget.closeCall(open.callId);
           open = null;
+          terminalDelivered = true;
           // No normal close frames are valid after overflow. Emit exactly one bounded
           // typed terminal without consulting the exhausted budget.
           controller.enqueue(encoder.encode(sseFrame("error", anthropicErrorBody(
@@ -368,10 +375,12 @@ export function responsesSseToAnthropicSse(
           // Do not manufacture message_start before the terminal error. Earlier transport-only
           // pings remain valid and do not turn the failure into a partial message.
           emit("error", anthropicErrorBody(status, message, type, code));
+          terminalDelivered = true;
           return;
         }
         closeOpenBlock();
         emit("error", anthropicErrorBody(status, message, type, code));
+        terminalDelivered = true;
       };
 
       const handleFrame = (eventName: string, data: Rec) => {
@@ -559,7 +568,10 @@ export function responsesSseToAnthropicSse(
                 if (env?.sig) open.reasoningSig = env.sig;
                 closeOpenBlock();
               }
-              if (red.length > 0) ensureStarted();
+              if (red.length > 0) {
+                ensureStarted();
+                closeOpenBlock();
+              }
               for (const data of red) {
                 const idx = blockIndex++;
                 emit("content_block_start", { type: "content_block_start", index: idx, content_block: { type: "redacted_thinking", data } });
@@ -806,10 +818,14 @@ export function responsesJsonToAnthropicMessage(json: unknown, model: string): R
         }
         const encrypted = typeof raw.encrypted_content === "string" ? raw.encrypted_content : "";
         const env = encrypted ? decodeReasoningEnvelope(encrypted) : null;
+        // Legacy combined envelopes place redacted blocks before the signed block,
+        // matching the Anthropic adapter. New bridge output uses separate items.
+        for (const data of env?.red ?? []) content.push({ type: "redacted_thinking", data });
+        // env.txt may be locally hidden text. Do not expose it here or manufacture
+        // a new signed continuity carrier; hidden-summary replay remains limited.
         if (parts.length > 0 || env?.sig) {
           content.push({ type: "thinking", thinking: parts.join("\n\n"), signature: env?.sig ?? encodeReasoningEnvelope({ txt: parts.join("\n\n") }) });
         }
-        for (const data of env?.red ?? []) content.push({ type: "redacted_thinking", data });
         break;
       }
       case "function_call": {
@@ -974,9 +990,10 @@ export async function collectAnthropicMessage(
   } finally {
     reader.releaseLock();
   }
-  closeBlock();
-
+  // Error is authoritative. In particular, do not allocate another copy of an
+  // unfinished thinking block after the translator reported closure overflow.
   if (error) return error;
+  closeBlock();
   return {
     id: `msg_${uuid()}`,
     type: "message",

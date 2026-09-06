@@ -506,6 +506,8 @@ Le proxy traduit chaque requête Anthropic Messages API au format Codex Response
 | `max_tokens` | `max_output_tokens` |
 | `stop_sequences` | `stop` |
 
+Sur l’adaptateur Anthropic prévu, les blocs signés non masqués (y compris thinking vide) et les blocs redacted opaques sont préservés. `hideThinkingSummary` reste inchangé : le texte signé masqué localement n’est pas exposé aux clients Claude ; sa relecture sans perte via cette frontière reste non établie. Les anciennes enveloppes combinées ne permettent pas de rétablir l’ordre après émission du texte en streaming. `claudeCode.compatibility: "enforce"` refuse toujours la relecture thinking. Cela ne prouve ni l’acceptation réelle par Anthropic ni une amélioration du cache ; [#3719](https://github.com/lidge-jun/opencodex/issues/3719) reste ouvert.
+
 **Cas d'erreur (400) :** JSON mal formé ; `model` absent ou vide ; `messages` absent ou vide ; rôle non pris en charge ;
 `tool_result` sans `tool_use_id` ; `tool_use` sans identifiant ni nom ; `tool_choice` nommé sans nom.
 

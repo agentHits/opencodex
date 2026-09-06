@@ -34,8 +34,8 @@ describe("reasoning and tool/result envelopes", () => {
     const message = responsesJsonToAnthropicMessage({
       output: [{ type: "reasoning", summary: [{ type: "summary_text", text: "visible" }], encrypted_content: encoded }],
     }, "m") as any;
-    expect(message.content[0]).toMatchObject({ type: "thinking", signature: "sig" });
-    expect(message.content.slice(1)).toEqual([
+    expect(message.content[2]).toMatchObject({ type: "thinking", signature: "sig" });
+    expect(message.content.slice(0, 2)).toEqual([
       { type: "redacted_thinking", data: "red-a" },
       { type: "redacted_thinking", data: "red-b" },
     ]);
