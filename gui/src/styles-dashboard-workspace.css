@@ -620,6 +620,15 @@
   min-width: 0;
 }
 
+.dash-overview-stack .dash-delegation-controls .select-trigger > span,
+.dash-effort-controls .select-trigger > span,
+.dash-shadow-controls .select-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dash-overview-stack .dash-sidecar-row-card .dash-sidecar-copy {
   min-width: 0;
 }
