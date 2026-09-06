@@ -3720,6 +3720,17 @@ async function handleResponsesInner(
     }
     return null;
   };
+  const refreshResolvedOAuthSelection = async (sent: OAuthAccessSnapshot): Promise<OAuthAccessSnapshot> => {
+    const current = captureOAuthAccountSelection(route.providerName);
+    const unchanged = current?.accountId === oauthSelection?.accountId
+      && current?.revision === oauthSelection?.revision;
+    const candidate = unchanged ? await forceRefreshOAuthAccessSnapshot(sent) : sent;
+    const admitted = await commitResolvedOAuthSelection(candidate);
+    if (!admitted) throw new Error("OAuth selection changed during credential recovery");
+    genericFailoverAccountId = admitted.accountId;
+    stampOAuthAccountLabel(logCtx, route.providerName, route.provider, admitted.accountId);
+    return admitted;
+  };
   /**
    * Config generation captured where the serving credential is RESOLVED, not where the
    * quota is written. A streaming turn is a long await, so a generation captured at write
@@ -4804,7 +4815,7 @@ async function handleResponsesInner(
       try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
       let refreshed: OAuthAccessSnapshot;
       try {
-        refreshed = await forceRefreshOAuthAccessSnapshot(sentOAuthSnapshot);
+        refreshed = await refreshResolvedOAuthSelection(sentOAuthSnapshot);
       } catch (err) {
         upstream.abort();
         releaseCodexAuthContextProbeLease(authCtx);
@@ -6671,7 +6682,7 @@ async function handleResponsesInner(
         try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
         let refreshed: OAuthAccessSnapshot;
         try {
-          refreshed = await forceRefreshOAuthAccessSnapshot(sentOAuthSnapshot);
+          refreshed = await refreshResolvedOAuthSelection(sentOAuthSnapshot);
         } catch (err) {
           cleanupUpstreamAbort();
           return formatErrorResponse(401, "authentication_error", publicOAuthAuthenticationErrorMessage(err));

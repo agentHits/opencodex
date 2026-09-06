@@ -161,7 +161,7 @@ afterEach(() => {
 
 describe("GitHub Copilot bearer/origin snapshot atomicity", () => {
   for (const wire of ["chat", "responses"] as const) {
-    test(`${wire} initial refresh keeps account A's origin after B becomes active`, async () => {
+    test(`${wire} initial admission follows a newer manual selection with its matching origin`, async () => {
       const accounts = await seedAccounts(0);
       const observed = installFetch({
         wire,
@@ -175,12 +175,12 @@ describe("GitHub Copilot bearer/origin snapshot atomicity", () => {
 
       expect(response.status).toBe(200);
       expect(observed.dispatches).toEqual([{
-        origin: ACCOUNT_A_ORIGIN,
-        authorization: bearer("copilot-access-a-refreshed"),
+        origin: ACCOUNT_B_ORIGIN,
+        authorization: bearer("copilot-access-b"),
       }]);
     });
 
-    test(`${wire} 401 replay keeps refreshed account A's origin after B becomes active`, async () => {
+    test(`${wire} 401 replay follows a newer manual selection with its matching origin`, async () => {
       const accounts = await seedAccounts();
       const observed = installFetch({
         wire,
@@ -195,7 +195,7 @@ describe("GitHub Copilot bearer/origin snapshot atomicity", () => {
       expect(response.status).toBe(200);
       expect(observed.dispatches).toEqual([
         { origin: ACCOUNT_A_ORIGIN, authorization: bearer("copilot-access-a") },
-        { origin: ACCOUNT_A_ORIGIN, authorization: bearer("copilot-access-a-refreshed") },
+        { origin: ACCOUNT_B_ORIGIN, authorization: bearer("copilot-access-b") },
       ]);
     });
   }

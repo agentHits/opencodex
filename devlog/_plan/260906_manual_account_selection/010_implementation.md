@@ -61,3 +61,5 @@ Independent reviewer verdict: GO-WITH-FIXES(blockers=5). All five are folded int
 5. Quota eligibility explicitly distinguishes known exhaustion from unknown, including Kiro overage rules. Parameterized provider coverage includes Kiro and passive providers.
 
 B lane allocation (approved plan): main owns core.ts, OAuth management route/SSE route registration, generic selector/rank and integration proof/docs; store lane owns oauth/types.ts+store.ts, leaf account-selection event bus, and oauth-store-multi.test.ts; backend lane owns Anthropic routing+tests and API-key source/router/transport+tests including types/provider.ts; frontend lane owns the3GUI sourcefiles and2testfiles above. No worker changes maincore or another lane's files. Independent context review follows integration.
+
+Latest explicit verification restriction: do not run repository-wide tests. The earlier full-suite requirement is superseded. One attempted full run was interrupted by user at exit130; it is not completion proof. Resolve observed failures with their specific test files, run focused affected checks and typecheck, then push --no-verify and merge the single PR.
