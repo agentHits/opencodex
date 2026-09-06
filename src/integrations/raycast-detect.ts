@@ -10,7 +10,7 @@
  * GUI need to explain a file that is written but ignored.
  *
  * Detection is read-only and injectable, like cursor-detect.ts: nothing here
- * touches the Raycast install or its preferences, and the tests run against
+ * writes to the Raycast install or its preferences, and the tests run against
  * stubbed deps rather than the machine they execute on.
  */
 import { existsSync } from "node:fs";
@@ -37,7 +37,8 @@ export interface RaycastDetectDeps {
 }
 
 /**
- * The preference Raycast writes for its subscription state. Read through
+ * A private preference used only as an advisory subscription hint, not an
+ * entitlement API or a condition for writes. Read through
  * `defaults` rather than by parsing the plist: cfprefsd caches writes, so the
  * file on disk can lag what the running app believes.
  */

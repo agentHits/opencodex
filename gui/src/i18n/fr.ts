@@ -1734,7 +1734,7 @@ export const fr: Record<TKey, string> = {
   "integrations.semantics.aside": "Gère uniquement providers.opencodex dans le fichier ~/.aside/u/<id>/models.json de ce profil. Vos autres fournisseurs restent inchangés. Quittez complètement Aside et relancez-le après application.",
   "integrations.semantics.raycast": "Ajoute une entrée de fournisseur OpenCodex dans le providers.yaml de Raycast afin que chaque modèle routé apparaisse dans le sélecteur de modèles de Raycast AI. Raycast Pro requis.",
   "integrations.raycast.proRequired": "Custom Providers est une fonctionnalité Raycast Pro. Le fichier sera écrit, mais Raycast l'ignore tant qu'un abonnement Pro n'est pas actif.",
-  "integrations.raycast.planUnknown": "Impossible de lire l'état de l'abonnement Raycast ; Custom Providers nécessite Raycast Pro.",
+  "integrations.raycast.planUnknown": "Impossible de déterminer si Raycast Pro est actif ; Custom Providers nécessite Raycast Pro.",
   "integrations.raycast.revealConfig": "Ouvrez Raycast → Réglages → AI et cliquez une fois sur « Reveal Providers Config » pour que le dossier des fournisseurs existe.",
   "codexAuth.mainAccount": "Compte principal",
   "codexAuth.logLabel": "Libellé du journal",

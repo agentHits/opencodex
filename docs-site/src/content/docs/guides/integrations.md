@@ -73,14 +73,22 @@ not honor `XDG_CONFIG_HOME`, so that path is not relocatable.
 
 The managed block is one element, `id: opencodex`, in the file's `providers`
 sequence: `name: OpenCodex`, `base_url: http://<host>:<port>/v1`, and every
-routed model with its `abilities` — `tools` and `system_message` are always
-supported, `vision` follows the catalog's input modalities, `reasoning_effort`
+routed model with its `abilities` — the exporter sets `tools` and `system_message` to
+`true` as a client-export convention, `vision` follows the catalog's input modalities, `reasoning_effort`
 is set when the model has an effort ladder, and `temperature` is turned off for
 reasoning models. Other providers in the file are preserved, and disable removes
 only the OpenCodex element. Raycast picks up the change as soon as the file is
 saved, no restart needed; the models appear in Raycast's model picker grouped
-under **OpenCodex**. The file has no place for a credential, so this client is
-loopback-only: no `api_keys` entry is written and a non-loopback bind is refused.
+under **OpenCodex**. Raycast supports optional `api_keys`, but OpenCodex intentionally
+omits them and refuses non-loopback or admission-authenticated targets; this integration
+cannot supply OpenCodex's required admission header.
+
+The macOS private preference is only an advisory Pro hint; Windows never reads it and
+reports the plan as unknown. Plan detection does not authorize or block a write.
+The export metadata has no authoritative tool-support flag, so `tools: true` does not
+prove every routed model supports tools. Vision and effort flags follow catalog metadata;
+turning temperature off for an effort ladder is conservative export behavior.
+Provider values are preserved; YAML formatting and comments are not guaranteed to survive.
 The format is documented at
 [manual.raycast.com/ai/custom-providers](https://manual.raycast.com/ai/custom-providers).
 

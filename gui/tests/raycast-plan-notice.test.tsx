@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { I18nContext, type TFn } from "../src/i18n/shared";
+import { DICTS, I18nContext, type TFn } from "../src/i18n/shared";
 import RaycastPlanNotice from "../src/pages/integrations/RaycastPlanNotice";
 import type { RaycastInstall } from "../src/pages/integrations/integration-api";
 
@@ -14,11 +14,11 @@ import type { RaycastInstall } from "../src/pages/integrations/integration-api";
 
 const echoT: TFn = key => key;
 
-function render(install: RaycastInstall): string {
+function render(install: RaycastInstall, t: TFn = echoT): string {
   return renderToStaticMarkup(
     createElement(
       I18nContext.Provider,
-      { value: { locale: "en", setLocale: () => {}, t: echoT } },
+      { value: { locale: "en", setLocale: () => {}, t } },
       createElement(RaycastPlanNotice, { install }),
     ),
   );
@@ -36,7 +36,7 @@ test("a free plan is a warning notice, never a refusal", () => {
   expect(markup).not.toContain("integrations.raycast.planUnknown");
 });
 
-test("an unreadable plan stays muted, because non-macOS hosts have no signal", () => {
+test("an unknown plan stays muted, because non-macOS hosts have no signal", () => {
   const markup = render({ plan: "unknown", appPath: null, aiDirPresent: true });
   expect(markup).toContain('data-raycast-plan="unknown"');
   expect(markup).toContain("integrations.raycast.planUnknown");
@@ -48,4 +48,14 @@ test("a missing ai folder adds the reveal hint independently of the plan", () =>
   expect(markup).toContain("integrations.raycast.proRequired");
   expect(markup).toContain('data-raycast-ai-dir="absent"');
   expect(markup).toContain("integrations.raycast.revealConfig");
+});
+
+test("a Windows install reports unknown Pro activity without claiming a preference read failed", () => {
+  const markup = render({
+    plan: "unknown", appPath: "C:\\Users\\u\\AppData\\Local\\Programs\\Raycast", aiDirPresent: true,
+  }, key => DICTS.en[key]);
+  expect(markup).toContain("Could not determine whether Raycast Pro is active");
+  expect(markup).not.toContain("Could not read");
+  expect(markup).not.toContain("notice-warn");
+  expect(markup).not.toContain("<button");
 });

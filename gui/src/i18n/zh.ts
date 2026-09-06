@@ -1272,7 +1272,7 @@ export const zh: Record<TKey, string> = {
   "integrations.semantics.aside": "仅管理此配置文件的 ~/.aside/u/<id>/models.json 中的 providers.opencodex。其他提供商保持不变。应用后请完全退出并重新打开 Aside。",
   "integrations.semantics.raycast": "在 Raycast 的 providers.yaml 中添加一个 OpenCodex 提供商条目，让所有已路由的模型出现在 Raycast AI 模型选择器中。需要 Raycast Pro。",
   "integrations.raycast.proRequired": "Custom Providers 是 Raycast Pro 功能。文件会被写入，但在 Pro 订阅生效之前 Raycast 会忽略它。",
-  "integrations.raycast.planUnknown": "无法读取 Raycast 订阅状态；Custom Providers 需要 Raycast Pro。",
+  "integrations.raycast.planUnknown": "无法确定 Raycast Pro 是否已激活；Custom Providers 需要 Raycast Pro。",
   "integrations.raycast.revealConfig": "打开 Raycast → 设置 → AI，点击一次“Reveal Providers Config”，以便创建 providers 文件夹。",
   "codexAuth.mainAccount": "主账号",
   "codexAuth.logLabel": "日志标签",

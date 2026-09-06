@@ -51,7 +51,7 @@ export class AmbiguousSelectorError extends Error {
 }
 
 /** The index of the element a selector names, -1 when none matches. */
-function selectIndex(items: readonly unknown[], field: string, value: string): number {
+export function selectIndex(items: readonly unknown[], field: string, value: string): number {
   const matches: number[] = [];
   items.forEach((item, index) => {
     if (isPlainRecord(item) && item[field] === value) matches.push(index);
@@ -249,7 +249,7 @@ export function createdContainerPaths(
         case "select": {
           // A selector that matches nothing means setPath will push the element.
           next = Array.isArray(cursor)
-            ? cursor.find(item => isPlainRecord(item) && item[segment.field] === segment.value)
+            ? cursor[selectIndex(cursor, segment.field, segment.value)]
             : undefined;
           break;
         }

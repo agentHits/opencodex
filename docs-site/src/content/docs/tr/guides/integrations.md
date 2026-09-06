@@ -1,10 +1,10 @@
 ---
 title: Entegrasyonlar
-description: Kontrol panelinden OpenCode, Pi, OMP, Hermes, OpenClaw, Kimi Code, Gajae Code, DeepSeek Harness, MiniMax Code ve Raycast'i opencodex'e bağlayın — istemci başına tek bir anahtar ve her yazmadan önce alınan bir yedek.
+description: Kontrol panelinden OpenCode, Pi, OMP, Hermes, OpenClaw, Kimi Code, Gajae Code, DeepSeek Harness, MiniMax Code, ZCode, Prime Agent, Aside ve Raycast'i opencodex'e bağlayın — istemci başına tek bir anahtar ve her yazmadan önce alınan bir yedek.
 ---
 
 **Entegrasyonlar** sekmesi, opencodex'in sağlayıcı bloğunu istemcinin kendi
-yapılandırma dosyasına yazar ve tekrar kaldırır. On istemci bu şekilde
+yapılandırma dosyasına yazar ve tekrar kaldırır. On üç istemci bu şekilde
 çalışır, her biri bir anahtarla:
 
 | İstemci | Yapılandırma dosyası | Format | Değişiklik ne zaman geçerli olur? | Kimlik bilgisi |
@@ -18,6 +18,9 @@ yapılandırma dosyasına yazar ve tekrar kaldırır. On istemci bu şekilde
 | Gajae Code | `~/.gjc/agent/models.yml` | YAML | yeni oturumlarda veya `/model` açtığınızda | `OPENCODEX_GAJAE_API_KEY` |
 | DeepSeek Harness (DSH) | `$DSH_HOME/settings.yaml` (varsayılan `~/.dsh/settings.yaml`) | YAML | çalışırken yeniden yükleme | gizli olmayan geri döngü bearer yer tutucusu |
 | MiniMax Code | `~/.minimax/config.yaml` | YAML | yeni oturumlarda veya model seçici açıldıktan sonra | geri döngü (loopback) yer tutucusu |
+| Prime Agent | `~/.prime/agent/models.json` | JSON | yeni oturumlarda | geri döngü yer tutucusu |
+| ZCode | `~/.zcode/v2/config.json` | JSON | yeniden başlatmada | geri döngü yer tutucusu |
+| Aside | `~/.aside/u/<account>/models.json` | JSON | Aside tamamen kapatılıp yeniden açıldıktan sonra | geri döngü yer tutucusu |
 | Raycast | `~/.config/raycast/ai/providers.yaml` | YAML | kaydedildiği anda — Raycast dosyayı izler | yok — yalnızca geri döngü |
 
 Yönetilen DSH desteğinin en düşük uyumlu sürümü **DSH 0.1.0-rc.6**'dır. OpenCodex yalnızca
@@ -48,14 +51,18 @@ yol taşınamaz.
 
 Yönetilen blok, dosyanın `providers` dizisindeki tek bir öğedir: `id: opencodex`,
 `name: OpenCodex`, `base_url: http://<host>:<port>/v1` ve `abilities` alanıyla birlikte
-yönlendirilen her model — `tools` ve `system_message` her zaman destekli, `vision`
+yönlendirilen her model — dışa aktarma kuralı olarak `tools` ve `system_message` değeri `true` olur, `vision`
 kataloğun giriş modalitelerini izler, `reasoning_effort` modelin bir çaba merdiveni
 varsa ayarlanır ve `temperature` akıl yürütme modelleri için kapatılır. Dosyadaki diğer
 sağlayıcılar korunur ve devre dışı bırakma yalnızca OpenCodex öğesini kaldırır. Raycast
 değişikliği dosya kaydedilir kaydedilmez, yeniden başlatma gerekmeden alır; modeller
-Raycast'in model seçicisinde **OpenCodex** altında gruplanmış olarak görünür. Dosyada
-kimlik bilgisi için bir yer yoktur, bu yüzden bu istemci yalnızca geri döngü içindir:
-hiçbir `api_keys` girdisi yazılmaz ve geri döngü dışı bir bağlama reddedilir. Format
+Raycast'in model seçicisinde **OpenCodex** altında gruplanmış olarak görünür. Raycast şeması
+isteğe bağlı `api_keys` alanını destekler; OpenCodex bu alanı bilerek yazmaz ve geri döngü
+dışı veya kimlik doğrulaması gerektiren hedefleri reddeder. Bu entegrasyon OpenCodex'in
+zorunlu kabul başlığını sağlayamaz. macOS'taki özel tercih yalnızca bir Pro ipucudur;
+Windows bu tercihi hiç okumaz ve durumu bilinmiyor olarak bildirir. Bu bilgi yazmayı engellemez.
+Dışa aktarılan meta veriler her modelin araç desteğini doğrulamaz. Diğer sağlayıcıların
+değerleri korunur; YAML biçimlendirmesi ve yorumlarının korunması garanti edilmez. Format
 [manual.raycast.com/ai/custom-providers](https://manual.raycast.com/ai/custom-providers)
 adresinde belgelenmiştir.
 

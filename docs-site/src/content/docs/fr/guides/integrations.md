@@ -1,10 +1,10 @@
 ---
 title: Intégrations
-description: Connectez opencodex à OpenCode, Pi, OMP, Hermes, OpenClaw, Kimi Code, Gajae Code, DeepSeek Harness, MiniMax Code et Raycast depuis le tableau de bord — un commutateur par client, avec une sauvegarde avant chaque écriture.
+description: Connectez opencodex à OpenCode, Pi, OMP, Hermes, OpenClaw, Kimi Code, Gajae Code, DeepSeek Harness, MiniMax Code, ZCode, Prime Agent, Aside et Raycast depuis le tableau de bord — un commutateur par client, avec une sauvegarde avant chaque écriture.
 ---
 
 L'onglet **Intégrations** écrit le bloc fournisseur d'opencodex dans le fichier de configuration du client,
-puis peut le retirer. Dix clients fonctionnent ainsi, chacun avec son propre commutateur :
+puis peut le retirer. Treize clients fonctionnent ainsi, chacun avec son propre commutateur :
 
 | Client | Fichier de configuration | Format | Prise d'effet de la modification | Identifiant |
 |---|---|---|---|---|
@@ -17,6 +17,9 @@ puis peut le retirer. Dix clients fonctionnent ainsi, chacun avec son propre com
 | Gajae Code | `~/.gjc/agent/models.yml` | YAML | dans les nouvelles sessions ou à l'ouverture de `/model` |`OPENCODEX_GAJAE_API_KEY` |
 | DeepSeek Harness (DSH) | `$DSH_HOME/settings.yaml` (`~/.dsh/settings.yaml` par défaut) | YAML | rechargement à chaud | jeton porteur fictif et non secret pour le bouclage |
 | MiniMax Code | `~/.minimax/config.yaml` | YAML | dans les nouvelles sessions ou après l’ouverture du sélecteur de modèles | valeur fictive de bouclage |
+| Prime Agent | `~/.prime/agent/models.json` | JSON | dans les nouvelles sessions | valeur fictive de bouclage |
+| ZCode | `~/.zcode/v2/config.json` | JSON | au redémarrage | valeur fictive de bouclage |
+| Aside | `~/.aside/u/<account>/models.json` | JSON | après avoir quitté complètement puis rouvert Aside | valeur fictive de bouclage |
 | Raycast | `~/.config/raycast/ai/providers.yaml` | YAML | immédiatement à l'enregistrement — Raycast surveille le fichier | aucun — bouclage uniquement |
 
 La prise en charge gérée de DSH exige au minimum **DSH 0.1.0-rc.6**. OpenCodex ne possède que le fragment
@@ -45,14 +48,18 @@ d'installation et indique que le client n'est pas installé tant qu'il n'existe 
 
 Le bloc géré est un seul élément, `id: opencodex`, dans la séquence `providers` du fichier :
 `name: OpenCodex`, `base_url: http://<host>:<port>/v1`, et chaque modèle routé avec ses `abilities` —
-`tools` et `system_message` sont toujours pris en charge, `vision` suit les modalités d'entrée du
+`tools` et `system_message` sont définis à `true` par convention d’export, `vision` suit les modalités d'entrée du
 catalogue, `reasoning_effort` est défini lorsque le modèle dispose d'une échelle d'effort, et
 `temperature` est désactivé pour les modèles de raisonnement. Les autres fournisseurs du fichier sont
 préservés, et la désactivation ne retire que l'élément OpenCodex. Raycast prend en compte la
 modification dès l'enregistrement du fichier, sans redémarrage ; les modèles apparaissent dans le
-sélecteur de modèles de Raycast regroupés sous **OpenCodex**. Le fichier n'a aucun emplacement pour
-un identifiant, ce client est donc limité au bouclage : aucune entrée `api_keys` n'est écrite et une
-liaison hors bouclage est refusée. Le format est documenté sur
+sélecteur de modèles de Raycast regroupés sous **OpenCodex**. Raycast accepte le champ facultatif
+`api_keys`, mais OpenCodex l’omet volontairement et refuse les cibles hors bouclage ou exigeant
+authentification : cette intégration ne fournit pas l’en-tête d’admission requis par OpenCodex.
+Le signal Pro issu d’une préférence privée macOS est indicatif ; Windows ne la lit jamais et
+renvoie un état inconnu. Il ne bloque pas l’écriture. Les métadonnées exportées ne prouvent pas
+la prise en charge des outils pour chaque modèle. Les valeurs des autres fournisseurs sont
+préservées, sans garantie pour les commentaires ou la mise en forme YAML. Le format est documenté sur
 [manual.raycast.com/ai/custom-providers](https://manual.raycast.com/ai/custom-providers).
 
 Les chemins respectent les variables de remplacement propres à chaque client, lorsqu'elles existent. Pour
@@ -115,7 +122,7 @@ niveaux. Dans ces cas, le commutateur est verrouillé afin que rien ne soit modi
 **OMP** n'est pas affecté non plus par les modifications voisines, mais pour une autre raison : son outil
 d'écriture ne modifie, octet par octet, que sa propre plage `providers.opencodex` ; le reste du fichier
 n'est jamais réécrit. Pour les autres formats susceptibles de contenir des commentaires (Hermes, OpenClaw,
-Kimi Code, Gajae Code, MiniMax Code et Raycast — documents YAML, JSON5 et TOML réécrits en entier), ou lorsque les propres entrées
+Kimi Code, Gajae Code, MiniMax Code, ZCode, Prime Agent, Aside et Raycast — documents YAML, JSON5 et TOML réécrits en entier), ou lorsque les propres entrées
 d'opencodex ont été modifiées, le commutateur se verrouille et la désactivation est refusée plutôt que de
 deviner quelles modifications vous appartiennent.
 

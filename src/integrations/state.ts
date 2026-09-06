@@ -12,7 +12,7 @@ import { ClientPathError, EXPORT_CLIENTS, opencodeProxyBaseUrl, type ExportModel
 import type { OcxConfig } from "../types";
 import { PARSE_FAILED, loadTarget, parseConfig, type IntegrationIO } from "./config-io";
 import { SNAPSHOT_RETENTION } from "./journal";
-import { parseSegment, type PathSegment } from "./merge";
+import { AmbiguousSelectorError, parseSegment, selectIndex, type PathSegment } from "./merge";
 import { canonicalContribution, fingerprint, semanticContribution, type OwnershipRecord } from "./ownership";
 import {
   protectedContributionFingerprint,
@@ -36,6 +36,7 @@ export type StateReason =
   | "unowned-key"
   /** A container we would have to write through holds a non-object value. */
   | "blocked-container"
+  | "ambiguous-selector"
   /** A path selector we cannot resolve, e.g. a relative OPENCLAW_CONFIG_PATH. */
   | "unresolvable-path";
 
@@ -63,7 +64,7 @@ function assertNever(segment: never): never {
 
 /** The element a selector names, or `undefined` when none matches. */
 function selectElement(items: readonly unknown[], segment: PathSegment & { kind: "select" }): unknown {
-  return items.find(item => isPlainRecord(item) && item[segment.field] === segment.value);
+  return items[selectIndex(items, segment.field, segment.value)];
 }
 
 /**
@@ -291,8 +292,24 @@ export function classifyIntegration(input: {
    * Checked BEFORE `absent`: our leaf is missing in exactly this case, so the
    * absent branch would authorize an apply that replaces the user's value.
    */
-  if (blockedContainerPath(input.parsed, input.contribution)) {
-    return { state: "unsafe", reason: "blocked-container" };
+  try {
+    if (blockedContainerPath(input.parsed, input.contribution)) {
+      return { state: "unsafe", reason: "blocked-container" };
+    }
+    // Check every selector before presence/fingerprint short-circuits, including
+    // paths an older ownership record may remove during refresh or disable.
+    const paths = [
+      ...input.contribution.fragments.map(fragment => fragment.path),
+      ...(input.record?.fragmentPaths ?? []),
+    ];
+    for (const path of paths) {
+      if (Array.isArray(path) && path.every(key => typeof key === "string")) {
+        readPath(input.parsed, path);
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof AmbiguousSelectorError)) throw error;
+    return { state: "unsafe", reason: "ambiguous-selector" };
   }
   if (!hasOurFragments(input.parsed, input.contribution)) return { state: "absent" };
 

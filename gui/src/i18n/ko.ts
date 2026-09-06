@@ -1279,7 +1279,7 @@ export const ko: Record<TKey, string> = {
   "integrations.semantics.aside": "이 프로필의 ~/.aside/u/<id>/models.json에서 providers.opencodex만 관리합니다. 다른 프로바이더는 그대로 유지됩니다. 적용 후 Aside를 완전히 종료하고 다시 여세요.",
   "integrations.semantics.raycast": "Raycast의 providers.yaml에 OpenCodex 프로바이더 항목을 추가해 라우팅된 모든 모델이 Raycast AI 모델 선택기에 표시되도록 합니다. Raycast Pro가 필요합니다.",
   "integrations.raycast.proRequired": "Custom Providers는 Raycast Pro 기능입니다. 파일은 기록되지만 Pro 구독이 활성화될 때까지 Raycast는 이를 무시합니다.",
-  "integrations.raycast.planUnknown": "Raycast 구독 상태를 읽을 수 없습니다. Custom Providers에는 Raycast Pro가 필요합니다.",
+  "integrations.raycast.planUnknown": "Raycast Pro 활성 여부를 확인할 수 없습니다. Custom Providers에는 Raycast Pro가 필요합니다.",
   "integrations.raycast.revealConfig": "Raycast → 설정 → AI를 열고 「Reveal Providers Config」를 한 번 클릭해 providers 폴더를 만드세요.",
   "codexAuth.mainAccount": "메인 계정",
   "codexAuth.logLabel": "로그 라벨",

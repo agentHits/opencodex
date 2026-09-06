@@ -321,7 +321,9 @@ function applyOrRefreshIntegration(
     return refuse(clientId, "unsafe", "unsafe",
       classified.reason === "blocked-container"
         ? `${configPath} holds a value where opencodex would have to write a section, so applying would replace it`
-        : `${configPath} cannot be changed safely`);
+        : classified.reason === "ambiguous-selector"
+          ? `${configPath} has more than one entry matching a managed selector`
+          : `${configPath} cannot be changed safely`);
   }
   /*
    * An implicit catalog sync is refresh-only. Keeping this decision inside the
@@ -511,7 +513,9 @@ export function disableIntegration(input: IntegrationWriteInput): WriteOutcome {
     return refuse(clientId, "unsafe", "unsafe",
       classified.reason === "blocked-container"
         ? `${configPath} holds a value where opencodex would have to read a section, so nothing can be removed safely`
-        : `${configPath} cannot be changed safely`);
+        : classified.reason === "ambiguous-selector"
+          ? `${configPath} has more than one entry matching a managed selector`
+          : `${configPath} cannot be changed safely`);
   }
 
   /*

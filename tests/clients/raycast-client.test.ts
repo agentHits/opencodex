@@ -10,6 +10,7 @@ import {
   buildClientContribution,
   raycastAiDir,
   raycastConfigPath,
+  summarizeRaycast,
   type ExportContext,
   type ExportModel,
   type RaycastGeneratedConfig,
@@ -73,6 +74,7 @@ beforeEach(() => {
 
 afterEach(() => {
   removeTreeWithRetry(home);
+  removeTreeWithRetry(store.root);
 });
 
 /** Raycast "installed" for our purposes: the `ai` directory exists. */
@@ -123,6 +125,25 @@ describe("Raycast client config", () => {
     expect("context" in unknown).toBe(false);
   });
 
+  test("summarizes unknown file shapes without trusting parsed YAML", () => {
+    const empty = { modelCount: 0, modelsWithoutLimits: 0 };
+    for (const document of [undefined, null, false, 42, "providers", [], {},
+      { providers: null }, { providers: {} }, { providers: "bad" },
+      { providers: [null, false, "bad", [], {}] },
+      ...[undefined, null, false, 42, "bad", {}].map(models => ({ providers: [{ id: "opencodex", models }] })),
+      { providers: [{ id: "opencodex", models: [] }, { id: "opencodex", models: [] }] },
+    ]) expect(summarizeRaycast(document)).toEqual(empty);
+    expect(summarizeRaycast({ providers: [null, { id: "foreign", models: "bad" }, {
+      id: "opencodex", models: [null, false, 1, "bad", [], {}, { id: "x" },
+        { id: "", name: "empty id" }, { id: "x", name: 1 },
+        { id: "known", name: "Known", context: 1000 },
+        { id: "unknown", name: "Unknown" },
+        { id: "invalid", name: "Invalid", context: "1000" },
+        { id: "negative", name: "Negative", context: -1 },
+      ],
+    }] })).toEqual({ modelCount: 4, modelsWithoutLimits: 3 });
+  });
+
   test("uses product labels instead of raw slugs or provider suffixes", () => {
     expect(exportPresentationLabel({
       namespaced: "anthropic/claude-fable-5-1", provider: "anthropic", id: "claude-fable-5-1",
@@ -137,9 +158,9 @@ describe("Raycast client config", () => {
 
   /*
    * Abilities follow the catalog row, not the vendor name. Temperature and
-   * reasoning_effort are the same bit inverted: Raycast's own template notes
-   * that reasoning models commonly reject temperature. system_message and
-   * tools are always on, the same stance as Hermes.
+   * reasoning_effort use opposite flags as a conservative export convention.
+   * This is not a complete per-model capability oracle. system_message and
+   * tools retain the client export convention, not verified per-model support.
    */
   test("maps vision and reasoning ladders onto abilities per model", () => {
     const document = buildClientConfig("raycast", context()) as RaycastGeneratedConfig;
@@ -250,6 +271,28 @@ describe("Raycast client config", () => {
     expect(ourProvider(readProviders(configPath)).models.map(model => model.id))
       .toEqual(fewer.map(model => model.namespaced).sort());
   });
+
+  test("implicit catalog refresh neither loads models nor connects an unowned Raycast", async () => {
+    const configPath = installRaycast(USER_SEED);
+    const outcomes = await refreshOwnedCatalogIntegrations({
+      ...request(),
+      models: async () => { throw new Error("unowned client must not load models"); },
+    }, ["raycast"]);
+    expect(outcomes).toEqual([]);
+    expect(readFileSync(configPath, "utf8")).toBe(USER_SEED);
+    expect(store.readRecords().raycast).toBeUndefined();
+    expect(store.listOperations("raycast")).toEqual([]);
+  });
+
+  for (const hostname of ["0.0.0.0", "192.0.2.1"]) {
+    test(`refuses admission-authenticated bind ${hostname} without changing the file`, () => {
+      const configPath = installRaycast(USER_SEED);
+      const result = applyIntegration({ ...request(), config: { ...CONFIG, hostname } });
+      expect(result).toMatchObject({ ok: false, reason: "non_loopback" });
+      expect(readFileSync(configPath, "utf8")).toBe(USER_SEED);
+      expect(store.listOperations("raycast")).toEqual([]);
+    });
+  }
 
   test("refuses a file whose providers is a map rather than a sequence", () => {
     // `providers: {}` is a container we would have to REPLACE with `[]` to

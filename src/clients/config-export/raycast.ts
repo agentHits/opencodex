@@ -49,6 +49,8 @@ export function buildRaycastClientConfig(ctx: ExportContext): RaycastGeneratedCo
         temperature: { supported: !hasLadder },
         vision: { supported: model.inputModalities?.includes("image") ?? false },
         system_message: { supported: true },
+        // Existing client-export convention, not a verified per-model capability:
+        // ExportModel has no authoritative tool-support field.
         tools: { supported: true },
         reasoning_effort: { supported: hasLadder },
       },
@@ -61,14 +63,32 @@ export function buildRaycastClientConfig(ctx: ExportContext): RaycastGeneratedCo
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function summarizeRaycast(
   document: unknown,
 ): { modelCount: number; modelsWithoutLimits: number } {
-  const providers = (document as RaycastGeneratedConfig | undefined)?.providers ?? [];
-  const models = providers.find(provider => provider.id === OPENCODE_PROVIDER_ID)?.models ?? [];
+  const empty = { modelCount: 0, modelsWithoutLimits: 0 };
+  if (!isRecord(document) || !Array.isArray(document.providers)) return empty;
+  const providers = document.providers.filter(
+    provider => isRecord(provider) && provider.id === OPENCODE_PROVIDER_ID,
+  );
+  // An ambiguous managed provider has no meaningful summary either.
+  if (providers.length !== 1) return empty;
+  const provider: unknown = providers[0];
+  if (!isRecord(provider) || !Array.isArray(provider.models)) return empty;
+  const models = provider.models.filter((model): model is Record<string, unknown> => (
+    isRecord(model)
+    && typeof model.id === "string" && model.id.trim().length > 0
+    && typeof model.name === "string" && model.name.trim().length > 0
+  ));
   return {
     modelCount: models.length,
-    modelsWithoutLimits: models.filter(model => model.context === undefined).length,
+    modelsWithoutLimits: models.filter(model => (
+      typeof model.context !== "number" || authoritativeContextWindow(model.context) === undefined
+    )).length,
   };
 }
 

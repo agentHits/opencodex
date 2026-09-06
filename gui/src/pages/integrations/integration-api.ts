@@ -26,6 +26,7 @@ export type IntegrationReason =
   | "foreign-edit"
   | "unowned-key"
   | "blocked-container"
+  | "ambiguous-selector"
   | "unresolvable-path";
 
 export type IntegrationRefusalReason =

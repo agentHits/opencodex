@@ -1675,7 +1675,7 @@ export const ja: Record<TKey, string> = {
   "integrations.semantics.aside": "このプロファイルの ~/.aside/u/<id>/models.json 内の providers.opencodex のみを管理します。他のプロバイダーは変更しません。適用後は Aside を完全に終了してから開き直してください。",
   "integrations.semantics.raycast": "Raycast の providers.yaml に OpenCodex のプロバイダーエントリを追加し、ルーティングされたすべてのモデルを Raycast AI のモデル選択に表示します。Raycast Pro が必要です。",
   "integrations.raycast.proRequired": "Custom Providers は Raycast Pro の機能です。ファイルは書き込まれますが、Pro サブスクリプションが有効になるまで Raycast はこれを無視します。",
-  "integrations.raycast.planUnknown": "Raycast のサブスクリプション状態を読み取れませんでした。Custom Providers には Raycast Pro が必要です。",
+  "integrations.raycast.planUnknown": "Raycast Pro が有効かどうか確認できませんでした。Custom Providers には Raycast Pro が必要です。",
   "integrations.raycast.revealConfig": "Raycast → 設定 → AI を開き、「Reveal Providers Config」を一度クリックして providers フォルダを作成してください。",
   "codexAuth.mainAccount": "メインアカウント",
   "codexAuth.logLabel": "ログラベル",

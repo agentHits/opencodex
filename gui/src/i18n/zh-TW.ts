@@ -2340,7 +2340,7 @@ export const zhTW: Record<TKey, string> = {
   "integrations.semantics.aside": "僅管理此設定檔的 ~/.aside/u/<id>/models.json 中的 providers.opencodex。其他供應商維持不變。套用後請完全結束並重新開啟 Aside。",
   "integrations.semantics.raycast": "在 Raycast 的 providers.yaml 中新增一個 OpenCodex 供應商項目，讓所有已路由的模型出現在 Raycast AI 模型選擇器中。需要 Raycast Pro。",
   "integrations.raycast.proRequired": "Custom Providers 是 Raycast Pro 功能。檔案會被寫入，但在 Pro 訂閱生效之前 Raycast 會忽略它。",
-  "integrations.raycast.planUnknown": "無法讀取 Raycast 訂閱狀態；Custom Providers 需要 Raycast Pro。",
+  "integrations.raycast.planUnknown": "無法確認 Raycast Pro 是否已啟用；Custom Providers 需要 Raycast Pro。",
   "integrations.raycast.revealConfig": "開啟 Raycast → 設定 → AI，點一次「Reveal Providers Config」，以便建立 providers 資料夾。",
   "codexAuth.pinned": "已固定",
   "codexAuth.pinnedHint": "你手動選取了此帳號，因此較高的選擇順序不會越過它。此固定會持續到該帳號用盡、你改選其他帳號，或你變更任一選擇順序為止。",

@@ -1751,7 +1751,7 @@ export const tr: Record<TKey, string> = {
   "integrations.semantics.aside": "Yalnızca bu profilin ~/.aside/u/<id>/models.json dosyasındaki providers.opencodex bölümünü yönetir. Diğer sağlayıcılarınız değişmez. Uyguladıktan sonra Aside’ı tamamen kapatıp yeniden açın.",
   "integrations.semantics.raycast": "Raycast'in providers.yaml dosyasına bir OpenCodex sağlayıcı girdisi ekler; böylece yönlendirilen her model Raycast AI model seçicisinde görünür. Raycast Pro gerekir.",
   "integrations.raycast.proRequired": "Custom Providers bir Raycast Pro özelliğidir. Dosya yazılır, ancak bir Pro aboneliği etkin olana kadar Raycast bunu yok sayar.",
-  "integrations.raycast.planUnknown": "Raycast abonelik durumu okunamadı; Custom Providers için Raycast Pro gerekir.",
+  "integrations.raycast.planUnknown": "Raycast Pro’nun etkin olup olmadığı belirlenemedi; Custom Providers için Raycast Pro gerekir.",
   "integrations.raycast.revealConfig": "Raycast → Ayarlar → AI bölümünü açıp sağlayıcı klasörünün oluşması için „Reveal Providers Config“ seçeneğine bir kez tıklayın.",
   "integrations.semantics.omp": "Kataloğu yüklemek için OMP'yi yeniden başlatın.",
   "codexAuth.mainAccount": "Ana Hesap",

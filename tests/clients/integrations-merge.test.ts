@@ -17,6 +17,7 @@ import {
   applyIntegration,
   disableIntegration,
   overwriteIntegration,
+  refreshIntegration,
   type IntegrationWriteInput,
 } from "../../src/integrations/writer";
 import type { OcxConfig } from "../../src/types";
@@ -88,6 +89,9 @@ describe("setPath with a selector", () => {
     const doc = { providers: [OURS, THEIRS, { id: "opencodex", name: "dupe" }] };
     expect(() => setPath(doc, SELECT, OURS)).toThrow(AmbiguousSelectorError);
     expect(() => deletePath(doc, SELECT)).toThrow(AmbiguousSelectorError);
+    expect(() => readPath(doc, SELECT)).toThrow(AmbiguousSelectorError);
+    expect(() => createdContainerPaths(doc, contribution([...SELECT, "name"])))
+      .toThrow(AmbiguousSelectorError);
   });
 });
 
@@ -250,19 +254,48 @@ describe("raycast writer round trip", () => {
     expect(Bun.YAML.parse(readFileSync(configPath, "utf8"))).toEqual({ providers: { opencodex: {} } });
   });
 
-  test("two entries with our id refuse as unsafe and leave the file alone", () => {
-    const configPath = installRaycast();
-    const text = Bun.YAML.stringify({ providers: [{ id: "opencodex", name: "a" }, { id: "opencodex", name: "b" }] });
-    writeFileSync(configPath, text);
-    // Neither entry is ours on record, so status reads conflict and a plain apply refuses
-    // there. The explicit overwrite reaches the merge, which is where the ambiguity is
-    // detected: it must surface as an `unsafe` refusal, never as a thrown error.
-    expect(readIntegrationState(input())).toMatchObject({ state: "conflict" });
-    expect(applyIntegration(input())).toMatchObject({ ok: false, reason: "conflict" });
-    const result = overwriteIntegration(input());
-    expect(result).toMatchObject({ ok: false, reason: "unsafe", state: "unsafe" });
-    if (!result.ok) expect(result.message).toContain("more than one entry");
-    expect(readFileSync(configPath, "utf8")).toBe(text);
-    expect(store.listOperations("raycast")).toHaveLength(0);
-  });
+  for (const recorded of [false, true]) {
+    for (const count of [0, 1, 2]) {
+      test(`${count} matching rows with record=${recorded} agree across status and mutation`, () => {
+        const configPath = installRaycast();
+        writeFileSync(configPath, Bun.YAML.stringify({ providers: [THEIRS] }));
+        let managed: unknown = OURS;
+        if (recorded) {
+          expect(applyIntegration(input())).toMatchObject({ ok: true });
+          const applied = Bun.YAML.parse(readFileSync(configPath, "utf8")) as { providers: unknown[] };
+          managed = applied.providers[1];
+        }
+        // For one owned row retain the writer's exact bytes, so this exercises
+        // current rather than an unrelated whole-file formatting conflict.
+        if (!recorded || count !== 1) {
+          writeFileSync(configPath, Bun.YAML.stringify({
+            providers: [THEIRS, ...Array.from({ length: count }, () => managed)],
+          }));
+        }
+        const text = readFileSync(configPath, "utf8");
+        const records = store.readRecords();
+        const operations = store.listOperations("raycast");
+        const expected = count === 0 ? "absent" : count === 2 ? "unsafe" : recorded ? "current" : "conflict";
+        expect(readIntegrationState(input()).state).toBe(expected);
+        if (count === 2) {
+          expect(readIntegrationState(input()).reason).toBe("ambiguous-selector");
+          for (const mutate of [applyIntegration, refreshIntegration, disableIntegration, overwriteIntegration]) {
+            expect(mutate(input())).toMatchObject({ ok: false, state: "unsafe", reason: "unsafe" });
+            expect(readFileSync(configPath, "utf8")).toBe(text);
+            expect(store.readRecords()).toEqual(records);
+            expect(store.listOperations("raycast")).toEqual(operations);
+          }
+        } else if (count === 0) {
+          expect(refreshIntegration(input())).toMatchObject({ ok: true, changed: false, state: "absent" });
+          expect(readFileSync(configPath, "utf8")).toBe(text);
+        } else if (recorded) {
+          expect(applyIntegration(input())).toMatchObject({ ok: true, changed: false, state: "current" });
+        } else {
+          expect(applyIntegration(input())).toMatchObject({ ok: false, reason: "conflict" });
+          expect(disableIntegration(input())).toMatchObject({ ok: false, reason: "conflict" });
+          expect(readFileSync(configPath, "utf8")).toBe(text);
+        }
+      });
+    }
+  }
 });
