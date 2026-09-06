@@ -2557,6 +2557,8 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     defaultModel: "glm-5.3",
     models: ["glm-5.3", "glm-5-turbo"],
     liveModels: false,
+    // The local Codex catalog does not establish an authenticated HTTP /models contract.
+    apiKeyValidation: "unknown",
     jawcodeBundle: "zai",
     // A pre-existing same-named custom provider must retain its destination and key boundary.
     preserveCustomDestination: true,

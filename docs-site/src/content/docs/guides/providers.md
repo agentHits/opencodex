@@ -605,11 +605,16 @@ Both entries declare text input. The default model is `glm-5.3`; Responses reaso
 content is preserved on replay. The existing Codex export adds its compatibility
 `ultra` tier to GLM-5.3 and omits Turbo's default-effort field because Turbo has no
 selectable ladder; the provider metadata still records `max` for both models.
+For Turbo, outgoing Responses requests omit `reasoning.effort`, including a caller's
+`max` or `ultra`, while preserving requested reasoning summaries. This leaves effort
+selection to the upstream default; opencodex does not inject a selectable or wire `max`.
 
 The example's `models.json` is a local catalog file, not a documented HTTP model-list
 response. This preset does not perform live model discovery. `glm-5.3-flash` is not
 seeded here because its exact Responses metadata is not verified. An existing custom
 provider with the same name keeps its configured destination and metadata.
+CLI key login also skips the undocumented `/models` probe and reports validation as
+unknown; successful key authentication is established by a subsequent inference request.
 
 ### Multiple API keys
 

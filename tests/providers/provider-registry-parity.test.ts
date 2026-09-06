@@ -1,10 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { buildCatalogEntries } from "../../src/codex/catalog";
 import { CURSOR_NO_VISION_MODELS } from "../../src/adapters/cursor/discovery";
 import { getModelMetadata, resolveMetadataProvider } from "../../src/generated/model-metadata";
 import { buildInitProviders } from "../../src/cli/init";
 import { OAUTH_PROVIDERS } from "../../src/oauth";
-import { enrichProviderFromCatalog, KEY_LOGIN_PROVIDERS } from "../../src/oauth/key-providers";
+import { enrichProviderFromCatalog, KEY_LOGIN_PROVIDERS, validateApiKey } from "../../src/oauth/key-providers";
 import {
   deriveFeaturedProviderIds,
   deriveInitProviders,
@@ -459,7 +459,7 @@ describe("provider registry parity", () => {
     expect(registry.modelDiscovery).toBeUndefined();
     expect(registry.preserveReasoningContentModels).toBeUndefined();
     expect(KEY_LOGIN_PROVIDERS[id]).toMatchObject({
-      models: ["glm-5.3", "glm-5-turbo"], liveModels: false,
+      models: ["glm-5.3", "glm-5-turbo"], liveModels: false, apiKeyValidation: "unknown",
     });
     const provider = providerConfigSeed(registry);
     enrichProviderFromRegistry(id, provider);
@@ -490,6 +490,17 @@ describe("provider registry parity", () => {
         .toEqual([...efforts]);
     }
     expect(entries.some(entry => String(entry.slug).includes("glm-5.3-flash"))).toBe(false);
+  });
+
+  test("BigModel Responses key login does not probe an undocumented models endpoint", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status: 403 }));
+    try {
+      const id = "zhipu-bigmodel-responses";
+      expect(await validateApiKey(id, KEY_LOGIN_PROVIDERS[id], "test-bigmodel-key")).toBe("unknown");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   test("BigModel Responses name collisions preserve custom transport and metadata", () => {
