@@ -399,7 +399,7 @@ describe("Claude / Responses / intended Anthropic replay fidelity", () => {
         const request = await adapter.buildRequest(parsed);
         const replay = JSON.parse(request.body as string) as { messages: Array<{ role: string; content: unknown }> };
         expect(replay.messages).toEqual([
-          { role: "user", content: [{ type: "text", text: "question" }] },
+          { role: "user", content: "question" },
           { role: "assistant", content: fixture.blocks },
           { role: "user", content: [{ type: "tool_result", tool_use_id: tool.id, content: "result" }] },
         ]);

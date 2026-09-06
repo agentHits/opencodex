@@ -346,9 +346,11 @@ describe("claude outbound SSE", () => {
     for (const buffered of [false, true]) {
       test(`closure-only reasoning overflow: ${terminal}, ${buffered ? "collector" : "stream"}`, async () => {
         // All small deltas fit, including replacement reservations. Closing needs
-        // the retained 32 KiB text PLUS its base64 signature frame. For the
-        // collector allow its additional retained text in the same real budget.
-        const budget = createTestTranslatorBudget({ maxTurnBytes: (buffered ? 102 : 70) * 1024 });
+        // the retained 32 KiB text PLUS its base64 signature frame. Capture the
+        // generated stream before collection: concurrent collector retention can
+        // exceed a shared budget during ingestion instead of exercising closure.
+        // Collection below reuses this SAME budget, without resetting it.
+        const budget = createTestTranslatorBudget({ maxTurnBytes: 70 * 1024 });
         let reasoningBytes = 0;
         let maxReasoningBytes = 0;
         let reasoningBytesAtOverflow = -1;
@@ -397,24 +399,31 @@ describe("claude outbound SSE", () => {
         const stream = responsesSseToAnthropicSse(streamFromChunks(frames), "m", {
           translatorBudget: trackedBudget, pingIntervalMs: 0,
         });
-        if (buffered) {
-          const message = await collectAnthropicMessage(stream, "m", trackedBudget);
+        const captured = buffered ? await new Response(stream).text() : undefined;
+        const capturedFrames = captured?.split("\n\n").filter(Boolean).map(frame => `${frame}\n\n`);
+        const events = await collectEvents(capturedFrames ? streamFromChunks(capturedFrames) : stream);
+        const deltas = events.filter(event => event.data.delta?.type === "thinking_delta");
+        expect(deltas.map(event => event.data.delta.thinking).join("")).toBe(text);
+        expect(events.filter(event => event.name === "error")).toHaveLength(1);
+        expect(events.at(-1)).toMatchObject({ name: "error", data: { type: "error", error: {
+          type: "request_too_large", code: "translation_buffer_limit",
+        } } });
+        expect(JSON.stringify(events.at(-1)).length).toBeLessThan(1024);
+        expect(events.some(event => event.name === "message_stop" || event.name === "message_delta" || event.name === "content_block_stop")).toBe(false);
+        expect(events.some(event => event.data.delta?.type === "signature_delta")).toBe(false);
+        if (capturedFrames) {
+          expect(capturedFrames.join("")).toBe(captured);
+          expect(reasoningBytesAtOverflow).toBe(text.length);
+          expect(reasoningBytes).toBe(0);
+          expect(budget.snapshot().overflows).toBe(1);
+          // Feed the actual generated frames, without inventing an error event or
+          // collecting one huge chunk that introduces a different buffer limit.
+          const message = await collectAnthropicMessage(streamFromChunks(capturedFrames), "m", trackedBudget);
           expect(message).toMatchObject({ type: "error", error: {
             type: "request_too_large", code: "translation_buffer_limit",
           } });
           expect(message).not.toHaveProperty("content");
           expect(message).not.toHaveProperty("stop_reason");
-        } else {
-          const events = await collectEvents(stream);
-          const deltas = events.filter(event => event.data.delta?.type === "thinking_delta");
-          expect(deltas.map(event => event.data.delta.thinking).join("")).toBe(text);
-          expect(events.filter(event => event.name === "error")).toHaveLength(1);
-          expect(events.at(-1)).toMatchObject({ name: "error", data: { type: "error", error: {
-            type: "request_too_large", code: "translation_buffer_limit",
-          } } });
-          expect(JSON.stringify(events.at(-1)).length).toBeLessThan(1024);
-          expect(events.some(event => event.name === "message_stop" || event.name === "message_delta" || event.name === "content_block_stop")).toBe(false);
-          expect(events.some(event => event.data.delta?.type === "signature_delta")).toBe(false);
         }
         // These prove failure happened after all text was retained, not while
         // ingesting a delta, and the error path released the thinking reservation.
