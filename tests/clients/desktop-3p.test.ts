@@ -1,5 +1,10 @@
+import { saveConfig } from "../../src/config";
+import { writeServiceApiTokenFile } from "../../src/lib/service-secrets";
+import { withClientLifecycleSync } from "../../src/client/lifecycle-lock";
+import { applyRemoteDesktopStore } from "../../src/claude/desktop-remote-store";
+import type { OcxConfig } from "../../src/types";
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import {
@@ -47,23 +52,36 @@ describe("Claude Desktop 3P models", () => {
   });
 
   test("remote apply preserves exact hub entries and foreign keys without installing aliases", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ocx-desktop-remote-"));
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "ocx-desktop-remote-")));
     const previous = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+    const previousHome = process.env.OPENCODEX_HOME;
+    process.env.OPENCODEX_HOME = join(dir, "ocx");
+    saveConfig({ providers: {}, defaultProvider: "test", port: 4096 } as OcxConfig);
     process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = dir;
     const models: Desktop3pModelEntry[] = [{
       name: "claude-opus-4-8-20260304", labelOverride: "Hub model",
       anthropicFamilyTier: "fable", isFamilyDefault: true, supports1m: true, prefer1m: true,
     }];
     try {
-      const local = writeDesktop3pConfig(4096, ["gpt-5.6-sol"], [], "old-key");
+      const local = writeDesktop3pConfig(4096, ["gpt-5.6-sol"], [], "old-key", "static", undefined, undefined, { lockPath: join(dir, "locks", "desktop.sqlite") });
       expect(local.written).toBe(true);
       const prior = JSON.parse(readFileSync(local.path, "utf8"));
       writeFileSync(local.path, JSON.stringify({ ...prior, foreignSetting: { retained: true } }));
+      const token = writeServiceApiTokenFile("remote-fixture-key");
+      const owner = { serverUrl: "https://hub.example.test", apiKeyId: "desktop-fixture", connectedAt: "2026-09-06T00:00:00.000Z" };
+      saveConfig({ providers: {}, defaultProvider: "test", port: 4096, runtimeRole: "client", client: {
+        ...owner, managementUrl: owner.serverUrl, managementTransport: "direct", selectedClients: ["claude"],
+        tokenEnv: "OPENCODEX_API_AUTH_TOKEN", tokenFingerprint: token.fingerprint, protocolVersion: 1,
+      } } as OcxConfig);
       for (const mode of ["static", "hybrid", "discovery"] as const) {
-        const result = writeRemoteDesktop3pConfig({ baseUrl: "https://hub.example.test", apiKey: "remote-fixture-key", mode, models });
-        expect(result.written).toBe(true);
+        const result = withClientLifecycleSync(held => applyRemoteDesktopStore(held, {
+          owner, expectedTokenFingerprint: token.fingerprint,
+          baseUrl: owner.serverUrl, apiKey: "remote-fixture-key", mode, models,
+        }), { lockPath: join(dir, "locks", "desktop.sqlite") });
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(result.reason);
         expect(result.path).toBe(local.path);
-        const written = JSON.parse(readFileSync(result.path, "utf8"));
+        const written = JSON.parse(readFileSync(result.path!, "utf8"));
         expect(written.inferenceGatewayBaseUrl).toBe("https://hub.example.test");
         expect(written.inferenceGatewayApiKey).toBe("remote-fixture-key");
         expect(written.modelDiscoveryEnabled).toBe(mode !== "static");
@@ -75,23 +93,26 @@ describe("Claude Desktop 3P models", () => {
     } finally {
       if (previous === undefined) delete process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
       else process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = previous;
+      if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = previousHome;
       buildDesktop3pRegistry([], []);
       removeTreeWithRetry(dir);
     }
   });
 
-  test("local and remote generation failures retain result semantics and existing file bytes", () => {
+  test("local generation and unbound remote failures retain result semantics and existing file bytes", () => {
     const dir = mkdtempSync(join(tmpdir(), "ocx-desktop-generation-"));
     const previous = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
     process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = dir;
     try {
-      const initial = writeDesktop3pConfig(4096, [], [{ provider: "test", id: "valid" }]);
+      const initial = writeDesktop3pConfig(4096, [], [{ provider: "test", id: "valid" }], undefined, "static", undefined, undefined, { lockPath: join(dir, "locks", "desktop.sqlite") });
       expect(initial.written).toBe(true);
       const before = readFileSync(initial.path, "utf8");
       const beforeMeta = readFileSync(join(dir, "_meta.json"), "utf8");
-      const local = writeDesktop3pConfig(4096, [], [{ provider: "test", id: "x".repeat(90) }]);
+      const local = writeDesktop3pConfig(4096, [], [{ provider: "test", id: "x".repeat(90) }], undefined, "static", undefined, undefined, { lockPath: join(dir, "locks", "desktop.sqlite") });
       const remote = writeRemoteDesktop3pConfig({
         baseUrl: "https://hub.example.test", apiKey: "fixture-key", mode: "static",
+        lifecycleLockDeps: { lockPath: join(dir, "locks", "desktop.sqlite") },
         models: [{ name: "invalid", labelOverride: "Hub", anthropicFamilyTier: "opus" }],
       });
       for (const result of [local, remote]) {
@@ -386,7 +407,7 @@ describe("Claude Desktop 3P models", () => {
         foreignDeploymentSetting: { allowed: true },
       }));
 
-      const written = writeDesktop3pConfig(4096, ["gpt-5.6-sol"], [], "new-key");
+      const written = writeDesktop3pConfig(4096, ["gpt-5.6-sol"], [], "new-key", "static", undefined, undefined, { lockPath: join(dir, "locks", "desktop.sqlite") });
       expect(written.written).toBe(true);
       const profile = JSON.parse(readFileSync(join(dir, `${id}.json`), "utf8"));
       expect(profile.foreignDeploymentSetting).toEqual({ allowed: true });

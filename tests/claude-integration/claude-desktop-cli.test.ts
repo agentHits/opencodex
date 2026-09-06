@@ -2,13 +2,14 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyProfile, handleClaudeDesktopCommand, type ApplyProfileDeps } from "../../src/cli/claude-desktop";
+import { applyProfile as applyProfileProduction, handleClaudeDesktopCommand as handleClaudeDesktopCommandProduction, type ApplyProfileDeps } from "../../src/cli/claude-desktop";
 import * as managementApi from "../../src/server/management-api";
 import { buildClaudeDesktopState } from "../../src/server/management-api";
 import { getConfigPath, loadConfig, saveConfig } from "../../src/config";
 import { emptyDesktopProfile } from "../../src/claude/desktop-profile";
-import { writeRemoteDesktop3pConfig } from "../../src/claude/desktop-3p";
-import { readClientConnectionState } from "../../src/client/state";
+import { applyRemoteDesktopStore, restoreRemoteDesktopStore, writeDesktopDisconnectReceipt, type DesktopDisconnectReceipt } from "../../src/claude/desktop-remote-store";
+import * as lifecycleLock from "../../src/client/lifecycle-lock";
+import { readClientConnectionState, clearClientConnection } from "../../src/client/state";
 import { HubClientError } from "../../src/client/hub-client";
 import { claudeDesktopIntegrationEnabledNow, setIntegrationEnabled } from "../../src/codex/desired-state";
 import { serviceApiTokenBackupPath, serviceApiTokenFilePath, writeServiceApiTokenFile } from "../../src/lib/service-secrets";
@@ -19,6 +20,12 @@ let dir = "";
 let previousHome: string | undefined;
 let previousDesktopDir: string | undefined;
 let restoreLocalBuild: (() => void) | undefined;
+
+const fixtureLock = () => ({ lockPath: join(dir, "lifecycle.sqlite") });
+const applyProfile = (profile: Parameters<typeof applyProfileProduction>[0], mode: Parameters<typeof applyProfileProduction>[1], deps: ApplyProfileDeps = {}) =>
+  applyProfileProduction(profile, mode, { lifecycleLockDeps: fixtureLock(), ...deps });
+const handleClaudeDesktopCommand = (args: string[], deps: ApplyProfileDeps = {}) =>
+  handleClaudeDesktopCommandProduction(args, { lifecycleLockDeps: fixtureLock(), ...deps });
 
 beforeEach(() => {
   previousHome = process.env.OPENCODEX_HOME;
@@ -99,10 +106,12 @@ test.each([
         expect(claudeDesktopIntegrationEnabledNow()).toBe(true);
         return { version: 1, models: remoteModels };
       },
-      writeRemoteDesktop3pConfigImpl: options => {
-        expect(options).toEqual({ baseUrl: "https://hub.example.test", apiKey: "ocx_desktop_fixture_token", mode, models: remoteModels });
-        const result = writeRemoteDesktop3pConfig(options);
-        writtenPath = result.path;
+      applyRemoteDesktopStoreImpl: (held, options) => {
+        expect(options).toEqual({ baseUrl: "https://hub.example.test", apiKey: "ocx_desktop_fixture_token", mode, models: remoteModels,
+          owner: { serverUrl: "https://hub.example.test", apiKeyId: "desktop-key", connectedAt: "2026-09-06T00:00:00.000Z" },
+          expectedTokenFingerprint: loadConfig().client!.tokenFingerprint });
+        const result = applyRemoteDesktopStore(held, options);
+        writtenPath = result.ok ? result.path ?? "" : "";
         return result;
       },
       findLiveProxyImpl: async () => { throw new Error("must not look for local proxy"); },
@@ -137,7 +146,7 @@ test.each(["absent", "unsafe", "mismatch", "pending", "invalid", "mismatched"])(
     let writes = 0;
     const result = await applyProfile(emptyDesktopProfile(), "static", {
       downloadDesktop3pModelsImpl: async () => { downloads++; return { version: 1, models: remoteModels }; },
-      writeRemoteDesktop3pConfigImpl: () => { writes++; return { written: true, path: oldPath }; },
+      applyRemoteDesktopStoreImpl: () => { writes++; return { ok: true, changed: true, status: "applied", path: oldPath, restartRequired: true }; },
     });
     expect(result.ok).toBe(false);
     expect(downloads).toBe(0);
@@ -158,7 +167,7 @@ test.each(["empty", "failed"])("connected CLI handles %s snapshot without claimi
         if (outcome === "failed") throw new HubClientError("desktop_snapshot_unsupported", "remote-marker");
         return { version: 1, models: [] };
       },
-      writeRemoteDesktop3pConfigImpl: () => { writes++; return { written: true, path: oldPath }; },
+      applyRemoteDesktopStoreImpl: () => { writes++; return { ok: true, changed: true, status: "applied", path: oldPath, restartRequired: true }; },
     })).toBe(1);
     expect(writes).toBe(0);
     expect(readFileSync(oldPath, "utf8")).toBe("existing Desktop bytes");
@@ -183,7 +192,7 @@ test.each(["off", "server", "key", "fingerprint", "connectedAt", "disconnect", "
     let writes = 0;
     const applying = applyProfile(emptyDesktopProfile(), "static", {
       downloadDesktop3pModelsImpl: async () => { started(); await downloadGate; return { version: 1, models: remoteModels }; },
-      writeRemoteDesktop3pConfigImpl: () => { writes++; return { written: true, path: oldPath }; },
+      applyRemoteDesktopStoreImpl: () => { writes++; return { ok: true, changed: true, status: "applied", path: oldPath, restartRequired: true }; },
     });
     await downloading;
     try {
@@ -208,6 +217,26 @@ test.each(["off", "server", "key", "fingerprint", "connectedAt", "disconnect", "
     if (transition === "off") expect(claudeDesktopIntegrationEnabledNow()).toBe(false);
   },
 );
+
+test("a prepared disconnect receipt rejects connected apply after its download", async () => {
+  connectDesktopFixture();
+  const oldPath = oldDesktopFile();
+  let writes = 0;
+  const result = await applyProfile(emptyDesktopProfile(), "static", {
+    downloadDesktop3pModelsImpl: async () => {
+      const connection = loadConfig().client!;
+      lifecycleLock.withClientLifecycleSync(held => writeDesktopDisconnectReceipt(held, null, {
+        version: 1, owner: { serverUrl: connection.serverUrl, apiKeyId: connection.apiKeyId, connectedAt: connection.connectedAt },
+        tokenFingerprint: connection.tokenFingerprint, keepCatalog: false, phase: "prepared",
+      }), fixtureLock());
+      return { version: 1, models: remoteModels };
+    },
+    applyRemoteDesktopStoreImpl: () => { writes++; return { ok: true, changed: true, status: "applied", path: oldPath, restartRequired: true }; },
+  });
+  expect(result).toMatchObject({ ok: false, reason: "client_disconnect_pending" });
+  expect(writes).toBe(0);
+  expect(readFileSync(oldPath, "utf8")).toBe("existing Desktop bytes");
+});
 
 test("remote import --apply refuses before saving or building a local profile", async () => {
   connectDesktopFixture();
@@ -242,6 +271,93 @@ test("import --apply also refuses a connection established while local reconcili
     expect(loadConfig().claudeCode?.desktopProfile).toBeUndefined();
     expect(readClientConnectionState().kind).toBe("connected");
   } finally { build.mockRestore(); error.mockRestore(); }
+});
+
+test.each([
+  ["move", "rotation"], ["default", "rotation"], ["import", "rotation"],
+  ["move", "disconnect"], ["default", "disconnect"], ["import", "disconnect"],
+] as const)("delayed %s cannot overwrite a %s transition", async (command, transition) => {
+  connectDesktopFixture(false);
+  const capturedState = await buildClaudeDesktopState(loadConfig());
+  const originalProfile = structuredClone(loadConfig().claudeCode?.desktopProfile);
+  const source = join(dir, "profile-race.json");
+  writeFileSync(source, JSON.stringify(emptyDesktopProfile()));
+  const args = command === "move" ? ["move", "mock/test-model", "sonnet"]
+    : command === "default" ? ["default", "opus", "mock/test-model"] : ["import", source];
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const build = spyOn(managementApi, "buildClaudeDesktopState").mockImplementation(async () => {
+    entered(); await gate; return capturedState;
+  });
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const pending = handleClaudeDesktopCommand(args);
+  try {
+    await started;
+    if (transition === "rotation") {
+      const current = loadConfig();
+      writeFileSync(serviceApiTokenBackupPath(), readFileSync(serviceApiTokenFilePath()), { mode: 0o600 });
+      current.client!.pendingOperation = pendingRotation();
+      saveConfig(current);
+    } else {
+      // Construct an interrupted disconnect after its own token/state cleanup using
+      // only this fixture's OCX files. The awaited local edit must not resurrect client.
+      const current = loadConfig().client!;
+      const owner = { serverUrl: current.serverUrl, apiKeyId: current.apiKeyId, connectedAt: current.connectedAt };
+      lifecycleLock.withClientLifecycleSync(held => {
+        let receipt: DesktopDisconnectReceipt = { version: 1, owner, tokenFingerprint: current.tokenFingerprint, keepCatalog: false, phase: "prepared" };
+        writeDesktopDisconnectReceipt(held, null, receipt);
+        const restored = restoreRemoteDesktopStore(held, { owner, knownTokenFingerprints: [current.tokenFingerprint] });
+        expect(restored.ok).toBe(true);
+        const advance = (phase: DesktopDisconnectReceipt["phase"], fields: Partial<DesktopDisconnectReceipt> = {}) => {
+          const next = { ...receipt, ...fields, phase };
+          writeDesktopDisconnectReceipt(held, receipt, next); receipt = next;
+        };
+        advance("desktop_restored");
+        advance("catalog_settled", { catalogAfter: { kind: "absent" } });
+        advance("removing_token"); unlinkSync(serviceApiTokenFilePath());
+        advance("token_removed"); advance("clearing_connection");
+        expect(clearClientConnection(owner)).toBe("committed");
+      }, fixtureLock());
+    }
+    const afterTransition = readFileSync(getConfigPath(), "utf8");
+    release();
+    expect(await pending).toBe(1);
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(afterTransition);
+    expect(loadConfig().claudeCode?.desktopProfile).toEqual(originalProfile);
+    if (transition === "rotation") expect(loadConfig().client?.pendingOperation).toEqual(pendingRotation());
+    else {
+      expect(readClientConnectionState().kind).toBe("disconnected");
+      expect(existsSync(serviceApiTokenFilePath())).toBe(false);
+    }
+  } finally { release(); await pending; build.mockRestore(); error.mockRestore(); warn.mockRestore(); }
+});
+
+test("local profile mutation preserves unrelated current settings after its builder await", async () => {
+  connectDesktopFixture(false);
+  const capturedState = await buildClaudeDesktopState(loadConfig());
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const build = spyOn(managementApi, "buildClaudeDesktopState").mockImplementation(async () => { entered(); await gate; return capturedState; });
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const pending = handleClaudeDesktopCommand(["move", "mock/test-model", "sonnet"]);
+  try {
+    await started;
+    const latest = loadConfig();
+    latest.port = 20202;
+    latest.clientIntegrations = { ...latest.clientIntegrations, grok: false };
+    saveConfig(latest);
+    release();
+    expect(await pending).toBe(0);
+    expect(loadConfig().port).toBe(20202);
+    expect(loadConfig().clientIntegrations?.grok).toBe(false);
+    expect(loadConfig().claudeCode?.desktopProfile?.assignments["mock/test-model"]?.family).toBe("sonnet");
+  } finally { release(); await pending; build.mockRestore(); log.mockRestore(); warn.mockRestore(); }
 });
 
 test("connected show/export and local edits identify the local profile view", async () => {

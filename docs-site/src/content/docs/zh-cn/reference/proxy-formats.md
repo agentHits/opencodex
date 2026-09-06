@@ -190,6 +190,13 @@ user-agent。响应为 `{ "version": 1, "models": [...] }`，带有 `Cache-Contr
 会视为不可用，不写入替代配置。返回普通目录而非版本 1 的旧 hub 不受支持，客户端不会回退到
 本地生成的 ID。
 
+快照仍是只读模型列表，不是密钥轮换或配置上传 API。Desktop 密钥迁移、恢复与断开由现有
+客户端连接流程处理。轮换保留模型条目和选择；CLI 的 `rotation` 区分 `committed` 与
+`rolled_back`。断开会恢复管理设置，或对已确认的旧配置报告标准回退，同时保留用户字段和
+后来有效的选择。冲突或未完成的恢复不会标为完成。需要重启 Desktop 才会读取磁盘变更；
+断开不会自动撤销 hub 密钥。参见 [Desktop 指南](/zh-cn/guides/claude-code/)。
+thinking 重放与提示缓存仍由独立的 [#3719](https://github.com/lidge-jun/opencodex/issues/3719) 跟进。
+
 ## `POST /v1/live` 和 Realtime sideband
 
 `POST /v1/live` 接受 ChatGPT/Codex App 的 Frameless call-creation 表面。

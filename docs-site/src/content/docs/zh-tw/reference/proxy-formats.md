@@ -172,6 +172,13 @@ user-agent。回應為 `{ "version": 1, "models": [...] }`，帶有 `Cache-Contr
 會視為無法使用，不寫入替代設定。回傳一般目錄而非版本 1 的舊 hub 不受支援，客戶端不會改用
 本機產生的 ID。
 
+快照仍是唯讀模型清單，不是金鑰輪換或設定檔上傳 API。Desktop 金鑰移轉、復原與中斷由既有
+客戶端連線流程處理。輪換保留模型項目和選擇；CLI 的 `rotation` 區分 `committed` 與
+`rolled_back`。中斷會還原管理設定，或對已確認的舊設定檔回報標準回退，同時保留使用者欄位和
+後來有效的選擇。衝突或未完成的復原不會標為完成。需要重新啟動 Desktop 才會讀取磁碟變更；
+中斷不會自動撤銷 hub 金鑰。參見 [Desktop 指南](/zh-tw/guides/claude-code/)。
+thinking 重播與提示快取仍由獨立的 [#3719](https://github.com/lidge-jun/opencodex/issues/3719) 跟進。
+
 ## `POST /v1/live` 與 Realtime sideband
 
 `POST /v1/live` 接受 ChatGPT/Codex App Frameless call-creation 介面。

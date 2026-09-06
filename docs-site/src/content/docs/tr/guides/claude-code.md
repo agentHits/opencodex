@@ -267,10 +267,44 @@ yüklemesi gerekmez. Eski hub desteği yoksa, yanıt geçersizse veya Desktop li
 başarısız olur; yerel katalog ya da loopback adresi kullanılmaz. Hub'ı güncelleyin veya
 yapılandırın, ardından yeniden uygulayın.
 
-Bu takma ad değişikliği, [#3646](https://github.com/lidge-jun/opencodex/issues/3646)'daki ayrı `thinking` / `redacted_thinking` yeniden gönderim ve
+Bu takma ad değişikliği, [#3719](https://github.com/lidge-jun/opencodex/issues/3719)'daki ayrı `thinking` / `redacted_thinking` yeniden gönderim ve
 istem önbelleği talebini çözmez. Proxy erişimi tek başına yerel Anthropic geçişini etkinleştirmez;
 çevrilen Anthropic rotaları yine de önbellek kullanabilir. Yeniden gönderim doğruluğu ve önbellek
 isabetlerinin karşılaştırılması ayrı iş olarak kalır.
+
+### Anahtar döndürme, kurtarma ve bağlantıyı kesme
+
+Anahtar döndürme ve kurtarma, yerel bağlantı kimlik bilgileriyle birlikte bağlantının yönettiği
+Desktop profilindeki anahtarı da günceller. Yalnızca anahtarı taşımak için elle apply gerekmez.
+Model kimlikleri, aileler, varsayılanlar ve geçerli profil seçimi korunur; yönetilen profil tekrar
+seçilmez veya kapalı entegrasyon açılmaz. CLI JSON'unda `rotation: "committed"` yeni anahtarın
+etkin olduğunu, `rotation: "rolled_back"` önceki anahtarın korunduğunu ya da geri yüklendiğini
+belirtir. Geri alma, yeni anahtarın kesinleştiği veya öncekinin iptal edildiği anlamına gelmez.
+Belirsiz veya eksik kurtarma başarılı döndürme olarak bildirilmez.
+
+İlk bağlı uygulama, geri yüklemek için önceki yönetilen ayarları ve seçimi kaydeder. Tekrar
+uygulama ve döndürme bu ilk kaydı değiştirmez. `ocx disconnect`, kullanıcı alanlarını ve diğer
+profilleri koruyarak bağlantıya ait ayarları geri yükler. Önceki seçim yalnızca yönetilen profil
+hâlâ seçiliyse geri gelir; kullanıcının sonradan seçtiği başka geçerli profil korunur. Yeni
+oluşturulmuş profile kullanıcı eklemeleri yapılmışsa silinmez, okunabilir standart modda kalır.
+`--keep-catalog`, Desktop bağlantı anahtarını değil kataloğu tutar.
+
+İlk ayar kaydı olmayan eski yönetilen profil, geçerli hub'a ve tanınan bağlantı anahtarına açıkça
+aitse taşınabilir. Apply, döndürme/kurtarma veya doğrudan disconnect bunu yeni bayrak ya da önceden
+apply gerektirmeden yapar. Önceki ayarlar kaydedilmediği için bağlantı kesildiğinde standart moda
+geçileceği uyarısı gösterilir. Yalnızca bağlantıya ait ağ geçidi ayarları kaldırılır; kullanıcı
+alanları ve ayrı geçerli seçim korunur. Sonuç özgün ayarların geri yüklenmesi değil standart
+moda dönüş olarak bildirilir.
+
+Yönetilen ayar çatışmaları, tanınmayan kimlik bilgileri ve bozuk geri yükleme kayıtları korunup
+bildirilir. Kesilen temizlik yalnızca aynı bağlantı için sürdürülür; yeni bağlantı silinmez ve
+eksik geri yükleme tamamlanmış sayılmaz. Bağlantıyı kesmeden bekleyen döndürme kurtarmasını bitirin;
+yeniden denerken katalog saklama tercihini değiştirmeyin.
+
+Uygulama, döndürme/kurtarma veya geri yükleme sonrası Claude Desktop'ı tamamen kapatıp yeniden
+açın; disk değişikliği çalışan uygulamanın anahtarını değiştirmez. Uygulama otomatik yeniden
+başlatılmaz. Yerel bağlantı kesme hub anahtarını iptal etmez veya dış kopyaları silmez;
+gerekirse anahtarı hub'da ayrıca iptal edin.
 
 ## /model seçici ("From gateway")
 

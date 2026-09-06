@@ -221,6 +221,15 @@ Responses로 변환되어 일반적으로 라우팅된 뒤, Anthropic JSON 또�
 대체 프로필을 쓰지 않습니다. 버전 1 대신 일반 카탈로그를 반환하는 구형 허브는 지원하지 않으며,
 클라이언트가 로컬에서 만든 ID로 대신 적용하지 않습니다.
 
+스냅샷은 읽기 전용 모델 목록이며 키 회전이나 프로필 업로드 API가 아닙니다. 연결된 Desktop의
+키 이전·복구·연결 해제는 기존 클라이언트 수명주기에서 처리합니다. 회전은 모델 항목과 선택을
+유지하며 CLI의 `rotation`은 `committed`와 `rolled_back`을 구분합니다. 연결 해제는 관리 설정을
+복원하거나 확인된 구형 프로필을 표준 모드로 전환하고, 사용자 필드와 이후의 유효한 선택을
+보존합니다. 충돌이나 미완료 복구를 완료로 표시하지 않습니다. 디스크 변경을 읽으려면 Desktop을
+재시작해야 하며, 연결 해제는 허브 키를 자동 폐기하지 않습니다.
+[Claude Desktop 안내](/ko/guides/claude-code/)를 참고하세요. thinking 재전송과 프롬프트 캐시는
+별도 [#3719](https://github.com/lidge-jun/opencodex/issues/3719)에서 다룹니다.
+
 ## `POST /v1/live`와 Realtime sideband
 
 `POST /v1/live`는 ChatGPT/Codex App Frameless call-creation 표면을 받습니다.

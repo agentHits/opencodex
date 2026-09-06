@@ -326,6 +326,15 @@ the snapshot is `{ "version": 1, "models": [] }`; connected Desktop apply treats
 unavailable and does not write a replacement profile. Old hubs returning an ordinary catalog
 instead of version 1 are unsupported; the client does not fall back to locally generated IDs.
 
+The snapshot remains a read-only model-list contract; it is not a key-rotation or profile-upload
+API. Connected Desktop key migration, recovery and disconnect operate through the existing client
+lifecycle. Rotation preserves model entries and selections; CLI `rotation` distinguishes
+`committed` from `rolled_back`. Disconnect restores owned settings or reports a known-legacy
+standard fallback, preserving user fields and later valid selections. Conflicts or incomplete
+recovery prevent a completion claim. Restart Desktop to load disk changes; disconnect does not
+automatically revoke the hub key. See [Claude Desktop lifecycle](/guides/claude-code/).
+Thinking replay and prompt-cache work remain separate in [#3719](https://github.com/lidge-jun/opencodex/issues/3719).
+
 ## `POST /v1/live` and Realtime sideband
 
 `POST /v1/live` accepts the ChatGPT/Codex App Frameless call-creation surface.

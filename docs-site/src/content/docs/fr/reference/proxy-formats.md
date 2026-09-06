@@ -252,6 +252,16 @@ de format, les contrats ordinaires ci-dessus restent inchangés. Si Claude est d
 profil de remplacement. Un ancien hub renvoyant un catalogue ordinaire au lieu de la version 1
 n'est pas pris en charge ; aucun identifiant local de secours n'est généré.
 
+Le snapshot reste une lecture de modèles, pas une API de rotation ou d'envoi de profil.
+Migration des clés Desktop, récupération et déconnexion utilisent le cycle de vie client existant.
+La rotation conserve modèles et sélection ; le champ CLI `rotation` distingue `committed` et
+`rolled_back`. La déconnexion restaure les paramètres gérés ou signale un repli standard pour un
+ancien profil reconnu, en préservant champs utilisateur et choix valides ultérieurs. Conflits et
+récupération incomplète empêchent de déclarer l'opération terminée. Redémarrez Desktop pour lire
+les changements ; la déconnexion ne révoque pas automatiquement la clé du hub.
+Voir [le guide Desktop](/fr/guides/claude-code/). Relecture thinking et cache restent dans
+[#3719](https://github.com/lidge-jun/opencodex/issues/3719).
+
 ## `POST /v1/live` et bande latérale en temps réel
 
 `POST /v1/live` accepte la surface de création d'appel ChatGPT/Codex App sans cadre.

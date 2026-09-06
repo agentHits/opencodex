@@ -225,10 +225,47 @@ administrateur ni envoi de profil. Un ancien hub incompatible, une réponse inva
 Desktop vide fait échouer l'application, sans catalogue local ni adresse de bouclage de secours.
 Mettez à jour ou configurez le hub, puis réappliquez.
 
-Ce changement d'alias ne résout pas la demande distincte de [#3646](https://github.com/lidge-jun/opencodex/issues/3646) concernant la relecture de
+Ce changement d'alias ne résout pas la demande distincte de [#3719](https://github.com/lidge-jun/opencodex/issues/3719) concernant la relecture de
 `thinking` / `redacted_thinking` et le cache de prompts. L'accès au proxy seul n'active pas le
 passthrough Anthropic natif ; les routes Anthropic traduites peuvent néanmoins utiliser le cache.
 La fidélité de relecture et la comparaison des accès au cache restent à traiter séparément.
+
+### Rotation des clés, récupération et déconnexion
+
+La rotation et la récupération mettent à jour la clé du profil Desktop géré par la connexion
+avec celle de la connexion locale, sans réapplication manuelle pour migrer la clé. Les ID de
+modèles, familles, valeurs par défaut et la sélection courante sont conservés ; la rotation ne
+resélectionne pas le profil géré et ne réactive pas une intégration désactivée. Dans le JSON CLI,
+`rotation: "committed"` signifie que la nouvelle clé est active ; `rotation: "rolled_back"` signifie
+que l'ancienne a été conservée ou restaurée, sans prétendre qu'elle a été révoquée. Une récupération
+incertaine ou incomplète n'est pas annoncée comme une rotation réussie.
+
+La première application connectée conserve les paramètres gérés et la sélection antérieurs pour
+les restaurer. Réapplication et rotation ne remplacent pas cette référence initiale.
+`ocx disconnect` restaure les paramètres appartenant à la connexion en préservant les champs
+ajoutés par l'utilisateur et les autres profils. La sélection antérieure n'est restaurée que si
+le profil géré reste sélectionné ; un autre profil valide choisi depuis reste sélectionné.
+Un profil créé puis enrichi par l'utilisateur est conservé en mode standard lisible.
+`--keep-catalog` conserve le catalogue, pas la clé Desktop de la connexion.
+
+Un ancien profil géré sans historique peut être migré s'il appartient sans ambiguïté au hub
+courant et à une clé de connexion reconnue. Apply, rotation/récupération ou déconnexion directe
+le prennent en charge sans nouveau drapeau ni réapplication préalable. Un avertissement précise
+que la déconnexion utilisera le mode standard faute de paramètres antérieurs enregistrés.
+Seuls les paramètres de passerelle appartenant à la connexion sont retirés ; les champs utilisateur
+et une sélection distincte valide restent intacts. Ce résultat est un repli standard, pas une
+restauration de l'original.
+
+Les conflits de paramètres gérés, identifiants inconnus ou données de restauration endommagées
+sont conservés et signalés. Un nettoyage interrompu reprend uniquement pour la même connexion,
+sans effacer une nouvelle connexion ni annoncer une restauration incomplète comme terminée.
+Terminez la récupération de rotation avant la déconnexion et gardez le même choix de conservation
+du catalogue lors d'une nouvelle tentative.
+
+Quittez complètement puis rouvrez Claude Desktop après application, rotation/récupération ou
+restauration : le processus en cours peut garder l'ancienne clé. Aucun redémarrage automatique
+n'est effectué. La déconnexion locale ne révoque pas automatiquement la clé du hub et n'efface
+pas les copies externes ; révoquez-la séparément sur le hub si nécessaire.
 
 ## Le sélecteur /model (« Depuis la passerelle »)
 

@@ -240,9 +240,44 @@ or no Desktop models are available, apply fails without substituting a local cat
 origin. Upgrade/configure the hub and apply again.
 
 This alias change does not fix the separate `thinking` / `redacted_thinking` replay and prompt-cache
-request in [#3646](https://github.com/lidge-jun/opencodex/issues/3646). Proxy admission alone does not enable native Anthropic passthrough; translated
+request in [#3719](https://github.com/lidge-jun/opencodex/issues/3719). Proxy admission alone does not enable native Anthropic passthrough; translated
 Anthropic routes can still use prompt caching. Replay fidelity and cache-hit comparisons remain
 separate work.
+
+### Key rotation, recovery and disconnect
+
+Key rotation and recovery update the credential stored in the connection-owned Desktop profile
+alongside the local connection credential. No manual Desktop reapply is required just to migrate
+the key. Existing model IDs, family/default choices and the user's current profile selection are
+preserved; rotation does not select the managed profile again or re-enable a disabled integration.
+CLI JSON `rotation: "committed"` means the new key is active. `rotation: "rolled_back"` means the
+previous key was retained or restored, not that a new key was committed or the previous key revoked.
+Uncertain or incomplete recovery is reported as such, rather than as successful rotation.
+
+The first connected apply records the prior managed settings and selection for restoration.
+Repeated apply and key rotation retain that original baseline. `ocx disconnect` restores the
+connection-owned settings while preserving current user-added fields and unrelated profiles.
+The previous selection is restored only if the managed profile is still selected; a later valid
+user selection stays selected. A newly created profile with user additions is retained in readable
+standard mode instead of deleting those additions. `--keep-catalog` keeps the catalog, not the
+Desktop connection credential.
+
+For an older managed profile without an original record, OpenCodex can migrate it when it
+unambiguously belongs to the current hub and a recognized connection key. Apply, rotation/recovery
+or direct disconnect can handle this case without a new flag or prerequisite reapply. A warning
+explains that disconnect will use standard mode because the previous settings were not recorded.
+That fallback removes only the connection-owned gateway settings, preserves user fields and a
+separate valid selection, and is reported as standard fallback, not original restoration.
+
+Conflicting managed fields, unrecognized credentials or damaged restoration records are preserved
+and reported for resolution. Interrupted cleanup can resume for the same connection; it does not
+clear a newer connection or claim completion while restoration remains incomplete. Finish pending
+rotation recovery before starting disconnect, and retain the same catalog choice when retrying it.
+
+Fully quit and reopen Claude Desktop after apply, rotation/recovery or restoration: changing files
+does not replace a credential already held by the running app. OpenCodex does not kill/restart the
+app automatically. Disconnect works locally without automatically revoking the hub key or erasing
+arbitrary external copies; revoke separately on the hub if desired.
 
 ## The /model picker ("From gateway")
 

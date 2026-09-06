@@ -34,7 +34,7 @@ class ClientStateProbeError extends Error {
 function readStateProbe(script: string, home: string, timeoutMs = INTERNAL_DEADLINE_MS) {
   const child = spawnSync(process.execPath, ["--eval", script], {
     cwd: repoRoot,
-    env: { ...process.env, OPENCODEX_HOME: home },
+    env: { ...process.env, OPENCODEX_HOME: home, OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR: join(home, "desktop") },
     encoding: "utf8",
     timeout: timeoutMs,
     killSignal: "SIGKILL",
@@ -318,7 +318,7 @@ function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "co
           selectedClients: ["claude"],
           managementTransport: "direct",
           noSync: true,
-        }, { fetchImpl, now: () => new Date("2026-08-28T00:00:00.000Z") });
+        }, { fetchImpl, now: () => new Date("2026-08-28T00:00:00.000Z"), lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" } });
       } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
       const beforeDisconnect = readClientConnectionState();
       const artifacts = {
@@ -327,14 +327,14 @@ function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "co
         credentialZeroed: credential.every(value => value === 0),
       };
       let disconnected = null;
-      if ((stage === "success" || stage === "prior-catalog") && connected) disconnected = await disconnectClient();
+      if ((stage === "success" || stage === "prior-catalog") && connected) disconnected = await disconnectClient({}, { lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" } });
       const catalogAfter = existsSync(DEFAULT_CATALOG_PATH) ? readFileSync(DEFAULT_CATALOG_PATH, "utf8") : null;
       console.log(JSON.stringify({ connected, error, beforeDisconnect, artifacts, disconnected, catalogAfter, after: readClientConnectionState(), calls }));
     })();
   `;
   const result = spawnSync(process.execPath, ["--eval", script], {
     cwd: repoRoot,
-    env: { ...process.env, OPENCODEX_HOME: opencodexHome, CODEX_HOME: codexHome },
+    env: { ...process.env, OPENCODEX_HOME: opencodexHome, CODEX_HOME: codexHome, OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR: join(opencodexHome, "desktop") },
     encoding: "utf8",
   });
   const output = result.stdout.trim().split("\n").at(-1) ?? "{}";
@@ -476,8 +476,9 @@ function runConnectedStateScenario(mode: "sync-401" | "sync-503" | "disconnect-c
       let result = null;
       let error = null;
       try {
-        if (mode === "disconnect-conflict" || mode === "disconnect-process-journal") result = await disconnectClient();
+        if (mode === "disconnect-conflict" || mode === "disconnect-process-journal") result = await disconnectClient({}, { lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" } });
         else result = await syncConnectedClient({}, {
+          lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" },
           fetchImpl: async () => Response.json({ error: "fixture" }, { status: mode === "sync-401" ? 401 : 503 }),
         });
       } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
@@ -492,7 +493,7 @@ function runConnectedStateScenario(mode: "sync-401" | "sync-503" | "disconnect-c
   `;
   const child = spawnSync(process.execPath, ["--eval", script], {
     cwd: repoRoot,
-    env: { ...process.env, OPENCODEX_HOME: opencodexHome, CODEX_HOME: codexHome },
+    env: { ...process.env, OPENCODEX_HOME: opencodexHome, CODEX_HOME: codexHome, OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR: join(opencodexHome, "desktop") },
     encoding: "utf8",
   });
   const parsed = JSON.parse(child.stdout.trim().split("\n").at(-1) ?? "{}") as Record<string, any>;
@@ -615,7 +616,7 @@ describe("recoverable connected key rotation", () => {
       };
       (async () => {
         const credential = new TextEncoder().encode("ocx_admin_rotation_test");
-        const result = await rotateConnectedClientKey({ credential: { kind: "admin", value: credential } }, { fetchImpl });
+        const result = await rotateConnectedClientKey({ credential: { kind: "admin", value: credential } }, { fetchImpl, lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" } });
         console.log(JSON.stringify({
           result,
           state: readClientConnectionState(),
@@ -628,7 +629,7 @@ describe("recoverable connected key rotation", () => {
     `;
     const child = spawnSync(process.execPath, ["--eval", script], {
       cwd: repoRoot,
-      env: { ...process.env, OPENCODEX_HOME: opencodexHome },
+      env: { ...process.env, OPENCODEX_HOME: opencodexHome, OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR: join(opencodexHome, "desktop") },
       encoding: "utf8",
     });
     try {
@@ -661,11 +662,13 @@ describe("recoverable connected key rotation", () => {
     writeFileSync(join(home, "service-api-token"), `${token}\n`, { mode: 0o600 });
     writeFileSync(join(home, "service-api-token.prev"), `${token}\n`, { mode: 0o600 });
     const previous = process.env.OPENCODEX_HOME;
+    const previousDesktop = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
     process.env.OPENCODEX_HOME = home;
+    process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = join(home, "desktop");
     try {
       const errors: string[] = [];
       const spy = spyOn(console, "error").mockImplementation(value => errors.push(String(value)));
-      try { expect(await handleConnectCommand(["status", "--json"])).toBe(0); }
+      try { expect(await handleConnectCommand(["status", "--json"], { lifecycleLockDeps: { lockPath: join(home, "lifecycle.sqlite") } })).toBe(0); }
       finally { spy.mockRestore(); }
       expect(existsSync(join(home, "service-api-token.prev"))).toBe(false);
       expect(readFileSync(join(home, "service-api-token"), "utf8").trim()).toBe(token);
@@ -673,7 +676,344 @@ describe("recoverable connected key rotation", () => {
     } finally {
       if (previous === undefined) delete process.env.OPENCODEX_HOME;
       else process.env.OPENCODEX_HOME = previous;
+      if (previousDesktop === undefined) delete process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+      else process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = previousDesktop;
       removeTreeWithRetry(home);
     }
+  });
+});
+
+
+/** Real per-process files and SQLite; only hub HTTP is substituted. Never return credential bytes. */
+function runDesktopLifecycleScenario(mode: string) {
+  const root = mkdtempSync(join(tmpdir(), "ocx-desktop-lifecycle-client-"));
+  const script = `
+    const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
+    const { Readable } = require("node:stream");
+    const { spyOn } = require("bun:test");
+    const configApi = require("./src/config");
+    const connectApi = require("./src/client/connect");
+    const stateApi = require("./src/client/state");
+    const store = require("./src/claude/desktop-remote-store");
+    const locks = require("./src/client/lifecycle-lock");
+    const { handleConnectCommand } = require("./src/cli/connect");
+    const { DEFAULT_CATALOG_PATH } = require("./src/codex/paths");
+    const mode = ${JSON.stringify(mode)};
+    const home = process.env.OPENCODEX_HOME, desktop = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+    for (const dir of [home, desktop, process.env.CODEX_HOME]) fs.mkdirSync(dir, { recursive: true });
+    const lockDeps = { lockPath: path.join(home, "fixture-lifecycle.sqlite") };
+    const oldKey = "ocx_data_" + "1".repeat(40), newKey = "ocx_data_" + "2".repeat(40);
+    const hash = value => crypto.createHash("sha256").update(value).digest("hex");
+    const oldHash = hash(oldKey), newHash = hash(newKey);
+    const owner = { serverUrl: "https://hub.example.test", apiKeyId: "fixture-key", connectedAt: "2026-09-06T00:00:00.000Z" };
+    const catalog = '{"models":[{"slug":"hub/model"}]}', prior = '{"models":[{"slug":"prior/model"}]}';
+    const config = { port: 10100, providers: {}, defaultProvider: "openai", runtimeRole: "client", client: {
+      ...owner, managementUrl: owner.serverUrl, managementTransport: "direct", selectedClients: ["claude"],
+      tokenEnv: "OPENCODEX_API_AUTH_TOKEN", tokenFingerprint: oldHash, protocolVersion: 1,
+      catalogFingerprint: crypto.createHash("sha256").update(catalog).digest("base64url"),
+      priorCatalog: Buffer.from(prior).toString("base64"),
+    } };
+    configApi.saveConfig(config);
+    const tokenPath = path.join(home, "service-api-token"), backupPath = tokenPath + ".prev";
+    fs.writeFileSync(tokenPath, oldKey, { mode: 0o600 });
+    fs.mkdirSync(path.dirname(DEFAULT_CATALOG_PATH), { recursive: true });
+    fs.writeFileSync(DEFAULT_CATALOG_PATH, catalog);
+    const profilePath = path.join(desktop, "fixture.json");
+    const baselinePath = path.join(home, "desktop-remote", "baseline.json");
+    const unused = mode.startsWith("status-") || mode === "disconnect-expected-owner";
+    if (!unused) {
+      fs.writeFileSync(path.join(desktop, "_meta.json"), JSON.stringify({ appliedId: "fixture", entries: [{ id: "fixture", name: "opencodex" }], foreignMeta: "preserve" }));
+      fs.writeFileSync(profilePath, JSON.stringify({
+        inferenceProvider: "gateway", inferenceCredentialKind: "static",
+        inferenceGatewayBaseUrl: mode === "disconnect-legacy" ? owner.serverUrl : "http://127.0.0.1:10100",
+        inferenceGatewayApiKey: mode === "disconnect-legacy" ? oldKey : "fixture-local-key",
+        modelDiscoveryEnabled: false, inferenceModels: [], foreignTheme: "preserve",
+      }));
+      if (mode !== "disconnect-legacy") {
+        const applied = locks.withClientLifecycleSync(held => store.applyRemoteDesktopStore(held, {
+          owner, expectedTokenFingerprint: oldHash, baseUrl: owner.serverUrl, apiKey: oldKey, mode: "static",
+          models: [{ name: "claude-opus-4-8-20260101", labelOverride: "Fixture", anthropicFamilyTier: "opus" }],
+        }), lockDeps);
+        if (!applied.ok) throw new Error("fixture_desktop_apply_failed");
+      }
+    }
+    const baselineBefore = fs.existsSync(baselinePath) ? hash(fs.readFileSync(baselinePath)) : null;
+    const desktopValue = () => fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, "utf8")) : {};
+    const saveClient = change => { const c = configApi.loadConfig(); change(c.client, c); configApi.saveConfig(c); };
+    const pending = { kind: "rotate", rotationId: "fixture-rotation", newKeyIssuedAt: "2026-09-06T00:00:01.000Z", oldKeyBackupPath: backupPath };
+    const prepared = () => locks.withClientLifecycleSync(held => store.writeDesktopDisconnectReceipt(held, null, {
+      version: 1, owner, tokenFingerprint: oldHash, keepCatalog: false, phase: "prepared",
+    }), lockDeps);
+    const recovery = mode.startsWith("recover-") || mode.startsWith("same-old");
+    if (recovery) {
+      saveClient(client => { client.pendingOperation = pending; });
+      fs.writeFileSync(backupPath, oldKey, { mode: 0o600 });
+      fs.writeFileSync(tokenPath, mode.startsWith("same-old") ? oldKey : newKey, { mode: 0o600 });
+    }
+    let commits = 0, aborts = 0, desktopBeforeCommit = false, committed = mode === "recover-current", aborted = false;
+    let guardSeen = false, writesAfterGuard = 0, codexSawPrepared = false, codexOutsideL = false;
+    const fetchImpl = async (input, init = {}) => {
+      const url = String(input);
+      if (url.endsWith("/api/keys/rotate") && init.method === "POST") return Response.json({
+        id: owner.apiKeyId, name: "fixture", key: newKey, createdAt: pending.newKeyIssuedAt,
+        rotationId: pending.rotationId, expiresAt: "2026-09-06T00:10:01.000Z",
+      }, { status: 201 });
+      if (url.endsWith("/api/keys/rotate/commit")) {
+        commits++;
+        desktopBeforeCommit = desktopValue().inferenceGatewayApiKey === newKey;
+        committed = true;
+        if (mode === "commit-lost" && commits === 1) throw new Error("dropped fixture response");
+        return Response.json({ ok: true });
+      }
+      if (url.endsWith("/api/keys/rotate") && init.method === "DELETE") {
+        aborts++;
+        if (mode === "same-old-abort-failure") return Response.json({ error: "unavailable" }, { status: 503 });
+        aborted = true;
+        return Response.json({ ok: true });
+      }
+      if (url.endsWith("/v1/catalog")) {
+        if (mode === "sync-claim") { prepared(); return Response.json({ models: [{ slug: "new/model" }] }); }
+        if (mode === "sync-generation-change") {
+          saveClient(client => { client.tokenFingerprint = newHash; }); fs.writeFileSync(tokenPath, newKey);
+          return Response.json({ models: [{ slug: "new/model" }] });
+        }
+        if (mode === "sync-queued-guard") return Response.json({ models: [{ slug: "new/model" }] });
+        if (mode === "recover-probe-error") throw new Error("fixture probe unavailable");
+        const value = new Headers(init.headers).get("x-opencodex-api-key");
+        const oldAdmitted = !committed;
+        const newAdmitted = !aborted && !["recover-backup", "recover-backup-cli", "rollback"].includes(mode);
+        const admitted = mode !== "recover-neither" && ((value === oldKey && oldAdmitted) || (value === newKey && newAdmitted));
+        return admitted ? new Response(catalog, { headers: { "Content-Type": "application/json", "X-OpenCodex-Key-Id": owner.apiKeyId } })
+          : Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      throw new Error("unexpected fixture request");
+    };
+    (async () => {
+      let result = null, error = null, second = null, statusInside = null, statusOutside = null, cliRotation = null;
+      const credential = new TextEncoder().encode("ocx_admin_fixture");
+      const deps = { fetchImpl, lifecycleLockDeps: lockDeps };
+      try {
+        if (mode.startsWith("disconnect")) {
+          let journalSpy;
+          if (mode === "disconnect-expected-owner") {
+            saveClient(client => { client.apiKeyId = "new-fixture-key"; client.connectedAt = "2026-09-06T02:00:00.000Z"; client.tokenFingerprint = newHash; });
+            fs.writeFileSync(tokenPath, newKey);
+          }
+          if (mode === "disconnect-order") {
+            saveClient(client => { client.selectedClients = ["codex"]; });
+            const journal = require("./src/codex/journal");
+            fs.writeFileSync(path.join(process.env.CODEX_HOME, "config.toml"), 'model_provider = "opencodex"');
+            fs.writeFileSync(journal.JOURNAL_PATH, JSON.stringify({ version: 1,
+              originalConfig: Buffer.from('model_provider = "openai"').toString("base64"), originalProfile: null,
+              owner: { kind: "client", apiKeyId: owner.apiKeyId },
+            }));
+            const actualRestore = journal.restoreJournalState;
+            journalSpy = spyOn(journal, "restoreJournalState").mockImplementation(() => {
+              const r = store.readDesktopDisconnectReceipt();
+              codexSawPrepared = r.kind === "valid" && r.value.phase === "prepared";
+              codexOutsideL = locks.withClientLifecycleSync(() => true, lockDeps);
+              return actualRestore();
+            });
+          }
+          if (mode === "disconnect-foreign") {
+            const v = desktopValue(); v.userAdded = "preserved"; fs.writeFileSync(profilePath, JSON.stringify(v));
+          }
+          if (mode === "disconnect-protected") {
+            const v = desktopValue(); v.inferenceModels = []; fs.writeFileSync(profilePath, JSON.stringify(v));
+          }
+          if (mode === "disconnect-resume" || mode === "disconnect-after-clear") {
+            locks.withClientLifecycleSync(held => {
+              let r = { version: 1, owner, tokenFingerprint: oldHash, keepCatalog: false, phase: "prepared" };
+              store.writeDesktopDisconnectReceipt(held, null, r);
+              const restored = store.restoreRemoteDesktopStore(held, { owner, knownTokenFingerprints: [oldHash] });
+              if (!restored.ok) throw new Error("fixture_restore_failed");
+              const advance = (phase, fields = {}) => { const next = { ...r, ...fields, phase }; store.writeDesktopDisconnectReceipt(held, r, next); r = next; };
+              advance("desktop_restored", restored.fingerprint ? { desktopAfterFingerprint: restored.fingerprint } : {});
+              fs.writeFileSync(DEFAULT_CATALOG_PATH, prior);
+              advance("catalog_settled", { catalogAfter: { kind: "file", fingerprint: hash(prior) } });
+              advance("removing_token"); fs.unlinkSync(tokenPath);
+              if (mode === "disconnect-after-clear") { advance("token_removed"); advance("clearing_connection"); stateApi.clearClientConnection(owner); }
+            }, lockDeps);
+          }
+          try {
+            result = await connectApi.disconnectClient(mode === "disconnect-expected-owner" ? { expectedOwner: owner } : {}, deps);
+            second = await connectApi.disconnectClient({}, deps);
+          } finally { journalSpy?.mockRestore(); }
+        } else if (mode === "sync-claim" || mode === "sync-queued-guard" || mode === "sync-generation-change") {
+          let spy;
+          if (mode === "sync-queued-guard") {
+            saveClient(client => { client.selectedClients = ["codex"]; });
+            const inject = require("./src/codex/inject");
+            spy = spyOn(inject, "injectCodexConfig").mockImplementation(async (_port, _config, options) => {
+              guardSeen = typeof options.beforeClientWrite === "function";
+              prepared();
+              options.beforeClientWrite?.();
+              writesAfterGuard++;
+              return { success: true, status: "applied", message: "fixture" };
+            });
+          }
+          try { result = await connectApi.syncConnectedClient({}, deps); } finally { spy?.mockRestore(); }
+        } else if (mode === "status-lock" || mode === "status-receipt") {
+          fs.writeFileSync(backupPath, oldKey, { mode: 0o600 });
+          if (mode === "status-receipt") prepared();
+          statusInside = await locks.withClientLifecycle(async () => ({
+            result: stateApi.inspectClientRotationRecoveryGate(stateApi.readClientConnectionState(), lockDeps),
+            backupPresent: fs.existsSync(backupPath),
+          }), lockDeps);
+          statusOutside = stateApi.inspectClientRotationRecoveryGate(stateApi.readClientConnectionState(), lockDeps);
+        } else if (mode === "clear-owner-change") {
+          saveClient(client => { client.connectedAt = "2026-09-06T02:00:00.000Z"; });
+          result = stateApi.clearClientConnection(owner);
+        } else if (mode === "recover-backup-cli") {
+          const logs = [], errors = [];
+          const log = spyOn(console, "log").mockImplementation(value => logs.push(String(value)));
+          const err = spyOn(console, "error").mockImplementation(value => errors.push(String(value)));
+          try {
+            const exitCode = await handleConnectCommand(["rotate", "--admin-token-stdin", "--json"], {
+              ...deps, stdinImpl: Readable.from(["ocx_admin_fixture\\n"]),
+            });
+            cliRotation = { exitCode, value: logs.length ? JSON.parse(logs.at(-1)) : null, revokedClaim: logs.some(x => x.includes("previous key is no longer admitted")) };
+          } finally { log.mockRestore(); err.mockRestore(); }
+        } else if (recovery) result = await connectApi.recoverPendingClientRotation({ credential: { kind: "admin", value: credential } }, deps);
+        else result = await connectApi.rotateConnectedClientKey({ credential: { kind: "admin", value: credential } }, deps);
+      } catch (cause) { error = cause instanceof Error ? cause.message : "fixture operation failed"; }
+      const d = desktopValue(), state = stateApi.readClientConnectionState();
+      const token = fs.existsSync(tokenPath) ? fs.readFileSync(tokenPath, "utf8").trim() : null;
+      const r = store.readDesktopDisconnectReceipt();
+      console.log(JSON.stringify({
+        result, error, second, commits, aborts, desktopBeforeCommit, guardSeen, writesAfterGuard, cliRotation, codexSawPrepared, codexOutsideL,
+        stateKind: state.kind, pending: state.kind === "connected" && !!state.value.pendingOperation,
+        persistedOutcome: state.kind === "connected" && Object.hasOwn(state.value, "rotationOutcome"),
+        tokenIsOld: token === oldKey, tokenIsNew: token === newKey, tokenAbsent: token === null,
+        desktopIsOld: d.inferenceGatewayApiKey === oldKey, desktopIsNew: d.inferenceGatewayApiKey === newKey,
+        desktopIsLocal: d.inferenceGatewayApiKey === "fixture-local-key", desktopHasKey: Object.hasOwn(d, "inferenceGatewayApiKey"),
+        foreignPreserved: unused || d.foreignTheme === "preserve", userAddedPreserved: d.userAdded === "preserved",
+        backupPresent: fs.existsSync(backupPath),
+        baselineUnchanged: baselineBefore !== null && fs.existsSync(baselinePath) && hash(fs.readFileSync(baselinePath)) === baselineBefore,
+        catalogUnchanged: fs.existsSync(DEFAULT_CATALOG_PATH) && fs.readFileSync(DEFAULT_CATALOG_PATH, "utf8") === catalog,
+        catalogPrior: fs.existsSync(DEFAULT_CATALOG_PATH) && fs.readFileSync(DEFAULT_CATALOG_PATH, "utf8") === prior,
+        receiptPhase: r.kind === "valid" ? r.value.phase : r.kind,
+        statusInside, statusOutside, credentialZeroed: credential.every(byte => byte === 0),
+      }));
+    })().catch(() => { console.log(JSON.stringify({ fatal: "fixture setup failed" })); process.exitCode = 1; });
+  `;
+  const child = spawnSync(process.execPath, ["--eval", script], {
+    cwd: repoRoot,
+    env: { ...process.env, OPENCODEX_HOME: join(root, "ocx"), CODEX_HOME: join(root, "codex"), OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR: join(root, "desktop") },
+    encoding: "utf8", timeout: INTERNAL_DEADLINE_MS, killSignal: "SIGKILL",
+  });
+  try {
+    if (child.error || child.status !== 0 || child.signal) throw new ClientStateProbeError(child.pid, child.status, child.signal, !!child.error);
+    return JSON.parse(child.stdout.trim().split("\n").at(-1) ?? "{}");
+  } finally { removeTreeWithRetry(root); }
+}
+
+describe("Desktop copy coherence across client lifecycle", () => {
+  test.each(["rotate", "recover-both", "recover-current", "commit-lost"])("%s settles Desktop before reporting committed", mode => {
+    const r = runDesktopLifecycleScenario(mode);
+    expect(r.error).toBeNull();
+    expect(r.result.rotationOutcome).toBe("committed");
+    expect(r.tokenIsNew && r.desktopIsNew).toBe(true);
+    expect(r.pending || r.backupPresent || r.persistedOutcome).toBe(false);
+    expect(r.foreignPreserved && r.baselineUnchanged && r.credentialZeroed).toBe(true);
+    if (r.commits > 0) expect(r.desktopBeforeCommit).toBe(true);
+  });
+  test.each(["recover-backup", "same-old"])("%s returns rolled_back without a false commit", mode => {
+    const r = runDesktopLifecycleScenario(mode);
+    expect(r.error).toBeNull();
+    expect(r.result.rotationOutcome).toBe("rolled_back");
+    expect(r.commits).toBe(0);
+    expect(r.aborts).toBe(1);
+    expect(r.tokenIsOld && r.desktopIsOld).toBe(true);
+    expect(r.pending || r.backupPresent || r.persistedOutcome).toBe(false);
+    expect(r.baselineUnchanged && r.credentialZeroed).toBe(true);
+  });
+  test("normal failed candidate rolls both local copies back before returning failure", () => {
+    const r = runDesktopLifecycleScenario("rollback");
+    expect(r.error).not.toBeNull();
+    expect(r.commits).toBe(0);
+    expect(r.tokenIsOld && r.desktopIsOld).toBe(true);
+    expect(r.pending || r.backupPresent).toBe(false);
+  });
+  test.each(["same-old-abort-failure", "recover-neither", "recover-probe-error"])("%s preserves recovery evidence", mode => {
+    const r = runDesktopLifecycleScenario(mode);
+    expect(r.result).toBeNull();
+    expect(r.error).not.toBeNull();
+    expect(r.commits).toBe(0);
+    expect(r.pending && r.backupPresent && r.credentialZeroed).toBe(true);
+  });
+  test("CLI reports a recovered rollback honestly", () => {
+    const r = runDesktopLifecycleScenario("recover-backup-cli");
+    expect(r.cliRotation.exitCode).toBe(0);
+    expect(r.cliRotation.value.rotation).toBe("rolled_back");
+    expect(r.cliRotation.revokedClaim).toBe(false);
+    expect(r.desktopIsOld && r.tokenIsOld).toBe(true);
+  });
+  test.each(["disconnect", "disconnect-foreign", "disconnect-resume", "disconnect-after-clear"])("%s restores projection and retries idempotently", mode => {
+    const r = runDesktopLifecycleScenario(mode);
+    expect(r.error).toBeNull();
+    expect(r.stateKind).toBe("disconnected");
+    expect(r.tokenAbsent && r.desktopIsLocal && r.foreignPreserved && r.catalogPrior).toBe(true);
+    expect(r.receiptPhase).toBe("complete");
+    expect(r.second.tokenRemoved).toBe(false);
+    if (mode === "disconnect-foreign") expect(r.userAddedPreserved).toBe(true);
+  });
+  test("legacy current-hub profile disconnects via labeled standard fallback", () => {
+    const r = runDesktopLifecycleScenario("disconnect-legacy");
+    expect(r.error).toBeNull();
+    expect(r.result.desktopRestoration).toBe("standard_fallback");
+    expect(r.desktopHasKey).toBe(false);
+    expect(r.tokenAbsent && r.foreignPreserved).toBe(true);
+  });
+  test("protected Desktop edits block destructive disconnect", () => {
+    const r = runDesktopLifecycleScenario("disconnect-protected");
+    expect(r.error).not.toBeNull();
+    expect(r.tokenIsOld && r.desktopIsOld).toBe(true);
+    expect(r.stateKind).toBe("connected");
+  });
+  test("post-await sync cannot overwrite a prepared disconnect", () => {
+    const r = runDesktopLifecycleScenario("sync-claim");
+    expect(r.error).toBe("client_disconnect_pending");
+    expect(r.catalogUnchanged).toBe(true);
+    expect(r.receiptPhase).toBe("prepared");
+  });
+  test("disconnect expectedOwner refuses a newly connected owner before claiming or deleting state", () => {
+    const r = runDesktopLifecycleScenario("disconnect-expected-owner");
+    expect(r.result).toBeNull();
+    expect(r.error).toBe("client_disconnect_expected_owner_changed");
+    expect(r.stateKind).toBe("connected");
+    expect(r.tokenIsNew && r.catalogUnchanged).toBe(true);
+    expect(r.receiptPhase).toBe("absent");
+  });
+  test("disconnect claims its receipt before Codex-only restoration outside L", () => {
+    const r = runDesktopLifecycleScenario("disconnect-order");
+    expect(r.error).toBeNull();
+    expect(r.codexSawPrepared && r.codexOutsideL).toBe(true);
+    expect(r.receiptPhase).toBe("complete");
+  });
+  test("sync CAS preserves a newer token generation and leaves catalog bytes unchanged", () => {
+    const r = runDesktopLifecycleScenario("sync-generation-change");
+    expect(r.error).toBe("client_connection_changed");
+    expect(r.tokenIsNew && r.catalogUnchanged).toBe(true);
+  });
+  test("full-owner clear cannot delete a newer connection with the same key id", () => {
+    const r = runDesktopLifecycleScenario("clear-owner-change");
+    expect(r.result).toBe("conflict");
+    expect(r.stateKind).toBe("connected");
+    expect(r.tokenIsOld).toBe(true);
+  });
+  test("sync supplies the read-only guard at the actual injection seam", () => {
+    const r = runDesktopLifecycleScenario("sync-queued-guard");
+    expect(r.guardSeen).toBe(true);
+    expect(r.writesAfterGuard).toBe(0);
+    expect(r.error).toBe("client_disconnect_pending");
+  });
+  test.each(["status-lock", "status-receipt"])("%s cannot discard another operation's backup", mode => {
+    const r = runDesktopLifecycleScenario(mode);
+    expect(r.error).toBeNull();
+    expect(r.statusInside.result.kind).toBe("recovery-required");
+    expect(r.statusInside.backupPresent).toBe(true);
+    expect(r.statusOutside.kind).toBe(mode === "status-lock" ? "orphan-cleaned" : "recovery-required");
+    expect(r.backupPresent).toBe(mode === "status-receipt");
   });
 });

@@ -1,10 +1,20 @@
+import { readClientConnectionState } from "../client/state";
+import { readServiceApiTokenState, readTokenBackupState } from "../lib/service-secrets";
+import { withClientLifecycleSync, type ClientLifecycleLockDeps } from "../client/lifecycle-lock";
+import { applyRemoteDesktopStore, inspectRemoteDesktopCleanup, restoreRemoteDesktopStore } from "./desktop-remote-store";
+import { canonicalDirectory } from "./desktop-remote-store-io";
+import {
+  resolveDesktop3pConfigLibraryPath, parseMetadata, SAFE_DESKTOP_PROFILE_ID, isRecord,
+  isOwnedDesktopEntry, isOwnedDesktopGatewayEntry, profilePath, readDesktopProfileForeignKeys,
+  type Desktop3pConfigLibraryOptions, type Desktop3pMetadata, type Desktop3pMetadataEntry,
+} from "./desktop-3p-library";
+export { resolveDesktop3pConfigLibraryPath, type Desktop3pConfigLibraryOptions } from "./desktop-3p-library";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFile } from "../config";
+import { atomicWriteFile, readConfigDiagnostics, withConfigMutationLockSync } from "../config";
+import { claudeDesktopIntegrationEnabled } from "../codex/desired-state";
 import type { OcxClaudeDesktopProfile } from "../types";
-import { claudeDesktopConfigLibraryDir, resolveConfigLibraryDir } from "./desktop-3p-paths";
 import {
   reconcileDesktopProfile,
   renderDesktopProfile,
@@ -51,33 +61,6 @@ export interface Desktop3pRoutedModel {
  */
 export const DESKTOP_SUPPORTS_1M_THRESHOLD = 1_000_000;
 
-export interface Desktop3pConfigLibraryOptions {
-  env?: NodeJS.ProcessEnv;
-  platform?: NodeJS.Platform;
-  homeDir?: string;
-}
-
-/**
- * Resolve the config library from the same user-data root Claude Desktop uses. Keeping this in one
- * helper prevents the writer and dashboard status probe from agreeing on a path Desktop never reads.
- *
- * The resolution itself lives in `./desktop-3p-paths`, which ports Claude Desktop's own `GE()`
- * branch for branch — including the `-3p` suffix the app appends to its userData root. Dropping
- * that suffix points us at a directory Desktop never reads (GitHub #539).
- */
-export function resolveDesktop3pConfigLibraryPath(
-  options: Desktop3pConfigLibraryOptions = {},
-): string {
-  if (options.env === undefined && options.platform === undefined && options.homeDir === undefined) {
-    return claudeDesktopConfigLibraryDir();
-  }
-  return resolveConfigLibraryDir({
-    env: options.env ?? process.env,
-    platform: options.platform ?? process.platform,
-    home: options.homeDir ?? homedir(),
-  });
-}
-
 /** CLI arg parsing for `ocx claude desktop` mode flags (mutually exclusive). */
 export function parseDesktop3pModeArgs(flags: string[]): { mode: Desktop3pConfigMode } | { error: string } {
   const known = new Map<string, Desktop3pConfigMode>([
@@ -90,18 +73,6 @@ export function parseDesktop3pModeArgs(flags: string[]): { mode: Desktop3pConfig
   const picked = [...new Set(flags.map(a => known.get(a)!))];
   if (picked.length > 1) return { error: "모드 옵션은 하나만 쓸 수 있습니다 (--static | --hybrid | --discovery-only)." };
   return { mode: picked[0] ?? "static" };
-}
-
-interface Desktop3pMetadataEntry {
-  id: string;
-  name: string;
-  [key: string]: unknown;
-}
-
-interface Desktop3pMetadata {
-  appliedId?: string;
-  entries: Desktop3pMetadataEntry[];
-  [key: string]: unknown;
 }
 
 export type Desktop3pLibraryKind =
@@ -385,32 +356,6 @@ export function generateDesktop3pConfig(
   };
 }
 
-function parseMetadata(path: string): Desktop3pMetadata {
-  if (!existsSync(path)) return { entries: [] };
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Desktop3pMetadata>;
-  if (!Array.isArray(parsed.entries)) throw new Error("Claude Desktop 3P _meta.json has no entries array");
-  return { ...parsed, entries: parsed.entries };
-}
-
-const SAFE_DESKTOP_PROFILE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isOwnedDesktopEntry(entry: Desktop3pMetadataEntry | undefined): boolean {
-  return entry?.name === "opencodex" || entry?.name === "opencodex-standard";
-}
-
-/** A gateway row is removable; the selected standard row must always remain. */
-function isOwnedDesktopGatewayEntry(entry: Desktop3pMetadataEntry | undefined): boolean {
-  return entry?.name === "opencodex";
-}
-
-function profilePath(libraryPath: string, id: string): string {
-  return join(libraryPath, `${id}.json`);
-}
-
 /**
  * Read Desktop's selected config without changing its library.
  *
@@ -505,6 +450,58 @@ export function inspectDesktop3pConfigLibrary(
  */
 export function removeDesktop3pStandardPivot(
   options: Desktop3pConfigLibraryOptions & {
+    appliedFingerprint?: string | null; unlink?: (path: string) => void;
+    lifecycleLockDeps?: ClientLifecycleLockDeps;
+  } = {},
+): Desktop3pRemovalResult {
+  const libraryPath = resolveDesktop3pConfigLibraryPath(options);
+  try {
+    return withClientLifecycleSync<Desktop3pRemovalResult>(held => withConfigMutationLockSync(() => {
+      const connection = readClientConnectionState();
+      if (connection.kind === "invalid" || connection.kind === "mismatched") {
+        return { ok: false, changed: false, kind: "unsafe", libraryPath, reason: `desktop_client_state_${connection.kind}` };
+      }
+      if (connection.kind === "connected"
+        && canonicalDirectory(libraryPath) !== canonicalDirectory(resolveDesktop3pConfigLibraryPath())) {
+        return { ok: false, changed: false, kind: "unsafe", libraryPath, reason: "desktop_library_identity_changed" };
+      }
+      const latest = readConfigDiagnostics();
+      if (latest.source === "fallback") return { ok: false, changed: false, kind: "unsafe", libraryPath, reason: "desktop_config_invalid" };
+      if (claudeDesktopIntegrationEnabled(latest.config)) {
+        const observed = inspectDesktop3pConfigLibrary(options);
+        if (observed.kind === "not_installed" || observed.kind === "no_owned_state") {
+          return { ok: true, changed: false, kind: "noop", libraryPath };
+        }
+        return { ok: false, changed: false, kind: "unsafe", libraryPath, reason: "desired_state_changed" };
+      }
+      const cleanup = inspectRemoteDesktopCleanup();
+      if (cleanup.kind === "absent") {
+        if (connection.kind === "disconnected") return removeDesktop3pStandardPivotLocal(options);
+        const client = connection.value;
+        const known = [readServiceApiTokenState(), readTokenBackupState()].flatMap(token => token.kind === "present" ? [token.fingerprint] : []);
+        const result = restoreRemoteDesktopStore(held, {
+          owner: { serverUrl: new URL(client.serverUrl).origin, apiKeyId: client.apiKeyId, connectedAt: client.connectedAt },
+          knownTokenFingerprints: known,
+        });
+        return result.ok
+          ? { ok: true, changed: result.changed, kind: result.changed ? "removed" : "noop", libraryPath }
+          : { ok: false, changed: result.changed, kind: "unsafe", reason: result.reason, libraryPath };
+      }
+      if (cleanup.kind === "unsafe" || canonicalDirectory(libraryPath) !== canonicalDirectory(resolveDesktop3pConfigLibraryPath())) {
+        return { ok: false, changed: false, kind: "unsafe", libraryPath };
+      }
+      const known = [readServiceApiTokenState(), readTokenBackupState()]
+        .flatMap(token => token.kind === "present" ? [token.fingerprint] : []);
+      const result = restoreRemoteDesktopStore(held, { owner: cleanup.owner, knownTokenFingerprints: known });
+      return result.ok
+        ? { ok: true, changed: result.changed, kind: result.changed ? "removed" : "noop", libraryPath }
+        : { ok: false, changed: result.changed, kind: result.reason === "cleanup_pending" ? "cleanup_incomplete" : "unsafe", reason: result.reason, libraryPath };
+    }), options.lifecycleLockDeps);
+  } catch { return { ok: false, changed: false, kind: "write_failed", libraryPath }; }
+}
+
+function removeDesktop3pStandardPivotLocal(
+  options: Desktop3pConfigLibraryOptions & {
     appliedFingerprint?: string | null;
     unlink?: (path: string) => void;
   } = {},
@@ -590,10 +587,27 @@ export function writeDesktop3pConfig(
   mode: Desktop3pConfigMode = "static",
   profile?: OcxClaudeDesktopProfile,
   nativeContextCap?: NativeContextLimitsInput,
+  lifecycleLockDeps?: ClientLifecycleLockDeps,
 ): { written: boolean; path: string; reason?: string; fingerprint?: string } {
-  return writeDesktop3pConfigWithGenerator(() => (
-    generateDesktop3pConfig(port, nativeSlugs, routedModels, apiKey, mode, profile, nativeContextCap)
-  ));
+  try {
+    return withClientLifecycleSync(() => withConfigMutationLockSync(() => {
+      const connection = readClientConnectionState();
+      if (connection.kind === "invalid" || connection.kind === "mismatched") {
+        return { written: false, path: resolveDesktop3pConfigLibraryPath(), reason: `desktop_client_state_${connection.kind}` };
+      }
+      const latest = readConfigDiagnostics();
+      if (latest.source === "fallback") return { written: false, path: resolveDesktop3pConfigLibraryPath(), reason: "desktop_config_invalid" };
+      if (!claudeDesktopIntegrationEnabled(latest.config)) {
+        return { written: false, path: resolveDesktop3pConfigLibraryPath(), reason: "desired_state_changed" };
+      }
+      if (connection.kind === "connected" || inspectRemoteDesktopCleanup().kind !== "absent") {
+        return { written: false, path: resolveDesktop3pConfigLibraryPath(), reason: "desktop_remote_store_active" };
+      }
+      return writeDesktop3pConfigWithGenerator(() => (
+        generateDesktop3pConfig(port, nativeSlugs, routedModels, apiKey, mode, profile, nativeContextCap)
+      ));
+    }), lifecycleLockDeps);
+  } catch { return { written: false, path: resolveDesktop3pConfigLibraryPath(), reason: "desktop_lifecycle_busy_or_unsafe" }; }
 }
 
 /** Write the hub's exact entries without constructing a client-local alias registry. */
@@ -602,18 +616,26 @@ export function writeRemoteDesktop3pConfig(options: {
   apiKey: string;
   mode: Desktop3pConfigMode;
   models: Desktop3pModelEntry[];
+  lifecycleLockDeps?: ClientLifecycleLockDeps;
 }): { written: boolean; path: string; reason?: string; fingerprint?: string } {
-  return writeDesktop3pConfigWithGenerator(() => {
-    assertDesktop3pModelsValid(options.models);
-    return {
-      inferenceProvider: "gateway",
-      inferenceCredentialKind: "static",
-      inferenceGatewayBaseUrl: options.baseUrl,
-      inferenceGatewayApiKey: options.apiKey,
-      modelDiscoveryEnabled: options.mode !== "static",
-      ...(options.mode === "discovery" ? {} : { inferenceModels: options.models }),
-    };
-  });
+  try {
+    return withClientLifecycleSync(held => {
+      const connection = readClientConnectionState();
+      const token = readServiceApiTokenState();
+      if (connection.kind !== "connected" || token.kind !== "present") {
+        return { written: false, path: "", reason: "desktop_remote_connection_required" };
+      }
+      const client = connection.value;
+      const result = applyRemoteDesktopStore(held, {
+        baseUrl: options.baseUrl, apiKey: options.apiKey, mode: options.mode, models: options.models,
+        owner: { serverUrl: new URL(client.serverUrl).origin, apiKeyId: client.apiKeyId, connectedAt: client.connectedAt },
+        expectedTokenFingerprint: token.fingerprint,
+      });
+      return result.ok
+        ? { written: result.status === "applied", path: result.path ?? "", fingerprint: result.fingerprint }
+        : { written: false, path: "", reason: result.reason };
+    }, options.lifecycleLockDeps);
+  } catch { return { written: false, path: "", reason: "desktop_lifecycle_busy_or_unsafe" }; }
 }
 
 function writeDesktop3pConfigWithGenerator(
@@ -629,7 +651,7 @@ function writeDesktop3pConfigWithGenerator(
     const selected = metadata.entries.find(entry => entry?.id === metadata.appliedId && isOwnedDesktopGatewayEntry(entry));
     const existing = selected ?? metadata.entries.find(entry => isOwnedDesktopGatewayEntry(entry) && typeof entry.id === "string");
     const id = existing?.id ?? randomUUID();
-    configPath = join(libraryPath, `${id}.json`);
+    configPath = profilePath(libraryPath, id);
     const entry: Desktop3pMetadataEntry = existing ? { ...existing, id, name: "opencodex" } : { id, name: "opencodex" };
     const entries = existing
       ? metadata.entries.map(current => current === existing ? entry : current)
@@ -652,24 +674,6 @@ function writeDesktop3pConfigWithGenerator(
     const reason = error instanceof Error ? error.message : String(error);
     return { written: false, path: configPath, reason };
   }
-}
-
-const OPENCODEX_DESKTOP_PROFILE_KEYS = new Set([
-  "inferenceProvider",
-  "inferenceCredentialKind",
-  "inferenceGatewayBaseUrl",
-  "inferenceGatewayApiKey",
-  "modelDiscoveryEnabled",
-  "inferenceModels",
-]);
-
-function readDesktopProfileForeignKeys(path: string): Record<string, unknown> {
-  if (!existsSync(path)) return {};
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  if (!isRecord(parsed)) throw new Error("Claude Desktop 3P profile is not a JSON object");
-  return Object.fromEntries(
-    Object.entries(parsed).filter(([key]) => !OPENCODEX_DESKTOP_PROFILE_KEYS.has(key)),
-  );
 }
 
 /** Backup an existing owned config then atomically replace it. Exported for failure-path tests. */

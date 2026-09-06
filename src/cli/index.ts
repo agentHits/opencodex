@@ -106,7 +106,7 @@ function reportShellHookFailure(result: { state: "installed" | "absent" | "faile
 }
 
 
-import { removeOwnedConfigState } from "../lib/config-ownership";
+import { removeOwnedConfigAfterDesktopCleanup } from "./uninstall-client-state";
 import { withProcessRuntimeProvenance } from "../lib/bun-runtime";
 import { selfLaunchArgv } from "../lib/self-launch-argv";
 import { initializeNodeLauncherContext } from "./launcher-context";
@@ -1277,8 +1277,8 @@ async function handleUninstall() {
   }
 
   if (failures.length === 0) {
-    await runStep("opencodex config removed", () => {
-      const result = removeOwnedConfigState(getConfigDir());
+    await runStep("opencodex config removed", async () => {
+      const result = await removeOwnedConfigAfterDesktopCleanup(observed);
       if (result.status === "absent") return false;
       if (result.status === "removed") return true;
       const residual = result.residualPaths.length > 0

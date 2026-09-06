@@ -257,6 +257,15 @@ seçicisi yoksa yukarıdaki olağan sözleşmeler değişmez. Claude kapalıysa
 profil yazmaz. Sürüm 1 yerine olağan katalog döndüren eski hub'lar desteklenmez; yerel üretilmiş
 kimliklere geçilmez.
 
+Anlık görüntü salt okunur model listesidir; anahtar döndürme veya profil yükleme API'si değildir.
+Desktop anahtar taşıma, kurtarma ve bağlantıyı kesme mevcut istemci yaşam döngüsünü kullanır.
+Döndürme modelleri ve seçimi korur; CLI `rotation` alanı `committed` ile `rolled_back` sonucunu
+ayırır. Bağlantıyı kesme yönetilen ayarları geri yükler veya tanınan eski profil için standart
+moda dönüşü bildirir; kullanıcı alanları ve sonraki geçerli seçimler korunur. Çatışma veya eksik
+kurtarma tamamlanmış sayılmaz. Disk değişiklikleri için Desktop'ı yeniden başlatın; bağlantıyı
+kesmek hub anahtarını otomatik iptal etmez. [Desktop kılavuzuna](/tr/guides/claude-code/) bakın.
+Thinking yeniden gönderimi ve önbellek, ayrı [#3719](https://github.com/lidge-jun/opencodex/issues/3719) işidir.
+
 ## `POST /v1/live` ve Realtime yan bandı
 
 `POST /v1/live`, ChatGPT/Codex App Frameless çağrı oluşturma yüzeyini kabul
