@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as abortModule from "../../src/lib/abort";
 import type { AdapterFetchContext, ProviderAdapter } from "../../src/adapters/base";
 import { parseRequest } from "../../src/responses/parser";
 import { responseWithDeferredRequestLog, type RequestLogEntry } from "../../src/server";
@@ -19,8 +20,11 @@ function runWithWebSearch(
 }
 
 const originalFetch = globalThis.fetch;
+let cleanupDeadlineFixture: (() => void) | undefined;
 
 afterEach(() => {
+  cleanupDeadlineFixture?.();
+  cleanupDeadlineFixture = undefined;
   globalThis.fetch = originalFetch;
 });
 
@@ -362,6 +366,37 @@ describe("web-search timeout runtime contracts", () => {
     let firstSignal: AbortSignal | undefined;
     let cancelCalls = 0;
     let rotations = 0;
+    let rotatedFetches = 0;
+    let deadlineCreations = 0;
+    let deadlineClears = 0;
+    let cancelSettled = false;
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>(resolve => { releaseCancel = resolve; })
+      .then(() => { cancelSettled = true; });
+    const events: string[] = [];
+    const deadlineController = new AbortController();
+    const timeoutReason = new DOMException("Timeout elapsed", "TimeoutError");
+    const originalDeadline = abortModule.clearableDeadline;
+    const deadlineSpy = spyOn(abortModule, "clearableDeadline").mockImplementation((timeoutMs, parent) => {
+      if (timeoutMs !== connectTimeoutMs) return originalDeadline(timeoutMs, parent);
+      deadlineCreations++;
+      const signal = parent ? AbortSignal.any([parent, deadlineController.signal]) : deadlineController.signal;
+      return {
+        signal,
+        timeoutReason,
+        didExpire: () => signal.aborted && signal.reason === timeoutReason,
+        clear: () => { deadlineClears++; },
+      };
+    });
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      releaseCancel();
+      deadlineController.abort(timeoutReason);
+      deadlineSpy.mockRestore();
+    };
+    cleanupDeadlineFixture = cleanup;
     const firstAdapter: ProviderAdapter = {
       name: "rate-limited-never-cancelled",
       buildRequest: () => ({ url: "https://routed.test/v1", method: "POST", headers: {}, body: "{}" }),
@@ -370,7 +405,8 @@ describe("web-search timeout runtime contracts", () => {
         return new Response(new ReadableStream<Uint8Array>({
           cancel() {
             cancelCalls++;
-            return new Promise<void>(() => {});
+            events.push("cancel-requested");
+            return cancelGate;
           },
         }), { status: 429 });
       },
@@ -381,32 +417,51 @@ describe("web-search timeout runtime contracts", () => {
       name: "rotated-header-hang",
       buildRequest: () => ({ url: "https://routed.test/v1", method: "POST", headers: {}, body: "{}" }),
       fetchResponse: (_request, ctx) => {
+        rotatedFetches++;
+        expect(firstSignal).toBeDefined();
         expect(ctx?.abortSignal).toBe(firstSignal);
-        return hangingFetch(ctx);
+        expect(ctx?.abortSignal?.aborted).toBe(false);
+        expect(cancelCalls).toBe(1);
+        expect(cancelSettled).toBe(false);
+        events.push("rotated-fetch");
+        const pending = hangingFetch(ctx);
+        // Expiry is driven only after rotation: awaiting cancel would deadlock the test.
+        events.push("deadline-expired");
+        deadlineController.abort(timeoutReason);
+        return pending;
       },
       async *parseStream() { yield { type: "done" }; },
       async parseResponse() { return [{ type: "done" }]; },
     };
 
-    const started = performance.now();
-    const response = await runWithWebSearch(deps(firstAdapter, {
-      connectTimeoutMs,
-      on429: () => {
-        rotations++;
-        return rotatedAdapter;
-      },
-    }));
+    try {
+      const response = await runWithWebSearch(deps(firstAdapter, {
+        connectTimeoutMs,
+        on429: () => {
+          rotations++;
+          return rotatedAdapter;
+        },
+      }));
 
-    expect(performance.now() - started).toBeLessThan(500);
-    expect(cancelCalls).toBe(1);
-    expect(rotations).toBe(1);
-    expect(response.status).toBe(504);
-    expect(await response.json()).toEqual({
-      error: {
-        message: `Provider response-header timeout after ${connectTimeoutMs}ms during web-search`,
-        type: "upstream_error",
-        code: null,
-      },
-    });
+      expect(cancelCalls).toBe(1);
+      expect(cancelSettled).toBe(false);
+      expect(rotations).toBe(1);
+      expect(rotatedFetches).toBe(1);
+      expect(deadlineCreations).toBe(1);
+      expect(deadlineClears).toBe(1);
+      expect(firstSignal?.reason).toBe(timeoutReason);
+      expect(events).toEqual(["cancel-requested", "rotated-fetch", "deadline-expired"]);
+      expect(response.status).toBe(504);
+      expect(await response.json()).toEqual({
+        error: {
+          message: `Provider response-header timeout after ${connectTimeoutMs}ms during web-search`,
+          type: "upstream_error",
+          code: null,
+        },
+      });
+    } finally {
+      cleanup();
+      if (cleanupDeadlineFixture === cleanup) cleanupDeadlineFixture = undefined;
+    }
   }, 1_000);
 });
