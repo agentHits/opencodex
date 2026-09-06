@@ -14,7 +14,8 @@ inspector reports real terminals and exposes parsed payload callbacks.
 - src/server/responses/combo-stream-preflight.ts: native-only replayReadErrors
   option, default false. Catch only reader.read rejection; opted-in callers get
   an accepted reconstructed stream retaining the bounded prefix and the errored
-  reader. Default combo callers preserve their prior throw behavior. Do not retry
+  reader. Never cancel that errored reader: its original rejection must survive
+  the replay into relay/inspection. Default combo callers preserve their prior throw behavior. Do not retry
   or classify a read reset as a decrypt rejection, swallow it, or grow buffers.
 - src/server/responses/core.ts: enable that option only on the native opaque
   preflight. After its await, caller abort takes the existing cancellation cleanup
