@@ -627,7 +627,7 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
 
       <div className="panel" aria-busy={!shadowCall || undefined}>
         <div className="spread" style={{ alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="dash-shadow-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span className="font-semibold">{t("dash.shadowCallIntercept")}</span>
             <button
               ref={shadowCallHelpTriggerRef}

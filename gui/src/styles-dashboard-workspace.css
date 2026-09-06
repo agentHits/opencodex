@@ -676,6 +676,9 @@
 
   .dash-overview-stack .dash-shadow-controls { flex-basis: 100%; }
   .dash-overview-stack .spread:has(.dash-shadow-controls) { flex-wrap: wrap; }
+  .dash-shadow-label { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+  .dash-shadow-label > .font-semibold { flex-shrink: 0; max-width: 100%; }
+  .dash-shadow-label > code { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
   .dash-overview-stack .maintenance-actions { justify-content: flex-start; }
 }
 
