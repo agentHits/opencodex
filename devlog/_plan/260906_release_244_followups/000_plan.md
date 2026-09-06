@@ -1,6 +1,7 @@
 # Release 2.44 follow-up integration
 
 ## Loop contract
+
 - Archetype: spec-satisfaction repair; class C4 for governance, replay and release; C3 for bounded client changes.
 - Trigger: owner authorized the named backlog, bottom-up stacked PR integration, --no-verify pushes, admin merges, maintainer dev policy and release on 2026-09-06.
 - Goal: publish the verified next release after these narrowly scoped fixes.
@@ -12,6 +13,7 @@
 - Resources: existing GitHub account, repository and release OIDC only; no new credentials/purchases. Unlimited requested-model delegation within available concurrency; no owner token/cost cap. Each subprocess <=30 minutes, CI polls <=60 seconds, each phase investigation checkpoint at 60 minutes with evidence-based continuation. No implicit exhausted outcome.
 
 ## Snapshot and sequence
+
 Baseline dev: af344a28eabcee09a5e04c48ab897449792719c2, version 2.44.0. Latest published stable is 2.43.0. Refresh before every layer.
 
 | Work phase | Design | Dependency / independent proof |
@@ -32,4 +34,5 @@ Baseline dev: af344a28eabcee09a5e04c48ab897449792719c2, version 2.44.0. Latest p
 One work-phase is one PABCD cycle. Publish short dependency stacks; use merge commits for parents with live children, squash bounded terminal carries if safe, and recascade after any squash. Independent presentation/governance slices remain their own PRs even though execution is sequential. Every carried contributor receives account-linked Co-authored-by credit. Preserve snapshots of source heads.
 
 ## Evidence boundaries
+
 #3735/#3734 are public current-SHA reports; independently inspect code, author local-pass statements remain reports. Kiro proof is recorded-log shape plus synthetic CI tests, never a live quota-consuming request. #3644 has a network A/B report and landed diagnostic #3693; do not claim a Windows runtime reproduction from mocked tests. Detailed private logs are never committed.
