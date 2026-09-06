@@ -2525,6 +2525,7 @@ export async function handleComboResponses(
   const payloadEligible = (target: (typeof combo.targets)[number]): boolean =>
     comboPayloadReadable || !unreadableEncryptedAgentTask || canDecryptUnreadableAgentTask(target);
   let encryptedTaskRecoveryAttempted = false;
+  let storedPool401ReplayDispatched = false;
   const recoverUnreadableEncryptedTask = async (): Promise<boolean> => {
     if (encryptedTaskRecoveryAttempted) return false;
     encryptedTaskRecoveryAttempted = true;
@@ -2662,7 +2663,6 @@ export async function handleComboResponses(
       attemptRetained = true;
     };
     let consumedChildFailure: ConsumedComboFailure | undefined;
-    let storedPool401ReplayDispatched = false;
     const callbackGate = createChildPassthroughCallbackGate(options);
     let response: Response;
     try {
@@ -2795,13 +2795,36 @@ export async function handleComboResponses(
     (logCtx.attempts ??= []).push(attempt);
     attemptRetained = true;
     lastFailure = failure.response;
+    const failureDecision = comboFailureDecision(failure.response.status, failure.classificationText, {
+      code: failure.upstreamCode,
+    });
     if (storedPool401ReplayDispatched) {
+      if (failureDecision === "hop" && unreadableEncryptedAgentTask && !comboPayloadReadable) {
+        const recoveredTarget = await pickWithWait({
+          exclude: pick.attempted,
+          eligible: target => {
+            try {
+              const route = routeConcreteModel(config, `${target.provider}/${target.model}`);
+              return route.codexAccountMode === undefined
+                && !isCanonicalOpenAiForwardProvider(route.provider);
+            } catch {
+              return false;
+            }
+          },
+        });
+        if (options.abortSignal?.aborted) return clientCancelledResponse();
+        if (recoveredTarget && await recoverUnreadableEncryptedTask()) {
+          pick = recoveredTarget;
+          continue;
+        }
+        if (options.abortSignal?.aborted) return clientCancelledResponse();
+      }
+      // Keep the spent Pool budget sticky even after a recovered routed child:
+      // no later failure may reopen ordinary combo/native account hopping.
       adoptFailedChildLog(childLog);
       return lastFailure;
     }
-    if (comboFailureDecision(failure.response.status, failure.classificationText, {
-      code: failure.upstreamCode,
-    }) === "stop") {
+    if (failureDecision === "stop") {
       adoptFailedChildLog(childLog);
       if (
         failure.response.status === 413
