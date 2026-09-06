@@ -273,6 +273,17 @@ to snapshot persistence instead of relying on the progress argument alone.
 
 ### OpenCodex home and live process state
 
+`initializePersistedConfigIfMissing` in `src/config.ts` is the create-only path consumed by
+`src/cli/init.ts`. It rechecks absence under the existing config-mutation lock and publishes through
+`src/config/initialize.ts`: a private descriptor is hardened before secret bytes are written, then
+linked without replacing an occupied destination. Existing invalid or unsafe entries are preserved.
+The initializer never truncates a staged inode or rolls back by unlinking the destination; cleanup
+only removes its own temporary name. Unsupported/denied links and incomplete cleanup fail explicitly,
+and publication followed by a later failure can leave a complete config or private residue. Ordinary
+`saveConfig` replacement behavior remains unchanged. This protects init-time config bytes, not a
+foreign winner's ownership under future uninstall; the existing ownership manifest and global CLI
+shim preflight keep their separate contracts.
+
 `src/config/paths.ts` is the single owner of `OPENCODEX_HOME` expansion and resolution. It exposes
 the config directory and `config.json` path and retains the existing cache rule: a relative home is
 resolved once for each distinct raw environment value, so a later working-directory change cannot
@@ -284,7 +295,7 @@ identity, and snapshot-guarded removal. `RuntimePortState.attestationSecret` rem
 owner-only state and is validated before a record is returned. `src/config.ts` re-exports the same
 symbols for compatibility, but new lifecycle-only callers import the process-state leaf directly.
 
-Both config and process-state writes use `src/config/atomic-write.ts`. The leaf preserves the shared
+Replacing config and process-state writes use `src/config/atomic-write.ts`. The leaf preserves the shared
 process-wide temp sequence, symlink target resolution, real-home test guard, owner manifest,
 Windows ACL hardening, scrub-before-unlink failure path, and explicit residual-temp errors. A caller
 must not replace it with a local temp-and-rename shortcut.
