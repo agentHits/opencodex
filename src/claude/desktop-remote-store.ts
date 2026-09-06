@@ -141,11 +141,12 @@ function restoreArtifact(io: StoreIO, bundle: Bundle, known: readonly string[]):
   let restoration: "owned_projection" | "standard_fallback" | "selection_preserved" = baseline.kind === "standard_fallback" ? "standard_fallback" : "owned_projection";
   if (selection !== state.targetId) restoration = "selection_preserved";
   else if (baseline.priorSelection && baseline.priorSelection.id !== state.targetId) {
-    const prior = io.read(profilePath(bundle.paths.library, baseline.priorSelection.id));
-    if (!prior || prior.hash !== baseline.priorSelection.hash || !meta.value.entries.some(e => e.id === baseline.priorSelection.id)) throw new DesktopStoreError("conflict");
+    const priorSelection = baseline.priorSelection;
+    const prior = io.read(profilePath(bundle.paths.library, priorSelection.id));
+    if (!prior || prior.hash !== priorSelection.hash || !meta.value.entries.some(e => e.id === priorSelection.id)) throw new DesktopStoreError("conflict");
     const key = profileCredential(prior.value);
     if (key && known.includes(key.fingerprint)) throw new DesktopStoreError("conflict");
-    selection = baseline.priorSelection.id;
+    selection = priorSelection.id;
   }
   const originalKey = profileCredential(baseline.projection);
   if (originalKey && known.includes(originalKey.fingerprint)) throw new DesktopStoreError("conflict");

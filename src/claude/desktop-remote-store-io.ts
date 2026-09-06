@@ -8,7 +8,7 @@ import { DesktopStoreError, digest } from "./desktop-remote-store-state";
 export const MAX_DESKTOP_METADATA_ENTRIES = 256;
 
 export interface JsonFile { value: Record<string, unknown>; hash: string; identity: string }
-const identity = (s: ReturnType<typeof lstatSync>): string => `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;
+const identity = (s: NonNullable<ReturnType<typeof lstatSync>>): string => `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException)?.code === "ENOENT"; }
 export function canonicalDirectory(path: string): string {
   const absolute = resolve(path);
