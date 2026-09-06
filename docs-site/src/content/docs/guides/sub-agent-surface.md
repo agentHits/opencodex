@@ -39,6 +39,8 @@ without a `call_id`. On translated routes, OpenCodex recognizes only the complet
 `function_call_output` shape with nonblank `id`, `name` and `namespace` and supported
 text/image output, then treats it as a user turn. This also starts the new conversation
 boundary during continuation and clears pending reasoning from the preceding turn.
+Generated developer guidance is placed before the current task in both parsed
+messages and saved raw history, preserving the same order when that history is replayed.
 
 Malformed, empty, opaque or incomplete envelopes still fail validation. Actual tool
 results keep their required `call_id`; native passthrough and compaction retain their
