@@ -598,7 +598,11 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
     displayNameSavingRef.current = true;
     setDisplayNameSaving(true);
     setDisplayNameRequestError(null);
-    let confirmed = displayName === undefined && displayNameRecovery?.confirmed === true;
+    // A failed convergence retry cannot invalidate an earlier persistence receipt
+    // for the same value. Editing the draft clears recovery and starts a new intent.
+    let confirmed = displayNameRecovery?.confirmed === true
+      && (displayName === undefined || displayName === displayNameRecovery.value);
+    let receivedReceipt = displayName === undefined;
     let refreshOnly = displayName === undefined;
     try {
       if (displayName !== undefined) {
@@ -624,9 +628,14 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
           ? await readJsonOrThrow<DisplayNameReceipt>(response, t("models.displayNameSaveFailed"))
           : await response.json();
         bounded.signal.throwIfAborted();
-        if (!result) throw new Error(t("models.displayNameSaveFailed"));
-        confirmed = response.ok || result.saved === true;
-        if (confirmed) {
+        if (!result || typeof result !== "object" || Array.isArray(result)
+          || (!response.ok && result.saved !== true && typeof result.error !== "string")) {
+          throw new Error(t("models.displayNameSaveFailed"));
+        }
+        receivedReceipt = true;
+        const receiptConfirmed = response.ok || result.saved === true;
+        confirmed = confirmed || receiptConfirmed;
+        if (receiptConfirmed) {
           const override = result.displayNameOverride === null ? undefined
             : result.displayNameOverride ?? displayName ?? undefined;
           const fields: Pick<ModelRow, "displayName" | "displayNameOverride" | "displayNameSource"> = {
@@ -653,13 +662,16 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
       finishDisplayNameEdit();
     } catch (error) {
       if (displayNameRequestRef.current !== bounded) return;
-      if (bounded.signal.aborted && !confirmed) setDisplayNameCurrentPending(true);
-      setDisplayNameRecovery(confirmed || bounded.signal.aborted || refreshOnly
-        ? { value: refreshOnly || bounded.signal.aborted ? undefined : displayName, confirmed }
+      // A dropped connection or unreadable body can hide a committed write just
+      // like a timeout. Reconcile by reading; never replay an unchanged old draft.
+      const unknownOutcome = !receivedReceipt || bounded.signal.aborted;
+      if (unknownOutcome && !confirmed) setDisplayNameCurrentPending(true);
+      setDisplayNameRecovery(confirmed || unknownOutcome || refreshOnly
+        ? { value: refreshOnly || unknownOutcome ? undefined : displayName, confirmed }
         : null);
       setDisplayNameRequestError(confirmed
         ? t("models.displayNameSavedRefreshFailed")
-        : bounded.signal.aborted || refreshOnly
+        : unknownOutcome || refreshOnly
           ? t("models.displayNameOutcomeUnknown")
           : error instanceof Error && error.message
             ? error.message

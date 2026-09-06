@@ -389,6 +389,78 @@ describe("Models dashboard discovered display name integration", () => {
     });
   }
 
+  test("confirmed reset survives an ordinary convergence retry error before success", async () => {
+    await mountModels();
+    await act(async () => nameTrigger().click());
+    savedFailure = true;
+    await act(async () => dialogButton("Reset name").click());
+    await flush();
+    savedFailure = false;
+    mutationFailure = "Temporary server failure";
+    await act(async () => dialogButton("Retry").click());
+    await flush();
+    expect(dialogInput().value).toBe("");
+    expect(dialogButton("Reset name").disabled).toBe(true);
+    expect(dialogButton("Retry").disabled).toBe(false);
+    expect(container.textContent).toContain("The change was saved");
+    expect(currentNameText()).not.toContain("Your name");
+    expect(currentModels[0]!.displayNameOverride).toBeUndefined();
+
+    mutationFailure = null;
+    await act(async () => container.querySelector("dialog form")!.dispatchEvent(
+      new testWindow.Event("submit", { bubbles: true, cancelable: true }),
+    ));
+    await flush();
+    expect(mutationBodies.map(body => body.displayName)).toEqual([null, null, null]);
+    expect(container.querySelector("dialog")).toBeNull();
+    expect(currentModels[0]!.displayNameOverride).toBeUndefined();
+  });
+
+  for (const failure of ["transport", "body"] as const) {
+    for (const value of ["Saved despite disconnect", null]) {
+      test(`persisted ${value === null ? "reset" : "save"} with ${failure} failure retries only a read`, async () => {
+        await mountModels();
+        const transport = globalThis.fetch;
+        let failedSignal: AbortSignal | null | undefined;
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const response = await transport(input, init);
+          if (init?.method === "PUT" && String(input).includes("model-display-names")) {
+            failedSignal = init.signal;
+            if (failure === "transport") throw new TypeError("Connection closed");
+            Object.defineProperty(response, "text", {
+              value: async () => { throw new TypeError("Response body interrupted"); },
+            });
+          }
+          return response;
+        }) as typeof fetch;
+        await act(async () => nameTrigger().click());
+        await act(async () => {
+          if (value === null) dialogButton("Reset name").click();
+          else {
+            setInputValue(dialogInput(), value);
+            dialogButton("Save").click();
+          }
+        });
+        await flush();
+        expect(failedSignal?.aborted).toBe(false);
+        expect(currentModels[0]!.displayNameOverride).toBe(value ?? undefined);
+        expect(dialogInput().value).toBe(value ?? "Grok 4.6");
+        expect(currentNameText()).toContain("Current name unavailable until refresh");
+        expect(currentNameText()).not.toContain("Your name");
+        expect(container.textContent).toContain("The change may have been saved");
+        expect(dialogButton("Retry").disabled).toBe(false);
+        expect(dialogButton("Cancel").disabled).toBe(false);
+        await act(async () => container.querySelector("dialog form")!.dispatchEvent(
+          new testWindow.Event("submit", { bubbles: true, cancelable: true }),
+        ));
+        await flush();
+        expect(mutationBodies).toEqual([{ modelId: "grok-4.6", displayName: value }]);
+        expect(currentModels[0]!.displayNameOverride).toBe(value ?? undefined);
+        expect(container.querySelector("dialog")).toBeNull();
+      });
+    }
+  }
+
   test("editing after a saved receipt explicitly starts a new save", async () => {
     await mountModels();
     await act(async () => nameTrigger().click());
