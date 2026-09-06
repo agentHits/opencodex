@@ -1528,6 +1528,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
                   ? nativeFastEligible(model.id)
                   : catalogRowFastEligible(model)
               : undefined,
+            { modelPickerOrder: config.modelPickerOrder, featured: config.subagentModels },
           );
           return jsonResponse({ data }, 200, req, policy);
         }
@@ -1562,6 +1563,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
             accountNativeSlugs,
             accountNativeSlugsBySelector,
             config.keepNativeChatGptOnV1 === true,
+            config.modelPickerOrder,
           );
           return jsonResponse({
             models: applyNativeVisibility(
