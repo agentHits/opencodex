@@ -292,6 +292,7 @@ import {
   recordAttemptRequestedEffort,
   requestLogSpeedLabel,
   sealRequestAttemptIdentity,
+  recordAttemptCredentialSource,
   usageFromResponsesPayload,
   type RequestLogContext,
 } from "../request-log";
@@ -1422,6 +1423,7 @@ async function retryCodexPoolOnAlternateAccount(
     retryAdapter.name,
     logCtx.accountLogLabel,
   );
+  recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, retryAdapter.name);
 
   const retrySameConfirmedAccount = outcomeStatus === 400
     && ACCOUNT_GATED_NATIVE_OPENAI_MODELS.has(route.modelId)
@@ -3925,6 +3927,7 @@ async function handleResponsesInner(
     (logCtx.attempts ??= []).push(attempt);
   }
   sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, adapter.name, logCtx.accountLogLabel);
+  recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, adapterProvider, adapter.name);
   let runTurnAdapter = adapter;
   if (adapter.runTurn) {
     recordAdapterTierMetadata(logCtx, adapter.tierLogForRunTurn?.(parsed));
@@ -4590,6 +4593,7 @@ async function handleResponsesInner(
         retryAdapter.name,
         logCtx.accountLogLabel,
       );
+      recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, retryAdapter.name);
       const rebuiltBodyRefusal = refuseOversizedOutboundBody(request);
       if (rebuiltBodyRefusal) return { failed: rebuiltBodyRefusal };
       try {
@@ -4678,6 +4682,7 @@ async function handleResponsesInner(
       });
       logCtx.providerAdapter = replayAdapter.name;
       sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, replayAdapter.name, logCtx.accountLogLabel);
+      recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, replayAdapter.name);
       try {
         request = await replayAdapter.buildRequest(parsed, {
           headers: selectedForwardHeaders,
@@ -4797,6 +4802,7 @@ async function handleResponsesInner(
         refreshedAdapter.name,
         logCtx.accountLogLabel,
       );
+      recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, refreshedAdapter.name);
       try {
         request = await refreshedAdapter.buildRequest(parsed, {
           headers: selectedForwardHeaders,
@@ -6123,6 +6129,7 @@ async function handleResponsesInner(
           forwardHeaders: selectedForwardHeaders,
         });
         sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, rotatedAdapter.name, logCtx.accountLogLabel);
+        recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, rotatedAdapter.name);
         return true;
       } catch {
         return false;
@@ -6542,6 +6549,7 @@ async function handleResponsesInner(
       if (retryEstimate !== undefined) logCtx.usageLogInputTokens = retryEstimate;
       logCtx.providerAdapter = activeAdapter.name;
       sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name, logCtx.accountLogLabel);
+      recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, activeAdapter.name);
       noteAttemptSend(logCtx.activeAttempt, retryEstimate, recovery);
       try {
         try {
@@ -6789,6 +6797,7 @@ async function handleResponsesInner(
             config.cacheRetention,
           );
           sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name, logCtx.accountLogLabel);
+          recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, activeAdapter.name);
           const result = await rebuildAndRefetch("anthropic-oauth-429");
           if ("failed" in result) return result.failed;
           upstreamResponse = result;
@@ -6832,6 +6841,7 @@ async function handleResponsesInner(
             config.cacheRetention,
           );
           sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name, logCtx.accountLogLabel);
+          recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, activeAdapter.name);
           const result = await rebuildAndRefetch("oauth-account-429");
           if ("failed" in result) return result.failed;
           upstreamResponse = result;
@@ -7199,6 +7209,7 @@ async function handleResponsesInner(
               config.cacheRetention,
             );
             sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name, logCtx.accountLogLabel);
+            recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, activeAdapter.name);
             nextContinuationRecoveryKind = "anthropic-oauth-429";
             continue;
           } catch {
@@ -7240,6 +7251,7 @@ async function handleResponsesInner(
                 config.cacheRetention,
               );
               sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name, logCtx.accountLogLabel);
+              recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, activeAdapter.name);
               nextContinuationRecoveryKind = "oauth-account-429";
               continue;
             }
