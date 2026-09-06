@@ -135,9 +135,13 @@ export type ComboStreamPreflightResult =
 export async function preflightComboStreamResponse(
   response: Response,
   logCtx: RequestLogContext,
+  retryableTerminal: (payload: unknown) => boolean = retryableZeroOutputTerminal,
+  options?: { allowMissingContentType?: boolean },
 ): Promise<ComboStreamPreflightResult> {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (!response.ok || !response.body || !contentType.includes("text/event-stream")) {
+  const isEventStream = contentType.includes("text/event-stream")
+    || (!contentType && options?.allowMissingContentType === true);
+  if (!response.ok || !response.body || !isEventStream) {
     return { kind: "accepted", response };
   }
 
@@ -150,11 +154,14 @@ export async function preflightComboStreamResponse(
   const inspector = createSseInspector({
     logCtx,
     onParsedPayload: payload => {
-      if (comboStreamPayloadCommitsOutput(payload)) outputCommitted = true;
+      const retryable = retryableTerminal(payload);
+      const matchedBareError = retryable && payload !== null && typeof payload === "object"
+        && !Array.isArray(payload) && (payload as { type?: unknown }).type === "error";
+      // Only an explicit caller predicate may opt a known bare error into replay.
+      // Default combo classification still commits unknown/error events.
+      if (comboStreamPayloadCommitsOutput(payload) && !matchedBareError) outputCommitted = true;
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
-      if (retryableZeroOutputTerminal(payload)) {
-        retryableTerminalPayload = payload as Record<string, unknown>;
-      }
+      if (retryable) retryableTerminalPayload = payload as Record<string, unknown>;
     },
     onTerminal: status => { terminalStatus = status; },
   });
@@ -180,7 +187,10 @@ export async function preflightComboStreamResponse(
         inspector.feed(retained);
       }
 
-      if ((terminalStatus === "failed" || terminalStatus === "incomplete")
+      // A bare error event is not a protocol terminal (terminalStatus stays undefined),
+      // so its exact-message retryable match doubles as the terminal evidence.
+      if ((terminalStatus === "failed" || terminalStatus === "incomplete"
+        || retryableTerminalPayload?.type === "error")
         && !outputCommitted && retryableTerminalPayload) {
         await reader.cancel("retrying zero-output combo stream terminal").catch(() => undefined);
         return { kind: "failed", response: failedTerminalResponse(response, retryableTerminalPayload, logCtx) };
