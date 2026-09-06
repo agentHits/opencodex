@@ -3927,7 +3927,7 @@ async function handleResponsesInner(
     (logCtx.attempts ??= []).push(attempt);
   }
   sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, adapter.name, logCtx.accountLogLabel);
-  recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, adapterProvider);
+  recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, adapterProvider, adapter.name);
   let runTurnAdapter = adapter;
   if (adapter.runTurn) {
     recordAdapterTierMetadata(logCtx, adapter.tierLogForRunTurn?.(parsed));
