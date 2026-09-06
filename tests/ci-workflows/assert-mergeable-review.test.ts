@@ -402,8 +402,9 @@ describe.skipIf(process.platform === "win32")("assert-mergeable-review", () => {
 
       if (expected === "PASS") {
         expect(result.exitCode, output).toBe(0);
-        expect(output).toContain("eligible for explicit maintainer integration into dev");
-        expect(output).toContain("--admin --match-head-commit HEADSHA");
+        expect(output).toContain("validation snapshot for #999 into dev at head HEADSHA");
+        expect(output).toContain("head matching does not pin the base");
+        expect(output).not.toContain("gh pr merge");
         const calls = readFileSync(join(caseStateDir, "gh-calls"), "utf8").trim().split("\n");
         expect(calls.filter(call => call === "api user")).toHaveLength(2);
         expect(calls.filter(call => call.includes("/contents/MAINTAINERS.md?ref=dev"))).toHaveLength(2);

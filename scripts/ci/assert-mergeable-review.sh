@@ -279,8 +279,8 @@ if "$maintainer_integration"; then
     echo "FAIL: pull-request base or author changed during validation" >&2
     exit 1
   fi
-  echo "OK: #$PR eligible for explicit maintainer integration into dev at head $head by $actor; CI and security review remain separate"
-  echo "Merge with: gh pr merge $PR --repo $REPO --admin --match-head-commit $head"
+  echo "OK: validation snapshot for #$PR into dev at head $head by $actor; CI and security review remain separate"
+  echo "Snapshot only: revalidate the current actor and dev base before a separately authorized merge; head matching does not pin the base."
 else
   echo "OK: #$PR approved at head $head by maintainer $qualified (author $author)"
   echo "Merge with: gh pr merge $PR --repo $REPO --match-head-commit $head"

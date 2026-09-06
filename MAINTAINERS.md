@@ -145,8 +145,11 @@ Adding or removing a maintainer requires:
   `scripts/ci/assert-mergeable-review.sh --maintainer-integration <pr-number> [repo]` path checks
   the authenticated actor against the trusted `dev` roster and live repository permissions,
   preserves outstanding maintainer objections, and binds its result to the current head and base.
-  The helper is a review check, not proof of CI or security review and not a barrier against an
-  administrator bypassing it. Repository settings remain authoritative for actual permissions.
+  The helper emits a validation snapshot, not a ready-to-run privileged merge command: head
+  matching does not pin a PR's base, which may change after inspection. Revalidate the current
+  actor and `dev` base before a separately authorized merge. The helper is not proof of CI or
+  security review and not a barrier against an administrator bypassing it. Repository settings
+  remain authoritative for actual permissions.
 
 - 2026-08-19 — [@Wibias](https://github.com/Wibias) stepped down as a maintainer
   and is now a contributor. This follows his own decision to stop developing
