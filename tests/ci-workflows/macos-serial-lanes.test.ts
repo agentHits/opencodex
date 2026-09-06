@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import type { Readable } from "node:stream";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { repoPath } from "../helpers/repo-root";
 import { INTERNAL_DEADLINE_MS, SPAWN_BUDGET_MS } from "../helpers/test-budget";
@@ -117,49 +118,116 @@ function createFixture(directory: string, options: FixtureOptions): void {
   }));
 }
 
-function runShard(shard: number, options: FixtureOptions = {}) {
+function spawnErrorCode(error: unknown): string {
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  return typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code) ? code : "SPAWN_ERROR";
+}
+
+function runShell(directory: string, shard: number): Promise<{ status: number | null; output: string }> {
+  // Use the runner's native /bin/bash (Bash 3 on macOS), never a shell mock.
+  const command = macosTestBlock(shard);
+  return new Promise((resolve, reject) => {
+    let child: ChildProcessByStdio<null, Readable, Readable>;
+    try {
+      child = spawn("/bin/bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", command], {
+        cwd: directory, detached: true, stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          PATH: `${join(directory, "bin")}:/usr/bin:/bin`, HOME: directory,
+          TMPDIR: join(directory, "tmp"), RUNNER_TEMP: join(directory, "tmp"), CI: "true",
+          MACOS_TEST_SHARD: String(shard),
+          MACOS_FIXTURE_CONFIG: join(directory, "config.json"),
+          MACOS_FIXTURE_LOG: join(directory, "invocations.jsonl"),
+        },
+      });
+    } catch (error) {
+      reject(new Error(`macOS shell harness failed: ${spawnErrorCode(error)}`));
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    const outputLimit = 256 * 1024;
+    let outputBytes = 0;
+    let failure: string | undefined;
+    let settled = false;
+    let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = setTimeout(() => interrupt("ETIMEDOUT"), INTERNAL_DEADLINE_MS);
+
+    function finish(status: number | null): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      if (cleanupTimer) clearTimeout(cleanupTimer);
+      if (failure) reject(new Error(`macOS shell harness failed: ${failure}`));
+      else resolve({ status, output: fixtureDiagnostics(Buffer.concat(chunks).toString("utf8")) });
+    }
+
+    function interrupt(code: string): void {
+      if (settled || failure) return;
+      failure = code;
+      clearTimeout(deadline);
+      // Only an interrupted run is signalled. Normal close (including an
+      // assertion's nonzero status) never kills a completed/reusable PID.
+      try {
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+      } catch (error) {
+        const killCode = spawnErrorCode(error);
+        if (killCode !== "ESRCH") failure = `${code}; CLEANUP_${killCode}`;
+      }
+      // Await close after group termination, but inherited pipes cannot keep
+      // the harness or fixture cleanup pending forever. This is cleanup grace,
+      // not another test attempt or an extension of the execution deadline.
+      cleanupTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.unref();
+        failure = `${failure}; CLEANUP_TIMEOUT`;
+        finish(null);
+      }, 1_000);
+    }
+
+    function capture(chunk: Buffer): void {
+      if (settled || failure) return;
+      const remaining = outputLimit - outputBytes;
+      const kept = chunk.subarray(0, remaining);
+      if (kept.length) chunks.push(Buffer.from(kept));
+      outputBytes += kept.length;
+      if (chunk.length > remaining) interrupt("OUTPUT_LIMIT");
+    }
+
+    child.stdout.on("data", capture);
+    child.stderr.on("data", capture);
+    child.stdout.on("error", error => interrupt(spawnErrorCode(error)));
+    child.stderr.on("error", error => interrupt(spawnErrorCode(error)));
+    child.on("error", error => interrupt(spawnErrorCode(error)));
+    child.once("exit", (_status, signal) => {
+      if (signal) interrupt(signal);
+    });
+    child.once("close", (status, signal) => {
+      if (signal) interrupt(signal);
+      finish(status);
+    });
+  });
+}
+
+async function runShard(shard: number, options: FixtureOptions = {}) {
   // Spaces and a quote in cwd exercise the executable/config/log path quoting
   // without inventing manifest characters forbidden by the source path policy.
   const directory = mkdtempSync(join(tmpdir(), "ocx macos' lanes-"));
-  let pid: number | undefined;
-  let interrupted = false;
   try {
     createFixture(directory, options);
     const log = join(directory, "invocations.jsonl");
-    // Use the runner's native /bin/bash (Bash 3 on macOS), never a shell mock.
-    const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", macosTestBlock(shard)], {
-      cwd: directory, encoding: "utf8", detached: true,
-      timeout: INTERNAL_DEADLINE_MS, killSignal: "SIGKILL", maxBuffer: 256 * 1024,
-      env: {
-        PATH: `${join(directory, "bin")}:/usr/bin:/bin`, HOME: directory,
-        TMPDIR: join(directory, "tmp"), RUNNER_TEMP: join(directory, "tmp"), CI: "true",
-        MACOS_TEST_SHARD: String(shard),
-        MACOS_FIXTURE_CONFIG: join(directory, "config.json"), MACOS_FIXTURE_LOG: log,
-      },
-    });
-    pid = result.pid;
-    interrupted = Boolean(result.error || result.signal);
-    if (result.error) {
-      throw new Error(`macOS shell harness failed: ${(result.error as NodeJS.ErrnoException).code ?? result.error.name}`);
-    }
-    if (result.signal) throw new Error(`macOS shell terminated by ${result.signal}: ${fixtureDiagnostics(result.stderr)}`);
+    const result = await runShell(directory, shard);
     const invocations: Invocation[] = existsSync(log)
       ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line))
       : [];
-    return { status: result.status, output: fixtureDiagnostics(result.stdout + result.stderr), invocations };
+    return { ...result, invocations };
   } finally {
-    // A shell timeout must not leave its tee/fake-Bun descendants behind.
-    try {
-      if (interrupted && pid && pid > 0) process.kill(-pid, "SIGKILL");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    } finally {
-      removeTreeWithRetry(directory);
-    }
+    // runShell settles only after close or its finite termination grace.
+    removeTreeWithRetry(directory);
   }
 }
 
-function testCalls(result: ReturnType<typeof runShard>): Invocation[] {
+function testCalls(result: Awaited<ReturnType<typeof runShard>>): Invocation[] {
   return result.invocations.filter(call => call.kind === "test");
 }
 
@@ -198,8 +266,8 @@ function expectGeneralCall(call: Invocation, shard: number): void {
 // These are explicitly Unix Bash integration tests; Windows still runs the
 // existing cross-platform workflow source/layout contracts unchanged.
 describe.skipIf(process.platform === "win32")("macOS serial lane shell ownership", () => {
-  test("both shards own each canonical file exactly once in a fresh isolated process", () => {
-    const runs = [runShard(1), runShard(2)];
+  test("both shards own each canonical file exactly once in a fresh isolated process", async () => {
+    const runs = [await runShard(1), await runShard(2)];
     for (const [index, run] of runs.entries()) {
       expect(run.status, run.output).toBe(0);
       const calls = testCalls(run);
@@ -226,8 +294,8 @@ describe.skipIf(process.platform === "win32")("macOS serial lane shell ownership
   }, SPAWN_BUDGET_MS);
 
   for (const target of ["main", SERIAL_FILES[0]!] as const) {
-    test(`${target}: assertion failure propagates without retry or later files`, () => {
-      const run = runShard(1, { target, outcomes: ["assert"] });
+    test(`${target}: assertion failure propagates without retry or later files`, async () => {
+      const run = await runShard(1, { target, outcomes: ["assert"] });
       expect(run.status, run.output).toBe(ASSERTION_STATUS);
       const calls = testCalls(run);
       expect(calls).toHaveLength(target === "main" ? 1 : 2);
@@ -235,8 +303,8 @@ describe.skipIf(process.platform === "win32")("macOS serial lane shell ownership
     }, SPAWN_BUDGET_MS);
 
     for (const [caseIndex, signature] of CRASH_SIGNATURES.entries()) {
-      test(`${target}: retries one runtime crash (case ${caseIndex + 1}), then finishes`, () => {
-        const run = runShard(1, { target, outcomes: ["crash"], crashSignature: signature });
+      test(`${target}: retries one runtime crash (case ${caseIndex + 1}), then finishes`, async () => {
+        const run = await runShard(1, { target, outcomes: ["crash"], crashSignature: signature });
         expect(run.status, run.output).toBe(0);
         const calls = testCalls(run);
         const attempts = calls.filter(call => targets(call, target));
@@ -248,8 +316,8 @@ describe.skipIf(process.platform === "win32")("macOS serial lane shell ownership
       }, SPAWN_BUDGET_MS);
     }
 
-    test(`${target}: a repeated crash fails after exactly one retry`, () => {
-      const run = runShard(1, { target, outcomes: ["crash", "crash"] });
+    test(`${target}: a repeated crash fails after exactly one retry`, async () => {
+      const run = await runShard(1, { target, outcomes: ["crash", "crash"] });
       expect(run.status, run.output).toBe(CRASH_STATUS);
       const calls = testCalls(run);
       expect(calls).toHaveLength(target === "main" ? 2 : 3);
@@ -258,8 +326,8 @@ describe.skipIf(process.platform === "win32")("macOS serial lane shell ownership
       expect(attempts[0]!.argv).toEqual(attempts[1]!.argv);
     }, SPAWN_BUDGET_MS);
 
-    test(`${target}: assertion on the crash retry retains its own exit status`, () => {
-      const run = runShard(1, { target, outcomes: ["crash", "assert"] });
+    test(`${target}: assertion on the crash retry retains its own exit status`, async () => {
+      const run = await runShard(1, { target, outcomes: ["crash", "assert"] });
       expect(run.status, run.output).toBe(ASSERTION_STATUS);
       const calls = testCalls(run);
       expect(calls).toHaveLength(target === "main" ? 2 : 3);
@@ -279,9 +347,9 @@ describe.skipIf(process.platform === "win32")("macOS serial lane shell ownership
     ["absolute path", { manifest: [`/${SERIAL_FILES[0]}`] }],
     ["parent traversal", { manifest: ["serial/../serial/falcon.test.ts"] }],
   ];
-  test.each(invalidManifests)("rejects %s before any tests start", (_name, options) => {
+  test.each(invalidManifests)("rejects %s before any tests start", async (_name, options) => {
     for (const shard of [1, 2]) {
-      const run = runShard(shard, options);
+      const run = await runShard(shard, options);
       expect(run.status, run.output).not.toBe(0);
       expect(testCalls(run), run.output).toEqual([]);
       expect(run.invocations.filter(call => call.kind === "manifest")).toHaveLength(1);
