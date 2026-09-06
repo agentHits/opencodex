@@ -1,6 +1,7 @@
 # Align the stateful raw conversation boundary
 
 ## Exact diff map
+
 - MODIFY src/server/responses/collaboration.ts: import the existing pure
   externalTaskInputContent helper. In isConversationalItem, recognize a complete
   external task envelope with helper(item) !== undefined, alongside existing
@@ -23,6 +24,7 @@ role/content order agrees. Leading protocol results remain before guidance;
 historical replay-prefix items remain in place.
 
 ## Activation and boundary proof
+
 The new predicate executes only when stateful guidance inspects raw input. Tests
 set previous_response_id, invoke the real injector and assert raw/parsed/reparsed
 arrays. Ordinary tool outputs with call_id remain protocol items because the
@@ -34,5 +36,6 @@ validation -> raw insertion index -> stored raw input -> later parser is the ful
 data flow. The helper remains pure and adds no optional subsystem dependency.
 Review uses the actual diff; all runtime checks execute in GitHub Actions.
 
-## A audit amendment
-Use the parse-time previous_response_id pattern from multi-agent-compat.test.ts:1075-1089 for envelope-alone and leading-result cases. The raw body must contain that field before parseRequest and retain it during reparse; do not copy the post-hoc parsed.previousResponseId assignment fixture at1029. For historical-prefix coverage use the1043-1072 pattern with explicit _replayPrefixLen and _continuationConversationMessageIndex, and put an old external envelope inside that preserved prefix. Assert parsed boundary before injection as well as raw/parsed/reparsed ordering. This closes the auditor's false-green fixture concern.
+## An audit amendment
+
+Use the parse-time previous_response_id pattern from multi-agent-compat.test.ts:1075-1089 for envelope-alone and leading-result cases. The raw body must contain that field before parseRequest and retain it during reparse; do not copy the post-hoc parsed.previousResponseId assignment fixture at 1029. For historical-prefix coverage use the 1043-1072 pattern with explicit `_replayPrefixLen` and `_continuationConversationMessageIndex`, and put an old external envelope inside that preserved prefix. Assert parsed boundary before injection as well as raw/parsed/reparsed ordering. This closes the auditor's false-green fixture concern.
