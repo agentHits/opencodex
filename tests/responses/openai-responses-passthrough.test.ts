@@ -2495,6 +2495,24 @@ describe("OpenAI Responses passthrough sanitization", () => {
     }]);
   });
 
+  test("external task parsing preserves the existing raw passthrough repair", () => {
+    const adapter = createResponsesPassthroughAdapter({
+      adapter: "openai-responses", baseUrl: "https://api.x.ai/v1", authMode: "key" as const, apiKey: "xai-test",
+    });
+    const raw = {
+      model: "grok-4.6",
+      input: [{ type: "function_call_output", id: "external-fixture", name: "handoff_input", namespace: "task_inbox", output: "external input" }],
+    };
+    const original = structuredClone(raw);
+    const parsed = parseRequest(raw);
+    expect(parsed.context.messages).toMatchObject([{ role: "user", content: "external input" }]);
+    expect(raw).toEqual(original);
+    const body = JSON.parse(adapter.buildRequest(parsed, meta).body) as { input: unknown[] };
+    expect(body.input).toEqual([{ type: "message", role: "user", content: [
+      { type: "input_text", text: "[tool output for unknown call]\nexternal input" },
+    ] }]);
+  });
+
   test("api-key mode keeps stateful tool outputs with call_id intact", () => {
     const adapter = createResponsesPassthroughAdapter({
       adapter: "openai-responses",

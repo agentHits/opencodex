@@ -19,6 +19,7 @@ Baseline dev: af344a28eabcee09a5e04c48ab897449792719c2, version 2.44.0. Latest p
 | roadmap | this unit | Lock all decade designs; docs only |
 | policy | 010_policy.md | Establish truthful maintainer integration authority |
 | task-input | 020_task_input.md | Shared Responses parser contract |
+| task-guidance | ../260906_stateful_task_guidance/010_raw_boundary.md | Review follow-up: align stored raw guidance before Kiro resumes |
 | kiro-results | 030_kiro_results.md | Consume parsed tool-result sequence |
 | opaque-recovery | 040_opaque_recovery.md | Retry and terminal semantics on composed routing |
 | combo-recovery | 050_combo_recovery.md | Route recoverable parsed payloads |
@@ -32,4 +33,3 @@ One work-phase is one PABCD cycle. Publish short dependency stacks; use merge co
 
 ## Evidence boundaries
 #3735/#3734 are public current-SHA reports; independently inspect code, author local-pass statements remain reports. Kiro proof is recorded-log shape plus synthetic CI tests, never a live quota-consuming request. #3644 has a network A/B report and landed diagnostic #3693; do not claim a Windows runtime reproduction from mocked tests. Detailed private logs are never committed.
-

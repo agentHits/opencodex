@@ -833,6 +833,18 @@ with seam heartbeats between bounded units. None of these clocks is a total gene
 
 ## Reasoning and tool-result compatibility
 
+`src/responses/task-input.ts` recognizes complete external Codex task-input envelopes
+before translated Responses adapters: `function_call_output`, no `call_id` property,
+nonblank `id`/`name`/`namespace`, and fully representable nonempty text/image output.
+`parser.ts` emits a user turn, clears pending reasoning and includes that turn in the
+existing continuation conversation-boundary calculation. The metadata is structural,
+not authentication. Unknown/opaque/malformed parts reject the entire conversion;
+ordinary missing/empty tool call ids retain the existing translated-route 400 guard.
+Native passthrough and compaction retain raw-body handling. The leaf reuses the input
+content converter after validation and imports no optional subsystem.
+Stateful developer-guidance injection reuses that validator for its raw insertion
+boundary, so parsed messages and stored raw history retain the same task/guidance order.
+
 Native OpenAI passthrough sanitizes routed reasoning history so `reasoning` input items do not send
 non-empty `content` arrays to upstream models that reject them. Chat Completions bridging repairs
 orphan `toolResult` messages by inserting a synthetic assistant `tool_call` before tool messages.

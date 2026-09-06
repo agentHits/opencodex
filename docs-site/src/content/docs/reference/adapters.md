@@ -23,6 +23,19 @@ adapter own retries/timeouts, while `runTurn` supports transports that cannot be
 HTTP fetch followed by one response stream. [`bridge.ts`](/reference/architecture/#the-bridge)
 then turns the events into Responses SSE.
 
+## External task input on translated Responses routes
+
+Codex task coordination can deliver input as `function_call_output` with nonblank
+`id`, `name` and `namespace` fields and no `call_id` property. OpenCodex maps this
+complete envelope to a user message before adapter translation. Its output must be
+nonblank text or a fully supported array of text and `input_image` URL parts. Text
+and image order are preserved; image detail `original` maps to `high`.
+
+Empty content, malformed or opaque parts, file-id-only images and partial envelopes
+remain invalid. Ordinary function/custom tool results still require a nonempty
+`call_id`. The envelope metadata identifies a compatibility shape and grants no
+additional permissions. Native passthrough and compaction retain their raw-body rules.
+
 ## `openai-chat`
 
 **Targets:** OpenAI **Chat Completions** (`POST {baseUrl}/chat/completions`; a trailing `/chat/completions` or `/` on `baseUrl` is stripped first) and every compatible
