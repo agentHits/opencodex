@@ -471,12 +471,14 @@ export function buildCatalogEntries(
   accountNativeSlugs?: readonly string[],
   accountNativeSlugsBySelector?: ReadonlyMap<string, readonly string[]>,
   keepNativeChatGptOnV1 = false,
+  modelPickerOrder: readonly string[] = [],
 ): RawEntry[] {
-  return buildCatalogEntriesFromObservedState({
+  const entries = buildCatalogEntriesFromObservedState({
     template,
     gptSlugs,
     goModels,
     featured,
+    modelPickerOrder,
     wsEnabled,
     multiAgentMode,
     exactComboSlugs,
@@ -489,6 +491,8 @@ export function buildCatalogEntries(
     accountNativeSlugs,
     accountNativeSlugsBySelector,
   });
+  applyFullModelPickerOrder(entries, modelPickerOrder);
+  return entries;
 }
 
 /** Build entries solely from caller-observed inputs, with no feature-state filesystem read. */
@@ -718,6 +722,30 @@ export function orderForSubagents(goModels: CatalogModel[], featured?: string[])
   return [...goModels].sort((a, b) => {
     return rankOf(a) - rankOf(b);
   });
+}
+
+/** Routed discovery projection; native groups and alias ownership belong to the caller. */
+export function orderForModelPicker(
+  models: readonly CatalogModel[],
+  order: readonly string[] = [],
+  featured: readonly string[] = [],
+): CatalogModel[] {
+  const pickerOrder = normalizeModelPickerOrder(order);
+  if (pickerOrder.length === 0) return [...models];
+  const pickerRank = modelPickerRank(pickerOrder);
+  const featuredRank = modelPickerRank(featured);
+  const complete = pickerOrder.some(slug => !slug.includes("/"));
+  const rank = (model: CatalogModel): number => {
+    const slug = catalogModelSlug(model);
+    const featuredIndex = featuredRank(slug) ?? featuredRank(`${model.provider}/${model.id}`);
+    const natural = featuredIndex ?? 5;
+    const index = pickerRank(slug) ?? pickerRank(`${model.provider}/${model.id}`);
+    if (complete) return index ?? pickerOrder.length + natural;
+    // Preserve the legacy featured/alias bands, including unlisted rows before listed rows.
+    if (featuredIndex !== undefined || model.nativeAlias === true) return natural;
+    return index === undefined ? natural : PICKER_ORDER_PRIORITY_BASE + index;
+  };
+  return [...models].sort((a, b) => rank(a) - rank(b));
 }
 
 /**
