@@ -41,6 +41,7 @@ export default function ModelDisplayNameDialog({
   const titleId = useId();
   const helpId = useId();
   const errorId = useId();
+  const [draftSnapshot, setDraftSnapshot] = useState(model);
   const [draft, setDraft] = useState(model.displayNameOverride ?? "");
   const [validationKey, setValidationKey] = useState<TKey | null>(null);
 
@@ -57,11 +58,13 @@ export default function ModelDisplayNameDialog({
     if (saveFailed) inputRef.current?.focus();
   }, [requestError, saving]);
 
-  // Parent replaces this snapshot only after a confirmed mutation, not catalog polling.
-  useEffect(() => {
+  // Parent replaces this snapshot only after a confirmed mutation, not typing or polling.
+  // Adjust before committing children, preserving the mounted dialog and its focus refs.
+  if (draftSnapshot !== model) {
+    setDraftSnapshot(model);
     setDraft(model.displayNameOverride ?? "");
     setValidationKey(null);
-  }, [model]);
+  }
 
   const validationError = validationKey ? t(validationKey) : null;
   const visibleError = validationError ?? requestError;
