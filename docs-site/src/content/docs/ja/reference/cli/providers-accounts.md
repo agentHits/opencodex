@@ -149,11 +149,11 @@ OAuth プロバイダーと API キー プロバイダーの場合、これに�
 
 ### `ocx account auto-switch <provider> <on|off|status|threshold <0-100>> [--json]`
 
-`openai` Codex プールのしきい値を制御するか、汎用 OAuth プールのしきい値を保存します。`on` は 80%、`off` は 0%、`threshold <n>` は 0–100 を保存します。汎用プールのしきい値は現在適用されません。保存しても、しきい値による切り替え、プロバイダーの有効化設定、429 エラー時のローテーションは変更されません。照会と変更の結果はサーバーの確認値を使用します。汎用プールの `poolEnabled` は保存された設定で、`null` は未指定です。継承後の実効状態ではありません。`inert: true` は未適用を示し、機能が不明な場合も `enabled: true` とは表示しません。API キープロバイダー、Anthropic、不正な値は拒否されます。
+`openai` Codex プールのしきい値を制御するか、汎用 OAuth プールのしきい値を保存します。`on` は 80%、`off` は 0%、`threshold <n>` は 0–100 を保存します。汎用プールのしきい値は現在適用されません。保存しても、しきい値による切り替え、プロバイダーの有効化設定、429 エラー時のローテーションは変更されません。汎用プールの照会と変更の結果はサーバーの確認値を使用します。汎用プールの `poolEnabled` は保存された設定で、`null` は未指定です。継承後の実効状態ではありません。`inert: true` は未適用を示し、機能が不明な場合も `enabled: true` とは表示しません。API キープロバイダー、Anthropic、不正な値は拒否されます。
 
 ```text
 openai: { provider, autoSwitchThreshold: number, enabled: boolean }
-generic OAuth: { provider, autoSwitchThreshold: number | null, enabled: boolean, poolEnabled: boolean | null, inert: boolean | null }
+generic OAuth: { provider, autoSwitchThreshold: number | null, enabled: boolean, poolEnabled: boolean | null, inert: true | null }
 ```
 
 ### `ocx account priority <provider> <account-id|main> [<-100..100|first|earlier|normal|later|last|reset>] [--json]`

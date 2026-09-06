@@ -229,11 +229,11 @@ eşleşen null veya eski bir rapora düşer (çıkış 0).
 
 ### `ocx account auto-switch <provider> <on|off|status|threshold <0-100>> [--json]`
 
-`openai` Codex havuzunun eşiğini yönetir veya genel OAuth havuzunun eşiğini kaydeder. `on` %80, `off` %0 kaydeder; `threshold <n>` 0–100 kabul eder. Genel havuz eşikleri şu anda uygulanmaz: kayıt işlemi eşik tabanlı geçişi, sağlayıcının etkinlik ayarını veya 429 hatasından sonraki otomatik hesap değişimini etkilemez. Çıktı sunucunun doğruladığı değerleri kullanır. Genel havuzlarda `poolEnabled`, kaydedilmiş sağlayıcı ayarıdır (`null` belirtilmemiş demektir); devralınmış etkin durumu göstermez. `inert: true`, eşiğin uygulanmadığını belirtir; yetenek bilinmiyorsa `enabled: true` bildirilmez. API anahtarlı sağlayıcılar, Anthropic ve geçersiz değerler reddedilir.
+`openai` Codex havuzunun eşiğini yönetir veya genel OAuth havuzunun eşiğini kaydeder. `on` %80, `off` %0 kaydeder; `threshold <n>` 0–100 kabul eder. Genel havuz eşikleri şu anda uygulanmaz: kayıt işlemi eşik tabanlı geçişi, sağlayıcının etkinlik ayarını veya 429 hatasından sonraki otomatik hesap değişimini etkilemez. Genel havuz çıktısı sunucunun doğruladığı değerleri kullanır. Genel havuzlarda `poolEnabled`, kaydedilmiş sağlayıcı ayarıdır (`null` belirtilmemiş demektir); devralınmış etkin durumu göstermez. `inert: true`, eşiğin uygulanmadığını belirtir; yetenek bilinmiyorsa `enabled: true` bildirilmez. API anahtarlı sağlayıcılar, Anthropic ve geçersiz değerler reddedilir.
 
 ```text
 openai: { provider, autoSwitchThreshold: number, enabled: boolean }
-generic OAuth: { provider, autoSwitchThreshold: number | null, enabled: boolean, poolEnabled: boolean | null, inert: boolean | null }
+generic OAuth: { provider, autoSwitchThreshold: number | null, enabled: boolean, poolEnabled: boolean | null, inert: true | null }
 ```
 
 ### `ocx account priority <provider> <account-id|main> [<-100..100|first|earlier|normal|later|last|reset>] [--json]`

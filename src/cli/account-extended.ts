@@ -379,15 +379,17 @@ export async function cmdAutoSwitch(args: string[], deps: AccountDeps): Promise<
     if (response.status !== 200 || (!genericPool && typeof response.json.autoSwitchThreshold !== "number")) {
       return apiError(response.json, "failed to read auto-switch status", response.status);
     }
-    settings = response.json;
-    threshold = typeof response.json.autoSwitchThreshold === "number" ? response.json.autoSwitchThreshold : 0;
+    settings = genericPool && (!response.json || typeof response.json !== "object" || Array.isArray(response.json))
+      ? {} : response.json;
+    threshold = typeof settings.autoSwitchThreshold === "number" ? settings.autoSwitchThreshold : 0;
   } else {
     const response = genericPool
       ? await apiJson(deps, baseUrl, "PUT", "/api/oauth/accounts/pool", { provider: name, autoSwitchThreshold: threshold })
       : await apiJson(deps, baseUrl, "PUT", "/api/codex-auth/auto-switch", { threshold });
     if (response.status === 0) return proxyUnreachable(response.transportError);
     if (response.status !== 200) return apiError(response.json, "failed to update auto-switch", response.status);
-    settings = response.json;
+    settings = genericPool && (!response.json || typeof response.json !== "object" || Array.isArray(response.json))
+      ? {} : response.json;
   }
   if (genericPool) {
     // Generic thresholds are stored independently of the enabled override. The
@@ -396,15 +398,14 @@ export async function cmdAutoSwitch(args: string[], deps: AccountDeps): Promise<
     const storedThreshold = typeof stored === "number" && Number.isInteger(stored) && stored >= 0 && stored <= 100
       ? stored : null;
     const poolEnabled = typeof settings.enabled === "boolean" ? settings.enabled : null;
-    const inert = typeof settings.inert === "boolean" ? settings.inert : null;
-    const enabled = inert === false && poolEnabled === true && storedThreshold !== null && storedThreshold > 0;
+    const inert = settings.inert === true ? true : null;
+    // This CLI understands only the current inert generic threshold contract.
+    const enabled = false;
     if (wantsJson) {
       console.log(JSON.stringify({ provider: name, autoSwitchThreshold: storedThreshold, enabled, poolEnabled, inert }, null, 2));
-    } else if (inert !== false) {
+    } else {
       const value = storedThreshold === null ? "unset" : `${storedThreshold}%`;
       console.log(`auto-switch: ${inert === true ? "inactive" : "unavailable"} (stored threshold ${value}; ${inert === true ? "not applied by this pool" : "threshold support is unknown"})`);
-    } else {
-      console.log(enabled ? `auto-switch: on (threshold ${storedThreshold}%)` : "auto-switch: off");
     }
     return 0;
   }
