@@ -122,10 +122,10 @@ export function exportModelsFromProxyRows(
  * Resolved ONCE and handed back to `runtimeRequest` as `baseUrl`, so the catalog and the
  * exported endpoint can never come from two different probes.
  */
-function proxyV1BaseUrl(root: string, config: OcxConfig): string {
+function proxyV1BaseUrl(root: string): string {
   const url = new URL(root);
   const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
-  return opencodeProxyBaseUrl(port, url.hostname, config);
+  return opencodeProxyBaseUrl(port, url.hostname);
 }
 
 function parseClient(args: string[]): ExportClientId {
@@ -193,7 +193,7 @@ export async function handleExportCommand(argv: string[], deps: ExportCommandDep
       // Discovery can persist selection; preserve the existing exporters' flow.
       const config = (deps.configImpl ?? loadConfig)();
       const models = exportModelsFromProxyRows(rows, config);
-      built = buildClientConfigText(client, { baseUrl: proxyV1BaseUrl(root, config), models, config });
+      built = buildClientConfigText(client, { baseUrl: proxyV1BaseUrl(root), models, config });
     }
     const clientConfig = built.document;
     const text = built.text;
