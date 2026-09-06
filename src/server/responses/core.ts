@@ -1534,7 +1534,9 @@ export function codexForwardTerminalOutcomeRecorder(
 ): ((status: ResponsesTerminalStatus, httpStatusOverride?: number) => void) | undefined {
   if (!usesCodexForwardPoolAuth(authCtx, provider)) return undefined;
   return (status, httpStatusOverride) => {
-    if (status === "incomplete") {
+    const quotaStatus = [httpStatusOverride, logCtx?.terminalHttpStatus]
+      .find(value => value === 429 || value === 402);
+    if (status === "incomplete" && quotaStatus === undefined) {
       // Normal limit/content-filter/stall terminal — the account served the
       // request. Don't penalize account health; record success to clear any
       // prior soft-avoid so a healthy account isn't stuck avoided.
@@ -1559,7 +1561,7 @@ export function codexForwardTerminalOutcomeRecorder(
     // the parent's terminalHttpStatus so the semantic status is not lost.
     const outcome = status === "completed"
       ? 200
-      : (httpStatusOverride ?? logCtx?.terminalHttpStatus ?? 502);
+      : (quotaStatus ?? httpStatusOverride ?? logCtx?.terminalHttpStatus ?? 502);
     recordCodexUpstreamOutcome(config, authCtx.accountId, outcome, {
       threadId: authCtx.affinityKey,
       fixedAccount: authCtx.fixedAccount,
@@ -2668,7 +2670,20 @@ export async function handleComboResponses(
       attemptRetained = true;
     };
     let consumedChildFailure: ConsumedComboFailure | undefined;
-    const callbackGate = createChildPassthroughCallbackGate(options);
+    const callbackGate = createChildPassthroughCallbackGate({
+      ...options,
+      onNativePassthroughTerminal: status => {
+        // A committed stream can acquire terminal metadata after preflight copied
+        // the child log. Publish it before the outer logger finalizes, but only
+        // through the gate: discarded attempts must never affect the parent.
+        // Undefined child fields must preserve metadata already inspected by WS.
+        if (childLog.terminalHttpStatus !== undefined) logCtx.terminalHttpStatus = childLog.terminalHttpStatus;
+        if (childLog.terminalIncompleteReason !== undefined) logCtx.terminalIncompleteReason = childLog.terminalIncompleteReason;
+        if (childLog.terminalErrorCode !== undefined) logCtx.terminalErrorCode = childLog.terminalErrorCode;
+        if (childLog.upstreamError !== undefined) logCtx.upstreamError = childLog.upstreamError;
+        options.onNativePassthroughTerminal?.(status);
+      },
+    });
     let response: Response;
     try {
       const currentTargetProvider = pick.target.provider;
@@ -5359,12 +5374,9 @@ async function handleResponsesInner(
       if (terminalBodyWillRecord) {
         options.setTerminalOutcomeRecorder?.((status, httpStatusOverride) => {
           terminalRecorder(status, httpStatusOverride);
-          if (status === "failed") {
-            const quotaFailureMessage = httpStatusOverride === 429 || httpStatusOverride === 402
-              || logCtx.terminalHttpStatus === 429
-              || logCtx.terminalHttpStatus === 402
-              ? (httpStatusOverride ?? logCtx.terminalHttpStatus)
-              : undefined;
+          if (status === "failed" || status === "incomplete") {
+            const quotaFailureMessage = [httpStatusOverride, logCtx.terminalHttpStatus]
+              .find(value => value === 429 || value === 402);
             if (!isFixedCodexAccount(authCtx) && quotaFailureMessage !== undefined) {
               recordSubagentQuotaFailureForThreadSpawn(
                 req.headers,
@@ -5570,12 +5582,9 @@ async function handleResponsesInner(
         const reportNativeTerminal = recordTerminalOutcomes
           ? (status: ResponsesTerminalStatus, httpStatusOverride?: number) => {
             terminalRecorder?.(status, httpStatusOverride);
-            if (status === "failed") {
-              const quotaFailureMessage = httpStatusOverride === 429 || httpStatusOverride === 402
-                || logCtx.terminalHttpStatus === 429
-                || logCtx.terminalHttpStatus === 402
-                ? (httpStatusOverride ?? logCtx.terminalHttpStatus)
-                : undefined;
+            if (status === "failed" || status === "incomplete") {
+              const quotaFailureMessage = [httpStatusOverride, logCtx.terminalHttpStatus]
+                .find(value => value === 429 || value === 402);
               if (!isFixedCodexAccount(authCtx) && quotaFailureMessage !== undefined) {
                 recordSubagentQuotaFailureForThreadSpawn(
                   req.headers,
@@ -5663,12 +5672,9 @@ async function handleResponsesInner(
         // client-cancel (no terminal seen) is finalized separately via consumeForInspection's onCancel.
         const reportNativeTerminal = (status: ResponsesTerminalStatus, httpStatusOverride?: number) => {
           terminalRecorder?.(status, httpStatusOverride);
-          if (status === "failed") {
-            const quotaFailureMessage = httpStatusOverride === 429 || httpStatusOverride === 402
-              || logCtx.terminalHttpStatus === 429
-              || logCtx.terminalHttpStatus === 402
-              ? (httpStatusOverride ?? logCtx.terminalHttpStatus)
-              : undefined;
+          if (status === "failed" || status === "incomplete") {
+            const quotaFailureMessage = [httpStatusOverride, logCtx.terminalHttpStatus]
+              .find(value => value === 429 || value === 402);
             if (!isFixedCodexAccount(authCtx) && quotaFailureMessage !== undefined) {
               recordSubagentQuotaFailureForThreadSpawn(
                 req.headers,

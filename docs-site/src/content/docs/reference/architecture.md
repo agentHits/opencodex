@@ -200,3 +200,13 @@ The internal model lives in `types.ts`: `OcxParsedRequest`, `OcxContext`, the `O
 `OcxContentPart` (text / image), `OcxToolCall`, `OcxTool`, `AdapterEvent`, and the config types
 (`OcxConfig`, `OcxProviderConfig`). Two helpers are widely used: `namespacedToolName()` and
 `modelInList()` (tolerant `:size`-tag matching for `noVisionModels` / `noReasoningModels`).
+
+
+### Incomplete quota terminals
+
+A native forward response that ends with quota or rate-limit evidence in an
+`incomplete` terminal records account quota failure and spawn-fallback health.
+Structured `incomplete_details.reason` and error codes are accepted without a
+message; ordinary output-limit, filtering, steering and stall incompletes do not
+cool an account. Cyber-policy classification retains precedence. The terminal is
+not replayed after output, and fixed-account request selection remains fixed.

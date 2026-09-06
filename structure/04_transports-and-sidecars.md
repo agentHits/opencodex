@@ -1645,3 +1645,13 @@ dispatch. Selection revisions fence stale retries and reselection; request ident
 actual committed account/key. Generic proactive selection is opt-in and preserves a healthy active
 account, while reactive429 recovery remains enabled even with the pool off. Post-commit selection
 events immediately invalidate dashboard roster state; see`05_gui-and-management-api.md`.
+
+
+### Incomplete quota terminals
+
+A native forward response that ends with quota or rate-limit evidence in an
+`incomplete` terminal records account quota failure and spawn-fallback health.
+Structured `incomplete_details.reason` and error codes are accepted without a
+message; ordinary output-limit, filtering, steering and stall incompletes do not
+cool an account. Cyber-policy classification retains precedence. The terminal is
+not replayed after output, and fixed-account request selection remains fixed.
