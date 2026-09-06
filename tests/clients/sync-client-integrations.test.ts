@@ -9,6 +9,7 @@ import { claudeDesktopIntegrationEnabled, grokIntegrationEnabled } from "../../s
 import { INTEGRATION_CLIENTS } from "../../src/integrations/registry";
 import { IntegrationMutationBusyError, runIntegrationMutationFlight, setIntegrationMutationFlightTestHook } from "../../src/integrations/mutation-flight";
 import { refreshOwnedCatalogIntegrations } from "../../src/integrations/catalog-refresh";
+import * as asideProfiles from "../../src/integrations/aside-profiles";
 import { refreshOwnedIntegration } from "../../src/integrations/owned-refresh";
 import * as ownedRefresh from "../../src/integrations/owned-refresh";
 import { createIntegrationStateStore, type IntegrationStateStore } from "../../src/integrations/store";
@@ -125,9 +126,14 @@ describe("Desktop sync rechecks persisted state after discovery", () => {
       const discoveryGate = new Promise<void>(resolve => { releaseDiscovery = resolve; });
       const discoveryStarted = new Promise<void>(resolve => { announceDiscovery = resolve; });
       const writes: Parameters<typeof writeDesktop3pConfig>[] = [];
-      const mcode = spyOn(ownedRefresh, "refreshOwnedIntegration").mockResolvedValue({
-        client: "mcode", ok: true, changed: true,
-      });
+      // The shared refresh now also receives Pi. Stub only MCode so peers retain
+      // their real unowned-client behavior instead of manufacturing MCode results.
+      const realRefresh = ownedRefresh.refreshOwnedIntegration;
+      const refresh = spyOn(ownedRefresh, "refreshOwnedIntegration").mockImplementation((input, options) =>
+        input.clientId === "mcode"
+          ? Promise.resolve({ client: "mcode", ok: true, changed: true })
+          : realRefresh(input, options));
+      const aside = spyOn(asideProfiles, "refreshAsideProfiles");
       const sync = syncEnabledClientIntegrations(12345, config, {
         fetchAllModels: async () => {
           announceDiscovery();
@@ -160,9 +166,16 @@ describe("Desktop sync rechecks persisted state after discovery", () => {
         writeFileSync(join(root, "config.json"), JSON.stringify(latest));
         releaseDiscovery();
         const results = await sync;
-        expect(mcode).toHaveBeenCalledTimes(1);
-        expect(mcode.mock.calls[0]![0]).toMatchObject({ clientId: "mcode", port: 12345 });
-        expect(results).toContainEqual({ client: "mcode", ok: true, changed: true });
+        const mcodeCalls = refresh.mock.calls.filter(([input]) => input.clientId === "mcode");
+        expect(mcodeCalls).toHaveLength(1);
+        expect(mcodeCalls[0]![0]).toMatchObject({ clientId: "mcode", port: 12345 });
+        expect(refresh.mock.calls.filter(([input]) => input.clientId === "pi")).toHaveLength(1);
+        expect(aside).toHaveBeenCalledTimes(1);
+        expect(aside.mock.calls[0]![0]).toMatchObject({ config, port: 12345 });
+        expect(await aside.mock.results[0]!.value).toEqual([]);
+        expect(results.filter(result => result.client === "mcode"))
+          .toEqual([{ client: "mcode", ok: true, changed: true }]);
+        expect(results.filter(result => result.client === "pi" || result.client === "aside")).toEqual([]);
         if (outcome === "off") {
           expect(writes).toHaveLength(0);
           expect(results).toEqual([{ client: "mcode", ok: true, changed: true }]);
@@ -183,7 +196,8 @@ describe("Desktop sync rechecks persisted state after discovery", () => {
       } finally {
         releaseDiscovery();
         await sync.catch(() => undefined);
-        mcode.mockRestore();
+        refresh.mockRestore();
+        aside.mockRestore();
       }
     });
   }

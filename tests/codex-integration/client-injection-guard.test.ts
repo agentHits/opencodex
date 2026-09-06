@@ -121,8 +121,8 @@ async function invoke() {
   console.log(JSON.stringify({ fatal: error instanceof Error ? error.message : String(error) }));
   process.exitCode = 1;
 }).finally(() => {
-  try { nBlocker?.rollback(); nBlocker?.close(); } catch {}
-  try { cBlocker?.exec("ROLLBACK"); cBlocker?.close(); } catch {}
+  try { nBlocker?.rollback(); nBlocker?.close(); } catch { process.exitCode = 1; }
+  try { cBlocker?.exec("ROLLBACK"); cBlocker?.close(); } catch { process.exitCode = 1; }
 });
 `;
 

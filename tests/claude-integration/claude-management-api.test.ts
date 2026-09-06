@@ -33,6 +33,7 @@ function startServer(port?: number, deps: NonNullable<Parameters<typeof startSer
       ...deps.managementApi,
     },
   });
+}
 
 beforeEach(() => {
   previousHome = process.env.OPENCODEX_HOME;

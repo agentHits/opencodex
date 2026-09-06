@@ -18,15 +18,19 @@ import { INTERNAL_DEADLINE_MS } from "../helpers/test-budget";
 
 const repoRoot = findRepoRoot();
 
+const CLIENT_FIXTURE_FAILURE_CATEGORIES = ["module_load", "config_setup", "desktop_setup", "scenario", "child_failed"] as const;
+type ClientFixtureFailureCategory = typeof CLIENT_FIXTURE_FAILURE_CATEGORIES[number];
+
 class ClientStateProbeError extends Error {
   constructor(
     readonly pid: number,
     readonly status: number | null,
     readonly signal: NodeJS.Signals | null,
     readonly timedOut: boolean,
+    readonly failureCategory?: ClientFixtureFailureCategory,
   ) {
     // Do not include the child script, environment, stdout or stderr in failure output.
-    super(`Client state probe ${timedOut ? "timed out" : "failed"} (status=${status}, signal=${signal})`);
+    super(`Client state probe ${timedOut ? "timed out" : "failed"} (status=${status}, signal=${signal}${failureCategory ? `, category=${failureCategory}` : ""})`);
     this.name = "ClientStateProbeError";
   }
 }
@@ -312,7 +316,7 @@ describe("remote hub client boundary", () => {
 /** A catalog the user already had before ever connecting. */
 const PRIOR_CATALOG_BYTES = '{"models":[{"slug":"local/only-model"}]}';
 
-function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "commit" | "prior-catalog") {
+function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "commit" | "prior-catalog" | "coordinator") {
   const opencodexHome = mkdtempSync(join(tmpdir(), "ocx-client-connect-home-"));
   const codexHome = mkdtempSync(join(tmpdir(), "ocx-client-connect-codex-"));
   const configPath = join(opencodexHome, "config.json");
@@ -327,7 +331,7 @@ function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "co
   if (stage === "prior-catalog") {
     writeFileSync(join(codexHome, "opencodex-catalog.json"), PRIOR_CATALOG_BYTES, "utf8");
   }
-  if (stage === "commit") {
+  if (stage === "coordinator") {
     const { mkdirSync } = require("node:fs") as typeof import("node:fs");
     mkdirSync(join(opencodexHome, "config-mutation.sqlite"));
   }
@@ -339,6 +343,8 @@ function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "co
     const { serviceApiTokenFilePath } = require("./src/lib/service-secrets");
     const { DEFAULT_CATALOG_PATH } = require("./src/codex/paths");
     const stage = ${JSON.stringify(stage)};
+    const { setPersistedConfigMutationBeforeCommitForTests } = require("./src/config");
+    let commitFaultTriggered = false;
     const catalog = '{"models":[]}';
     const etag = '"sha256-' + createHash("sha256").update(catalog).digest("base64url") + '"';
     const calls = [];
@@ -370,7 +376,13 @@ function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "co
           selectedClients: ["claude"],
           managementTransport: "direct",
           noSync: true,
-        }, { fetchImpl, now: () => new Date("2026-08-28T00:00:00.000Z"), lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" } });
+        }, { fetchImpl, now: () => {
+          if (stage === "commit") setPersistedConfigMutationBeforeCommitForTests(() => {
+            commitFaultTriggered = true;
+            throw new Error("fixture_final_client_commit_failed");
+          });
+          return new Date("2026-08-28T00:00:00.000Z");
+        }, lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" } });
       } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
       const beforeDisconnect = readClientConnectionState();
       const artifacts = {
@@ -381,7 +393,7 @@ function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "co
       let disconnected = null;
       if ((stage === "success" || stage === "prior-catalog") && connected) disconnected = await disconnectClient({}, { lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" } });
       const catalogAfter = existsSync(DEFAULT_CATALOG_PATH) ? readFileSync(DEFAULT_CATALOG_PATH, "utf8") : null;
-      console.log(JSON.stringify({ connected, error, beforeDisconnect, artifacts, disconnected, catalogAfter, after: readClientConnectionState(), calls }));
+      console.log(JSON.stringify({ connected, error, beforeDisconnect, artifacts, disconnected, catalogAfter, after: readClientConnectionState(), calls, commitFaultTriggered }));
     })();
   `;
   const result = spawnSync(process.execPath, ["--eval", script], {
@@ -404,6 +416,15 @@ function runTransactionScenario(stage: "success" | "catalog" | "preflight" | "co
 }
 
 describe("connect transaction and offline disconnect", () => {
+  test("an unavailable config coordinator refuses before issuing any hub key", () => {
+    const run = runTransactionScenario("coordinator");
+    try {
+      expect(run.status).toBe(0);
+      expect(run.parsed.connected).toBeNull();
+      expect(run.parsed.calls).toEqual([]);
+      expect(run.parsed.artifacts).toEqual({ token: false, catalog: false, credentialZeroed: true });
+    } finally { run.cleanup(); }
+  });
   test("commits key id/state last, zeroes authority, and disconnects with the hub offline", () => {
     const run = runTransactionScenario("success");
     try {
@@ -454,6 +475,10 @@ describe("connect transaction and offline disconnect", () => {
         expect(run.parsed.artifacts.catalog).toBe(false);
         expect(run.parsed.artifacts.credentialZeroed).toBe(true);
         expect(run.parsed.calls.some((call: any) => call.method === "DELETE")).toBe(true);
+        if (stage === "commit") {
+          expect(run.parsed.commitFaultTriggered).toBe(true);
+          expect(run.parsed.calls.some((call: any) => call.method === "POST" && call.url.endsWith("/api/keys"))).toBe(true);
+        }
         expect(run.configBytes).not.toContain("issued-id");
         expect(`${run.parsed.error} ${run.stderr}`).not.toContain(`ocx_data_${"d".repeat(40)}`);
       } finally { run.cleanup(); }
@@ -759,13 +784,19 @@ function runDesktopLifecycleScenario(mode: string) {
     const oldHash = hash(oldKey), newHash = hash(newKey);
     const owner = { serverUrl: "https://hub.example.test", apiKeyId: "fixture-key", connectedAt: "2026-09-06T00:00:00.000Z" };
     const catalog = '{"models":[{"slug":"hub/model"}]}', prior = '{"models":[{"slug":"prior/model"}]}';
-    const config = { port: 10100, providers: {}, defaultProvider: "openai", runtimeRole: "client", client: {
+    const config = { port: 10100,
+      providers: { openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward" } },
+      defaultProvider: "openai", runtimeRole: "client", client: {
       ...owner, managementUrl: owner.serverUrl, managementTransport: "direct", selectedClients: ["claude"],
       tokenEnv: "OPENCODEX_API_AUTH_TOKEN", tokenFingerprint: oldHash, protocolVersion: 1,
       catalogFingerprint: crypto.createHash("sha256").update(catalog).digest("base64url"),
       priorCatalog: Buffer.from(prior).toString("base64"),
     } };
+    fixtureFailurePhase = "config_setup";
     configApi.saveConfig(config);
+    if (configApi.readConfigDiagnostics().source !== "file" || stateApi.readClientConnectionState().kind !== "connected") {
+      throw new Error("fixture_config_invalid");
+    }
     const tokenPath = path.join(home, "service-api-token"), backupPath = tokenPath + ".prev";
     fs.writeFileSync(tokenPath, oldKey, { mode: 0o600 });
     fs.mkdirSync(path.dirname(DEFAULT_CATALOG_PATH), { recursive: true });
@@ -773,6 +804,7 @@ function runDesktopLifecycleScenario(mode: string) {
     const profilePath = path.join(desktop, "fixture.json");
     const baselinePath = path.join(home, "desktop-remote", "baseline.json");
     const unused = mode.startsWith("status-") || mode === "disconnect-expected-owner";
+    fixtureFailurePhase = "desktop_setup";
     if (!unused) {
       fs.writeFileSync(path.join(desktop, "_meta.json"), JSON.stringify({ appliedId: "fixture", entries: [{ id: "fixture", name: "opencodex" }], foreignMeta: "preserve" }));
       fs.writeFileSync(profilePath, JSON.stringify({
@@ -840,7 +872,8 @@ function runDesktopLifecycleScenario(mode: string) {
       }
       throw new Error("unexpected fixture request");
     };
-    (async () => {
+    fixtureFailurePhase = "scenario";
+    await (async () => {
       let result = null, error = null, second = null, statusInside = null, statusOutside = null, cliRotation = null;
       const credential = new TextEncoder().encode("ocx_admin_fixture");
       const deps = { fetchImpl, lifecycleLockDeps: lockDeps };
@@ -932,7 +965,7 @@ function runDesktopLifecycleScenario(mode: string) {
       const d = desktopValue(), state = stateApi.readClientConnectionState();
       const token = fs.existsSync(tokenPath) ? fs.readFileSync(tokenPath, "utf8").trim() : null;
       const r = store.readDesktopDisconnectReceipt();
-      console.log(JSON.stringify({
+      console.log(JSON.stringify({ fixtureResult: {
         result, error, second, commits, aborts, desktopBeforeCommit, guardSeen, writesAfterGuard, cliRotation, codexSawPrepared, codexOutsideL,
         stateKind: state.kind, pending: state.kind === "connected" && !!state.value.pendingOperation,
         persistedOutcome: state.kind === "connected" && Object.hasOwn(state.value, "rotationOutcome"),
@@ -946,17 +979,42 @@ function runDesktopLifecycleScenario(mode: string) {
         catalogPrior: fs.existsSync(DEFAULT_CATALOG_PATH) && fs.readFileSync(DEFAULT_CATALOG_PATH, "utf8") === prior,
         receiptPhase: r.kind === "valid" ? r.value.phase : r.kind,
         statusInside, statusOutside, credentialZeroed: credential.every(byte => byte === 0),
-      }));
-    })().catch(() => { console.log(JSON.stringify({ fatal: "fixture setup failed" })); process.exitCode = 1; });
+      }}));
+    })();
   `;
-  const child = spawnSync(process.execPath, ["--eval", script], {
-    cwd: repoRoot,
+  // spyOn is a test-runner API; execute this synthetic scenario as a real test,
+  // not bare --eval. Resolve repository imports independently of its temporary path.
+  const resolvedScript = script.replace(/require\("(\.\/src\/[^"\n]+)"\)/g,
+    (_match, relative: string) => `require(${JSON.stringify(join(repoRoot, relative))})`);
+  const fixturePath = join(root, "client-lifecycle-fixture.test.ts");
+  writeFileSync(fixturePath, `import { test } from "bun:test";
+    test("isolated client lifecycle scenario", async () => {
+      let fixtureFailurePhase = "module_load";
+      try {
+        ${resolvedScript}
+      } catch {
+        console.log(JSON.stringify({ fixtureFailure: fixtureFailurePhase }));
+        throw new Error("client_fixture_" + fixtureFailurePhase);
+      }
+    }, { timeout: ${INTERNAL_DEADLINE_MS} });
+  `);
+  // Keep the canonical guard/preload, but avoid the repository's root="tests"
+  // discovery restriction for this generated temporary test file.
+  const child = spawnSync(process.execPath, ["test", "--preload", join(repoRoot, "tests/preload.ts"), fixturePath], {
+    cwd: root,
     env: { ...process.env, OPENCODEX_HOME: join(root, "ocx"), CODEX_HOME: join(root, "codex"), OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR: join(root, "desktop") },
     encoding: "utf8", timeout: INTERNAL_DEADLINE_MS, killSignal: "SIGKILL",
   });
   try {
-    if (child.error || child.status !== 0 || child.signal) throw new ClientStateProbeError(child.pid, child.status, child.signal, !!child.error);
-    return JSON.parse(child.stdout.trim().split("\n").at(-1) ?? "{}");
+    const marker = child.stdout.trim().split("\n").reverse().find(line =>
+      line.startsWith('{"fixtureResult":') || line.startsWith('{"fixtureFailure":'));
+    let envelope: { fixtureFailure?: unknown; fixtureResult?: unknown } | undefined;
+    try { if (marker) envelope = JSON.parse(marker); } catch { /* fixed category below */ }
+    if (child.error || child.status !== 0 || child.signal || !envelope?.fixtureResult) {
+      const category = CLIENT_FIXTURE_FAILURE_CATEGORIES.find(value => value === envelope?.fixtureFailure) ?? "child_failed";
+      throw new ClientStateProbeError(child.pid, child.status, child.signal, (child.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT", category);
+    }
+    return envelope.fixtureResult as Record<string, any>;
   } finally { removeTreeWithRetry(root); }
 }
 

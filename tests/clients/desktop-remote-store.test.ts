@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, readFileSync, readdir
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as configIO from "../../src/config";
-import { saveConfig, loadConfig, atomicWriteFile } from "../../src/config";
+import { saveConfig, loadConfig, readConfigDiagnostics, atomicWriteFile } from "../../src/config";
 import { withClientLifecycleSync, type ClientLifecycleHeld } from "../../src/client/lifecycle-lock";
 import { serviceApiTokenFingerprint, writeServiceApiTokenFile, replaceServiceApiTokenFile, writeTokenBackup, serviceApiTokenBackupPath, removeServiceApiTokenFileIfOwned } from "../../src/lib/service-secrets";
 import {
@@ -50,11 +50,13 @@ beforeEach(() => {
   library = join(dir, "desktop");
   process.env.OPENCODEX_HOME = join(dir, "ocx");
   process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = library;
-  saveConfig({ port: 10100, defaultProvider: "test", providers: {}, runtimeRole: "client", client: {
+  saveConfig({ port: 10100, defaultProvider: "test", providers: { test: { adapter: "openai-chat", baseUrl: "http://127.0.0.1:1/v1", allowPrivateNetwork: true, liveModels: false, models: ["fixture-model"] } }, runtimeRole: "client", client: {
     ...owner, managementUrl: owner.serverUrl, managementTransport: "direct", selectedClients: ["claude"],
     tokenEnv: "OPENCODEX_API_AUTH_TOKEN", tokenFingerprint: fingerprint, protocolVersion: 1,
   } } as OcxConfig);
   writeServiceApiTokenFile(token);
+  expect(readConfigDiagnostics().source).toBe("file");
+  expect(loadConfig().client?.apiKeyId).toBe(owner.apiKeyId);
   // Only the fixture creates its Desktop root; read-only store calls never do.
   mkdirSync(library, { recursive: true });
 });
@@ -302,7 +304,7 @@ describe("connection-owned Desktop projection store", () => {
       owner, expectedTokenFingerprint: fingerprint, baseUrl: owner.serverUrl, apiKey: token, mode: "static",
       models: [{ name: "invalid", labelOverride: "Fixture", anthropicFamilyTier: "opus" }],
     }));
-    expect(result).toMatchObject({ ok: false, changed: false });
+    expect(result).toMatchObject({ ok: false, changed: false, reason: "unsafe" });
     expect(hash(readFileSync(join(library, "original.json"), "utf8"))).toBe(before);
     expect(existsSync(join(dir, "ocx", "desktop-remote", "baseline.json"))).toBe(false);
   });

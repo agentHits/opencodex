@@ -448,6 +448,21 @@ export function inspectDesktop3pConfigLibrary(
  * (or any other benign mismatch), while the Integrations card still showed the
  * leftover profile as applied/stale.
  */
+/** Keep failures diagnosable without reflecting paths, config bytes or arbitrary errors. */
+function desktopMutationFailureReason(error: unknown): string {
+  const code = error !== null && typeof error === "object" && "code" in error ? error.code : undefined;
+  switch (code) {
+    case "client_lifecycle_busy": return "client_lifecycle_busy";
+    case "client_lifecycle_lock_failed": return "client_lifecycle_lock_failed";
+    case "CONFIG_MUTATION_LOCK_UNAVAILABLE": return "config_mutation_lock_unavailable";
+    case "EACCES":
+    case "EPERM": return "desktop_filesystem_denied";
+    case "ENOENT": return "desktop_path_missing";
+    case "EBUSY": return "desktop_filesystem_busy";
+    default: return "desktop_mutation_failed";
+  }
+}
+
 export function removeDesktop3pStandardPivot(
   options: Desktop3pConfigLibraryOptions & {
     appliedFingerprint?: string | null; unlink?: (path: string) => void;
@@ -497,7 +512,9 @@ export function removeDesktop3pStandardPivot(
         ? { ok: true, changed: result.changed, kind: result.changed ? "removed" : "noop", libraryPath }
         : { ok: false, changed: result.changed, kind: result.reason === "cleanup_pending" ? "cleanup_incomplete" : "unsafe", reason: result.reason, libraryPath };
     }), options.lifecycleLockDeps);
-  } catch { return { ok: false, changed: false, kind: "write_failed", libraryPath }; }
+  } catch (error) {
+    return { ok: false, changed: false, kind: "write_failed", libraryPath, reason: desktopMutationFailureReason(error) };
+  }
 }
 
 function removeDesktop3pStandardPivotLocal(
@@ -573,8 +590,8 @@ function removeDesktop3pStandardPivotLocal(
       JSON.stringify({ ...metadataAfterPivot, entries: metadataAfterPivot.entries.filter(entry => !targetIds.includes(entry.id)) }, null, 2) + "\n",
     );
     return { ok: true, changed: true, kind: "removed", libraryPath: inspected.libraryPath };
-  } catch {
-    return { ok: false, changed: false, kind: "write_failed", libraryPath: inspected.libraryPath };
+  } catch (error) {
+    return { ok: false, changed: false, kind: "write_failed", libraryPath: inspected.libraryPath, reason: desktopMutationFailureReason(error) };
   }
 }
 
