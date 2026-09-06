@@ -47,3 +47,10 @@ large core/relay files retain their current ownership for this bounded carry:
 no export moves or broad refactor amid replay/cancellation changes. A new generic
 retry abstraction or core extraction would enlarge the behavior under review.
 Remote CI verifies all source and tests together; no local suite/typecheck/build.
+
+The existing core recognizes successful streaming Responses without Content-Type.
+Keep that parity in the new preflight through an explicit fourth options argument
+allowMissingContentType, enabled only by the same core streaming condition; default
+combo callers still require text/event-stream. Add missing-header recovery and
+non-SSE refusal controls. This avoids a source-PR gap where core selected recovery
+but its preflight returned early solely because the header was absent.
