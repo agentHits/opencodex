@@ -147,8 +147,9 @@ opencodex fails safely instead of forwarding an empty or unreadable task:
   `error.code = "unreadable_encrypted_agent_task"` and does not echo the ciphertext. An eligible
   direct key-auth Responses provider that explicitly opts in with
   `allowEncryptedV2AgentTasks: true` instead receives the opaque ciphertext and bypasses this error.
-- A combo considers only canonical native ChatGPT targets for that task, including retries. If none
-  is available, it returns the same 400 error.
+- A combo first considers canonical native ChatGPT targets. If none is available or their attempts
+  are exhausted, enabled recovery may make the task readable for an available routed target.
+  Without successful recovery and an eligible target, unreadable ciphertext is never forwarded.
 - A readable plaintext task keeps the normal route and fallback behavior.
 
 Recovery options are to select a native ChatGPT child, explicitly trust a direct key-auth Responses
@@ -165,8 +166,8 @@ authentication, another provider credential, or another Codex account. Only `aut
 `content-type` and `accept` are generated locally, and no other caller headers cross the boundary.
 It consumes quota, adds latency, briefly retains recovered plaintext in a bounded in-memory cache,
 and depends on undocumented ChatGPT backend behavior. Because a model returns the recovered text,
-byte-for-byte fidelity is not guaranteed. It rejects generic/API-key proxy callers and preserves
-`unreadable_encrypted_agent_task` on any failure. See
+byte-for-byte fidelity is not guaranteed. It rejects generic/API-key proxy callers. Failed recovery before any native attempt returns
+`unreadable_encrypted_agent_task`; after native attempts have failed, their last error is retained. See
 [Agent configuration: Encrypted v2 task recovery](/reference/configuration/agents/#encrypted-v2-task-recovery)
 for the full trust boundary and configuration.
 Combo routing prefers a selectable canonical native ChatGPT target for encrypted tasks. If none
