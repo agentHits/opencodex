@@ -17,3 +17,9 @@ The implementation preserves Yrlan's contributor attribution from the public
 issue and supplied proposal. Protocol/security review and hosted CI are recorded
 on the fixing PR and source-bound cycle receipt. No local test suite, typecheck,
 build or live Kiro request is part of this validation.
+
+The first hosted run exposed two invalid HTTP test stimuli: short text in an
+encrypted_content slot follows the existing plaintext normalization path before
+the parser. The negative fixtures now use synthetic ciphertext-shaped content
+with an explicit classifier check; a separate positive control retains plaintext
+slot compatibility. The 400/no-upstream assertions and production logic are unchanged.

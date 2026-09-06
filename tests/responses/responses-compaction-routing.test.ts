@@ -9,6 +9,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleResponses, handleResponsesCompact } from "../../src/server/responses";
+import { looksLikeBackendCiphertext } from "../../src/server/responses/encrypted-payload";
 import * as adapterResolveModule from "../../src/server/adapter-resolve";
 import * as visionModule from "../../src/vision";
 import { saveCodexAccountCredential } from "../../src/codex/account-store";
@@ -1632,11 +1633,18 @@ describe("computer screenshot output translation boundary", () => {
 });
 
 describe("external task-input envelopes (#3735)", () => {
+  // Synthetic charset/length fixture: short plaintext in this slot is deliberately
+  // normalized to input_text before parsing, so it cannot exercise opaque rejection.
+  const opaqueOutput = `g${"A".repeat(127)}`;
   const external = (output: unknown = "external task input") => ({
     type: "function_call_output", id: "external-fixture", name: "handoff_input", namespace: "task_inbox", output,
   });
   const body = (item: Record<string, unknown>) => ({
     model: "gw/model", stream: false, input: [item],
+  });
+
+  test("opaque negative fixtures survive the plaintext-slot classifier", () => {
+    expect(looksLikeBackendCiphertext(opaqueOutput)).toBe(true);
   });
 
   test("sends a complete envelope as user text without an orphan-tool marker", async () => {
@@ -1675,6 +1683,21 @@ describe("external task-input envelopes (#3735)", () => {
     ] }]);
   });
 
+  test("retains existing plaintext-slot normalization before task-input admission", async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      captured.push(JSON.parse(String(init?.body)));
+      return jsonResponse({ id: "chat_plaintext_slot", choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+    }) as typeof fetch;
+    const res = await handleResponses(compactionRequest(body(external([
+      { type: "encrypted_content", encrypted_content: "plaintext task" },
+    ]))), keyProviderConfig({ adapter: "openai-chat" }), { model: "", provider: "" });
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.messages).toEqual([{ role: "user", content: "plaintext task" }]);
+  });
+
   const invalid: Array<[string, Record<string, unknown>]> = [
     ["empty call id", { ...external(), call_id: "" }],
     ["null call id", { ...external(), call_id: null }],
@@ -1683,8 +1706,8 @@ describe("external task-input envelopes (#3735)", () => {
     ["custom output", { ...external(), type: "custom_tool_call_output" }],
     ["blank output", external("  ")],
     ["empty output array", external([])],
-    ["opaque output", external([{ type: "encrypted_content", encrypted_content: "opaque-fixture" }])],
-    ["mixed opaque output", external([{ type: "input_text", text: "retained input" }, { type: "encrypted_content", encrypted_content: "opaque-fixture" }])],
+    ["opaque output", external([{ type: "encrypted_content", encrypted_content: opaqueOutput }])],
+    ["mixed opaque output", external([{ type: "input_text", text: "retained input" }, { type: "encrypted_content", encrypted_content: opaqueOutput }])],
     ["malformed image", external([{ type: "input_image", image_url: 42 }])],
   ];
   for (const [name, item] of invalid) {
