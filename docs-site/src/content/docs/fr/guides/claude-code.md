@@ -519,6 +519,7 @@ Sur l’adaptateur Anthropic prévu, les blocs signés non masqués (y compris t
 | Battement de coeur | `ping` |
 | Deltas de texte | `content_block_start` → `content_block_delta` (texte) → `content_block_stop` |
 | Résumé ou texte de raisonnement | Bloc `thinking` avec la signature relue, ou une enveloppe de secours `ocxr1` bornée |
+| Raisonnement expurgé | Blocs `redacted_thinking` relus depuis l'enveloppe de raisonnement |
 | Trames d'appel de fonction | Bloc `tool_use` avec `input_json_delta` |
 | Événement terminal | `message_delta` → `message_stop` |
 | EOF avant la borne | style 502 `api_error` |
