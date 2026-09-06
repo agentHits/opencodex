@@ -168,7 +168,7 @@ export async function preflightComboStreamResponse(
 
   try {
     for (;;) {
-      let next: ReadableStreamReadResult<Uint8Array>;
+      let next: Awaited<ReturnType<typeof reader.read>>;
       try {
         next = await reader.read();
       } catch (error) {
