@@ -361,7 +361,12 @@ export function useDashboardData(apiBase: string) {
   useEffect(() => {
     const data = settingsPoll.data;
     if (!data) return;
-    if (data.settings !== undefined) setSettings(data.settings);
+    if (data.settings !== undefined) {
+      const next = data.settings;
+      // GET settings does not report application receipts. Keep a saved preference's
+      // pending indication until an affirmative sync result clears it.
+      setSettings(prev => ({ ...next, catalogRefreshPending: prev?.catalogRefreshPending === true || next.catalogRefreshPending }));
+    }
     // Latest-wins: only seed from settings when no newer dedicated probe has committed
     // while this settings poll was in flight. Always merge against the live ref.
     if (

@@ -13,6 +13,7 @@ import { DashboardSidecarPanels } from "../src/pages/dashboard-overview-sections
 import type { SidecarData, SidecarPatch } from "../src/pages/dashboard-shared";
 import { mergeSidecarSetting } from "../src/pages/dashboard-shared";
 import { useDashboardData } from "../src/pages/use-dashboard-data";
+import { setClientResourceData } from "../src/client-resource";
 
 const globals = ["document", "window", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
 let previousGlobals: Record<(typeof globals)[number], PropertyDescriptor | undefined>;
@@ -479,6 +480,14 @@ test.each(["skipped", "catalog-only", "applied"])("Desktop preference pending st
     expect(latest?.settings?.codexDesktopAuthless).toBe(true);
     expect(latest?.settings?.catalogRefreshPending).toBe(syncStatus !== "applied");
     expect(latest?.syncResult?.status).toBe(syncStatus);
+    // A fresh settings poll has no application receipt and cannot erase pending.
+    await act(async () => {
+      setClientResourceData(`dashboard-settings:${apiBase}`, {
+        settings: { codexAutoStart: true, codexDesktopAuthless: true, port: 10100, hostname: "127.0.0.1" },
+      });
+    });
+    expect(latest?.settings?.codexDesktopAuthless).toBe(true);
+    expect(latest?.settings?.catalogRefreshPending === true).toBe(syncStatus !== "applied");
   } finally {
     await act(async () => { root?.unmount(); });
     root = null;
