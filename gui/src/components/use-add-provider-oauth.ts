@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { TFn } from "../i18n/shared";
 import { readJsonIfOk } from "../fetch-json";
 import { openBrowserRequestField } from "../oauth-open-browser-pref";
+import { afterOAuthCancellation, cancelOAuthLogin } from "../oauth-cancellation-barrier";
 
 export const OAUTH_LOGIN_POLL_INTERVAL_MS = 2_000;
 
@@ -35,14 +36,8 @@ export function useAddProviderOAuth({
     return generation;
   }, []);
 
-  const cancelServerLogin = useCallback(async (providerId: string) => {
-    await fetch(`${apiBase}/api/oauth/login/cancel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: providerId }),
-      keepalive: true,
-    }).catch(() => undefined);
-  }, [apiBase]);
+  const cancelServerLogin = useCallback((providerId: string) =>
+    cancelOAuthLogin(apiBase, providerId), [apiBase]);
 
   useEffect(() => {
     const cancelActiveLogins = (clearUi: boolean) => {
@@ -97,15 +92,19 @@ export function useAddProviderOAuth({
     setManualCodeMsg("");
     setManualCodeOk(true);
     try {
-      const res = await fetch(`${apiBase}/api/oauth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: providerId, ...openBrowserRequestField() }),
+      const res = await afterOAuthCancellation(apiBase, providerId, () => {
+        if (!aliveRef.current || !isCurrent()) return;
+        return fetch(`${apiBase}/api/oauth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: providerId, ...openBrowserRequestField() }),
+        });
       });
-      if (!aliveRef.current || !isCurrent()) return;
+      if (!res || !aliveRef.current || !isCurrent()) return;
       if (!res.ok) {
         activeProvidersRef.current.delete(providerId);
         const data = await res.json().catch(() => ({})) as { error?: string };
+        if (!aliveRef.current || !isCurrent()) return;
         setOauthMsgTone("warn");
         setOauthMsg(data.error === "unknown oauth provider"
           ? t("modal.oauthComingSoonShort")
@@ -116,6 +115,7 @@ export function useAddProviderOAuth({
       // carry the only human-readable step. Keep all three: the hint renderer
       // decides what to show, rather than this hook deciding what to discard.
       const data = await res.json() as { url?: string; instructions?: string; deviceCode?: string; error?: string };
+      if (!aliveRef.current || !isCurrent()) return;
       setOauthUrl(data.url ?? "", providerId, data.deviceCode, data.instructions);
       if (data.url || data.deviceCode) setOauthMsg(t("modal.waitingLogin"));
       else setOauthMsg(data.instructions || t("modal.loggingIn"));
@@ -144,7 +144,7 @@ export function useAddProviderOAuth({
       setOauthMsg(t("modal.loginTimeout"));
     } catch {
       if (isCurrent()) await cancelServerLogin(providerId);
-      activeProvidersRef.current.delete(providerId);
+      if (isCurrent()) activeProvidersRef.current.delete(providerId);
       if (aliveRef.current && isCurrent()) {
         setOauthMsgTone("warn");
         setOauthMsg(t("modal.networkError"));

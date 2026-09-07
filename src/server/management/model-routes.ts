@@ -418,8 +418,9 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     else nextModelCosts[modelId] = cost;
     const mergedError = providerModelCostsConfigError(nextModelCosts);
     if (mergedError) return jsonResponse({ error: mergedError }, 400, req, config);
-    if (Object.keys(nextModelCosts).length > 0) provider.modelCosts = nextModelCosts;
-    else delete provider.modelCosts;
+    // Keep even an empty map until persistence reconciles individual model keys.
+    // Deleting the property would also delete prices another writer added on disk.
+    provider.modelCosts = nextModelCosts;
     try {
       // The persistence owner refreshes usage overlays after its atomic write.
       // Price-only edits do not change routing or require catalog convergence.

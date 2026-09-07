@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { TFn } from "../i18n/shared";
 import { readJsonIfOk } from "../fetch-json";
 import { openBrowserRequestField } from "../oauth-open-browser-pref";
+import { afterOAuthCancellation, cancelOAuthLogin } from "../oauth-cancellation-barrier";
 import type { OAuthAccount, OAuthStatus } from "./providers-shared";
 import { oauthLabel } from "./providers-shared";
 
@@ -53,14 +54,8 @@ export function useProvidersOAuth({
     return gen;
   }, []);
 
-  const cancelServerLogin = useCallback(async (provider: string) => {
-    await fetch(`${apiBase}/api/oauth/login/cancel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider }),
-      keepalive: true,
-    }).catch(() => undefined);
-  }, [apiBase]);
+  const cancelServerLogin = useCallback((provider: string) =>
+    cancelOAuthLogin(apiBase, provider), [apiBase]);
 
   useEffect(() => {
     const cancelActiveLogins = (clearUi: boolean) => {
@@ -87,11 +82,9 @@ export function useProvidersOAuth({
     const gen = bumpLoginGeneration(provider);
     activeLoginGenerationsRef.current.delete(provider);
     await cancelServerLogin(provider);
-    if (!aliveRef.current) return;
-    if (oauthLoginGenerationRef.current!.get(provider) === gen) {
-      setBusy(current => current === provider ? null : current);
-      setLoginInfo(current => current?.provider === provider ? null : current);
-    }
+    if (!aliveRef.current || oauthLoginGenerationRef.current!.get(provider) !== gen) return;
+    setBusy(current => current === provider ? null : current);
+    setLoginInfo(current => current?.provider === provider ? null : current);
     notify(t("prov.loginCancelled", { provider: oauthLabel(provider) }), false);
   }, [aliveRef, bumpLoginGeneration, cancelServerLogin, notify, setBusy, setLoginInfo, t]);
 
@@ -103,26 +96,31 @@ export function useProvidersOAuth({
     setStatus("");
     setLoginInfo(null);
     try {
-      const res = await fetch(`${apiBase}/api/oauth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider,
-          // Explicit, never inferred, and omitted entirely when this operator has
-          // expressed no preference — otherwise the request would permanently
-          // overrule a persisted `oauthOpenBrowser: false`.
-          ...openBrowserRequestField(),
-          ...(addAccount || reauthTargetId ? { addAccount: true } : {}),
-          ...(reauthTargetId ? { accountId: reauthTargetId, reauth: true } : {}),
-        }),
+      const res = await afterOAuthCancellation(apiBase, provider, () => {
+        if (!aliveRef.current || oauthLoginGenerationRef.current!.get(provider) !== generation) return;
+        return fetch(`${apiBase}/api/oauth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider,
+            // Explicit, never inferred, and omitted entirely when this operator has
+            // expressed no preference — otherwise the request would permanently
+            // overrule a persisted `oauthOpenBrowser: false`.
+            ...openBrowserRequestField(),
+            ...(addAccount || reauthTargetId ? { addAccount: true } : {}),
+            ...(reauthTargetId ? { accountId: reauthTargetId, reauth: true } : {}),
+          }),
+        });
       });
-      if (oauthLoginGenerationRef.current!.get(provider) !== generation || !aliveRef.current) return;
+      if (!res || oauthLoginGenerationRef.current!.get(provider) !== generation || !aliveRef.current) return;
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
+        if (!aliveRef.current || oauthLoginGenerationRef.current!.get(provider) !== generation) return;
         notify(data.error || t("prov.loginFailStart", { provider: oauthLabel(provider) }), false);
         return;
       }
       const data = await res.json() as { url?: string; instructions?: string; deviceCode?: string };
+      if (!aliveRef.current || oauthLoginGenerationRef.current!.get(provider) !== generation) return;
       if (data.url || data.instructions || data.deviceCode) {
         setLoginInfo({ provider, url: data.url, instructions: data.instructions, deviceCode: data.deviceCode });
       }
@@ -135,6 +133,7 @@ export function useProvidersOAuth({
         const s: (OAuthStatus & { accounts?: OAuthAccount[]; activeAccountId?: string | null }) | null = sRes
           ? ((await readJsonIfOk<OAuthStatus & { accounts?: OAuthAccount[]; activeAccountId?: string | null }>(sRes)) ?? null)
           : null;
+        if (!aliveRef.current || oauthLoginGenerationRef.current!.get(provider) !== generation) return;
         if (!s) continue;
         if (s.error) {
           setOauthStatus(prev => ({ ...prev, [provider]: s }));
@@ -203,12 +202,14 @@ export function useProvidersOAuth({
       }
       if (!finished && oauthLoginGenerationRef.current!.get(provider) === generation && aliveRef.current) {
         await cancelServerLogin(provider);
+        if (!aliveRef.current || oauthLoginGenerationRef.current!.get(provider) !== generation) return;
         notify(t("prov.loginTimeout", { provider: oauthLabel(provider) }), false);
         setLoginInfo(null);
       }
     } catch {
       if (oauthLoginGenerationRef.current!.get(provider) === generation) {
         await cancelServerLogin(provider);
+        if (!aliveRef.current || oauthLoginGenerationRef.current!.get(provider) !== generation) return;
         notify(t("prov.loginRequestFail", { provider: oauthLabel(provider) }), false);
       }
     } finally {

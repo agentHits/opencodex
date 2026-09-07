@@ -76,6 +76,8 @@ interface UsageProvider {
   shareRatio: number;
 }
 
+class UsageWindowMismatchError extends Error {}
+
 interface UsageResponse {
   range: Range;
   surface: UsageSurface;
@@ -825,6 +827,10 @@ export default function Usage({ apiBase, connected = false, apiKeyId }: { apiBas
     const response = await fetch(`${apiBase}/api/usage?${query}`, { signal });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`.trim());
     const next = await response.json() as UsageResponse;
+    // HTTP 200 alone does not prove an older daemon honored the custom bounds.
+    if (since !== undefined && (next?.customWindow !== true || next.since !== since || next.until !== until)) {
+      throw new UsageWindowMismatchError();
+    }
     if (since === undefined) writeHeldUsage(apiBase, range, surface, connected, scope, apiKeyId, next);
     return next;
   }, [apiBase, apiKeyId, connected, range, scope, surface, since, until]);
@@ -940,7 +946,9 @@ export default function Usage({ apiBase, connected = false, apiKeyId }: { apiBas
         <DataSurfaceSkeleton label={t("usage.loading")} rows={5} />
       ) : state.kind === "failed-cold" ? (
         <Notice tone="err">
-          {connected ? t("usage.hubOffline") : state.error instanceof Error ? `${t("usage.loadError")} ${state.error.message}` : t("usage.loadError")}{" "}
+          {state.error instanceof UsageWindowMismatchError
+            ? `${t("usage.loadError")} ${t("dash.codexRestartMalformed")}`
+            : connected ? t("usage.hubOffline") : state.error instanceof Error ? `${t("usage.loadError")} ${state.error.message}` : t("usage.loadError")}{" "}
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => resource.refresh()}>
             {t("common.retry")}
           </button>

@@ -16,7 +16,7 @@ const globals = [
   "document", "window", "navigator", "localStorage", "sessionStorage", "fetch", "IS_REACT_ACT_ENVIRONMENT",
 ] as const;
 
-type CachedSubagents = { available: string[]; chosen: string[]; fallback?: string[]; pollMs?: number };
+type CachedSubagents = { available: string[]; chosen: string[]; fallback?: string[]; pollMs?: number; fallbackAvailable?: string[] };
 type FallbackSettings = { models: string[]; pollMs: number };
 type SentRequest = { path: string; method: string; init?: RequestInit };
 type V2Settings = {
@@ -33,6 +33,7 @@ let root: Root | null = null;
 let requests: SentRequest[];
 let available: string[];
 let chosen: string[];
+let fallbackAvailable: string[] | undefined;
 let fallbackSettings: FallbackSettings;
 let failFallbackPut: boolean;
 let v2Settings: V2Settings;
@@ -57,6 +58,7 @@ beforeEach(() => {
   requests = [];
   available = ["a-1", "a-2", "a-3"];
   chosen = ["a-1"];
+  fallbackAvailable = undefined;
   fallbackSettings = { models: ["a-2"], pollMs: 45_000 };
   failFallbackPut = false;
   v2Settings = { enabled: true, multiAgentMode: "v2", multiAgentModeHintText: null, keepNativeChatGptOnV1: false };
@@ -77,7 +79,7 @@ beforeEach(() => {
           return pending;
         }
         if (fallbackGetGate) await fallbackGetGate;
-        return Response.json({ ...fallbackSettings, available });
+        return Response.json({ ...fallbackSettings, available: fallbackAvailable ?? available });
       }
       if (path === FALLBACK_PATH && method === "PUT") {
         if (failFallbackPut) return Response.json({ error: "Fallback settings could not be persisted" }, { status: 500 });
@@ -203,7 +205,7 @@ function pollInput(): HTMLInputElement {
   return input;
 }
 
-async function changePollMs(value: number) {
+async function changePollMs(value: number | string) {
   await act(async () => {
     const input = pollInput();
     Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!.set!.call(input, String(value));
@@ -220,6 +222,128 @@ function putBodies(path = FALLBACK_PATH): unknown[] {
 function cached(): CachedSubagents | null {
   return readSessionListCache<CachedSubagents>(CACHE_KEY);
 }
+
+const failedFallbackReads = [
+  { name: "404", response: () => Response.json({ error: "Fallback endpoint missing" }, { status: 404 }) },
+  { name: "503", response: () => Response.json({ error: "Fallback discovery unavailable" }, { status: 503 }) },
+  { name: "invalid JSON", response: () => new Response("{broken") },
+  { name: "missing settings", response: () => Response.json({}) },
+  { name: "invalid models", response: () => Response.json({ models: [null], pollMs: 45_000, available: [] }) },
+  { name: "invalid poll interval", response: () => Response.json({ models: [], pollMs: 1, available: [] }) },
+  { name: "invalid availability", response: () => Response.json({ models: [], pollMs: 45_000, available: [null] }) },
+];
+
+test.each(failedFallbackReads)("cold roster survives fallback $name and recovers through retry", async ({ response }) => {
+  expect(cached()).toBeNull();
+  pendingFallbackResponse = Promise.resolve(response());
+  await mount();
+
+  expect(Array.from(container.querySelectorAll(".swi-featured-name"), node => node.textContent?.trim())).toEqual(["a-1"]);
+  expect(pollInput().disabled).toBe(true);
+  expect(saveButton().disabled).toBe(true);
+  expect(labelledButton(editor(), en["sub.fallbackAdd"]).disabled).toBe(true);
+  expect(container.textContent).toContain(en["sub.fallbackLabel"]);
+  expect(container.textContent).toContain(en["sub.loadFail"]);
+  expect(cached()).not.toHaveProperty("fallback");
+  expect(cached()).not.toHaveProperty("pollMs");
+  await act(async () => { saveButton().click(); });
+  expect(putBodies()).toEqual([]);
+
+  await click(labelledButton(container, en["sub.workspace.addToFeatured"].replace("{m}", "a-3")));
+  const rosterSaveRow = container.querySelector(".swi-save-row");
+  if (!rosterSaveRow) throw new Error("Roster Save row not found");
+  await click(saveButton(rosterSaveRow));
+  expect(putBodies(ROSTER_PATH)).toEqual([{ models: ["a-1", "a-3"] }]);
+  expect(cached()).not.toHaveProperty("fallback");
+
+  const rosterGets = requests.filter(request => request.path === ROSTER_PATH && request.method === "GET").length;
+  const retry = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    .find(button => button.textContent?.trim() === en["common.retry"]);
+  if (!retry) throw new Error("Fallback retry not found");
+  await click(retry);
+  expect(requests.filter(request => request.path === ROSTER_PATH && request.method === "GET")).toHaveLength(rosterGets);
+  expect(container.textContent).not.toContain(en["sub.loadFail"]);
+  expectOrder(["a-2"]);
+  expect(pollInput().value).toBe("45000");
+  expect(saveButton().disabled).toBe(false);
+  expect(cached()?.chosen).toEqual(["a-1", "a-3"]);
+  await click(saveButton());
+  expect(putBodies()).toEqual([{ models: ["a-2"], pollMs: 45_000 }]);
+});
+
+test("cold roster is usable while fallback discovery remains pending", async () => {
+  let releaseGet!: () => void;
+  fallbackGetGate = new Promise<void>(resolve => { releaseGet = resolve; });
+  try {
+    await mount();
+    expect(container.querySelectorAll(".swi-featured-row")).toHaveLength(1);
+    expect(saveButton().disabled).toBe(true);
+    await click(labelledButton(container, en["sub.workspace.addToFeatured"].replace("{m}", "a-3")));
+    expect(container.querySelectorAll(".swi-featured-row")).toHaveLength(2);
+  } finally {
+    await act(async () => { releaseGet(); });
+  }
+  expectOrder(["a-2"]);
+  expect(container.querySelectorAll(".swi-featured-row")).toHaveLength(2);
+});
+
+test("fallback discovery excludes roster-only stale choices without losing configured values", async () => {
+  available.push(UNAVAILABLE_MODEL, "retired-provider/other-model");
+  chosen = [UNAVAILABLE_MODEL, "a-1"];
+  fallbackAvailable = ["a-1", "a-2", "a-3"];
+  fallbackSettings.models = [UNAVAILABLE_MODEL, "a-2"];
+  await mount();
+  expectOrder([UNAVAILABLE_MODEL, "a-2"]);
+  expect(rows()[0]?.textContent).toContain(en["sub.fallbackUnavailable"]);
+  const trigger = labelledButton(editor(), en["sub.fallbackAdd"]);
+  await click(trigger);
+  const listbox = testWindow.document.getElementById(trigger.getAttribute("aria-controls") ?? "");
+  expect(listbox?.textContent).not.toContain("retired-provider/other-model");
+  await click(trigger);
+  const rosterSaveRow = container.querySelector(".swi-save-row");
+  if (!rosterSaveRow) throw new Error("Roster Save row not found");
+  await click(saveButton(rosterSaveRow));
+  expect(putBodies(ROSTER_PATH)).toEqual([{ models: [UNAVAILABLE_MODEL, "a-1"] }]);
+  await click(saveButton());
+  expect(putBodies()).toEqual([{ models: [UNAVAILABLE_MODEL, "a-2"], pollMs: 45_000 }]);
+});
+
+test("cached fallback availability survives remount while discovery is pending", async () => {
+  available.push(UNAVAILABLE_MODEL);
+  chosen = [UNAVAILABLE_MODEL, "a-1"];
+  fallbackAvailable = ["a-1", "a-2", "a-3"];
+  fallbackSettings.models = [UNAVAILABLE_MODEL];
+  await mount();
+  expect(cached()?.fallbackAvailable).toEqual(["a-1", "a-2", "a-3"]);
+  await act(async () => { root!.unmount(); });
+  root = null;
+  clearClientResourceStoresForTests();
+  let releaseGet!: () => void;
+  fallbackGetGate = new Promise<void>(resolve => { releaseGet = resolve; });
+  try {
+    await mount();
+    expectOrder([UNAVAILABLE_MODEL]);
+    expect(rows()[0]?.textContent).toContain(en["sub.fallbackUnavailable"]);
+    expect(container.querySelectorAll(".swi-featured-row")).toHaveLength(2);
+  } finally {
+    await act(async () => { releaseGet(); });
+  }
+});
+
+test("failed revalidation disables a cached fallback without replacing its committed settings", async () => {
+  testWindow.sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+    available, chosen, fallback: [UNAVAILABLE_MODEL], pollMs: 90_000, fallbackAvailable: available,
+  }));
+  pendingFallbackResponse = Promise.resolve(Response.json({ error: "Fallback unavailable" }, { status: 503 }));
+  await mount();
+  expectOrder([UNAVAILABLE_MODEL]);
+  expect(pollInput().value).toBe("90000");
+  expect(saveButton().disabled).toBe(true);
+  expect(cached()?.fallback).toEqual([UNAVAILABLE_MODEL]);
+  expect(cached()?.pollMs).toBe(90_000);
+  expect(container.textContent).toContain("Fallback unavailable");
+  expect(container.querySelectorAll(".swi-featured-row")).toHaveLength(1);
+});
 
 test("preserves an unavailable configured fallback ID on load and save", async () => {
   fallbackSettings = { models: [UNAVAILABLE_MODEL, "a-2"], pollMs: 45_000 };
@@ -316,7 +440,7 @@ test("removes only the selected duplicate fallback occurrence by index", async (
 test("a failed fallback PUT retains the editable draft and leaves the committed cache unchanged", async () => {
   await mount();
   const committed = cached();
-  expect(committed).toEqual({ available, chosen: ["a-1"], fallback: ["a-2"], pollMs: 45_000 });
+  expect(committed).toEqual({ available, fallbackAvailable: available, chosen: ["a-1"], fallback: ["a-2"], pollMs: 45_000 });
   await addFallback("a-3");
   await changePollMs(90_000);
   failFallbackPut = true;
@@ -349,7 +473,7 @@ test("a successful fallback save updates committed session data without committi
 
   expect(putBodies()).toEqual([{ models: ["a-2", "a-3"], pollMs: 120_000 }]);
   expect(putBodies(ROSTER_PATH)).toEqual([]);
-  expect(cached()).toEqual({ available, chosen: ["a-1"], fallback: ["a-2", "a-3"], pollMs: 120_000 });
+  expect(cached()).toEqual({ available, fallbackAvailable: available, chosen: ["a-1"], fallback: ["a-2", "a-3"], pollMs: 120_000 });
   expectOrder(["a-2", "a-3"]);
   expect(container.querySelectorAll(".swi-featured-row").length).toBe(2);
 });
@@ -365,14 +489,14 @@ test("independent roster Save never caches an unsaved fallback draft", async () 
 
   expect(putBodies(ROSTER_PATH)).toEqual([{ models: ["a-1", "a-3"] }]);
   expect(putBodies()).toEqual([]);
-  expect(cached()).toEqual({ available, chosen: ["a-1", "a-3"], fallback: ["a-2"], pollMs: 45_000 });
+  expect(cached()).toEqual({ available, fallbackAvailable: available, chosen: ["a-1", "a-3"], fallback: ["a-2"], pollMs: 45_000 });
   expectOrder(["a-2", "a-3"]);
   expect(pollInput().value).toBe("90000");
 
   // Saving the fallback afterward must retain the already committed roster.
   await click(saveButton());
   expect(putBodies()).toEqual([{ models: ["a-2", "a-3"], pollMs: 90_000 }]);
-  expect(cached()).toEqual({ available, chosen: ["a-1", "a-3"], fallback: ["a-2", "a-3"], pollMs: 90_000 });
+  expect(cached()).toEqual({ available, fallbackAvailable: available, chosen: ["a-1", "a-3"], fallback: ["a-2", "a-3"], pollMs: 90_000 });
 });
 
 test("remount shows the committed fallback and roster while a fresh fallback GET is pending", async () => {
@@ -407,7 +531,7 @@ test("remount shows the committed fallback and roster while a fresh fallback GET
     expect(pollInput().value).toBe("120000");
     expect(Array.from(container.querySelectorAll(".swi-featured-name"), node => node.textContent?.trim()))
       .toEqual(["a-1", "a-3"]);
-    expect(cached()).toEqual({ available, chosen: ["a-1", "a-3"], fallback: ["a-2", "a-3"], pollMs: 120_000 });
+    expect(cached()).toEqual({ available, fallbackAvailable: available, chosen: ["a-1", "a-3"], fallback: ["a-2", "a-3"], pollMs: 120_000 });
   } finally {
     await act(async () => { releaseGet(); });
     fallbackGetGate = null;
@@ -511,6 +635,29 @@ test.each([false, true])("a captured old fallback GET cannot overwrite a newer d
   expect(pollInput().value).toBe("90000");
   expect(cached()).toEqual(saveNewer ? committedB : committedA);
   expect(putBodies()).toEqual(saveNewer ? [{ models: ["a-3"], pollMs: 90_000 }] : []);
+});
+
+test.each(["", "1e309"])("blank or overflowing polling input stays invalid until corrected (%s)", async value => {
+  await mount();
+  const committed = cached();
+  await changePollMs(value);
+  expect(pollInput().value).toBe(value);
+  expect(pollInput().getAttribute("aria-invalid")).toBe("true");
+  expect(editor().querySelector('[role="alert"]')?.textContent).toContain(en["sub.fallbackPollInvalid"]);
+  expect(saveButton().disabled).toBe(true);
+  await act(async () => { saveButton().click(); });
+  expect(putBodies()).toEqual([]);
+  expect(cached()).toEqual(committed);
+
+  // An unrelated roster edit must not restore the last valid interval or coerce the blank to zero.
+  await click(labelledButton(container, en["sub.workspace.addToFeatured"].replace("{m}", "a-3")));
+  expect(pollInput().value).toBe(value);
+  expect(saveButton().disabled).toBe(true);
+  await changePollMs(90_000);
+  expect(pollInput().getAttribute("aria-invalid")).toBe("false");
+  expect(editor().querySelector('[role="alert"]')).toBeNull();
+  await click(saveButton());
+  expect(putBodies()).toEqual([{ models: ["a-2"], pollMs: 90_000 }]);
 });
 
 test("invalid polling intervals disable Save without a PUT or cache mutation, and a valid interval recovers", async () => {

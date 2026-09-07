@@ -119,6 +119,40 @@ function sessionEntries() {
   });
 }
 
+for (const connected of [false, true]) {
+  test.each([
+    ["older daemon", { customWindow: undefined, until: undefined }],
+    ["missing mode", { customWindow: undefined }],
+    ["preset mode", { customWindow: false }],
+    ["nonboolean mode", { customWindow: "true" }],
+    ["missing since", { since: undefined }],
+    ["missing until", { until: undefined }],
+    ["wrong since", { since: since + 1 }],
+    ["wrong until", { until: until + 1 }],
+    ["string bounds", { since: String(since), until: String(until) }],
+  ])(`rejects custom %s receipts without displaying totals (connected=${connected})`, async (_name, receipt) => {
+    await mount(connected);
+    await respond(0, "held-preset-marker");
+    const held = sessionEntries();
+    await enter("2020-09-15T10:20", "2020-09-15T10:21");
+    await apply();
+    await act(async () => {
+      requests[1].resolve(Response.json({ ...report(requests[1], "mismatched-report-marker"), ...receipt }));
+    });
+    expect(container.textContent).toContain("Could not load usage data.");
+    expect(container.textContent).toContain("The proxy returned an unexpected response.");
+    expect(container.textContent).not.toContain("mismatched-report-marker");
+    expect(container.textContent).not.toContain("held-preset-marker");
+    expect(container.querySelector(".stat-value")).toBeNull();
+    expect(sessionEntries()).toEqual(held);
+    const retry = [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Retry")!;
+    await click(retry);
+    await respond(2, "exact-retry-marker");
+    expect(container.textContent).toContain("exact-retry-marker");
+    expect(container.textContent).not.toContain("Could not load usage data.");
+  });
+}
+
 test("America/Santiago midnight DST retains final-day activity and tooltip", async () => {
   const previous = process.env.TZ;
   process.env.TZ = "America/Santiago";

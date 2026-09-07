@@ -79,7 +79,9 @@ function parseKeyPayload(value: unknown): OAuthCredentials {
   if (!key.startsWith(ORCAROUTER_KEY_PREFIX) || key.length > 4096 || /[\r\n]/.test(key)) {
     throw new Error("OrcaRouter key exchange did not return a valid API key");
   }
-  if (payload.scope !== "api") {
+  // The documented key/user_id response omits scope. If supplied, it must match
+  // the api scope requested by this PKCE flow.
+  if (payload.scope !== undefined && payload.scope !== "api") {
     throw new Error("OrcaRouter key exchange did not grant the required api scope");
   }
   const accountId = typeof payload.user_id === "string"
