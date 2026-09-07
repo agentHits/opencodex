@@ -119,6 +119,33 @@ function sessionEntries() {
   });
 }
 
+test("America/Santiago midnight DST retains final-day activity and tooltip", async () => {
+  const previous = process.env.TZ;
+  process.env.TZ = "America/Santiago";
+  try {
+    expect(new Date(2026, 8, 6, 0).getHours()).toBe(1);
+    await mount();
+    await respond(0, "preset-marker");
+    await enter("2026-09-05T00:00", "2026-09-07T23:59");
+    await apply();
+    const gate = requests.at(-1)!;
+    const data = report(gate, "santiago-marker", "2026-09-07");
+    data.days = ["2026-09-05", "2026-09-06", "2026-09-07"].map(date => ({
+      date, requests: date === "2026-09-07" ? 7 : 0, measuredRequests: 0, reportedRequests: 0,
+      totalTokens: date === "2026-09-07" ? 700 : 0, models: [],
+    }));
+    await act(async () => gate.resolve(Response.json(data)));
+    const active = container.querySelector<HTMLElement>('.heatmap-grid .heatmap-cell:not(.heatmap-cell-0)');
+    expect(active).not.toBeNull();
+    await act(async () => active!.dispatchEvent(new testWindow.MouseEvent("mouseover", { bubbles: true })));
+    expect(container.querySelector(".heatmap-tip-date")?.textContent).toBe("2026-09-07");
+    expect(container.querySelector(".heatmap-tip")?.textContent).toContain("700");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+});
+
 test("Apply submits inclusive bounds once; Clear restores the held preset without custom cache entries", async () => {
   await mount();
   expect(requests[0].url).toBe(`${apiBase}/api/usage?range=30d&surface=all`);

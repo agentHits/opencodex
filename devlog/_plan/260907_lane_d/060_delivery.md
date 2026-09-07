@@ -16,3 +16,9 @@ stack:null proof. Attach independent implementation/security verdicts and top CI
 each PR. Leave all merges and original issue/PR closure actions to the main task.
 Local product tests/typecheck/build/install remain NOT RUN. D closes only when exact-head
 remote evidence and the requested handoff table are complete.
+
+Calendar audit fold-back: custom heatmaps iterate the server's returned civil dates,
+using UTC only for weekday/month layout; they do not step a local midnight cursor.
+The server's backward calendar walk resets midnight after decrement and explicitly
+advances to the prior existing local day if a whole-day timezone jump prevented progress.
+Regressions pin America/Santiago (2026-09-05..07) and Pacific/Apia (2011-12-29..31).

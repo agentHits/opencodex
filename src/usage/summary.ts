@@ -306,7 +306,15 @@ function customWindowDates(window: UsageTimeWindow): string[] {
   const dates: string[] = [];
   while (date.getTime() >= start && dates.length < MAX_USAGE_DAY_BUCKETS) {
     dates.push(localDateKey(date.getTime()));
+    const previous = date.getTime();
     date.setDate(date.getDate() - 1);
+    date.setHours(0, 0, 0, 0);
+    // A skipped civil day can normalize back to this same midnight (Apia, 2011).
+    // Move through the preceding instant to find the prior existing local day.
+    if (date.getTime() >= previous) {
+      date.setTime(previous - 1);
+      date.setHours(0, 0, 0, 0);
+    }
   }
   return dates.reverse();
 }

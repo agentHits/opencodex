@@ -17,6 +17,26 @@ import { isUnresolvedRequestedModel } from "../../src/usage/model-identity";
 const FIXED_NOW = Date.UTC(2026, 5, 28, 12, 0, 0);
 
 describe("custom usage windows", () => {
+  test("Pacific/Apia skipped day still reaches the preceding existing calendar date", () => {
+    const previous = process.env.TZ;
+    process.env.TZ = "Pacific/Apia";
+    try {
+      const start = new Date(2011, 11, 29, 12).getTime();
+      const end = new Date(2011, 11, 31, 12).getTime();
+      expect(new Date(2011, 11, 30, 0).getDate()).toBe(31);
+      const accumulator = createUsageSummaryAccumulator({ window: { since: start, until: end } });
+      accumulator.add(entry({ ts: start, requestId: "before-skip" }));
+      accumulator.add(entry({ ts: end, requestId: "after-skip" }));
+      const summary = accumulator.summarize("all", end);
+      expect(summary.days.map(day => day.date)).toEqual(["2011-12-29", "2011-12-31"]);
+      expect(summary.days.map(day => day.requests)).toEqual([1, 1]);
+      expect(summary.summary.requests).toBe(2);
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
+  });
+
   const since = new Date(2026, 1, 10, 12, 0, 0, 123).getTime();
   const until = since + 3_600_000;
 

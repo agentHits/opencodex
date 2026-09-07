@@ -161,29 +161,55 @@ interface HeatmapCell {
 
 function buildHeatmap(days: UsageDay[], customWindow = false): { weeks: HeatmapCell[][]; months: { label: string; col: number }[]; buckets: number[] } {
   const buckets = quantileBuckets(days.map(d => d.totalTokens));
-  if (customWindow && days.length === 0) return { weeks: [], months: [], buckets };
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  if (customWindow) {
+    const weeks: HeatmapCell[][] = [];
+    const months: { label: string; col: number }[] = [];
+    let week: HeatmapCell[] = [];
+    let weekStart: number | undefined;
+    let previousMonth = -1;
+    let lastMonthCol = -4;
+    const pad = (length: number) => {
+      while (week.length < length) week.push({ date: "", requests: 0, totalTokens: 0, level: 0, dayOfWeek: week.length });
+    };
+    // The server already supplied the bounded civil dates. Local midnight stepping
+    // can retain a shifted hour across DST and omit the final day of the report.
+    for (const day of days) {
+      const [year, month, date] = day.date.split("-").map(Number);
+      const calendar = new Date(Date.UTC(year, month - 1, date));
+      const weekday = calendar.getUTCDay();
+      const nextWeekStart = calendar.getTime() - weekday * 86_400_000;
+      if (weekStart !== nextWeekStart) {
+        if (week.length > 0) { pad(7); weeks.push(week); }
+        week = [];
+        weekStart = nextWeekStart;
+      }
+      const monthIndex = calendar.getUTCMonth();
+      if (monthIndex !== previousMonth && weeks.length - lastMonthCol >= 4) {
+        months.push({ label: monthNames[monthIndex], col: weeks.length });
+        previousMonth = monthIndex;
+        lastMonthCol = weeks.length;
+      }
+      pad(weekday);
+      week.push({ date: day.date, requests: day.requests, totalTokens: day.totalTokens,
+        level: bucketLevel(day.totalTokens, buckets), dayOfWeek: weekday });
+    }
+    if (week.length > 0) { pad(7); weeks.push(week); }
+    return { weeks, months, buckets };
+  }
   const dayMap = new Map(days.map(d => [d.date, d]));
 
-  const today = customWindow ? new Date(`${days[days.length - 1].date}T00:00:00`) : new Date();
+  const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const start = customWindow ? new Date(`${days[0].date}T00:00:00`) : new Date(today);
-  if (!customWindow) {
-    start.setDate(start.getDate() - 364);
-    start.setDate(start.getDate() - start.getDay());
-  }
+  const start = new Date(today);
+  start.setDate(start.getDate() - 364);
+  start.setDate(start.getDate() - start.getDay());
 
   const weeks: HeatmapCell[][] = [];
   const months: { label: string; col: number }[] = [];
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   let lastMonthCol = -4;
   let prevMonthIdx = -1;
   let week: HeatmapCell[] = [];
-  // Align a custom grid without inventing report dates outside the server's bounded days.
-  if (customWindow) {
-    while (week.length < start.getDay()) {
-      week.push({ date: "", requests: 0, totalTokens: 0, level: 0, dayOfWeek: week.length });
-    }
-  }
   const cursor = new Date(start);
 
   while (cursor <= today) {
