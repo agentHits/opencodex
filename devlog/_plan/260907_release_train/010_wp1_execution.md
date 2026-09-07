@@ -47,3 +47,6 @@ Chain-top CI: run 34106345180 @6eadb1658 (lane=all) success, aggregate `ci` succ
 - CI runner saturation: all queued Cross-platform runs cancelled; one chain at a time. Order: B → A → M7 (#3882) → C → E #3864 → D → E rest.
 - Per-chain gate excludes Windows shards and macos control; they run once on the final release-train head (wp3).
 - Lane B landed: #3871 (62fe747af) → #3872 (ddee5e8b4); tree 58536270a == tested; run 34111578200 (Linux 1/2/4, macOS 1/2, gates, policy, api, keyring, npm, docker green; test 3/4 = prompt-text-probe timing flake, untouched by B; Windows/control cancelled by policy). Closed #3856, #3849, issue #3855; #3781 slice comment.
+- Lane A landed: #3879 (b0bcb4b10) → #3880 (dac7e28c4) → #3881 (76436a3ee); tree d4f095822 == tested; run 34113638182 (all non-Windows/control jobs green). Closed #3862/#3858/#3769, issues #3861/#3857.
+- M7 #3882 (citation whole-string/streaming parity, found by lane A composition audit) merged 6389787dc; M8 #3888 (providers.md hunk from A) merged 522ce5f8c; run 34114667385 green on non-Windows/control jobs.
+- Slot order now: C → E #3864 → D → E docs/#3774/#3336.
