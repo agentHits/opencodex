@@ -42,7 +42,7 @@ function pickPinnedAddress(addresses: Array<{ address: string; family: number }>
  *
  * Under TUN mode the packet path intercepts the fake-IP destination itself, so a
  * canonical registry destination whose local DNS answers include Clash fake-IP
- * space (198.18.0.0/15) is reachable by pin-connecting through the TUN — no
+ * space (198.18.0.0/15 or fdfe:dcba:9876::/48) is reachable by pin-connecting through the TUN — no
  * outbound HTTP(S) proxy env is required. The exception is deliberately narrow:
  *
  * - hostname-only: a literal 198.18.x.x URL never reaches it (the literal gate
@@ -186,7 +186,9 @@ async function providerOutboundRequest(
     warnProxyDnsDegradationOnce();
     return globalThis.fetch(url, { ...init, method, redirect: "manual" });
   }
-  if (proxyConfigured && !resolved.privateNetwork) {
+  // A canonical TUN exception with no scheme-matched proxy must retain the
+  // validated address, even when an unrelated HTTP_PROXY/ALL_PROXY is present.
+  if (proxyConfigured && !resolved.privateNetwork && (effectiveProxy !== null || !allowMihomoIpv6FakeIp)) {
     warnProxyBoundaryOnce();
     // When the Mihomo exception could have admitted an answer, pin the transport to the
     // proxy the admission assumed instead of letting fetch re-infer it from the environment.

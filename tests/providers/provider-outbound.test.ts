@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ProviderOutboundDependencies } from "../../src/lib/provider-outbound";
 import { PROXY_ENV_KEYS } from "../../src/lib/proxy-env";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { fixturePath, repoRoot } from "../helpers/repo-root";
 
 const proxyKeys = PROXY_ENV_KEYS.flatMap(key => [key, key.toLowerCase()]);
 const originalProxyEnv = Object.fromEntries(proxyKeys.map(key => [key, process.env[key]]));
@@ -426,6 +427,17 @@ describe("#3462 Mihomo IPv6 fake-IP admission is gated on the scheme-matched pro
   type Captured = { allowMihomoIpv6FakeIp?: boolean };
   const ULA = "fdfe:dcba:9876::7e";
   const target = "https://opencode.ai/zen/v1/models";
+
+  test("canonical IPv6-only TUN transport preserves pinning and rejects unsafe DNS answers", async () => {
+    const child = Bun.spawn([process.execPath, fixturePath("provider-outbound-mihomo.ts")], {
+      cwd: repoRoot(), stdout: "pipe", stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    ]);
+    if (exitCode !== 0) throw new Error(`Mihomo fixture exited ${exitCode}: ${stderr}`);
+    expect(JSON.parse(stdout.trim())).toEqual({ ipv6Pinned: 6, proxyBound: 2, denied: 54 });
+  });
 
   async function run(env: Record<string, string>, opts: { admit: boolean }) {
     for (const key of proxyKeys) delete process.env[key];
