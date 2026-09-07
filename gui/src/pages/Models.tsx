@@ -2643,6 +2643,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
           saving={displayNameSaving}
           requestError={displayNameRequestError}
           currentNamePending={displayNameCurrentPending}
+          mutationOutcomeUnknown={displayNameRecovery?.confirmed === false}
           onRetry={displayNameRecovery ? () => void saveDisplayName(displayNameRecovery.value) : undefined}
           onEdit={() => setDisplayNameRecovery(null)}
           onSave={value => void saveDisplayName(value)}
