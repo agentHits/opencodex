@@ -193,11 +193,46 @@ describe("parseAnthropicSidecarSSE", () => {
   });
 });
 
+describe("Anthropic sidecar byte boundaries", () => {
+  test.each([64 * 1024, 80 * 1024])("preserves complete prefix frames at %i bytes without awaiting cancel", async (size) => {
+    const prefix = `data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "prefix 한글" } })}\n\n`;
+    const tail = `data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "discard" } })}`;
+    const encoder = new TextEncoder();
+    // The final unterminated frame is syntactically valid exactly at the cap.
+    // EOF flush must not fold it after cancellation.
+    const body = prefix + ":" + "x".repeat(64 * 1024 - encoder.encode(prefix + "\n\n" + tail).length - 1) + "\n\n" + tail;
+    const bytes = encoder.encode(body + "z".repeat(size - 64 * 1024));
+    let cancelled = false;
+    const res = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(bytes); },
+      cancel() { cancelled = true; return new Promise<void>(() => {}); },
+    }, { highWaterMark: 0 }));
+    const out = await parseAnthropicSidecarSSE(res);
+    expect(cancelled).toBe(true);
+    expect(out).toEqual({ text: "prefix 한글", sources: [] });
+  });
+});
+
 describe("runAnthropicWebSearch request shape", () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => {
     globalThis.fetch = originalFetch;
     oauthAccessError = undefined;
+  });
+
+  test.each([401, 503])("bounds HTTP %i error bodies and never awaits non-settling cancellation", async (status) => {
+    let reads = 0;
+    let cancelled = false;
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) { reads += 1; controller.enqueue(new Uint8Array(4096).fill(120)); },
+      cancel() { cancelled = true; return new Promise<void>(() => {}); },
+    }, { highWaterMark: 0 }), { status })) as typeof fetch;
+    const out = await runAnthropicWebSearch("bounded fixture", "anthropic", anthropicProvider,
+      { model: "claude-sonnet-5", reasoning: "low", timeoutMs: 5000, describeImages: false });
+    expect(reads).toBe(16);
+    expect(cancelled).toBe(true);
+    expect(out.error).toBe(status === 401
+      ? `anthropic sidecar auth failed: ${PUBLIC_OAUTH_ERROR}` : "sidecar HTTP 503");
   });
 
   test("projects OAuth, upstream-auth, and transport failures onto safe public errors", async () => {
