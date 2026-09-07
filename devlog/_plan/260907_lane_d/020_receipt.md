@@ -10,3 +10,8 @@ and ordinary validation error remain
 editable. Screenshot changed disabled input/reset with retry available.
 
 Verification: NOT RUN locally by user instruction; focused tests execute in final top-head Cross-platform CI.
+
+Implementation: unknown outcome guards input/reset handlers and submit, and focuses Retry
+when saving fails without a receipt. Saved:true remains editable. Transport/body failure
+matrix attempts a replacement intent and asserts no second PUT before read-only retry.
+Astra Herschel plan verdict PASS. Screenshots and product execution await top CI artifact.
