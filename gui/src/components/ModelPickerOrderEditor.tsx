@@ -35,34 +35,48 @@ export default function ModelPickerOrderEditor({ apiBase, active, identities, on
   const [announcement, setAnnouncement] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
-  const drag = useRef<{ id: string; token: string } | null>(null);
-  const generation = useRef(0);
-  const flight = useRef<BoundedFetch | null>(null);
+  const lifetime = useRef({
+    generation: 0,
+    flight: null as BoundedFetch | null,
+    drag: null as { id: string; token: string } | null,
+  });
+  const [activation, setActivation] = useState({ apiBase, active, onBusyChange });
   const identitySignature = JSON.stringify(identities.map(({ provider, id, namespaced }) => [provider, id, namespaced]));
   const latestIdentitySignature = useRef(identitySignature);
   useLayoutEffect(() => { latestIdentitySignature.current = identitySignature; }, [identitySignature]);
   const identityChanged = snapshot !== null && snapshot.identities !== identitySignature;
   const disabled = !active || busy || !snapshot || blocked !== null || identityChanged;
   const dirty = snapshot !== null && JSON.stringify(draft) !== JSON.stringify(snapshot.order);
-  const clearDrag = useCallback(() => { drag.current = null; setDragging(null); setOver(null); }, []);
+  const clearDrag = useCallback(() => { lifetime.current.drag = null; setDragging(null); setOver(null); }, []);
 
-  // Layout cleanup fences even A → B → A and unmount before a pending promise resumes.
+  // Reconcile before committing children, like the existing display-name dialog.
+  if (activation.apiBase !== apiBase || activation.active !== active || activation.onBusyChange !== onBusyChange) {
+    setActivation({ apiBase, active, onBusyChange });
+    setSnapshot(null); setDraft([]); setBlocked(null); setError(false); setBusy(false);
+  }
+  const [dragContext, setDragContext] = useState({ disabled, snapshot, identitySignature });
+  if (dragContext.disabled !== disabled || dragContext.snapshot !== snapshot || dragContext.identitySignature !== identitySignature) {
+    setDragContext({ disabled, snapshot, identitySignature });
+    setDragging(null); setOver(null);
+  }
+
+  // Capture the stable holder, but always abort its CURRENT flight during cleanup.
   useLayoutEffect(() => {
-    generation.current++;
-    setSnapshot(null); setDraft([]); setBlocked(null); setError(false);
+    const holder = lifetime.current;
+    holder.generation++;
     return () => {
-      generation.current++;
-      flight.current?.controller.abort(); flight.current?.clear(); flight.current = null;
-      drag.current = null; onBusyChange(false);
+      holder.generation++;
+      holder.flight?.controller.abort(); holder.flight?.clear(); holder.flight = null;
+      holder.drag = null; onBusyChange(false);
     };
   }, [apiBase, active, onBusyChange]);
-  useEffect(() => { clearDrag(); }, [disabled, snapshot, identitySignature, clearDrag]);
+  useLayoutEffect(() => { lifetime.current.drag = null; }, [disabled, snapshot, identitySignature]);
 
   const run = async (save: boolean) => {
-    if (!active || flight.current || (save && (disabled || !dirty))) return;
-    const owner = generation.current, bounded = createBoundedFetch(15_000);
-    flight.current = bounded; setBusy(true); onBusyChange(true); setError(false); clearDrag();
-    const owns = () => generation.current === owner && flight.current === bounded;
+    if (!active || lifetime.current.flight || (save && (disabled || !dirty))) return;
+    const owner = lifetime.current.generation, bounded = createBoundedFetch(15_000);
+    lifetime.current.flight = bounded; setBusy(true); onBusyChange(true); setError(false); clearDrag();
+    const owns = () => lifetime.current.generation === owner && lifetime.current.flight === bounded;
     const current = () => owns() && !bounded.signal.aborted
       && latestIdentitySignature.current === identitySignature;
     try {
@@ -102,11 +116,16 @@ export default function ModelPickerOrderEditor({ apiBase, active, identities, on
       // Current-identity timeouts surface an error; stale identities retain the draft silently.
     } finally {
       bounded.clear();
-      if (owns()) { flight.current = null; setBusy(false); onBusyChange(false); }
+      if (owns()) { lifetime.current.flight = null; setBusy(false); onBusyChange(false); }
     }
   };
-  const enter = useEffectEvent(() => { void run(false); });
-  useEffect(() => { if (active) enter(); }, [apiBase, active]);
+  const enter = useEffectEvent(async () => {
+    const holder = lifetime.current, owner = holder.generation;
+    // Automatic startup is cancellable before issuing transport; event actions stay immediate.
+    await Promise.resolve();
+    if (active && holder.generation === owner) void run(false);
+  });
+  useEffect(() => { if (active) void enter(); }, [apiBase, active, onBusyChange]);
 
   const move = (id: string, next: string[]) => {
     if (disabled) return;
@@ -125,13 +144,13 @@ export default function ModelPickerOrderEditor({ apiBase, active, identities, on
         const fixed = snapshot?.fixed.includes(id) === true;
         return <li key={id} className={`picker-order-row${dragging === id ? " cwi-target-row--dragging" : ""}${over === id ? " cwi-target-row--drop" : ""}`}
           onDragOver={event => {
-            if (!drag.current || drag.current.id === id || !movable(drag.current.id) || !movable(id)
+            if (!lifetime.current.drag || lifetime.current.drag.id === id || !movable(lifetime.current.drag.id) || !movable(id)
               || !event.dataTransfer.types.includes(DRAG_TYPE)) return;
             event.preventDefault(); event.dataTransfer.dropEffect = "move"; setOver(id);
           }}
           onDragLeave={() => setOver(null)}
           onDrop={event => {
-            const source = drag.current;
+            const source = lifetime.current.drag;
             if (source && source.id !== id && source.token === event.dataTransfer.getData(DRAG_TYPE) && movable(source.id) && movable(id)) {
               event.preventDefault(); move(source.id, movePickerBefore(draft, source.id, id, snapshot?.fixed ?? []));
             }
@@ -141,7 +160,7 @@ export default function ModelPickerOrderEditor({ apiBase, active, identities, on
             aria-label={t("models.pickerOrder.dragModel", { model: id })}
             onDragStart={event => {
               if (!movable(id)) { event.preventDefault(); return; }
-              const token = newDragToken(); drag.current = { id, token }; setDragging(id);
+              const token = newDragToken(); lifetime.current.drag = { id, token }; setDragging(id);
               event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData(DRAG_TYPE, token);
             }}><IconGrip width={14} height={14} aria-hidden="true" /></button>
           <code className="picker-order-name">{id}</code>

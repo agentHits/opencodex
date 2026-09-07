@@ -95,6 +95,24 @@ async function drop(source: string, target: string) {
 }
 async function edit() { await render(); await reply(0, initial()); await click("Move p/a down"); }
 
+test("unmount after effect setup cancels automatic startup before any fetch", async () => {
+  const { createRoot } = await import("react-dom/client");
+  const { flushSync } = await import("react-dom");
+  await act(async () => {
+    flushSync(() => {
+      root = createRoot(host);
+      root.render(<LanguageProvider><ModelPickerOrderEditor apiBase="/a" active
+        identities={ids} onAccepted={onAccepted} onBusyChange={onBusyChange} /></LanguageProvider>);
+    });
+    flushSync(() => { root!.unmount(); root = null; });
+    // Cleanup's callback proves the layout effect was installed, not a discarded render.
+    expect(busy).toEqual([false]);
+    await Promise.resolve();
+  });
+  expect(requests).toEqual([]); expect(receipts).toEqual([]);
+  expect(busy).toEqual([false]);
+});
+
 // No sleeps, retries or real transport: each deferred settlement is explicitly released in act.
 test("entering Custom reads a fresh GET each activation and only renders pickerAvailable", async () => {
   await render("/a", ids, false); expect(requests).toHaveLength(0);
