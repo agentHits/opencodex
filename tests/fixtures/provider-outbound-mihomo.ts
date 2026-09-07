@@ -5,7 +5,8 @@ import { PROXY_ENV_KEYS } from "../../src/lib/proxy-env";
 
 // Isolate the DNS module mock from other tests while exercising the real classifier.
 let answers: { address: string; family: number }[] = [];
-mock.module("node:dns/promises", () => ({ lookup: async () => answers }));
+let dnsCalls = 0;
+mock.module("node:dns/promises", () => ({ lookup: async () => { dnsCalls++; return answers; } }));
 const { providerOutboundGet, providerOutboundPost, ProviderOutboundPolicyError } = await import("../../src/lib/provider-outbound");
 const target = "https://opencode.ai/zen/v1/models";
 const fake = { address: "fdfe:dcba:9876::1", family: 6 };
@@ -25,6 +26,7 @@ for (const method of ["GET", "POST"] as const) {
     for (const key of PROXY_ENV_KEYS.flatMap(key => [key, key.toLowerCase()])) delete process.env[key];
     Object.assign(process.env, env);
     answers = dns;
+    dnsCalls = 0;
     let pinnedCalls = 0;
     let fetchCalls = 0;
     const originalFetch = globalThis.fetch;
@@ -74,6 +76,7 @@ for (const method of ["GET", "POST"] as const) {
         if (expected === "pinned") ipv6Pinned++;
         else proxyBound++;
       }
+      assert.equal(dnsCalls, url.startsWith("https://[") ? 0 : 1, "hostname requests must use the isolated DNS mock");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -103,4 +106,4 @@ for (const method of ["GET", "POST"] as const) {
   await attempt({}, [fake], "denied", "https://[fdfe:dcba:9876::1]/v1/models");
 }
 
-console.log(JSON.stringify({ ipv6Pinned, proxyBound, denied }));
+console.log("MIHOMO_RESULT=" + JSON.stringify({ ipv6Pinned, proxyBound, denied }));

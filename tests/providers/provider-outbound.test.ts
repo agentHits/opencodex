@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync} from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { ProviderOutboundDependencies } from "../../src/lib/provider-outbound";
 import { PROXY_ENV_KEYS } from "../../src/lib/proxy-env";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -429,14 +430,24 @@ describe("#3462 Mihomo IPv6 fake-IP admission is gated on the scheme-matched pro
   const target = "https://opencode.ai/zen/v1/models";
 
   test("canonical IPv6-only TUN transport preserves pinning and rejects unsafe DNS answers", async () => {
-    const child = Bun.spawn([process.execPath, fixturePath("provider-outbound-mihomo.ts")], {
-      cwd: repoRoot(), stdout: "pipe", stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
-    ]);
-    if (exitCode !== 0) throw new Error(`Mihomo fixture exited ${exitCode}: ${stderr}`);
-    expect(JSON.parse(stdout.trim())).toEqual({ ipv6Pinned: 6, proxyBound: 2, denied: 54 });
+    const childDir = mkdtempSync(join(tmpdir(), "ocx-mihomo-test-"));
+    const childTest = join(childDir, "mihomo.test.ts");
+    // Builtin module mocks are activated by Bun's test loader, not plain bun execution.
+    writeFileSync(childTest, `import { test } from "bun:test";\ntest("Mihomo matrix", async () => { await import(${JSON.stringify(pathToFileURL(fixturePath("provider-outbound-mihomo.ts")).href)}); });\n`);
+    try {
+      const child = Bun.spawn([process.execPath, "test", childTest], {
+        cwd: repoRoot(), stdout: "pipe", stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+      ]);
+      if (exitCode !== 0) throw new Error(`Mihomo fixture exited ${exitCode}: ${stderr}`);
+      const result = stdout.split(/\r?\n/).find(line => line.startsWith("MIHOMO_RESULT="));
+      expect(result).toBeDefined();
+      expect(JSON.parse(result!.slice("MIHOMO_RESULT=".length))).toEqual({ ipv6Pinned: 6, proxyBound: 2, denied: 54 });
+    } finally {
+      removeTreeWithRetry(childDir);
+    }
   });
 
   async function run(env: Record<string, string>, opts: { admit: boolean }) {
