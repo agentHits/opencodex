@@ -29,3 +29,16 @@ Top CI history:
 - D: #3877 (#3719 ordering) + name-guard layer + price overlay in progress; audits PASS on first two.
 - E: #3864 (#18 release.yml) CI in progress with security audit; #19/#20 handoff patches prepared against ece556a6e.
 
+
+## Landing (wp1 D, 2026-09-07 ~10:40Z)
+| Layer | PR | Merge SHA | Original closed |
+|---|---|---|---|
+| 1 | #3865 | 7f2fb922c | #3532 |
+| 2 | #3866 | dcec71715 | #3840 |
+| 3 | #3867 | 0ef7d2906 | #3837 |
+| 4 | #3868 | 99451df82 | #3843 |
+| 5 | #3869 | 0719457d1 | #3845 |
+| 6 | #3870 | d00615d56 | #2033 |
+
+Chain-top CI: run 34106345180 @6eadb1658 (lane=all) success, aggregate `ci` success. Prospective merge tree `git merge-tree --write-tree origin/dev codex/rt-m6-2033` = 7621cac89 = tested tree; post-merge `origin/dev^{tree}` = 7621cac89. Every layer head and d00615d56 are ancestors of fetched dev. Stale CodeRabbit trailer findings on #3869/#3870 replied (heads carry trailers). Lanes notified of the new dev head; A told that M#3838 follows A#3858.
+
