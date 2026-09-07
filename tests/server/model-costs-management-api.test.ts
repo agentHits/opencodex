@@ -60,7 +60,7 @@ afterEach(() => {
 function harness(config = fixture(), persist?: (saved: OcxConfig) => void) {
   const persisted: OcxConfig[] = [];
   let convergeCalls = 0;
-  async function call(method: "GET" | "PUT", body?: unknown, provider = PROVIDER, rawBody?: string, rawProvider?: string) {
+  async function call(method: "GET" | "PUT", body?: unknown, provider = PROVIDER, rawBody?: string | ReadableStream<Uint8Array>, rawProvider?: string) {
     const url = new URL(`http://127.0.0.1:10100/api/providers/${rawProvider ?? encodeURIComponent(provider)}/model-costs`);
     const response = await handleModelRoutes({
       version: "test",
@@ -87,6 +87,23 @@ function harness(config = fixture(), persist?: (saved: OcxConfig) => void) {
     return response;
   }
   return { call, config, persisted, get convergeCalls() { return convergeCalls; } };
+}
+
+/** No eager buffering: requested resolves only when the request parser pulls the body. */
+function deferredJsonBody(value: unknown) {
+  let requestPull!: () => void;
+  let release!: () => void;
+  const requested = new Promise<void>(resolve => { requestPull = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      requestPull();
+      await released;
+      controller.enqueue(new TextEncoder().encode(JSON.stringify(value)));
+      controller.close();
+    },
+  }, { highWaterMark: 0 });
+  return { body, requested, release };
 }
 
 describe("provider model costs API", () => {
@@ -138,6 +155,69 @@ describe("provider model costs API", () => {
     await h.call("PUT", { modelId: "org/model", cost: null });
     expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).providers[PROVIDER].modelCosts).toEqual({ sibling: SIBLING });
     expect(activeUserCostOverlays().some(row => row.provider === PROVIDER && row.modelId === "org/model")).toBe(false);
+  });
+
+  test("price PUT follows a provider row replaced by a pin edit while parsing its body", async () => {
+    const config = fixture({ "org/model": ZERO, sibling: SIBLING });
+    writeFileSync(join(home, "config.json"), JSON.stringify(config));
+    const h = harness(config, saveConfigPreservingClaudeCode);
+    const oldRow = config.providers[PROVIDER]!;
+    const oldCosts = oldRow.modelCosts;
+    const oldSnapshot = structuredClone(oldRow);
+    const deferred = deferredJsonBody({ modelId: "org/model", cost: COST });
+    const pending = h.call("PUT", undefined, PROVIDER, deferred.body);
+    await deferred.requested;
+
+    // Reproduce the provider PATCH ownership boundary without DNS or catalog side effects.
+    // This exercises row replacement during body parsing, not the pin PATCH route itself.
+    const newerSibling: ProviderCostOverlay = { input: 9, output: 11, cacheRead: 1, cacheWrite: 6 };
+    const replacement = {
+      ...oldRow,
+      pinnedReasoningEffort: "high",
+      modelCosts: { ...oldRow.modelCosts, sibling: newerSibling, "newer/sibling": SIBLING },
+    };
+    config.providers[PROVIDER] = replacement;
+    deferred.release();
+
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, provider: PROVIDER, modelId: "org/model", cost: COST });
+    expect(config.providers[PROVIDER]).toBe(replacement);
+    const expected = { "org/model": COST, sibling: newerSibling, "newer/sibling": SIBLING };
+    expect(replacement.pinnedReasoningEffort).toBe("high");
+    expect(replacement.modelCosts).toEqual(expected);
+    expect(oldRow).toEqual(oldSnapshot);
+    expect(oldRow.modelCosts).toBe(oldCosts);
+    expect(h.persisted).toHaveLength(1);
+    expect(h.persisted[0]!.providers[PROVIDER]!.pinnedReasoningEffort).toBe("high");
+    expect(h.persisted[0]!.providers[PROVIDER]!.modelCosts).toEqual(expected);
+    const disk = JSON.parse(readFileSync(join(home, "config.json"), "utf8")) as OcxConfig;
+    expect(disk.providers[PROVIDER]!.pinnedReasoningEffort).toBe("high");
+    expect(disk.providers[PROVIDER]!.modelCosts).toEqual(expected);
+    expect(h.convergeCalls).toBe(0);
+  });
+
+  test("price PUT returns 404 without persisting if the provider is removed during body parsing", async () => {
+    const config = fixture({ "org/model": ZERO, sibling: SIBLING });
+    writeFileSync(join(home, "config.json"), JSON.stringify(config));
+    const diskBefore = readFileSync(join(home, "config.json"), "utf8");
+    const h = harness(config, saveConfigPreservingClaudeCode);
+    const oldRow = config.providers[PROVIDER]!;
+    const oldSnapshot = structuredClone(oldRow);
+    const deferred = deferredJsonBody({ modelId: "org/model", cost: COST });
+    const pending = h.call("PUT", undefined, PROVIDER, deferred.body);
+    await deferred.requested;
+    delete config.providers[PROVIDER];
+    deferred.release();
+
+    const response = await pending;
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "provider not found" });
+    expect(Object.hasOwn(config.providers, PROVIDER)).toBe(false);
+    expect(oldRow).toEqual(oldSnapshot);
+    expect(h.persisted).toHaveLength(0);
+    expect(readFileSync(join(home, "config.json"), "utf8")).toBe(diskBefore);
+    expect(h.convergeCalls).toBe(0);
   });
 
   test("persist failure restores map identity and own-property absence for set and reset", async () => {

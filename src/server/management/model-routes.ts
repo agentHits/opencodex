@@ -379,8 +379,8 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     if (!hasOwnProvider(config.providers, name)) {
       return jsonResponse({ error: "provider not found" }, 404, req, config);
     }
-    const provider = config.providers[name]!;
     if (req.method === "GET") {
+      const provider = config.providers[name]!;
       return jsonResponse({ provider: name, modelCosts: sanitizeModelCostsForDisplay(provider.modelCosts) ?? {} }, 200, req, config);
     }
     let body: unknown;
@@ -402,6 +402,12 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     const cost = body.cost === null ? null : sanitizeModelCostsForDisplay(submitted)?.[modelId];
     if (cost === undefined) return jsonResponse({ error: "modelId cannot be displayed safely" }, 400, req, config);
 
+    // Body parsing yields: a concurrent provider PATCH can replace the row or remove it.
+    // Resolve ownership again and keep the merge/save synchronous on the current row.
+    if (!hasOwnProvider(config.providers, name)) {
+      return jsonResponse({ error: "provider not found" }, 404, req, config);
+    }
+    const provider = config.providers[name]!;
     const hadModelCosts = Object.hasOwn(provider, "modelCosts");
     const previousModelCosts = provider.modelCosts;
     const nextModelCosts = Object.assign(
