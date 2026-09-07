@@ -50,3 +50,6 @@ Chain-top CI: run 34106345180 @6eadb1658 (lane=all) success, aggregate `ci` succ
 - Lane A landed: #3879 (b0bcb4b10) → #3880 (dac7e28c4) → #3881 (76436a3ee); tree d4f095822 == tested; run 34113638182 (all non-Windows/control jobs green). Closed #3862/#3858/#3769, issues #3861/#3857.
 - M7 #3882 (citation whole-string/streaming parity, found by lane A composition audit) merged 6389787dc; M8 #3888 (providers.md hunk from A) merged 522ce5f8c; run 34114667385 green on non-Windows/control jobs.
 - Slot order now: C → E #3864 → D → E docs/#3774/#3336.
+- Lane C landed: #3873 (f46a7f49c) → #3874 (3f07e09bc) → #3875 (686cb127c) → #3876 (2eec04fe1) → #3878 (d0fca4a9b); tree e0b0e5886 == tested; run 34116228181 aggregate ci success (attempt 2 after a macos 1/2 20-min hang in codex-inject-write-lock; cause unproven, no code change). Closed #3839/#3841/#3860/#3252, issue #1533. #3863 reopened: contributor widened it mid-train (retitled, +2 commits) — only the original health-cache commit landed via #3875.
+- Lane E #3864 (release.yml registry-smoke recovery, security review PASS) merged f4a4b468f; run 34119094967 green on non-Windows/control jobs.
+- Slot order now: D → E docs (#3883/#3884) → #3887 → #3892 → final Windows/control run on the train head.
