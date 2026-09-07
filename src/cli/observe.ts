@@ -11,7 +11,7 @@ import {
   type RuntimeApiDeps,
 } from "./runtime-api";
 import { formatUsageReport } from "./usage-report";
-import { USAGE_RANGES, USAGE_SURFACES } from "../usage/summary";
+import { USAGE_RANGES, USAGE_SURFACES, type UsageSummary } from "../usage/summary";
 import { parseUsageTimeWindow, type UsageTimeWindow } from "../usage/time-range";
 import { redactSecretString } from "../lib/redact";
 
@@ -165,7 +165,11 @@ async function usage(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     throw new CliUsageError(`--surface must be one of ${USAGE_SURFACES.join(", ")}`, USAGE);
   }
   rejectArgs(args.map(redactSecretString), USAGE);
-  const result = await runtimeRequest(`/api/usage${query({ range, surface, provider, model, since: window?.since, until: window?.until })}`, {}, deps);
+  const result = await runtimeRequest<UsageSummary>(`/api/usage${query({ range, surface, provider, model, since: window?.since, until: window?.until })}`, {}, deps);
+  // Older daemons ignore custom bounds and return successful preset reports.
+  if (window && (result?.customWindow !== true || result.since !== window.since || result.until !== window.until)) {
+    throw new Error("The server did not confirm the requested custom usage window. Upgrade and restart the proxy, then retry.");
+  }
   // Built only when it will be printed: JavaScript evaluates arguments before
   // the call, so passing formatUsageReport(...) inline would run the human
   // renderer during --json and let its assumptions affect a path that is meant

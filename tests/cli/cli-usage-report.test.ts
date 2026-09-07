@@ -165,8 +165,40 @@ describe("ocx usage command", () => {
       since: "1709164800123", until: "1709164800123",
     });
     expect(out.split("\n")[0]).toContain("custom 2024-02-29T00:00:00.123Z to 2024-02-29T00:00:00.123Z (inclusive)");
-    expect((await run(["usage", "--since", "0", "--until", "0", "--json"], body)).out)
-      .toBe(JSON.stringify(body, null, 2));
+    const epochBody = payload({ customWindow: true, since: 0, until: 0 });
+    const epochResult = await run(["usage", "--since", "0", "--until", "0", "--json"], epochBody);
+    expect(epochResult.code).toBe(0);
+    expect(epochResult.out).toBe(JSON.stringify(epochBody, null, 2));
+  });
+
+  test.each([
+    ["older daemon", {}],
+    ["missing mode", { since: 100, until: 200 }],
+    ["preset mode", { customWindow: false, since: 100, until: 200 }],
+    ["nonboolean mode", { customWindow: "true", since: 100, until: 200 }],
+    ["missing since", { customWindow: true, since: undefined, until: 200 }],
+    ["missing until", { customWindow: true, since: 100 }],
+    ["wrong since", { customWindow: true, since: 101, until: 200 }],
+    ["wrong until", { customWindow: true, since: 100, until: 201 }],
+    ["string bounds", { customWindow: true, since: "100", until: "200" }],
+  ])("rejects custom %s receipts before human or JSON output", async (_name, receipt) => {
+    const errors: string[] = [];
+    const errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    });
+    try {
+      for (const format of [[], ["--json"]]) {
+        errors.length = 0;
+        const result = await run(["usage", "--since", "100", "--until", "200", ...format], payload(receipt));
+        expect(result.urls).toHaveLength(1);
+        expect(result.code).toBe(1);
+        expect(result.out).toBe("");
+        expect(errors.join("\n")).toContain("custom usage window");
+        expect(errors.join("\n")).toMatch(/upgrade.*restart/i);
+      }
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   test("rejects malformed or unpaired windows as usage errors without an API request", async () => {
