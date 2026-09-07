@@ -1329,7 +1329,7 @@ describe("provider cost overlay (user-configured)", () => {
 
 describe("Codex account pricing identity", () => {
   const modelId = "wp3-synthetic-account-model";
-  const account = { id: "cost-account", logLabel: "p123abc", alias: "display-name", email: "fixture@example.invalid", isMain: false };
+  const account = { id: "cost-account", logLabel: "p123abc", alias: "display-name", email: "fixture@example.test", isMain: false };
   const row: ExpectedPriceOverlay = {
     provider: "openai", modelId, cost4: RATE,
     source: "fixture", verifiedAt: "2026-09-07", status: "verified",
@@ -1420,7 +1420,7 @@ describe("Codex account pricing identity", () => {
     }
     const rows = activeUserCostOverlays();
     const memo = resolveMatchedPrice(account.id, modelId);
-    const renamed = { ...account, alias: "new-display", email: "new@example.invalid", plan: "pro" };
+    const renamed = { ...account, alias: "new-display", email: "new@example.test", plan: "pro" };
     refreshUserCostOverlays(config([second, renamed], providers));
     expect(userCostOverlayVersion()).toBe(before + 1);
     expect(activeUserCostOverlays()).toBe(rows);
