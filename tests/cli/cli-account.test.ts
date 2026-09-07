@@ -586,6 +586,24 @@ afterEach(() => {
 });
 
 describe("ocx account CLI (issue #180 matrix)", () => {
+  test.each([100, 12])("pending validation stays visible at %s percent usage without exposing raw health details", async weeklyPercent => {
+    codexAccounts = [{ id: "pending", email: "p***@example.test", quota: { weeklyPercent },
+      health: { status: "warning", reason: "validation_pending", message: RAW_SENTINEL } }];
+    for (const command of [["list", "openai"], ["refresh", "openai"]]) {
+      const human = await run(command);
+      expect(human.code).toBe(0);
+      expect(human.stdout).toContain("validation-pending");
+      expect(human.output).not.toContain(RAW_SENTINEL);
+      const machine = await run([...command, "--json"]);
+      expect(JSON.parse(machine.stdout).accounts[0].validationPending).toBe(true);
+      expect(machine.output).not.toContain(RAW_SENTINEL);
+    }
+    codexAccounts = [{ id: "pending", quota: { weeklyPercent: 12 }, health: { status: "healthy" } }];
+    const recovered = await run(["refresh", "openai", "--json"]);
+    expect(JSON.parse(recovered.stdout).accounts[0]).not.toHaveProperty("validationPending");
+    expect((await run(["refresh", "openai"])).stdout).not.toContain("validation-pending");
+  });
+
   test("main quota diagnostics survive opt-in JSON without copying upstream data", async () => {
     codexAccounts = [{ id: "__main__", isMain: true, quota: null,
       quotaRefresh: { status: "http_error", httpStatus: 503, message: RAW_SENTINEL } }];

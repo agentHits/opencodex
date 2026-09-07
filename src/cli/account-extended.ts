@@ -264,6 +264,7 @@ function refreshLine(row: FamilyRows["rows"][number]): string {
   const quotaText = row.quota ? quotaParts(row.quota).join(" ") : "";
   parts.push(quotaText.length > 0 ? quotaText : "quota: unknown");
   if (row.needsReauth) parts.push("needs-reauth");
+  if (row.validationPending) parts.push("validation-pending (routing disabled)");
   return parts.filter(Boolean).join(" ");
 }
 

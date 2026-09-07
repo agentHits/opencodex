@@ -22,6 +22,8 @@ export interface AccountRow {
   masked?: string;
   active: boolean;
   needsReauth?: boolean;
+  /** Registered credential that is still excluded from routing until validation completes. */
+  validationPending?: boolean;
   /** Codex pool selection order, higher used earlier. Absent where ordering does not apply. */
   priority?: number;
   quota?: CodexQuotaDto | null;
@@ -237,6 +239,7 @@ interface CodexAccountDto {
   plan?: string;
   isMain?: boolean;
   needsReauth?: boolean;
+  health?: { reason?: string };
   priority?: number;
   quota?: CodexQuotaDto | null;
   quotaRefresh?: unknown;
@@ -302,6 +305,7 @@ export async function fetchCodexRows(
     plan: a.plan,
     active: a.id === activeId,
     needsReauth: a.needsReauth,
+    ...(a.health?.reason === "validation_pending" ? { validationPending: true } : {}),
     priority: typeof a.priority === "number" ? a.priority : 0,
     paused: a.paused === true,
     ...(includeQuota ? {
