@@ -1,6 +1,6 @@
 import { toolChoiceToolPredicate, type OcxParsedRequest, type OcxProviderConfig } from "../types";
 import { isOpenAiOperatedResponsesDestination } from "../providers/openai-tiers";
-import { CODE_MODE_HOST_CONTRACT_SENTENCE, CODE_MODE_RESULT_ECHO_SENTENCE, normalizeEmptyExecToolResultText } from "./exec-tool-result-normalize";
+import { CODE_MODE_HOST_CONTRACT_SENTENCE, CODE_MODE_RESULT_ECHO_SENTENCE, annotateCodeModeHostFailure, normalizeEmptyExecToolResultText } from "./exec-tool-result-normalize";
 import { isBareShellBridgeTool, isCodexCodeModeExecTool } from "./tool-catalog-nudge";
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -59,7 +59,10 @@ export function normalizeResponsesCodeMode(body: unknown, parsed: OcxParsedReque
       }
       if ((item.type !== "function_call_output" && item.type !== "custom_tool_call_output") || !execCalls.has(item.call_id)) return item;
       const text = textOnlyOutput(item.output);
-      const normalized = text === undefined ? undefined : normalizeEmptyExecToolResultText(text, { toolName: "exec" });
+      const normalized = text === undefined
+        ? undefined
+        : normalizeEmptyExecToolResultText(text, { toolName: "exec" })
+          ?? annotateCodeModeHostFailure(text, { toolName: "exec" });
       return normalized === undefined ? item : { ...item, output: normalized };
     }) } : {}),
   };

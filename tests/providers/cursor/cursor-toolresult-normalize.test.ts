@@ -106,6 +106,34 @@ describe("normalizeCursorToolResultText (#1920/#1866 unit rows)", () => {
     expect(out.text).toContain(hint);
   });
 
+  test.each(["Unsupported import in exec: node:fs", "unsupported import in exec: node:fs"])(
+    "a code-mode exec result carrying %p gains the shared hint, keeps its isError, and is not re-annotated on replay",
+    (payload) => {
+      const out = normalizeCursorToolResultText(payload, { toolName: "exec" });
+      expect(out.changed).toBe(true);
+      expect(out.isError).toBe(false);
+      expect(out.text).toBe(`${payload}\n[recovery: Imports are not available in this exec context; use the injected globals (tools, text, notify, store, load, ALL_TOOLS) instead.]`);
+      // Replay through Responses history arrives with isError=false; the legacy lowercase marker
+      // row must not get a second look at it.
+      const replay = normalizeCursorToolResultText(out.text, { toolName: "exec", isError: false });
+      expect(replay).toEqual({ text: out.text, isError: false, changed: false });
+    },
+  );
+
+  test("the legacy node_repl import row keeps its own isError policy", () => {
+    const out = normalizeCursorToolResultText("unsupported import in exec", { toolName: "js", toolNamespace: "mcp__node_repl" });
+    expect(out.isError).toBe(true);
+    expect(out.text).toContain("injected globals");
+  });
+
+  test("a non-exec tool whose successful output merely mentions a host phrase stays byte-identical", () => {
+    const doc = "The docs say apply_patch expects a string input.";
+    const out = normalizeCursorToolResultText(doc, { toolName: "read_file" });
+    expect(out.changed).toBe(false);
+    expect(out.isError).toBe(false);
+    expect(out.text).toBe(doc);
+  });
+
   test("a non-computer-use tool with empty output stays byte-identical", () => {
     const out = normalizeCursorToolResultText("", { toolName: "read_file" });
     expect(out.changed).toBe(false);

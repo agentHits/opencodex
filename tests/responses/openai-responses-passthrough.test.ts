@@ -103,6 +103,21 @@ describe("native routed code-mode result visibility", () => {
     expect(second.instructions).toBe(first.instructions);
   });
 
+  test("annotates a paired exec result that carries a host failure string without touching the program", () => {
+    const failure = "Script failed\nWall time 0.1 seconds\nOutput:\nScript error:\ntool `apply_patch` expects a string input";
+    const body = raw(failure);
+    const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
+    expect(wire.input[1].output).toBe(`${failure}\n[recovery: tools.apply_patch takes exactly one string argument; pass the patch text itself, not an object such as {input: ...}.]`);
+    expect(JSON.parse(wire.input[0].arguments).input).toBe(body.input[0].input);
+    // Replayed history already carrying the hint is not annotated twice: the output item and the
+    // program keep their identity, and a second pass over the normalized body is a deep no-op.
+    const replayed = raw(wire.input[1].output);
+    const once = normalizeResponsesCodeMode(replayed, parseRequest(replayed), routed) as typeof replayed;
+    expect(once.input[1]).toBe(replayed.input[1]);
+    expect(once.input[0]).toBe(replayed.input[0]);
+    expect(normalizeResponsesCodeMode(once, parseRequest(once), routed)).toEqual(once);
+  });
+
   test("a replayed body that already carries the echo rule gains only the missing contract sentence", () => {
     const body = { ...raw(), instructions: `Keep this instruction.\n\n${CODE_MODE_RESULT_ECHO_SENTENCE}` };
     const parsed = parseRequest(body);
