@@ -159,7 +159,7 @@ describe("token guardian", () => {
     expect(mock.count()).toBeGreaterThan(0);
   });
 
-  test("a late guardian probe cannot validate a replacement pending credential", async () => {
+  test.each(["response.completed", "response.failed"])("a late guardian probe cannot change a replacement pending credential (%s)", async terminal => {
     writeConfig({
       tokenGuardian: { enabled: true, codexWarmupEnabled: true, tickSeconds: 60, leadSeconds: 60 },
       providers: { openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", codexAccountMode: "pool", refreshPolicy: "proactive" } },
@@ -170,11 +170,13 @@ describe("token guardian", () => {
     saveCodexAccountCredential("acct-late", credential);
     globalThis.fetch = (async () => {
       saveCodexAccountCredential("acct-late", { ...credential, accessToken: "replacement" }, { validationPending: true });
-      return new Response('data: {"type":"response.completed"}\n\n');
+      return new Response(`data: ${JSON.stringify({ type: terminal })}\n\n`);
     }) as typeof fetch;
     await guardianSweep(Date.now());
     expect(readCodexAccountRecord("acct-late")?.codexValidationPending).toBe(true);
     expect(readCodexAccountRecord("acct-late")?.lastCodexValidatedAt).toBeUndefined();
+    expect(readCodexAccountRecord("acct-late")?.lastCodexValidationStatus).toBeUndefined();
+    expect(readCodexAccountRecord("acct-late")?.lastCodexValidationError).toBeUndefined();
   });
 
   test("guardian rechecks pending replacement after asynchronous token resolution", async () => {

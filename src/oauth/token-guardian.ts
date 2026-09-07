@@ -217,12 +217,14 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
       const key = `codex:${id}`;
       if (inBackoff(key, nowMs)) { result.skippedBackoff.push(key); continue; }
       tasks.push(async () => {
+        let warmupGeneration: number | undefined;
         try {
           const token = await getValidCodexToken(id);
           if (needsRefresh) result.refreshed.push(key);
           const current = readCodexAccountRecord(id);
           if (needsWarmup && current?.credential && current.deletedAt == null
             && !current.codexValidationPending && current.generation === token.generation) {
+            warmupGeneration = token.generation;
             await warmCodexAccount({
               accessToken: token.accessToken,
               chatgptAccountId: token.chatgptAccountId,
@@ -239,8 +241,8 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
             return;
           }
           const permanent = err instanceof TokenRefreshError && (err.reason === "revoked" || err.reason === "expired");
-          if (needsWarmup && !(err instanceof TokenRefreshError)) {
-            markCodexAccountValidationFailed(id, codexWarmupFailureReason(err));
+          if (warmupGeneration !== undefined && !(err instanceof TokenRefreshError)) {
+            markCodexAccountValidationFailed(id, codexWarmupFailureReason(err), warmupGeneration);
           }
           recordFailure(key, nowMs, opts.backoffBaseSeconds, opts.backoffMaxSeconds, permanent, writerGeneration);
           result.failed.push(key);

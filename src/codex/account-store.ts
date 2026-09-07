@@ -187,11 +187,13 @@ export function markCodexAccountValidated(id: string, atMs: number = Date.now(),
   });
 }
 
-export function markCodexAccountValidationFailed(id: string, reason: string): void {
+export function markCodexAccountValidationFailed(id: string, reason: string, generation?: number): void {
   withCredentialMutationLockSync(() => {
     const store = loadCodexAccountRecordStore();
     const current = store[id];
     if (!current || current.deletedAt != null || !current.credential) return;
+    if (current.codexValidationPending && generation === undefined) return;
+    if (generation !== undefined && current.generation !== generation) return;
     store[id] = {
       ...current,
       lastCodexValidationStatus: "failed",
