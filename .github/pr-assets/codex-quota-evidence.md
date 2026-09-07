@@ -12,6 +12,7 @@ No live OpenAI account was used or charged.
 
 The browser was Microsoft Edge through Playwright, at 1440 × 1100, English/light
 theme, with external browser requests blocked. Verification ran on Windows.
+The final capture used runtime and GUI changes through `094d253b1`.
 
 1. Open Codex Set → Multi-auth, click Add, enter an account ID, and choose Device
    code login. Authorize through the mock device service.
@@ -25,6 +26,13 @@ theme, with external browser requests blocked. Verification ran on Windows.
    The server receives a completed validation response. Cumulative counts:
    three usage reads, one model call. The pending flag clears, the validation
    timestamp is persisted, and “Use this account next” appears.
+5. Select the recovered account and confirm the dialog. The real active-account
+   endpoint and stored config both report `weekly-demo` as selected and pinned.
+
+Both explicit refreshes used `POST /api/codex-auth/accounts/refresh` with the GUI
+session's CSRF header. The actual server accepted them. Separate live-server tests
+reject POSTs without CSRF or with a different Origin; GET quota refreshes never
+complete pending validation.
 
 | Capture | Weekly usage | Pending | Model calls so far |
 | --- | --- | --- | --- |

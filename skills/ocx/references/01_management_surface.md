@@ -392,6 +392,23 @@ JSON mode: `payload`.
 - `store` verifies every keychain write by read-back before config.json is rewritten with keychain: references; an unavailable keychain refuses with 503 and leaves the file untouched.
 - Headless services usually have no unlocked keychain session; prefer ${ENV_VAR} references there.
 
+### `ocx account refresh`
+
+Refresh account quotas and finish pending Codex validation when quota has recovered.
+
+| Method | Route |
+|---|---|
+| POST | `/api/codex-auth/accounts/refresh` |
+| GET | `/api/provider-quotas` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit the refresh result as JSON. |
+
+JSON mode: `payload`.
+
+- For Codex, recovered pending accounts require a model validation request before becoming routable. Account listing, including list --refresh, never performs this validation.
+
 ### `ocx account pause`
 
 Stop routing new requests to one account in the Codex pool.
@@ -648,6 +665,6 @@ JSON mode: `payload`.
 
 ## Counts
 
-- declared capabilities: 35
-- of those, state-changing: 15
+- declared capabilities: 36
+- of those, state-changing: 16
 - head-resolved invocations: 2
