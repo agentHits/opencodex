@@ -209,6 +209,35 @@ to the native default as a single choice. Defaults must belong to the final list
 the catalog projection, not stored configuration or arbitrary gateway models sharing a GPT name.
 See [custom native catalog examples](/guides/codex-app-models/).
 
+### Operator-pinned reasoning effort
+
+Set `pinnedReasoningEffort` on an existing provider to override incoming effort choices, or
+use `modelPinnedReasoningEfforts` for individual upstream model IDs. Per-model provider pins
+win over the provider-wide pin; the root `modelPinnedEfforts` map is the fallback. These are
+operator settings, not provider-registry defaults. They do not change model discovery or the
+advertised effort ladder.
+
+```json
+{
+  "pinnedReasoningEffort": "high",
+  "modelPinnedReasoningEfforts": {
+    "example-model": "max"
+  }
+}
+```
+
+Merge these fields into the existing provider row. Accepted values are `none`, `minimal`,
+`low`, `medium`, `high`, `xhigh`, `max`, and `ultra`. **`none` removes the explicit effort field**;
+it uses the provider's default behavior and does not guarantee that reasoning is disabled.
+Applicable effort caps still run after the pin, and provider wire mapping/normalization can
+lower or omit an unsupported value. `ultra` is normalized before it reaches an upstream wire.
+Compaction maintenance requests are exempt from pins.
+
+`PATCH /api/providers?name=<provider>` accepts these fields. Omit a field to preserve it;
+use `null` to clear a scalar or the whole map. A map entry set to `null` or `""` removes that
+entry while preserving other entries. Malformed writes are rejected before saving. A malformed
+optional pin in a hand-edited file is ignored on load without discarding the rest of the config.
+
 ### Discovered model display names
 
 Use `modelDisplayNames` when a provider returns machine friendly ids but the Codex model picker
