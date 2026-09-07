@@ -42,6 +42,7 @@ import { syncCatalogModels } from "../../src/codex/catalog";
 import { injectClaudeAgentDefs } from "../../src/claude/agents-inject";
 import { catalogConvergenceFactory } from "../helpers/catalog-convergence";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import * as appServerProcesses from "../../src/codex/app-server-processes";
 
 const VALID_COMBO = { targets: [{ provider: "a", model: "m1" }] };
 
@@ -831,38 +832,47 @@ describe("combo management API", () => {
   });
 
   test("GET subagent models exposes a combo alias as an available round-trip value", async () => {
-    const config = baseConfig({
-      subagentModels: ["deepseek-v4-flash"],
-      combos: {
-        free: { ...VALID_COMBO, alias: "deepseek-v4-flash" },
-      },
-    });
-    config.providers.a!.modelContextWindows = { m1: 128_000 };
+    // Process enumeration is unrelated to roster retention and can block on Windows CIM.
+    const processProbe = spyOn(appServerProcesses, "collectCodexAppServerCatalogState")
+      .mockReturnValue({ state: "not_running", processes: [], catalogMtimeMs: null });
+    try {
+      const config = baseConfig({
+        subagentModels: ["deepseek-v4-flash"],
+        combos: {
+          free: { ...VALID_COMBO, alias: "deepseek-v4-flash" },
+        },
+      });
+      // This exercises configured alias visibility, not live provider discovery.
+      for (const provider of Object.values(config.providers)) provider.liveModels = false;
+      config.providers.a!.modelContextWindows = { m1: 128_000 };
 
-    const response = await comboApi(config, "GET", "/api/subagent-models");
-    expect(response?.status).toBe(200);
-    const body = await response!.json() as { chosen: string[]; available: string[] };
-    expect(body.chosen).toEqual(["deepseek-v4-flash"]);
-    expect(body.available).toContain("deepseek-v4-flash");
-    expect(body.available.filter(model => model === "deepseek-v4-flash")).toHaveLength(1);
-    expect(body.available).not.toContain("combo/free");
+      const response = await comboApi(config, "GET", "/api/subagent-models");
+      expect(response?.status).toBe(200);
+      const body = await response!.json() as { chosen: string[]; available: string[] };
+      expect(body.chosen).toEqual(["deepseek-v4-flash"]);
+      expect(body.available).toContain("deepseek-v4-flash");
+      expect(body.available.filter(model => model === "deepseek-v4-flash")).toHaveLength(1);
+      expect(body.available).not.toContain("combo/free");
 
-    // Disabling an alias hides it from the pickable set, but NOT while it still holds a
-    // saved roster slot: the dashboard PUTs exactly the rows it can render, so dropping a
-    // chosen id here silently truncates the persisted roster on the next Save. Covered by
-    // tests/routing/subagent-roster-retention.test.ts.
-    config.disabledModels = ["deepseek-v4-flash"];
-    const disabledResponse = await comboApi(config, "GET", "/api/subagent-models");
-    const disabledBody = await disabledResponse!.json() as { chosen: string[]; available: string[] };
-    expect(disabledBody.chosen).toEqual(["deepseek-v4-flash"]);
-    expect(disabledBody.available).toContain("deepseek-v4-flash");
-    expect(disabledBody.available.filter(model => model === "deepseek-v4-flash")).toHaveLength(1);
+      // Disabling an alias hides it from the pickable set, but NOT while it still holds a
+      // saved roster slot: the dashboard PUTs exactly the rows it can render, so dropping a
+      // chosen id here silently truncates the persisted roster on the next Save. Covered by
+      // tests/routing/subagent-roster-retention.test.ts.
+      config.disabledModels = ["deepseek-v4-flash"];
+      const disabledResponse = await comboApi(config, "GET", "/api/subagent-models");
+      const disabledBody = await disabledResponse!.json() as { chosen: string[]; available: string[] };
+      expect(disabledBody.chosen).toEqual(["deepseek-v4-flash"]);
+      expect(disabledBody.available).toContain("deepseek-v4-flash");
+      expect(disabledBody.available.filter(model => model === "deepseek-v4-flash")).toHaveLength(1);
 
-    // Once it no longer occupies a roster slot, the disable takes full effect.
-    config.subagentModels = [];
-    const unfeaturedResponse = await comboApi(config, "GET", "/api/subagent-models");
-    const unfeaturedBody = await unfeaturedResponse!.json() as { available: string[] };
-    expect(unfeaturedBody.available).not.toContain("deepseek-v4-flash");
+      // Once it no longer occupies a roster slot, the disable takes full effect.
+      config.subagentModels = [];
+      const unfeaturedResponse = await comboApi(config, "GET", "/api/subagent-models");
+      const unfeaturedBody = await unfeaturedResponse!.json() as { available: string[] };
+      expect(unfeaturedBody.available).not.toContain("deepseek-v4-flash");
+    } finally {
+      processProbe.mockRestore();
+    }
   }, 15_000);
 
   test("GET models round-trips a disabled combo alias for the Models GUI", async () => {

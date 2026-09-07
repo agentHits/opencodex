@@ -16,6 +16,7 @@ let restoreGlobals: (() => void) | undefined;
 let previousLanguageDescriptor: PropertyDescriptor | undefined;
 let previousAbortTimeout: PropertyDescriptor | undefined;
 let testWindow: Window;
+let expireTimeouts: Array<() => void>;
 
 const AUTH_MATRIX = [
   { endpoint: "/v1/responses", bearer: "rejected", dedicated: "required", xApiKey: "rejected" },
@@ -41,18 +42,20 @@ beforeEach(() => {
   testWindow = new Window({ url: "http://localhost/" });
   previousLanguageDescriptor = Object.getOwnPropertyDescriptor(globalThis.navigator, "language");
   Object.defineProperty(globalThis.navigator, "language", { configurable: true, value: "en-US" });
-  // Shorten the fuse rather than the wiring. `createBoundedFetch` still runs,
+  // Control expiry rather than racing a 30ms wall-clock fuse under suite load.
+  // `createBoundedFetch` still runs,
   // still builds the combined signal, and the page still has to pass it to
   // `fetch` — waiting the real 15s would only prove the clock works, at the
   // price of half a minute on every suite run. The timer itself is covered in
   // tests/bounded-fetch.test.ts.
   previousAbortTimeout = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
+  expireTimeouts = [];
   Object.defineProperty(AbortSignal, "timeout", {
     configurable: true,
     value: (ms: number) => {
       expect(ms).toBe(15_000);
       const controller = new AbortController();
-      setTimeout(() => controller.abort(new DOMException("TimeoutError", "TimeoutError")), 30);
+      expireTimeouts.push(() => controller.abort(new DOMException("TimeoutError", "TimeoutError")));
       return controller.signal;
     },
   });
@@ -180,7 +183,7 @@ test("a delete that never answers gives navigation back instead of locking it", 
     expect(backButton(container).disabled).toBe(true);
 
     // The bound fires and the page is usable again — no reload required.
-    await tick(120);
+    await act(async () => { for (const expire of expireTimeouts) expire(); });
     await tick();
 
     expect(seen.aborted).toBe(true);
@@ -222,7 +225,7 @@ test("a rename that never answers releases the lock and keeps the draft", async 
 
     expect(backButton(container).disabled).toBe(true);
 
-    await tick(120);
+    await act(async () => { for (const expire of expireTimeouts) expire(); });
     await tick();
 
     expect(seen.aborted).toBe(true);
