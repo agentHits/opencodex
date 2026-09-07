@@ -136,6 +136,64 @@ describe("formatUsageReport", () => {
 });
 
 describe("ocx usage command", () => {
+  test("duplicate, inline and stray custom-bound arguments do not echo credential-shaped values", async () => {
+    const secret = "sk-" + "a".repeat(40);
+    const errors: string[] = [];
+    const errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(args.map(String).join(" ")); });
+    try {
+      for (const extra of [["--since", secret], [`--since=${secret}`], [secret]]) {
+        const result = await run(["usage", "--since", "0", "--until", "1", ...extra], payload());
+        expect(result.code).toBe(2);
+        expect(result.urls).toEqual([]);
+      }
+      expect(errors.join("\n")).not.toContain(secret);
+      expect(errors.join("\n")).toContain("Unexpected argument(s)");
+    } finally { errorSpy.mockRestore(); }
+  });
+
+  test("normalizes custom ISO bounds and preserves the selected preset and filters", async () => {
+    const body = payload({ customWindow: true, since: 1709164800123, until: 1709164800123 });
+    const { code, urls, out } = await run([
+      "usage", "--range", "7d", "--surface", "codex", "--provider", "openai", "--model", "gpt-5.5",
+      "--since", "2024-02-29T09:00:00.123+09:00", "--until", "1709164800123",
+    ], body);
+    expect(code).toBe(0);
+    expect(urls).toHaveLength(1);
+    const query = new URL(urls[0]!).searchParams;
+    expect(Object.fromEntries(query)).toEqual({
+      range: "7d", surface: "codex", provider: "openai", model: "gpt-5.5",
+      since: "1709164800123", until: "1709164800123",
+    });
+    expect(out.split("\n")[0]).toContain("custom 2024-02-29T00:00:00.123Z to 2024-02-29T00:00:00.123Z (inclusive)");
+    expect((await run(["usage", "--since", "0", "--until", "0", "--json"], body)).out)
+      .toBe(JSON.stringify(body, null, 2));
+  });
+
+  test("rejects malformed or unpaired windows as usage errors without an API request", async () => {
+    const errors: string[] = [];
+    const errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    });
+    try {
+      for (const args of [
+        ["--since", "0"], ["--until", "0"], ["--since", "2", "--until", "1"],
+        ["--since", "-1", "--until", "0"], ["--since", "1.5", "--until", "2"],
+        ["--since", "0", "--until", "8640000000000001"],
+        ["--since", "0", "--until", "2026-02-30T00:00:00Z"],
+        ["--since", "0", "--until", "2026-09-01T00:00:00"],
+        ["--since", "0", "--until", "2026-09-01T00:00:00.0001Z"],
+      ]) {
+        const result = await run(["usage", ...args], payload());
+        expect(result.code).toBe(2);
+        expect(result.urls).toEqual([]);
+      }
+      expect(errors.join("\n")).toContain("since and until must be supplied together");
+      expect(errors.join("\n")).toContain("timezone");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   test("forwards range and provider to the API", async () => {
     const { code, urls } = await run(["usage", "--range", "today", "--provider", "xai"], payload());
     expect(code).toBe(0);

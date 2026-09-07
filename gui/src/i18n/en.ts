@@ -2649,6 +2649,16 @@ export const en = {
   "pricing.override.refresh": "Refresh list",
   "pricing.override.cancel": "Cancel",
   "pricing.override.close": "Close",
+  "usage.range.custom": "Custom date range",
+  "usage.range.start": "Start (local time)",
+  "usage.range.end": "End (local time)",
+  "usage.range.apply": "Apply",
+  "usage.range.clear": "Clear",
+  "usage.range.help": "Local time. Includes the entire end minute.",
+  "usage.range.required": "Enter both a start and an end date and time.",
+  "usage.range.invalid": "Enter valid local dates and times, on or after 1970-01-01 UTC.",
+  "usage.range.reversed": "The end must be at or after the start.",
+  "usage.range.applied": "Selected interval: {start} – {end} (both inclusive).",
 } as const;
 
 export type TKey = keyof typeof en;

@@ -12,6 +12,8 @@ import {
 } from "./runtime-api";
 import { formatUsageReport } from "./usage-report";
 import { USAGE_RANGES, USAGE_SURFACES } from "../usage/summary";
+import { parseUsageTimeWindow, type UsageTimeWindow } from "../usage/time-range";
+import { redactSecretString } from "../lib/redact";
 
 const USAGE = `Usage:
   ocx observe logs [--provider <name>] [--model <id>] [--status <code>]
@@ -20,6 +22,7 @@ const USAGE = `Usage:
   ocx logs rebuild-index
   ocx logs index-status
   ocx observe usage [--range <today|1d|7d|30d|all>] [--surface <all|codex|claude|grok>]
+      [--since <epoch-ms|ISO-datetime>] [--until <epoch-ms|ISO-datetime>]
       [--provider <name>] [--model <id>] [--json]
   ocx observe storage [codex-logs [status|protect|unprotect|repair|compact] [--mode <compat|quiet>]] [--json]
   ocx observe memory [--json]
@@ -146,6 +149,14 @@ async function usage(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const surface = takeOption(args, "--surface") ?? "all";
   const provider = takeOption(args, "--provider");
   const model = takeOption(args, "--model");
+  const since = takeOption(args, "--since");
+  const until = takeOption(args, "--until");
+  let window: UsageTimeWindow | undefined;
+  try {
+    window = parseUsageTimeWindow(since, until);
+  } catch (error) {
+    throw new CliUsageError(error instanceof Error ? error.message : "invalid usage time window", USAGE);
+  }
   // `1d` is accepted here as well as server-side so the CLI does not reject an
   // alias the API would have understood.
   const ranges = [...USAGE_RANGES, "1d"];
@@ -153,8 +164,8 @@ async function usage(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   if (!USAGE_SURFACES.includes(surface as (typeof USAGE_SURFACES)[number])) {
     throw new CliUsageError(`--surface must be one of ${USAGE_SURFACES.join(", ")}`, USAGE);
   }
-  rejectArgs(args, USAGE);
-  const result = await runtimeRequest(`/api/usage${query({ range, surface, provider, model })}`, {}, deps);
+  rejectArgs(args.map(redactSecretString), USAGE);
+  const result = await runtimeRequest(`/api/usage${query({ range, surface, provider, model, since: window?.since, until: window?.until })}`, {}, deps);
   // Built only when it will be printed: JavaScript evaluates arguments before
   // the call, so passing formatUsageReport(...) inline would run the human
   // renderer during --json and let its assumptions affect a path that is meant
