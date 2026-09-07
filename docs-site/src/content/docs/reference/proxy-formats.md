@@ -402,7 +402,7 @@ conversation.
 
 | Route type | Behavior |
 | --- | --- |
-| Canonical ChatGPT or official OpenAI route | Forwards the request to the native `/responses/compact` endpoint with the resolved account and model authentication |
+| Canonical ChatGPT or official OpenAI route | Tries the native `/responses/compact` endpoint with the resolved account and model authentication; HTTP 404 falls back to a regular Responses compaction turn |
 | Other routed model | Runs an internal, non-streaming, no-tools compaction turn with a `compaction_trigger`; requires exactly one synthetic `compaction` item whose `encrypted_content` is an `ocx1:` envelope; decodes that summary into v1 replacement history |
 
 If the native compact endpoint returns HTTP 404, OpenCodex retries compaction through a regular
