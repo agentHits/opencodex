@@ -16,10 +16,10 @@ import {
 } from "../generated/model-metadata";
 import type { AttemptTierOutcome, OcxUsage } from "../types";
 import { canonicalFastTierMarker } from "../providers/fastwire";
-import { baseProviderLabel, canonicalUsageProviderLabel } from "../providers/label";
+import { baseProviderLabel } from "../providers/label";
 import type { PersistedUsageAttempt, UsageStatus } from "./log";
 import { canonicalAntigravityUsageModel } from "../providers/antigravity-models";
-import { activeConfiguredProviders, activeUserCostOverlays, userCostOverlayVersion } from "./user-cost-overlays";
+import { activeAccountPricingProviders, activeConfiguredProviders, activeUserCostOverlays, userCostOverlayVersion } from "./user-cost-overlays";
 import {
   EXPECTED_PRICE_OVERLAYS,
   findExpectedPriceOverlay,
@@ -187,21 +187,18 @@ export function resolveMatchedPrice(
   userOverlays: readonly ExpectedPriceOverlay[] = activeUserCostOverlays(),
   options: PriceResolutionOptions = {},
 ): MatchedPrice | null {
-  // User-configured overlays are keyed by the EXACT configured provider name.
-  // A provider that literally exists in config.providers keeps its own pricing
-  // namespace: a real custom provider can legitimately end with a label-shaped
-  // suffix (e.g. acme-pabcdef) and must not inherit the base provider's user
-  // overlay. Only NON-configured names (generated account log labels) collapse
-  // to their label base. chatgpt/openai-multi are the same OpenAI usage surface
-  // and always canonicalize to openai.
-  const collapsed = baseProviderLabel(provider);
-  if (collapsed !== provider && (canonicalUsageProviderLabel(provider) !== provider || !activeConfiguredProviders().has(provider))) {
+  // Literal configured providers win over account identities. Only then use
+  // config-owned Codex identities, followed by the existing historical suffix
+  // grammar. Never infer an account by stripping an arbitrary suffix.
+  const namespace = activeConfiguredProviders().has(provider)
+    ? provider
+    : activeAccountPricingProviders().get(provider) ?? baseProviderLabel(provider);
+  if (namespace !== provider) {
+    // An exact override (including caller-supplied rows) owns its namespace.
+    // Unchanged names use the memoized inner lookup's existing user-first order.
     const exactUserOverlay = userOverlayMatch(provider, modelId, userOverlays);
     if (exactUserOverlay) return exactUserOverlay;
-    // Pool/account log suffixes (e.g. google-antigravity-p442fff) must collapse
-    // before the compiled/overlay lookup; configured providers keep their own
-    // namespace above.
-    provider = collapsed;
+    provider = namespace;
   }
   // Memoize by (provider, model): usage summaries iterate hundreds of thousands of
   // rows that share a handful of provider/model keys, so resolving each time would
@@ -466,7 +463,7 @@ function applyContextTier(
   tier?: ServiceTierInput,
 ): [Cost4, ContextTierName | undefined, boolean] {
   if (rawInputTokens === undefined) return [cost4, undefined, false];
-  const rule = findContextTier(baseProviderLabel(provider), modelId);
+  const rule = findContextTier(provider, modelId);
   if (!rule || !isLongContext(rule, rawInputTokens)) return [cost4, undefined, false];
   const confirmedFast = isConfirmedFast(tier);
   if (confirmedFast && rule.confirmedPriorityRelation === "exclusive") {
@@ -494,9 +491,8 @@ function applyPriorityMultiplier(
   contextTier?: ContextTierName,
 ): [Cost4, number] {
   if (canonicalFastTierMarker(tierScalar(serviceTier)) !== "priority") return [cost4, 1];
-  const base = baseProviderLabel(provider);
-  if (contextTier && findContextTier(base, modelId)?.confirmedPriorityRelation !== "stack") return [cost4, 1];
-  const rule = findPriorityPricingRule(base, modelId);
+  if (contextTier && findContextTier(provider, modelId)?.confirmedPriorityRelation !== "stack") return [cost4, 1];
+  const rule = findPriorityPricingRule(provider, modelId);
   if (rule?.requiresResponseConfirmation && !isConfirmedFast(serviceTier)) return [cost4, 1];
   const multiplier = rule?.multiplier ?? 1;
   if (multiplier === 1) return [cost4, 1];
@@ -524,7 +520,7 @@ function isOpenRouterPriorityLowerBound(
   provider: string,
   outcome: AttemptTierOutcome | undefined,
 ): boolean {
-  return baseProviderLabel(provider) === "openrouter"
+  return provider === "openrouter"
     && outcome?.canonical === "priority"
     && outcome.fastOutcome === "applied"
     && (outcome.confirmation === "confirmed" || outcome.confirmation === "assumed");
@@ -550,13 +546,13 @@ export function estimateAttemptCost(
     ? serviceTierContextFromOutcome(attempt.tierOutcome)
     : serviceTier;
   const [tieredCost4, contextTier, contextPriorityLowerBound] = applyContextTier(
-    price.cost4, attempt.provider, attempt.model, attempt.usage.inputTokens, attemptServiceTier,
+    price.cost4, price.provider, attempt.model, attempt.usage.inputTokens, attemptServiceTier,
   );
   const [effectiveCost4, multiplier] = applyPriorityMultiplier(
-    tieredCost4, attempt.provider, attempt.model, attemptServiceTier, contextTier,
+    tieredCost4, price.provider, attempt.model, attemptServiceTier, contextTier,
   );
   const priorityLowerBound = contextPriorityLowerBound
-    || isOpenRouterPriorityLowerBound(attempt.provider, attempt.tierOutcome);
+    || isOpenRouterPriorityLowerBound(price.provider, attempt.tierOutcome);
   return {
     ordinal: attempt.ordinal,
     provider: attempt.provider,
@@ -635,13 +631,13 @@ export function estimateRequestCost(
   const price = resolveMatchedPrice(input.provider, input.model, overlays, userOverlays, input);
   if (!price) return null;
   const [tieredCost4, contextTier, contextPriorityLowerBound] = applyContextTier(
-    price.cost4, input.provider, input.model, input.usage.inputTokens, input.serviceTier,
+    price.cost4, price.provider, input.model, input.usage.inputTokens, input.serviceTier,
   );
   const [effectiveCost4, multiplier] = applyPriorityMultiplier(
-    tieredCost4, input.provider, input.model, input.serviceTier, contextTier,
+    tieredCost4, price.provider, input.model, input.serviceTier, contextTier,
   );
   const priorityLowerBound = contextPriorityLowerBound || isOpenRouterPriorityLowerBound(
-    input.provider,
+    price.provider,
     typeof input.serviceTier === "object" ? input.serviceTier.tierOutcome : undefined,
   );
   return {

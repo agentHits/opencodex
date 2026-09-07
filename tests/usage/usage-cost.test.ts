@@ -1327,6 +1327,184 @@ describe("provider cost overlay (user-configured)", () => {
   });
 });
 
+describe("Codex account pricing identity", () => {
+  const modelId = "wp3-synthetic-account-model";
+  const account = { id: "cost-account", logLabel: "p123abc", alias: "display-name", email: "fixture@example.test", isMain: false };
+  const row: ExpectedPriceOverlay = {
+    provider: "openai", modelId, cost4: RATE,
+    source: "fixture", verifiedAt: "2026-09-07", status: "verified",
+  };
+  const config = (accounts = [account], providers = {}) => ({
+    providers, codexAccounts: accounts,
+  }) as unknown as OcxConfig;
+  const forms = (id: string) => [id, ...["openai", "chatgpt", "openai-multi"].map(provider => `${provider}-${id}`)];
+
+  afterEach(() => refreshUserCostOverlays(config([])));
+
+  test("exact selectable IDs, effective labels and built-in main forms resolve without model fallback", () => {
+    refreshUserCostOverlays(config([
+      account,
+      // SHA-256('abc') begins ba7816: an invalid stored label must use the producer's fallback.
+      { ...account, id: "abc", logLabel: "invalid-label" },
+    ]));
+    for (const id of [account.id, account.logLabel, "abc", "pba7816", "main", "__main__"]) {
+      for (const provider of forms(id)) {
+        expect(resolveMatchedPrice(provider, modelId, [row], [], { allowModelLevelFallback: false }))
+          .toMatchObject({ provider: "openai", cost4: RATE, source: "expected" });
+      }
+    }
+  });
+
+  test("aliases, email, invalid rows, unknown IDs, case variants and non-Codex identities stay unmapped", () => {
+    refreshUserCostOverlays(config([
+      account,
+      { ...account, id: "invalid/id", logLabel: "p111aaa" },
+      { ...account, id: "constructor", logLabel: "p222aaa" },
+      { ...account, id: "desktop-row", logLabel: "p333aaa", isMain: true },
+      { ...account, id: "abc", logLabel: "invalid-label" },
+    ]));
+    for (const provider of [
+      ...forms("unknown-account"), ...forms(account.alias), ...forms(account.email),
+      ...forms("Cost-account"), ...forms("invalid-label"), ...forms("invalid/id"),
+      "constructor", "desktop-row", "p111aaa", "p222aaa", "p333aaa", "p123abC",
+      "Openai-cost-account", "openai-cost-account-extra", "anthropic-cost-account",
+      "xai-cost-account", "oauth-account", "o123abc", "xai-o123abc", "unrelated-hyphen-provider",
+    ]) {
+      expect(resolveMatchedPrice(provider, modelId, [row], [], { allowModelLevelFallback: false })).toBeNull();
+    }
+  });
+
+  test("configured literal namespaces beat account mapping and historical collapse", () => {
+    const names = [...forms(account.id), ...forms(account.logLabel), ...forms("main"), ...forms("__main__"), "chatgpt", "openai-multi"];
+    refreshUserCostOverlays(config([account], Object.fromEntries(names.map(name => [name, {}]))));
+    for (const provider of names) {
+      expect(resolveMatchedPrice(provider, modelId, [row], [])).toBeNull();
+      const literal = { ...row, provider, cost4: { ...RATE, input: 7 } };
+      expect(resolveMatchedPrice(provider, modelId, [row, literal], []))
+        .toMatchObject({ provider, cost4: literal.cost4 });
+    }
+  });
+
+  test("caller-supplied exact user rows beat both canonical user and compiled rows", () => {
+    refreshUserCostOverlays(config());
+    for (const provider of [...forms(account.id), ...forms(account.logLabel)]) {
+      const canonicalUser = { ...row, cost4: { ...RATE, input: 11 } };
+      const exactUser = { ...row, provider, cost4: { ...RATE, input: 17 } };
+      expect(resolveMatchedPrice(provider, modelId, [row], [canonicalUser, exactUser]))
+        .toMatchObject({ provider, source: "user", cost4: exactUser.cost4 });
+    }
+  });
+
+  test("only recognized historical phex and main suffixes retain the existing fallback", () => {
+    refreshUserCostOverlays(config([]));
+    const custom = { ...row, provider: "legacy" };
+    for (const provider of ["legacy-pabcdef", "legacy-main"]) {
+      expect(resolveMatchedPrice(provider, modelId, [custom], [])?.cost4).toEqual(RATE);
+    }
+    for (const provider of ["legacy-unknown", "legacy-pABCDEF", "legacy-pabcde", "legacy-oabcdef", "legacy-__main__"]) {
+      expect(resolveMatchedPrice(provider, modelId, [custom], [])).toBeNull();
+    }
+  });
+
+  test("account add, effective-label change and removal invalidate memo; presentation and order do not", () => {
+    const providers = { openai: { modelCosts: { [modelId]: RATE } } };
+    refreshUserCostOverlays(config([], providers));
+    expect(resolveMatchedPrice(account.id, modelId)).toBeNull();
+    expect(resolveMatchedPrice(account.logLabel, modelId)).toBeNull();
+    const before = userCostOverlayVersion();
+    const second = { ...account, id: "other-account", logLabel: "p456def" };
+    refreshUserCostOverlays(config([account, second], providers));
+    expect(userCostOverlayVersion()).toBe(before + 1);
+    for (const provider of [...forms(account.id), account.logLabel]) {
+      expect(resolveMatchedPrice(provider, modelId)?.cost4).toEqual(RATE);
+    }
+    const rows = activeUserCostOverlays();
+    const memo = resolveMatchedPrice(account.id, modelId);
+    const renamed = { ...account, alias: "new-display", email: "new@example.test", plan: "pro" };
+    refreshUserCostOverlays(config([second, renamed], providers));
+    expect(userCostOverlayVersion()).toBe(before + 1);
+    expect(activeUserCostOverlays()).toBe(rows);
+    expect(resolveMatchedPrice(account.id, modelId)).toBe(memo);
+    refreshUserCostOverlays(config([{ ...renamed, logLabel: "p789abc" }, second], providers));
+    expect(userCostOverlayVersion()).toBe(before + 2);
+    expect(resolveMatchedPrice(account.logLabel, modelId)).toBeNull();
+    expect(resolveMatchedPrice("p789abc", modelId)?.cost4).toEqual(RATE);
+    refreshUserCostOverlays(config([second], providers));
+    expect(userCostOverlayVersion()).toBe(before + 3);
+    for (const provider of [...forms(account.id), "p789abc"]) {
+      expect(resolveMatchedPrice(provider, modelId)).toBeNull();
+    }
+  });
+
+  test("mapped accounts share request, attempt and combo long-context/Fast pricing with original attribution", () => {
+    refreshUserCostOverlays(config());
+    const usage = { inputTokens: 300_000, outputTokens: 10_000 };
+    for (const provider of [...forms(account.id), ...forms(account.logLabel), ...forms("__main__")]) {
+      for (const serviceTier of [undefined, { responseServiceTier: "priority" }, { responseServiceTier: "default", requestedServiceTier: "priority" }]) {
+        const input = { provider, model: "gpt-6-astra", usageStatus: "reported" as const, usage, serviceTier };
+        const request = estimateRequestCost(input)!;
+        const attempt = estimateAttemptCost({ ...input, ordinal: 1 }, undefined, serviceTier)!;
+        const combo = estimateComboCost([{ ...input, ordinal: 1 }, { ...input, ordinal: 2 }], undefined, serviceTier)!;
+        // 300k * $20/M input + 10k * $75/M output; Fast doubles both.
+        const expected = serviceTier?.responseServiceTier === "priority" ? 13.5 : 6.75;
+        expect(request.cost.total).toBeCloseTo(expected, 9);
+        expect(request.contextTier).toBe("long");
+        expect(request.priorityMultiplier).toBe(expected === 13.5 ? 2 : undefined);
+        expect(attempt.cost).toEqual(request.cost);
+        expect(attempt.contextTier).toBe(request.contextTier);
+        expect(attempt.priorityMultiplier).toBe(request.priorityMultiplier);
+        expect(attempt.provider).toBe(provider);
+        expect(combo.cost.total).toBeCloseTo(expected * 2, 9);
+        expect(combo.attempts?.map(entry => entry.provider)).toEqual([provider, provider]);
+      }
+    }
+  });
+
+  test("literal and direct override namespaces do not inherit OpenAI context or Fast modifiers", () => {
+    const provider = "openai-p123abc";
+    const input = { provider, model: "gpt-6-astra", usageStatus: "reported" as const,
+      usage: { inputTokens: 300_000, outputTokens: 10_000 }, serviceTier: "priority" };
+    const literal = { ...row, provider, modelId: input.model };
+    refreshUserCostOverlays(config([account], { [provider]: {} }));
+    for (const estimate of [estimateRequestCost(input, [literal], []), estimateAttemptCost({ ...input, ordinal: 1 }, [literal], "priority", [])]) {
+      expect(estimate?.cost.total).toBeCloseTo(1.05, 9);
+      expect(estimate?.contextTier).toBeUndefined();
+      expect(estimate?.priorityMultiplier).toBeUndefined();
+    }
+    refreshUserCostOverlays(config());
+    const direct = estimateRequestCost(input, [], [literal]);
+    expect(direct?.cost.total).toBeCloseTo(1.05, 9);
+    expect(direct?.contextTier).toBeUndefined();
+    expect(direct?.priorityMultiplier).toBeUndefined();
+    const combo = estimateComboCost([{ ...input, ordinal: 1 }], [], "priority", [literal]);
+    expect(combo?.cost.total).toBeCloseTo(1.05, 9);
+    expect(combo?.contextTier).toBeUndefined();
+    expect(combo?.priorityMultiplier).toBeUndefined();
+  });
+
+  test("OpenRouter lower-bound uses the selected namespace, including Codex-name collisions", () => {
+    const provider = "openrouter-p123abc";
+    const tracker = createAdapterTierMetadata({ capability: true, eligibility: "eligible",
+      fastWire: { kind: "service-tier", canonicalToWire: { priority: "priority" }, foreignCallerTiers: "verbatim" },
+      demandDecision: "force-fast" }, { kind: "set", value: "priority" }, "service-tier", "priority")!;
+    tracker.observeResponseServiceTier("priority");
+    const input = { provider, model: modelId, usageStatus: "reported" as const,
+      usage: { inputTokens: 100, outputTokens: 10 }, ordinal: 1, tierOutcome: tracker.outcome };
+    const router = { ...row, provider: "openrouter" };
+    refreshUserCostOverlays(config([]));
+    expect(estimateAttemptCost(input, [router], undefined, [])?.priorityLowerBound).toBe(true);
+    refreshUserCostOverlays(config([{ ...account, id: provider }]));
+    expect(estimateAttemptCost(input, [row, router], undefined, [])?.priorityLowerBound).toBeUndefined();
+    refreshUserCostOverlays(config([], { [provider]: {} }));
+    const literal = { ...row, provider };
+    const request = estimateRequestCost({ ...input, serviceTier: { tierOutcome: tracker.outcome } }, [literal], []);
+    expect(request).not.toBeNull();
+    expect(request?.priorityLowerBound).toBeUndefined();
+    expect(estimateAttemptCost(input, [literal], undefined, [])?.priorityLowerBound).toBeUndefined();
+    expect(estimateComboCost([input], [literal], undefined, [])?.priorityLowerBound).toBeUndefined();
+  });
+});
+
 describe("aggregator vendor-prefixed model ids (#3136)", () => {
   test("restricted resolution partitions memoization and only removes vendor fallback", () => {
     const model = "anthropic/claude-3-haiku-20240307";
