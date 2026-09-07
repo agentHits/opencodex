@@ -5073,7 +5073,7 @@ describe("codex-auth API", () => {
     { status: 401, replace: false }, { status: 403, replace: false },
     { status: 429, replace: false }, { status: 500, replace: false },
     { status: 401, replace: true }, { status: 403, replace: true },
-  ])("deferred validation reports generation-current authentication failures: %j", async ({ status, replace }) => {
+  ].flatMap(scenario => [false, true].map(restart => ({ ...scenario, restart }))))("deferred validation reports generation-current authentication failures: %j", async ({ status, replace, restart }) => {
     const accountId = "validation-auth-error";
     const config = makeConfig({ codexAccounts: [{ id: accountId, plan: "pro", isMain: false }] });
     saveConfig(config);
@@ -5102,9 +5102,9 @@ describe("codex-auth API", () => {
     expect(JSON.stringify(response)).not.toContain("private-validation-body");
     expect(readCodexAccountRecord(accountId)?.codexValidationPending).toBe(true);
     expect(isCodexAccountUsable(config, accountId)).toBe(false);
-    // Clear volatile evidence: quota reads and restarts must not hide a permanent
-    // model-authorization failure; a replaced generation must not inherit it.
-    clearAccountNeedsReauth(accountId);
+    // Exercise both in-process recovery and lost volatile state after restart.
+    // Durable failure guidance must survive; replacement credentials must not inherit it.
+    if (restart) clearAccountNeedsReauth(accountId);
     const rows = await listCodexAuthAccounts(config, false);
     const authFailed = !replace && (status === 401 || status === 403);
     expect(rows.find(row => row.id === accountId)).toMatchObject({
@@ -5114,6 +5114,7 @@ describe("codex-auth API", () => {
     fail = false;
     await refresh();
     expect(readCodexAccountRecord(accountId)?.codexValidationPending).toBeUndefined();
+    expect(isAccountNeedsReauth(accountId)).toBe(false);
     expect(isCodexAccountUsable(config, accountId)).toBe(true);
   });
 
@@ -5668,6 +5669,27 @@ describe("codex-auth helpers", () => {
     const id = "lifecycle-test";
     expect(isAccountNeedsReauth(id)).toBe(false);
     markAccountNeedsReauth(id);
+    expect(isAccountNeedsReauth(id)).toBe(true);
+    clearAccountNeedsReauth(id);
+    expect(isAccountNeedsReauth(id)).toBe(false);
+  });
+
+  test("generation-scoped reauth recovery preserves replacement and account-wide evidence", () => {
+    const id = "reauth-generation-recovery";
+    const credential = { accessToken: "old-access", refreshToken: "refresh",
+      expiresAt: Date.now() + 3600_000, chatgptAccountId: "account" };
+    const oldGeneration = saveCodexAccountCredential(id, credential);
+    markAccountNeedsReauth(id, undefined, oldGeneration);
+    clearAccountNeedsReauth(id, oldGeneration);
+    expect(isAccountNeedsReauth(id)).toBe(false);
+
+    const replacementGeneration = saveCodexAccountCredential(id, { ...credential, accessToken: "replacement" });
+    markAccountNeedsReauth(id, undefined, replacementGeneration);
+    clearAccountNeedsReauth(id, oldGeneration);
+    expect(isAccountNeedsReauth(id)).toBe(true);
+
+    markAccountNeedsReauth(id);
+    clearAccountNeedsReauth(id, replacementGeneration);
     expect(isAccountNeedsReauth(id)).toBe(true);
     clearAccountNeedsReauth(id);
     expect(isAccountNeedsReauth(id)).toBe(false);

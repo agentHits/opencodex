@@ -1473,6 +1473,7 @@ async function fetchPoolAccountQuota(
           chatgptAccountId: record.credential.chatgptAccountId,
         });
         markCodexAccountValidated(accountId, Date.now(), generation);
+        clearAccountNeedsReauth(accountId, generation);
       } catch (error) {
         // Keep the durable restriction on any failed/partial inference response, even
         // when WHAM just reported headroom. No raw upstream text enters diagnostics.
