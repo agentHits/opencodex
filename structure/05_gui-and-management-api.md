@@ -357,6 +357,14 @@ keeps the saved state and renders fixed `ocx sync` guidance without server/accou
 
 ## Usage accounting
 
+Custom usage windows are immutable bounds on the streaming accumulator, applied to each
+ledger entry before attribution and daily aggregation. The filtered aggregate cache includes
+both inclusive millisecond bounds in its identity and retains the existing ledger revision,
+overlay-version and timezone checks. Preset warming never consumes custom summaries.
+The response retains its preset range discriminator for compatibility and explicitly marks
+`customWindow`, `since`, and `until`; the chart uses the window's local calendar days with
+the existing 366-day cap. GUI custom reports bypass the held preset/session cache.
+
 Account quota discovery is capability-based. Cheap OAuth and provider-key lists include
 `quotaMode` (`probe`, `passive`, or `unsupported`) without contacting upstream quota APIs.
 `GET /api/oauth/accounts?provider=...&quota=1` and

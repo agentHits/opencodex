@@ -225,6 +225,8 @@ export const CAPABILITIES: readonly Capability[] = [
     routes: [{ method: "GET", path: "/api/usage" }],
     flags: [
       { name: "--range", value: "string", summary: "today | 1d | 7d | 30d | all" },
+      { name: "--since", value: "string", summary: "Inclusive start: epoch milliseconds or full ISO datetime with timezone; requires --until and overrides --range." },
+      { name: "--until", value: "string", summary: "Inclusive end: epoch milliseconds or full ISO datetime with timezone; requires --since." },
       { name: "--provider", value: "string", summary: "Restrict to one provider." },
       { name: "--model", value: "string", summary: "Restrict to one model id." },
       { name: "--json", value: "boolean", summary: "Emit the usage report as JSON." },

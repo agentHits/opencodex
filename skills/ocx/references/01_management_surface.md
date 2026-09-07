@@ -132,6 +132,8 @@ Token and estimated-cost report over a time range.
 | Flag | Value | Meaning |
 |---|---|---|
 | `--range` | string | today | 1d | 7d | 30d | all |
+| `--since` | string | Inclusive start: epoch milliseconds or full ISO datetime with timezone; requires --until and overrides --range. |
+| `--until` | string | Inclusive end: epoch milliseconds or full ISO datetime with timezone; requires --since. |
 | `--provider` | string | Restrict to one provider. |
 | `--model` | string | Restrict to one model id. |
 | `--json` | boolean | Emit the usage report as JSON. |

@@ -1300,7 +1300,8 @@
     "zz-ci-storage-policy-isolation.test.ts": "ci-workflows",
     "zz-pr-coderabbit-readiness-revalidation.test.ts": "ci-workflows",
     "cli-models-price.test.ts": "cli",
-    "model-costs-management-api.test.ts": "server"
+    "model-costs-management-api.test.ts": "server",
+    "usage-time-range.test.ts": "usage"
   },
   "migrated": [
     "adapters",

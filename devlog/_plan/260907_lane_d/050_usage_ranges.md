@@ -28,3 +28,22 @@ integer epoch milliseconds or full ISO-8601 with timezone only; require both bou
 reject negative/unsafe/date-invalid/reversed, never normalize overflow dates.
 MODIFY src/cli/usage-report.ts heading prints since/until for customWindow responses.
 GUI datetime values become epoch ms locally; end selected minute includes 59.999s.
+
+P revalidation: custom windows always filter rows before aggregation. Introduce exported
+UsageTimeWindow {since:number,until:number} and immutable optional accumulator window;
+snapshot timestamps update first, clone retains the window, summary returns customWindow:true
+and exact since/until while actual generatedAt stays now. Partition/day filtering must not
+drop the partial first day. Grid uses local calendar day boundaries and caps at 366 days.
+getFilteredUsageAggregate accepts window, keys both bounds, passes window to factory and
+reuses existing revision/timezone/overlay guards. Only-window queries preserve account rows.
+GUI skips held/session report caching for custom windows (arbitrary keys must not grow the
+preset cache); useDataSurface key still includes bounds and unsubscribed stores already evict.
+Workers split backend/API/CLI/tests and GUI/i18n/tests; main owns docs/manifests/generated map.
+
+Implementation checkpoint: shared strict ISO/epoch-ms parser, immutable per-entry window,
+window-keyed filtered cache, API and CLI inclusive bounds, exact interval heading, and
+localized Usage date/time controls are implemented. Custom GUI reports bypass held caches;
+calendar grid stays within the server's bounded days. Tests cover partial/inclusive bounds,
+filters/accounts, cache invalidation, clone/snapshot behavior, empty/error responses and UI
+apply/clear/stale-response paths. New parser test registered in both manifests. ISO fractions
+beyond millisecond precision reject instead of truncating. Product execution NOT RUN locally.

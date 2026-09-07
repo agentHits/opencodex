@@ -182,7 +182,7 @@ by the current window size.
 | `GET /api/debug/usage-logs` | Read bounded usage-debug entries | — |
 | `GET /api/debug/injection-logs` | Read bounded guidance-injection debug entries | — |
 | `GET /api/claude/inbound-debug` | Read Claude inbound debug state and entries | — |
-| `GET /api/usage` | Stream the complete usage ledger into compact aggregates, then incrementally fold verified appends; summarize by range and client surface, with a Codex `accounts` breakdown keyed by stable non-PII log labels | Returns an `error: "read_failed"` summary if storage cannot be read |
+| `GET /api/usage` | Stream the complete usage ledger into compact aggregates, then incrementally fold verified appends; summarize by preset or inclusive custom window and client surface, with a Codex `accounts` breakdown keyed by stable non-PII log labels | 400 invalid custom bounds; returns an `error: "read_failed"` summary if storage cannot be read |
 | `GET /api/storage` | Scan Codex storage usage by bucket | Returns an `error: "scan_failed"` payload on scan failure |
 | `POST /api/storage/cleanup/preview` | Preview archived-session cleanup and return a binding digest | 400 `invalid_json` or `invalid_percent` |
 | `POST /api/storage/cleanup` | Quarantine or permanently remove the previewed archived set | 400 invalid input; 409 stale/busy/referenced state; 500 filesystem/database failure |
@@ -209,6 +209,23 @@ are applied to the complete aggregate, so the former read-byte window and parsed
 an earlier file prefix from 7-day, 30-day, or all-history totals. `managementUsageMaxReadBytes` remains
 accepted for compatibility with bounded legacy readers, but changing it no longer expands or reduces
 the history summarized by this endpoint.
+
+Pass both `since` and `until` to select an inclusive custom interval. Each accepts integer Unix
+epoch **milliseconds**, or a full ISO datetime with an explicit timezone. Invalid dates, negative
+or out-of-range values, reversed bounds, and a single bound are rejected. Custom bounds override
+`range`; the response keeps the preset `range` field for compatibility and adds `customWindow: true`,
+the exact `since`, and `until`. `generatedAt` remains the time the report was produced.
+
+Custom windows filter individual ledger entries before daily aggregation, including partial first
+and last days. They preserve `surface`, `provider`, `model`, and `apiKeyId` filtering and never reuse
+or overwrite unfiltered preset summaries. The daily chart remains capped at 366 local calendar days;
+totals cover the full requested interval. Snapshot-window fields describe the scanned ledger before
+the time filter, so they can extend beyond the requested bounds.
+
+The Usage page accepts local date/time inputs. Its selected ending minute includes the entire
+minute through `:59.999`. Choosing a preset or clearing the custom window restores preset behavior.
+This adds exact range selection and existing cost estimates; it does not add hourly chart buckets
+or offline reporting.
 
 The runtime ledger is append-only. Replacing or truncating it, or changing local pricing/time-zone
 inputs, triggers a complete rebuild. If you manually edit an older row in place while the proxy is
