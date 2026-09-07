@@ -330,6 +330,13 @@ Codex. Native custom calls and converted function calls use the same completion 
 patch previews are held while their executable form is unresolved. JavaScript that merely
 contains patch text and unrelated native custom payloads stay unchanged.
 
+Routed code-mode turns are also told the host's rules for the nested helpers before the first
+call: `tools.apply_patch` takes one string that opens and closes with the bare patch marker lines,
+the isolate has no `import`, and long-running commands are polled through `write_stdin`. When a
+code-mode exec result on the native routed Responses, Kiro, or Cursor path still carries one of the host's
+failure messages, opencodex appends a one-line hint naming the rule. This change does not rewrite
+the model's code or its patch text.
+
 Ordinary routed Responses function calls also use the original declared parameter schema at
 completion: integral floats in integer fields and integral numbers in string-only fields are
 normalized, while fractions and numeric unions stay unchanged. An explicitly empty completed
