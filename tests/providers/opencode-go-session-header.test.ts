@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { providerConfigSeed } from "../../src/providers/derive";
-import { deriveOpenCodeGoSessionId, resolveOpenCodeGoTransport } from "../../src/providers/opencode-go-transport";
+import { resolveOpenCodeGoTransport } from "../../src/providers/opencode-go-transport";
 import { getProviderRegistryEntry } from "../../src/providers/registry";
 import { handleResponses } from "../../src/server/responses/core";
 import { handleChatCompletions } from "../../src/server/chat-completions";
-import { normalizeLogConversationId } from "../../src/server/request-log-conversation";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 
 const MUSE_MODEL = "muse-spark-1.3-contributor";
@@ -128,10 +127,13 @@ describe("OpenCode Go session affinity (#3344)", () => {
     expect(bridged.headers.get(SESSION_HEADER)).toBe(chat.headers.get(SESSION_HEADER));
   });
 
-  for (const session of ["client-session-a", "ocx_0123456789abcdef0123456789abcdef"]) {
+  // Fixed vectors independently calculated with SHA-256, including the domain separator.
+  for (const [session, expected] of [
+    ["client-session-a", "ocx_516d593899f34b7baca2db37c7b0c8c5"],
+    ["ocx_0123456789abcdef0123456789abcdef", "ocx_60bcbfb9a85d3dc23b9b2b1cef3b0882"],
+  ] as const) {
     test(`treats inbound ${session.startsWith("ocx_") ? "ocx-prefixed" : "raw"} identity as client input on every ingress`, async () => {
       const headers = { "content-type": "application/json", [SESSION_HEADER]: session };
-      const expected = deriveOpenCodeGoSessionId(normalizeLogConversationId(session)!);
       const native = await captureRequest({ nativeChat: true, model: "omen-alpha", headers });
       const bridged = await captureRequest({ nativeChat: true, model: MUSE_MODEL, headers });
       const responses = await captureRequest({ model: MUSE_MODEL, headers });
@@ -148,6 +150,23 @@ describe("OpenCode Go session affinity (#3344)", () => {
       expect(override.headers.get(SESSION_HEADER)).toBe(session);
     });
   }
+
+  test("operator override precedes the Codex lane, which precedes client fallback on every ingress", async () => {
+    const headers = { ...codexHeaders(), [SESSION_HEADER]: "different-client-fallback" };
+    for (const ingress of [
+      { nativeChat: true, model: "omen-alpha" },
+      { nativeChat: true, model: MUSE_MODEL },
+      { model: MUSE_MODEL },
+    ]) {
+      const codex = await captureRequest({ ...ingress, headers });
+      expect(codex.headers.get(SESSION_HEADER)).toBe("ocx_67b70584fb755130286eff5488a3be9d");
+      const operator = await captureRequest({
+        ...ingress, headers,
+        provider: opencodeGo({ headers: { "X-OpenCode-Session": "different-operator-override" } }),
+      });
+      expect(operator.headers.get(SESSION_HEADER)).toBe("different-operator-override");
+    }
+  });
 
   test("native Chat does not send Go affinity to an unrelated destination", async () => {
     const captured = await captureRequest({
