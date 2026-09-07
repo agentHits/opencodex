@@ -863,13 +863,25 @@ async function handleClaudeMessagesWithBudget(
       headers.set("session_id", uuidFromHex(internalBody.prompt_cache_key));
     }
   }
-  const internalBodyJson = JSON.stringify(internalBody);
-  translatorBudget.chargeRetained(new TextEncoder().encode(internalBodyJson).byteLength, { kind: "request_copies" });
-  const internalReq = new Request("http://localhost/v1/responses", {
-    method: "POST",
-    headers,
-    body: internalBodyJson,
-  });
+  let internalReq: Request;
+  try {
+    // The UTF-16 JSON string and the Request's UTF-8 body coexist until dispatch.
+    const reservation = translatorBudget.reserveTransient(3 * jsonUtf8Bytes(internalBody), { kind: "request_copies" });
+    try {
+      internalReq = new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(internalBody),
+      });
+      reservation.commitRetained();
+    } finally {
+      reservation.release();
+    }
+  } catch (err) {
+    if (!isTranslatorBudgetExceededError(err)) throw err;
+    if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 413, { closeReason: "non_stream" });
+    return anthropicErrorResponse(413, "request translation buffer exceeded the safe limit", "request_too_large", "translation_buffer_limit");
+  }
 
   // Request-log wiring mirrors the /v1/responses route: native passthrough finalizes
   // via the terminal callbacks; routed streams get the Responses-vocabulary log tap

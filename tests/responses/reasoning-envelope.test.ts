@@ -160,8 +160,9 @@ describe("reasoning allocation admission", () => {
 
   test.each(["thinking", "redacted_thinking", "owned"])("handler maps %s admission failure to 413 without dispatch and disposes its budget", async type => {
     const { handleClaudeMessages } = await import("../../src/server/claude-messages");
-    const signature = type === "owned" ? encodeReasoningEnvelope({ txt: "fixture" }) : "fixture";
-    const content = type === "redacted_thinking" ? { type, data: "fixture" }
+    const payload = "fixture".repeat(128);
+    const signature = type === "owned" ? encodeReasoningEnvelope({ txt: payload }) : payload;
+    const content = type === "redacted_thinking" ? { type, data: payload }
       : { type: "thinking", thinking: "", signature };
     const request = new Request("http://localhost/v1/messages", {
       method: "POST", headers: { "content-type": "application/json" },
@@ -170,15 +171,50 @@ describe("reasoning allocation admission", () => {
     const beforeBytes = budgets.translatorObservedBufferSnapshot().currentBytes;
     const beforeCount = budgets.translatorLiveBudgetCountForTests();
     const create = budgets.createTranslatorBudget;
-    const factory = spyOn(budgets, "createTranslatorBudget").mockImplementation(() => create({ maxTurnBytes: 64 }));
+    const budget = create({ maxTurnBytes: 4096 });
+    const reserve = spyOn(budget, "reserveTransient");
+    const charge = spyOn(budget, "chargeRetained");
+    const factory = spyOn(budgets, "createTranslatorBudget").mockReturnValue(budget);
     const upstream = spyOn(globalThis, "fetch").mockImplementation(async () => { throw new Error("unexpected upstream dispatch"); });
     try {
       const response = await handleClaudeMessages(request, { port: 0, providers: {} }, { model: "", provider: "" });
       expect(response.status).toBe(413);
       expect(await response.json()).toMatchObject({ type: "error", error: { type: "request_too_large", code: "translation_buffer_limit" } });
       expect(upstream).not.toHaveBeenCalled();
+      expect(reserve.mock.calls.some(([, scope]) => scope.kind === "reasoning")).toBe(true);
+      expect(charge.mock.calls.filter(([, scope]) => scope.kind === "request_copies")).toHaveLength(0);
       expect(budgets.translatorObservedBufferSnapshot().currentBytes).toBe(beforeBytes);
       expect(budgets.translatorLiveBudgetCountForTests()).toBe(beforeCount);
-    } finally { factory.mockRestore(); upstream.mockRestore(); }
+    } finally { factory.mockRestore(); upstream.mockRestore(); reserve.mockRestore(); charge.mockRestore(); budget.dispose(); }
   });
+  test("final request-copy admission returns 413 before serialization and disposes the budget", async () => {
+    const { handleClaudeMessages } = await import("../../src/server/claude-messages");
+    const request = new Request("http://localhost/v1/messages", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "fixture/model", messages: [{ role: "user", content: "x".repeat(200) }] }),
+    });
+    const beforeBytes = budgets.translatorObservedBufferSnapshot().currentBytes;
+    const beforeCount = budgets.translatorLiveBudgetCountForTests();
+    const budget = budgets.createTranslatorBudget({ maxTurnBytes: 512 });
+    const reserve = spyOn(budget, "reserveTransient");
+    const charge = spyOn(budget, "chargeRetained");
+    const factory = spyOn(budgets, "createTranslatorBudget").mockReturnValue(budget);
+    const stringify = spyOn(JSON, "stringify");
+    const upstream = spyOn(globalThis, "fetch").mockImplementation(async () => { throw new Error("unexpected upstream dispatch"); });
+    try {
+      const response = await handleClaudeMessages(request, { port: 0, providers: {} }, { model: "", provider: "" });
+      expect(response.status).toBe(413);
+      expect(await response.json()).toMatchObject({ type: "error", error: { type: "request_too_large", code: "translation_buffer_limit" } });
+      expect(charge.mock.calls.filter(([, scope]) => scope.kind === "request_copies")).toHaveLength(1);
+      expect(reserve.mock.calls.filter(([, scope]) => scope.kind === "request_copies")).toHaveLength(1);
+      expect(stringify.mock.calls.some(([value]) => value && typeof value === "object" && "input" in value)).toBe(false);
+      expect(upstream).not.toHaveBeenCalled();
+      expect(budgets.translatorObservedBufferSnapshot().currentBytes).toBe(beforeBytes);
+      expect(budgets.translatorLiveBudgetCountForTests()).toBe(beforeCount);
+    } finally {
+      factory.mockRestore(); stringify.mockRestore(); upstream.mockRestore();
+      reserve.mockRestore(); charge.mockRestore(); budget.dispose();
+    }
+  });
+
 });
