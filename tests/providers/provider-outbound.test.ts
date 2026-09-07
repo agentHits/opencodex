@@ -501,6 +501,23 @@ describe("#3462 Mihomo IPv6 fake-IP admission is gated on the scheme-matched pro
     expect(resolveOptions).toEqual([{ allowMihomoIpv6FakeIp: false }]);
     expect(fetchInits).toHaveLength(0);
   });
+
+  test("canonical destination without proxy env: admitted under TUN transparentFakeIpException", async () => {
+    for (const key of proxyKeys) delete process.env[key];
+    const { providerOutboundGet } = await import("../../src/lib/provider-outbound");
+    const resolveOptions: Captured[] = [];
+    const { dependencies, captured } = directDependencies(new Response(null, { status: 200 }));
+    dependencies.isCanonicalUrl = (name, url) => name === "opencode-go" && url === target;
+    dependencies.resolveAddresses = mock(async (_url: string, options?: Captured) => {
+      resolveOptions.push({ allowMihomoIpv6FakeIp: options?.allowMihomoIpv6FakeIp });
+      return { hostname: "opencode.ai", addresses: [{ address: ULA, family: 6 }, { address: "198.18.0.1", family: 4 }], privateNetwork: false };
+    }) as ProviderOutboundDependencies["resolveAddresses"];
+
+    const response = await providerOutboundGet("opencode-go", { baseUrl: "https://opencode.ai/zen/v1" }, target, {}, dependencies);
+    expect(response.status).toBe(200);
+    expect(resolveOptions).toEqual([{ allowMihomoIpv6FakeIp: true }]);
+    expect(captured.address).toBe("198.18.0.1");
+  });
 });
 
 describe("effectiveProxyFor picks the variable Bun fetch actually honours", () => {
