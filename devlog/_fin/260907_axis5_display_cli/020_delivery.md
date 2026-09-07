@@ -33,8 +33,10 @@ One Mac shard reached its 20-minute limit after an unchanged history-lock test. 
 
 ## Attribution
 
-- Éverton Toffanetto <evertondgn@hotmail.com>
-- 투린 <me@turin.my>
-- Zig Zag <shafishahin786@proton.me>
+- Éverton Toffanetto
+- 투린
+- Zig Zag
+
+Original author identities remain in the landed commits; this note lists names without contact addresses.
 
 The preceding numbered files are the historical roadmap and audits; their original _plan locations refer to the planning phase before this closeout.
