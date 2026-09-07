@@ -415,6 +415,12 @@ an account credential. The public defaults intentionally split authentication
 (`https://www.orcarouter.ai`) from inference (`https://api.orcarouter.ai/v1`). Set
 `ORCAROUTER_BASE_URL` before the first account login for a one-origin self-hosted deployment, or use
 `ORCAROUTER_AUTH_BASE_URL` and `ORCAROUTER_API_BASE_URL` for separate origins.
+For a loopback/private self-hosted endpoint, **before the first login**, create or update
+`providers["orcarouter-oauth"]` with `adapter: "openai-chat"`, the intended `baseUrl`,
+`authMode: "oauth"`, and an explicit `allowPrivateNetwork: true`. Login preserves that operator
+setting and never grants it from a URL override. Without it, destination validation rejects the
+local endpoint for inference and model discovery. The OAuth browser callback listener itself
+does not require this provider opt-in. See the [OrcaRouter setup example](/guides/providers/).
 
 ## Provider diagnostic outbound safety
 

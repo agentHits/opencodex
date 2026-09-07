@@ -491,8 +491,26 @@ For a split self-hosted deployment, set `ORCAROUTER_API_BASE_URL` and
 `ORCAROUTER_AUTH_BASE_URL` separately.
 
 The value must be an HTTPS origin (or HTTP loopback for local development) with no credentials,
-query, or fragment. Re-run the login after a relay `401`; OrcaRouter keys are durable and do not
-have a refresh-token grant.
+query, or fragment. Before the first login to a loopback/private self-hosted endpoint, explicitly
+allow that destination in your `~/.opencodex/config.json` provider row. For example, merge this
+entry into the existing `providers` object for a local development server:
+
+```json
+{
+  "orcarouter-oauth": {
+    "adapter": "openai-chat",
+    "baseUrl": "http://127.0.0.1:9999/v1",
+    "authMode": "oauth",
+    "allowPrivateNetwork": true
+  }
+}
+```
+
+Then run `ORCAROUTER_BASE_URL=http://127.0.0.1:9999 ocx login orcarouter-oauth`.
+Login preserves this explicit consent; setting the URL alone never enables private-network access.
+Without the opt-in, destination validation rejects inference and model discovery for that endpoint.
+This requirement concerns the provider endpoint; the browser callback listener needs no such opt-in.
+Re-run the login after a relay `401`; OrcaRouter keys are durable and do not have a refresh-token grant.
 
 **Meta Model API (`meta-model`).** Muse Spark on Meta's own OpenAI-compatible endpoint,
 served over `/v1/responses`. Create a key in

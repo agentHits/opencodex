@@ -286,6 +286,24 @@ ORCAROUTER_BASE_URL=https://router.example ocx login orcarouter-oauth
 `ORCAROUTER_API_BASE_URL`。
 
 该值必须是 HTTPS origin（本地开发可使用 HTTP loopback），且不能包含用户名密码、query 或 fragment。
+首次登录回环或私有网络中的自托管服务前，必须在 `~/.opencodex/config.json` 中明确允许访问该地址。
+例如，将以下条目合并到现有的 `providers` 对象中，用于本地开发服务：
+
+```json
+{
+  "orcarouter-oauth": {
+    "adapter": "openai-chat",
+    "baseUrl": "http://127.0.0.1:9999/v1",
+    "authMode": "oauth",
+    "allowPrivateNetwork": true
+  }
+}
+```
+
+然后运行 `ORCAROUTER_BASE_URL=http://127.0.0.1:9999 ocx login orcarouter-oauth`。
+登录会保留这项明确授权；仅设置 URL 不会自动启用私有网络访问。
+未设置此选项时，目标地址校验会拒绝该服务的推理和模型发现请求。
+此要求针对 provider 的服务地址，浏览器回调监听器不需要此选项。
 若 relay 返回 `401`，重新运行登录即可；OrcaRouter 签发的是长期 API key，不存在 refresh-token grant。
 
 **Command Code 配额：**仪表盘和 `ocx account refresh` 会在规范主机 `https://api.commandcode.ai` 上探测 `/alpha/billing/credits` 窗口（5 小时和每周）。OAuth 预设 (`command-code`) 使用已保存的账户 bearer；Provider-API 密钥预设 (`commandcode`) 使用当前配置的有效密钥。用户改写后的仿冒 base URL 不会被探测。当 Command Code 同时返回周期消耗时，剩余的 monthly / purchased / free credits 会显示为 USD 窗口。
