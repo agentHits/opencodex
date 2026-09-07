@@ -653,7 +653,9 @@ export function useDashboardData(apiBase: string) {
       const res = await fetch(`${apiBase}/api/sync`, { method: "POST" });
       const data = await requireJson<SyncResult & { projectConfigGrouped?: ProjectCodexConfigGroup[] }>(res, "sync failed");
       setSyncResult(data);
-      setSettings(prev => prev ? { ...prev, catalogRefreshPending: false } : prev);
+      if (data.ok && data.status === "applied") {
+        setSettings(prev => prev ? { ...prev, catalogRefreshPending: false } : prev);
+      }
       if (data.projectConfigGrouped) setProjectConfigWarnings(data.projectConfigGrouped);
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : String(err));

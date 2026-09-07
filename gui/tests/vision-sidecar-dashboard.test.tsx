@@ -458,3 +458,30 @@ test.each([undefined, false, true])("Desktop login preference %s persists before
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test.each(["skipped", "catalog-only", "applied"])("Desktop preference pending state follows %s sync application evidence", async (syncStatus) => {
+  const originalFetch = globalThis.fetch;
+  let latest: Dash | undefined;
+  const apiBase = `/authless-sync-${syncStatus}`;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (init?.method === "PUT") return Response.json({ codexDesktopAuthless: true, catalogRefreshPending: true });
+    if (path.endsWith("/api/sync")) return Response.json({ ok: true, status: syncStatus, message: syncStatus });
+    if (path.endsWith("/api/settings")) return Response.json({ codexAutoStart: true, codexDesktopAuthless: false, port: 10100, hostname: "127.0.0.1" });
+    return Response.json({}, { status: 503 });
+  }) as typeof fetch;
+  function Harness() { latest = useDashboardData(apiBase); return null; }
+  try {
+    const { createRoot } = await import("react-dom/client");
+    await act(async () => { root = createRoot(host); root.render(<LanguageProvider><Harness /></LanguageProvider>); });
+    await act(async () => { await latest!.toggleCodexDesktopAuthless(); });
+    expect(latest?.settings?.codexDesktopAuthless).toBe(true);
+    expect(latest?.settings?.catalogRefreshPending).toBe(syncStatus !== "applied");
+    expect(latest?.syncResult?.status).toBe(syncStatus);
+  } finally {
+    await act(async () => { root?.unmount(); });
+    root = null;
+    globalThis.fetch = originalFetch;
+  }
+});
