@@ -866,17 +866,18 @@ async function handleClaudeMessagesWithBudget(
   let internalReq: Request;
   try {
     // The UTF-16 JSON string and the Request's UTF-8 body coexist until dispatch.
-    const reservation = translatorBudget.reserveTransient(3 * jsonUtf8Bytes(internalBody), { kind: "request_copies" });
+    const bodyBytes = jsonUtf8Bytes(internalBody);
+    const reservation = translatorBudget.reserveTransient(3 * bodyBytes, { kind: "request_copies" });
     try {
       internalReq = new Request("http://localhost/v1/responses", {
         method: "POST",
         headers,
         body: JSON.stringify(internalBody),
       });
-      reservation.commitRetained();
     } finally {
       reservation.release();
     }
+    translatorBudget.chargeRetained(bodyBytes, { kind: "request_copies" });
   } catch (err) {
     if (!isTranslatorBudgetExceededError(err)) throw err;
     if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 413, { closeReason: "non_stream" });
@@ -1019,7 +1020,13 @@ async function handleClaudeMessagesWithBudget(
     }
     return anthropicErrorResponse(502, error?.message ?? "upstream request failed", "api_error");
   }
-  const message = responsesJsonToAnthropicMessage(json, requestedModel);
+  let message: Rec;
+  try {
+    message = responsesJsonToAnthropicMessage(json, requestedModel, translatorBudget);
+  } catch (err) {
+    if (!isTranslatorBudgetExceededError(err)) throw err;
+    return anthropicErrorResponse(413, "upstream translation buffer exceeded the safe limit", "request_too_large", "translation_buffer_limit");
+  }
   if ((message as Rec).type === "error") {
     return new Response(JSON.stringify(message), {
       status: 529,

@@ -308,7 +308,7 @@ export function responsesSseToAnthropicSse(
           open.webSearchArgsEmitted = true;
         }
         if (open.kind === "thinking") {
-          const signature = open.reasoningSig ?? encodeReasoningEnvelope({ txt: open.thinkingBuf ?? "" });
+          const signature = open.reasoningSig ?? encodeReasoningEnvelope({ txt: open.thinkingBuf ?? "" }, translatorBudget);
           emit("content_block_delta", {
             type: "content_block_delta", index: open.index,
             delta: { type: "signature_delta", signature },
@@ -561,7 +561,7 @@ export function responsesSseToAnthropicSse(
             else if (open && open.kind === "text" && item.type === "message") closeOpenBlock();
             else if (item.type === "reasoning") {
               const encrypted = typeof item.encrypted_content === "string" ? item.encrypted_content : "";
-              const env = encrypted ? decodeReasoningEnvelope(encrypted) : null;
+              const env = encrypted ? decodeReasoningEnvelope(encrypted, translatorBudget) : null;
               const red = env?.red ?? [];
               if (env?.sig && open?.kind !== "thinking") ensureBlock("thinking");
               if (open?.kind === "thinking") {
@@ -785,7 +785,7 @@ export function responsesSseToAnthropicSse(
 }
 
 /** Non-streaming: /v1/responses JSON -> Anthropic message JSON. */
-export function responsesJsonToAnthropicMessage(json: unknown, model: string): Rec {
+export function responsesJsonToAnthropicMessage(json: unknown, model: string, translatorBudget?: TranslatorBudget): Rec {
   const body = isRec(json) ? json : {};
   const output = Array.isArray(body.output) ? body.output : [];
   const content: Rec[] = [];
@@ -817,14 +817,14 @@ export function responsesJsonToAnthropicMessage(json: unknown, model: string): R
           }
         }
         const encrypted = typeof raw.encrypted_content === "string" ? raw.encrypted_content : "";
-        const env = encrypted ? decodeReasoningEnvelope(encrypted) : null;
+        const env = encrypted ? decodeReasoningEnvelope(encrypted, translatorBudget) : null;
         // Legacy combined envelopes place redacted blocks before the signed block,
         // matching the Anthropic adapter. New bridge output uses separate items.
         for (const data of env?.red ?? []) content.push({ type: "redacted_thinking", data });
         // env.txt may be locally hidden text. Do not expose it here or manufacture
         // a new signed continuity carrier; hidden-summary replay remains limited.
         if (parts.length > 0 || env?.sig) {
-          content.push({ type: "thinking", thinking: parts.join("\n\n"), signature: env?.sig ?? encodeReasoningEnvelope({ txt: parts.join("\n\n") }) });
+          content.push({ type: "thinking", thinking: parts.join("\n\n"), signature: env?.sig ?? encodeReasoningEnvelope({ txt: parts.join("\n\n") }, translatorBudget) });
         }
         break;
       }

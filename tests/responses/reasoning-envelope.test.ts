@@ -1,7 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { bridgeToResponsesSSE, buildResponseJSON } from "../../src/bridge";
+import type { AdapterEvent } from "../../src/types";
 import { anthropicToResponsesBody, anthropicToResponsesTranslation } from "../../src/claude/inbound";
 import { decodeReasoningEnvelope, encodeReasoningEnvelope, OCX_REASONING_PREFIX, type ReasoningEnvelope } from "../../src/responses/reasoning-envelope";
-import { responsesJsonToAnthropicMessage } from "../../src/claude/outbound";
+import { responsesJsonToAnthropicMessage, responsesSseToAnthropicSse } from "../../src/claude/outbound";
 import { createTranslatorBudget, TranslatorBudgetExceededError, translatorObservedBufferSnapshot } from "../../src/lib/translator-budget";
 import { jsonUtf8Bytes } from "../../src/lib/json-byte-size";
 import * as budgets from "../../src/lib/translator-budget";
@@ -216,5 +218,164 @@ describe("reasoning allocation admission", () => {
       reserve.mockRestore(); charge.mockRestore(); budget.dispose();
     }
   });
+
+  test("successful Request construction retains only its UTF-8 body after releasing temporary copies", async () => {
+    const { handleClaudeMessages } = await import("../../src/server/claude-messages");
+    const request = new Request("http://localhost/v1/messages", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "fixture/model", messages: [{ role: "user", content: "hello" }] }),
+    });
+    const budget = budgets.createTranslatorBudget({ maxTurnBytes: 4096 });
+    const originalCharge = budget.chargeRetained.bind(budget);
+    const copies: Array<{ bytes: number; before: number; after: number }> = [];
+    const charge = spyOn(budget, "chargeRetained").mockImplementation((bytes, scope) => {
+      const before = budget.snapshot().currentBytes;
+      originalCharge(bytes, scope);
+      if (scope.kind === "request_copies") copies.push({ bytes, before, after: budget.snapshot().currentBytes });
+    });
+    const reserve = spyOn(budget, "reserveTransient");
+    const factory = spyOn(budgets, "createTranslatorBudget").mockReturnValue(budget);
+    const stringify = spyOn(JSON, "stringify");
+    try {
+      const response = await handleClaudeMessages(request, { port: 0, providers: {} }, { model: "", provider: "" });
+      expect(response.status).toBe(404); // Serialization succeeded; the synthetic model is deliberately absent.
+      await response.text();
+      const serialized = stringify.mock.calls.find(([value]) => value && typeof value === "object" && "input" in value)?.[0];
+      expect(serialized).toBeDefined();
+      const expected = Buffer.byteLength(JSON.stringify(serialized));
+      expect(copies).toHaveLength(2);
+      expect(copies[1]!.bytes).toBe(expected);
+      expect(copies[1]!.before).toBe(copies[0]!.after);
+      expect(reserve.mock.calls.filter(([, scope]) => scope.kind === "request_copies").map(([bytes]) => bytes)).toEqual([3 * expected]);
+      expect(budget.snapshot().currentBytes).toBe(0);
+    } finally { stringify.mockRestore(); factory.mockRestore(); reserve.mockRestore(); charge.mockRestore(); budget.dispose(); }
+  });
+
+  for (const event of [
+    { type: "thinking_signature", signature: "r".repeat(256) },
+    { type: "redacted_thinking", data: "r".repeat(256) },
+    { type: "reasoning_raw_delta", text: "r".repeat(256) },
+    { type: "kiro_redacted_reasoning", data: "r".repeat(256) },
+  ] as const) {
+    for (const mode of ["batch", "stream"] as const) {
+      test(`${mode} ${event.type} admits envelope copies against the already charged turn`, async () => {
+        const budget = createTranslatorBudget({ maxTurnBytes: 4096 });
+        budget.chargeRetained(2048, { kind: "request_copies" });
+        const stringify = spyOn(JSON, "stringify");
+        try {
+          const events: AdapterEvent[] = [event, { type: "done" }];
+          if (mode === "batch") {
+            expect(() => buildResponseJSON(events, "fixture/model", { translatorBudget: budget, hideThinkingSummary: true }))
+              .toThrow(TranslatorBudgetExceededError);
+          } else {
+            async function* source() { yield* events; }
+            const wire = await new Response(bridgeToResponsesSSE(source(), "fixture/model", undefined, undefined, undefined, undefined, undefined,
+              { translatorBudget: budget, hideThinkingSummary: true })).text();
+            expect(wire).toContain('"code":"translation_buffer_limit"');
+            expect(wire).not.toContain('event: response.completed');
+          }
+          expect(stringify.mock.calls.some(([value]) => value && typeof value === "object"
+            && ("sig" in value || "txt" in value || "red" in value || "krc" in value))).toBe(false);
+        } finally { stringify.mockRestore(); budget.dispose(); }
+      });
+    }
+  }
+
+  for (const encoded of [false, true]) {
+    test(`JSON outbound ${encoded ? "decoding" : "encoding"} uses the caller budget before allocation`, () => {
+      const item = encoded
+        ? { type: "reasoning", encrypted_content: encodeReasoningEnvelope({ sig: "r".repeat(256) }), summary: [] }
+        : { type: "reasoning", summary: [{ type: "summary_text", text: "r".repeat(256) }] };
+      const budget = createTranslatorBudget({ maxTurnBytes: 4096 });
+      budget.chargeRetained(2048, { kind: "request_copies" });
+      const from = spyOn(Buffer, "from");
+      try {
+        expect(() => responsesJsonToAnthropicMessage({ output: [item] }, "fixture/model", budget)).toThrow(TranslatorBudgetExceededError);
+        expect(from).not.toHaveBeenCalled();
+      } finally { from.mockRestore(); budget.dispose(); }
+    });
+  }
+
+  for (const ending of ["throw", "eof", "stall"] as const) {
+    for (const overflow of [false, true]) {
+      test(`hidden reasoning ${ending} cleanup ${overflow ? "reports one budget failure" : "preserves its admitted terminal"}`, async () => {
+        const budget = createTranslatorBudget({ maxTurnBytes: overflow ? 4096 : 65536 });
+        budget.chargeRetained(2048, { kind: "request_copies" });
+        const accumulated = Promise.withResolvers<void>();
+        const pending = Promise.withResolvers<IteratorResult<AdapterEvent>>();
+        let reads = 0;
+        let returns = 0;
+        let cancelled = 0;
+        let clears = 0;
+        let beat = () => {};
+        const source: AsyncIterableIterator<AdapterEvent> = {
+          [Symbol.asyncIterator]() { return this; },
+          async next() {
+            if (++reads === 1) return { done: false, value: { type: "reasoning_raw_delta", text: "r".repeat(256) } };
+            accumulated.resolve();
+            if (ending === "throw") throw new Error("synthetic generator failure");
+            if (ending === "eof") return { done: true, value: undefined };
+            return pending.promise;
+          },
+          async return() { returns++; pending.resolve({ done: true, value: undefined }); return { done: true, value: undefined }; },
+        };
+        const stringify = spyOn(JSON, "stringify");
+        try {
+          const stream = bridgeToResponsesSSE(source, "fixture/model", undefined, undefined, undefined,
+            () => { cancelled++; }, 500, {
+              translatorBudget: budget, hideThinkingSummary: true, stallTimeoutSec: 1,
+              timers: { setInterval(callback) { beat = callback; return 1; }, clearInterval() { clears++; beat = () => {}; } },
+            });
+          const result = new Response(stream).text();
+          await accumulated.promise;
+          if (ending === "stall") { beat(); beat(); beat(); }
+          const wire = await result;
+          const envelopes = stringify.mock.calls.filter(([value]) => value && typeof value === "object" && "txt" in value);
+          expect(wire.match(/data: \[DONE\]/g)).toHaveLength(1);
+          expect(wire).not.toContain("event: response.completed");
+          expect(clears).toBe(1);
+          if (overflow) {
+            expect(envelopes).toHaveLength(0);
+            expect(wire.match(/event: response.failed/g)).toHaveLength(1);
+            expect(wire).toContain('"code":"translation_buffer_limit"');
+            expect(wire).not.toContain("event: response.incomplete");
+            expect(cancelled).toBe(1);
+            expect(returns).toBe(1);
+          } else {
+            expect(envelopes).toHaveLength(1);
+            expect(wire).not.toContain("translation_buffer_limit");
+            expect(wire.match(new RegExp(`event: response.${ending === "throw" ? "failed" : "incomplete"}`, "g"))).toHaveLength(1);
+            expect(cancelled).toBe(ending === "eof" ? 0 : 1);
+          }
+        } finally { stringify.mockRestore(); pending.resolve({ done: true, value: undefined }); budget.dispose(); }
+      });
+    }
+  }
+
+  for (const encoded of [false, true]) {
+    test(`SSE outbound ${encoded ? "decoding" : "encoding"} admits against its live turn budget`, async () => {
+      const text = "r".repeat(512);
+      const events = encoded ? [{ type: "response.output_item.done", item: {
+        type: "reasoning", encrypted_content: encodeReasoningEnvelope({ sig: text }), summary: [],
+      } }] : [
+        { type: "response.reasoning_summary_text.delta", delta: text },
+        { type: "response.completed", response: { status: "completed", output: [] } },
+      ];
+      const frames = events.map(event => new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+      const budget = createTranslatorBudget({ maxTurnBytes: 8192 });
+      budget.chargeRetained(4096, { kind: "request_copies" });
+      const reserve = spyOn(budget, "reserveTransient");
+      const from = spyOn(Buffer, "from");
+      try {
+        const upstream = new ReadableStream<Uint8Array>({ start(controller) { frames.forEach(frame => controller.enqueue(frame)); controller.close(); } });
+        const wire = await new Response(responsesSseToAnthropicSse(upstream, "fixture/model", { translatorBudget: budget, pingIntervalMs: 0 })).text();
+        expect(reserve.mock.calls.some(([bytes, scope]) => scope.kind === "reasoning" && bytes > 4096)).toBe(true);
+        expect(from).not.toHaveBeenCalled();
+        expect(wire.match(/event: error/g)).toHaveLength(1);
+        expect(wire).toContain('"code":"translation_buffer_limit"');
+        expect(wire).not.toContain("event: message_stop");
+      } finally { reserve.mockRestore(); from.mockRestore(); budget.dispose(); }
+    });
+  }
 
 });
