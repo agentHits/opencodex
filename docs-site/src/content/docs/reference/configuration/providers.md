@@ -446,7 +446,12 @@ of those two a given response carries is recorded against that account — each 
 on refusals as well as successes. Usage-aware selection therefore works from the accounts you
 actually use, without waiting for the dashboard Providers page to poll them. These readings refresh
 the existing row rather than replacing it, so the model-scoped weekly bars that only the usage
-endpoint reports are preserved. Header observations do not postpone usage probes or clear a failed
+endpoint reports are preserved until their known reset time passes. Expired measurements become
+unknown, including retained standard windows omitted by later headers. A reset-only header cannot
+extend an older utilization measurement. Values with no known reset retain their existing behavior;
+missing measurements are never replaced with zero usage.
+
+Header observations do not postpone usage probes or clear a failed
 probe's unavailable status. After restart, cached Anthropic observations remain available while
 the next quota read probes again, because the saved observations do not include the probe clock.
 

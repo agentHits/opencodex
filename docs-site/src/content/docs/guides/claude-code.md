@@ -36,7 +36,9 @@ Operational contract when enabled:
   two the response carries is recorded for that account — each window independently, and a
   refusal counts as well as a success. Usage-aware selection works from ordinary traffic,
   without waiting for a dashboard poll. Headers preserve model-specific quota windows and do
-  not postpone usage probes or clear a failed usage probe's unavailable status.
+  not postpone usage probes or clear a failed usage probe's unavailable status. Measurements
+  whose known reset time has passed are discarded as unknown, including retained model-specific
+  windows. Values without a known reset are preserved; missing data is never reported as zero usage.
 - Affinity is **process-local** (lost on proxy restart).
 - **401/403** credential failures quarantine the account (`needsReauth`) so it is excluded from
   selection until re-authenticated.

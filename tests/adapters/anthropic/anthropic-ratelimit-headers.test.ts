@@ -1,6 +1,6 @@
 /** Anthropic response observations must preserve account usage and probe semantics. */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,8 +9,11 @@ import {
   forgetAnthropicFailoverQuorum,
   getAnthropicAccountHealthSnapshot,
   rotateAnthropicAccountOn429,
+  resetAnthropicRoutingForManualSelection,
+  resolveAnthropicAccountForSession,
 } from "../../../src/oauth/anthropic-routing";
 import { projectStoredOAuthAccountHealth } from "../../../src/oauth/health";
+import { quotaEvidenceForCandidate } from "../../../src/routing/quota";
 import {
   clearAccountQuotaCache,
   fetchProviderAccountQuotas,
@@ -22,7 +25,7 @@ import {
   setCachedProviderAccountQuotaForTests,
   sweepExpiredProviderAccountQuotaRows,
 } from "../../../src/providers/quota";
-import { getAccountSet, saveCredential } from "../../../src/oauth/store";
+import { getAccountSet, saveCredential, setActiveAccount } from "../../../src/oauth/store";
 import { clearPoolRotationState } from "../../../src/codex/pool-rotation";
 import { removeTreeWithRetry } from "../../helpers/remove-tree";
 import type { OcxConfig } from "../../../src/types";
@@ -524,5 +527,233 @@ describe("Anthropic malformed deadlines and partial windows", () => {
     expect(getCachedProviderAccountQuota("anthropic", id!)).toMatchObject({
       fiveHourPercent: 0, weeklyPercent: 20, weeklyResetAt: 1_800_000_000_000, customWindows,
     });
+  });
+});
+
+describe("Anthropic known-reset expiry", () => {
+  const start = 1_800_000_000_000;
+  let now: number;
+
+  beforeEach(() => {
+    now = start;
+    Date.now = () => now;
+  });
+
+  function observe(id: string, headers: Record<string, string> = {
+    "anthropic-ratelimit-unified-5h-utilization": "0.41",
+  }): void {
+    recordAnthropicAccountQuotaFromHeaders(id, new Headers(headers), 0);
+  }
+
+  test("headers expire only known elapsed custom windows without mutating their source", async () => {
+    const [id] = await seed(1);
+    const saved = {
+      fiveHourPercent: 10,
+      customWindows: [
+        { label: "Opus", percent: 100, resetAt: start + 60_000 },
+        { label: "Sonnet", percent: 90, resetAt: start + 600_000 },
+        { label: "Fable", percent: 70 },
+        { label: "Unknown reset", percent: 60, resetAt: 0 },
+      ],
+      updatedAt: start,
+    };
+    setCachedProviderAccountQuotaForTests("anthropic", id!, saved);
+    now += 120_000;
+    observe(id!);
+    const quota = getCachedProviderAccountQuota("anthropic", id!);
+    expect(quota?.customWindows).toEqual(saved.customWindows.slice(1));
+    expect(quota?.fiveHourPercent).toBe(41);
+    expect(quota?.updatedAt).toBe(now);
+    expect(saved.customWindows).toHaveLength(4);
+    expect(saved.updatedAt).toBe(start);
+    now += 30_000;
+    observe(id!);
+    expect(getCachedProviderAccountQuota("anthropic", id!)?.customWindows).toEqual(saved.customWindows.slice(1));
+  });
+
+  for (const [percent, reset, observedWindow] of [
+    ["fiveHourPercent", "fiveHourResetAt", "7d"],
+    ["weeklyPercent", "weeklyResetAt", "5h"],
+    ["monthlyPercent", "monthlyResetAt", "5h"],
+  ] as const) {
+    test(`partial headers remove the expired ${percent} pair without inventing zero`, async () => {
+      const [id] = await seed(1);
+      setCachedProviderAccountQuotaForTests("anthropic", id!, {
+        [percent]: 100, [reset]: start + 60_000, updatedAt: start,
+      });
+      now += 60_000;
+      observe(id!, { [`anthropic-ratelimit-unified-${observedWindow}-utilization`]: "0.2" });
+      const quota = getCachedProviderAccountQuota("anthropic", id!);
+      expect(quota).not.toBeNull();
+      expect(quota?.[percent]).toBeUndefined();
+      expect(quota?.[reset]).toBeUndefined();
+    });
+  }
+
+  test("standard windows without reset evidence remain known", async () => {
+    const [id] = await seed(1);
+    setCachedProviderAccountQuotaForTests("anthropic", id!, { weeklyPercent: 100, updatedAt: start });
+    now += 120_000;
+    observe(id!);
+    expect(getCachedProviderAccountQuota("anthropic", id!)?.weeklyPercent).toBe(100);
+  });
+
+  test("a reset-only header cannot extend retained usage even before the original reset", async () => {
+    const [id] = await seed(1);
+    setCachedProviderAccountQuotaForTests("anthropic", id!, {
+      fiveHourPercent: 10, weeklyPercent: 100, weeklyResetAt: start + 60_000, updatedAt: start,
+    });
+    now += 30_000;
+    observe(id!, {
+      "anthropic-ratelimit-unified-5h-utilization": "0.2",
+      "anthropic-ratelimit-unified-7d-utilization": "invalid",
+      "anthropic-ratelimit-unified-7d-reset": String((start + 600_000) / 1000),
+    });
+    expect(getCachedProviderAccountQuota("anthropic", id!)?.weeklyResetAt).toBe(start + 60_000);
+    now += 30_000;
+    expect(getCachedProviderAccountQuota("anthropic", id!)?.weeklyPercent).toBeUndefined();
+    expect(getCachedProviderAccountQuota("anthropic", id!)?.weeklyResetAt).toBeUndefined();
+    observe(id!, {
+      "anthropic-ratelimit-unified-7d-utilization": "0.3",
+      "anthropic-ratelimit-unified-7d-reset": String((start + 600_000) / 1000),
+    });
+    expect(getCachedProviderAccountQuota("anthropic", id!)).toMatchObject({
+      weeklyPercent: 30, weeklyResetAt: start + 600_000,
+    });
+  });
+
+  test("idle cache reads cross a reset without another observation or probe", async () => {
+    const [id] = await seed(1);
+    const quota = { customWindows: [{ label: "Opus", percent: 100, resetAt: start + 60_000 }], updatedAt: start };
+    setCachedProviderAccountQuotaForTests("anthropic", id!, quota);
+    setCachedProviderAccountQuotaForTests("kiro", "untouched", quota);
+    const candidate = { provider: "anthropic", model: "claude-opus-4-6", accountRef: id! };
+    now += 59_999;
+    expect(getCachedProviderAccountQuota("anthropic", id!)).toEqual(quota);
+    expect(quotaEvidenceForCandidate(candidate)).toMatchObject({ known: true, exhausted: true, headroom: 0 });
+    now++;
+    expect(getCachedProviderAccountQuota("anthropic", id!)).toBeNull();
+    expect(quotaEvidenceForCandidate(candidate)).toEqual({ known: false });
+    const [row] = await fetchProviderAccountQuotas("anthropic");
+    expect(row?.quota).toBeNull();
+    expect(row?.unavailable).toBeUndefined();
+    expect(getCachedProviderAccountQuota("kiro", "untouched")).toBe(quota);
+  });
+
+  test("expired Opus evidence stops suppressing an otherwise healthy manual selection", async () => {
+    const [a, b] = await seed(2);
+    setCachedProviderAccountQuotaForTests("anthropic", a!, {
+      fiveHourPercent: 30, customWindows: [{ label: "Opus", percent: 100, resetAt: start + 60_000 }], updatedAt: start,
+    });
+    setCachedProviderAccountQuotaForTests("anthropic", b!, { fiveHourPercent: 11, updatedAt: start });
+    await setActiveAccount("anthropic", a!);
+    resetAnthropicRoutingForManualSelection(a!);
+    const config = poolEnabled();
+    config.anthropicAccountPool = { enabled: true, strategy: "quota", autoSwitchThreshold: 20 };
+    const candidate = { provider: "anthropic", model: "claude-opus-4-6", accountRef: a! };
+    expect(resolveAnthropicAccountForSession(null, config, now).accountId).toBe(b);
+    expect(quotaEvidenceForCandidate(candidate)).toMatchObject({ known: true, exhausted: true, headroom: 0 });
+    now += 60_000;
+    expect(resolveAnthropicAccountForSession(null, config, now)).toMatchObject({ accountId: a, reason: "manual" });
+    expect(quotaEvidenceForCandidate(candidate)).toMatchObject({ known: true, exhausted: false, headroom: 0.7 });
+  });
+
+  for (const failure of ["http", "network"] as const) {
+    test(`joined ${failure} failures remove windows expiring during the shared probe`, async () => {
+      const [id] = await seed(1);
+      setCachedProviderAccountQuotaForTests("anthropic", id!, {
+        fiveHourPercent: 10, weeklyPercent: 100, weeklyResetAt: start + 60_000,
+        customWindows: [{ label: "Opus", percent: 100, resetAt: start + 60_000 }, { label: "Fable", percent: 63 }],
+        updatedAt: start,
+      });
+      let started!: () => void;
+      const dispatched = new Promise<void>(resolve => { started = resolve; });
+      let finish!: (response: Response) => void;
+      let fail!: (error: Error) => void;
+      const response = new Promise<Response>((resolve, reject) => { finish = resolve; fail = reject; });
+      let calls = 0;
+      globalThis.fetch = (async () => { calls++; started(); return response; }) as typeof fetch;
+      const first = fetchProviderAccountQuotas("anthropic", true);
+      await dispatched;
+      const second = fetchProviderAccountQuotas("anthropic", true);
+      now += 30_000;
+      observe(id!);
+      now += 30_000;
+      if (failure === "http") finish(new Response("busy", { status: 429 }));
+      else fail(new Error("offline"));
+      const [a, b] = await Promise.all([first, second]);
+      expect(calls).toBe(1);
+      expect(a).toEqual(b);
+      expect(a[0]?.unavailable).toBe(true);
+      expect(a[0]?.quota).toEqual({ fiveHourPercent: 41, customWindows: [{ label: "Fable", percent: 63 }], updatedAt: start + 30_000 });
+      expect(getCachedProviderAccountQuota("anthropic", id!)).toEqual(a[0]?.quota);
+      expect((await fetchProviderAccountQuotas("anthropic"))[0]).toEqual(a[0]);
+      expect(calls).toBe(1);
+    });
+  }
+
+  test("restart cannot revive expired bars from a recently updated disk row", async () => {
+    const [id] = await seed(1);
+    now += 120_000;
+    writeFileSync(join(home, "provider-account-quota-cache.json"), JSON.stringify({ version: 1, rows: {
+      [`anthropic\u0000${id}`]: {
+        fiveHourPercent: 41, weeklyPercent: 100, weeklyResetAt: start + 60_000,
+        customWindows: [{ label: "Opus", percent: 100, resetAt: start + 60_000 }, { label: "Fable", percent: 63 }],
+        updatedAt: now,
+      },
+    } }));
+    clearAccountQuotaCache();
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; return new Response("busy", { status: 429 }); }) as typeof fetch;
+    const [row] = await fetchProviderAccountQuotas("anthropic");
+    expect(calls).toBe(1);
+    expect(row?.unavailable).toBe(true);
+    expect(row?.quota).toEqual({ fiveHourPercent: 41, customWindows: [{ label: "Fable", percent: 63 }], updatedAt: now });
+  });
+
+  for (const malformed of [null, {}, [null, "bad", { label: "invalid", percent: "100" }]]) {
+    test(`malformed persisted custom windows stay unknown without breaking other rows: ${JSON.stringify(malformed)}`, async () => {
+      const [id] = await seed(1);
+      writeFileSync(join(home, "provider-account-quota-cache.json"), JSON.stringify({ version: 1, rows: {
+        [`anthropic\u0000${id}`]: { customWindows: malformed, updatedAt: now },
+        "kiro\u0000untouched": { monthlyPercent: 17, updatedAt: now },
+      } }));
+      clearAccountQuotaCache();
+      let calls = 0;
+      globalThis.fetch = (async () => { calls++; return new Response("busy", { status: 429 }); }) as typeof fetch;
+      const [row] = await fetchProviderAccountQuotas("anthropic");
+      expect(calls).toBe(1);
+      expect(row?.quota).toBeNull();
+      expect(row?.unavailable).toBe(true);
+      expect(getCachedProviderAccountQuota("kiro", "untouched")).toEqual({ monthlyPercent: 17, updatedAt: now });
+    });
+  }
+
+  test("fresh utilization without a reset does not inherit an expired reset", async () => {
+    const [id] = await seed(1);
+    setCachedProviderAccountQuotaForTests("anthropic", id!, {
+      fiveHourPercent: 100, fiveHourResetAt: start + 60_000, updatedAt: start,
+    });
+    now += 60_000;
+    observe(id!);
+    expect(getCachedProviderAccountQuota("anthropic", id!)).toEqual({ fiveHourPercent: 41, updatedAt: now });
+  });
+
+  test("deferred persistence evaluates expiry at write time and leaves other providers intact", async () => {
+    const [id] = await seed(1);
+    const saved = { weeklyPercent: 100, weeklyResetAt: start + 60_000, updatedAt: start };
+    setCachedProviderAccountQuotaForTests("anthropic", id!, saved);
+    setCachedProviderAccountQuotaForTests("kiro", "untouched", saved);
+    let flush!: () => void;
+    const timer = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
+      flush = callback;
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    try { observe(id!); } finally { timer.mockRestore(); }
+    now += 60_000;
+    flush();
+    const disk = JSON.parse(readFileSync(join(home, "provider-account-quota-cache.json"), "utf8"));
+    expect(disk.rows[`anthropic\u0000${id}`]).toEqual({ fiveHourPercent: 41, updatedAt: start });
+    expect(disk.rows["kiro\u0000untouched"]).toEqual(saved);
   });
 });
