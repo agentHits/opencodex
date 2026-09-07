@@ -5205,6 +5205,52 @@ describe("codex-auth API", () => {
     expect(isCodexAccountUsable(config, accountId)).toBe(true);
   });
 
+  test.each([{ delay: 0, reads: 1 }, { delay: 3, reads: 2 }, { delay: 6, reads: 2 }])("validation joins before, during, and after quota settlement: %j", async ({ delay, reads }) => {
+    const { fetchPoolAccountQuota } = await import("../../src/codex/auth-api");
+    const accountId = "late-validation-join";
+    const config = makeConfig({ codexAccounts: [{ id: accountId, plan: "pro", isMain: false }] });
+    saveConfig(config);
+    setLiveStateStoreConfig(config);
+    saveCodexAccountCredential(accountId, { accessToken: "late-access", refreshToken: "late-refresh",
+      expiresAt: Date.now() + 3600_000, chatgptAccountId: "late-account" }, { validationPending: true });
+    let warmups = 0;
+    let usageReads = 0;
+    let scheduled = false;
+    let joined: Promise<unknown> = Promise.resolve();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/wham/usage")) {
+        usageReads++;
+        const response = Response.json({});
+        response.json = async () => {
+          if (!scheduled) {
+            scheduled = true;
+            // Deterministic microtask ordering from JSON completion: join before
+            // the validation decision, after it but before flight cleanup, or
+            // after settlement. No timers or real network scheduling are involved.
+            let order = Promise.resolve();
+            for (let i = 0; i < delay; i++) order = order.then(() => {});
+            joined = order.then(() => Promise.all([
+              fetchPoolAccountQuota(accountId, true, "pro", undefined, true),
+              fetchPoolAccountQuota(accountId, true, "pro", undefined, true),
+            ]));
+          }
+          return { plan_type: "pro", rate_limit: { secondary_window: { used_percent: 12, limit_window_seconds: 604800 } } };
+        };
+        return response;
+      }
+      if (String(input).endsWith("/codex/responses")) {
+        warmups++;
+        return new Response('data: {"type":"response.completed"}\n\n');
+      }
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+    await fetchPoolAccountQuota(accountId, true, "pro");
+    await joined;
+    expect(usageReads).toBe(reads);
+    expect(warmups).toBe(1);
+    expect(readCodexAccountRecord(accountId)?.codexValidationPending).toBeUndefined();
+  });
+
   test("quota-pending reauth replaces only the same identity and clears stale validation", async () => {
     const accountId = "quota-reauth";
     const config = makeConfig({ codexAccounts: [{ id: accountId, email: "quota@example.test", plan: "pro", isMain: false }] });

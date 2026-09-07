@@ -1417,7 +1417,7 @@ async function fetchFreshPoolAccountQuota(
   }
 }
 
-async function fetchPoolAccountQuota(
+export async function fetchPoolAccountQuota(
   accountId: string,
   forceRefresh = false,
   configuredPlan?: string,
@@ -1460,6 +1460,13 @@ async function fetchPoolAccountQuota(
     generation => { state.resolvedCredentialGeneration = generation; },
     getValidToken,
   ).then(async result => {
+    // A passive flight has consumed its validation decision. Remove it before
+    // promise settlement queues other continuations, so a late explicit caller
+    // starts fresh work instead of setting an intent nobody will read again.
+    if (!state.validatePending) {
+      releaseFlight();
+      return result;
+    }
     // Only an explicit account-list refresh finishes deferred registration. Passive quota
     // polls and startup priming remain read-only with respect to inference spending.
     const generation = result.freshCredentialGeneration;
@@ -1490,13 +1497,16 @@ async function fetchPoolAccountQuota(
   const activeFlights = flights ?? new Set<PoolQuotaRefreshFlight>();
   activeFlights.add(flight);
   if (!flights) poolQuotaRefreshInFlight.set(accountId, activeFlights);
-  try {
-    return await refresh;
-  } finally {
+  const releaseFlight = () => {
     activeFlights.delete(flight);
     if (activeFlights.size === 0 && poolQuotaRefreshInFlight.get(accountId) === activeFlights) {
       poolQuotaRefreshInFlight.delete(accountId);
     }
+  };
+  try {
+    return await refresh;
+  } finally {
+    releaseFlight();
   }
 }
 
