@@ -16,7 +16,7 @@ const globals = [
   "document", "window", "navigator", "localStorage", "sessionStorage", "fetch", "IS_REACT_ACT_ENVIRONMENT",
 ] as const;
 
-type CachedSubagents = { available: string[]; chosen: string[]; fallback: string[]; pollMs: number };
+type CachedSubagents = { available: string[]; chosen: string[]; fallback?: string[]; pollMs?: number };
 type FallbackSettings = { models: string[]; pollMs: number };
 type SentRequest = { path: string; method: string; init?: RequestInit };
 type V2Settings = {
@@ -38,6 +38,7 @@ let failFallbackPut: boolean;
 let v2Settings: V2Settings;
 let preferredModel: string | null;
 let fallbackGetGate: Promise<void> | null;
+let pendingFallbackResponse: Promise<Response> | null;
 
 beforeEach(() => {
   clearClientResourceStoresForTests();
@@ -61,6 +62,7 @@ beforeEach(() => {
   v2Settings = { enabled: true, multiAgentMode: "v2", multiAgentModeHintText: null, keepNativeChatGptOnV1: false };
   preferredModel = null;
   fallbackGetGate = null;
+  pendingFallbackResponse = null;
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
     value: async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -69,6 +71,11 @@ beforeEach(() => {
       requests.push({ path, method, init });
       // Match agent-settings-routes: fallback uses models, roster uses chosen/applied.
       if (path === FALLBACK_PATH && method === "GET") {
+        if (pendingFallbackResponse) {
+          const pending = pendingFallbackResponse;
+          pendingFallbackResponse = null;
+          return pending;
+        }
         if (fallbackGetGate) await fallbackGetGate;
         return Response.json({ ...fallbackSettings, available });
       }
@@ -250,6 +257,51 @@ test("adds, reorders in both directions, and removes fallback models before savi
   expect(putBodies(ROSTER_PATH)).toEqual([]);
 });
 
+test("keyboard moves retain row focus and removal moves focus to the next row or add control", async () => {
+  fallbackSettings.models = ["a-1", "a-2", "a-3"];
+  await mount();
+
+  const activateWithEnter = async (button: HTMLButtonElement) => {
+    expect(button.disabled).toBe(false);
+    await act(async () => {
+      button.focus();
+      expect(testWindow.document.activeElement).toBe(button);
+      button.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+      // happy-dom does not synthesize native button activation from Enter. Supply the
+      // keyboard-generated click (detail 0) explicitly; this test covers focus restoration.
+      button.dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true, detail: 0 }));
+      button.dispatchEvent(new testWindow.KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+    });
+  };
+
+  const middleRow = rows()[1];
+  await activateWithEnter(rowButton(1, "sub.moveDown", "a-2"));
+  expectOrder(["a-1", "a-3", "a-2"]);
+  expect(rows()[2]).toBe(middleRow);
+  expect(rowButton(2, "sub.moveDown", "a-2").disabled).toBe(true);
+  // The requested direction is disabled at the boundary; focus an enabled action
+  // in the moved row, rather than the neighboring row or document.body.
+  expect(testWindow.document.activeElement).toBe(rowButton(2, "sub.moveUp", "a-2"));
+
+  await activateWithEnter(rowButton(2, "sub.moveUp", "a-2"));
+  expectOrder(["a-1", "a-2", "a-3"]);
+  expect(rows()[1]).toBe(middleRow);
+  expect(testWindow.document.activeElement).toBe(rowButton(1, "sub.moveUp", "a-2"));
+
+  await activateWithEnter(rowButton(1, "sub.removeAria", "a-2"));
+  expectOrder(["a-1", "a-3"]);
+  expect(testWindow.document.activeElement).toBe(rowButton(1, "sub.removeAria", "a-3"));
+
+  await activateWithEnter(rowButton(1, "sub.removeAria", "a-3"));
+  expectOrder(["a-1"]);
+  expect(testWindow.document.activeElement).toBe(rowButton(0, "sub.removeAria", "a-1"));
+
+  await activateWithEnter(rowButton(0, "sub.removeAria", "a-1"));
+  expectOrder([]);
+  expect(testWindow.document.activeElement).toBe(labelledButton(editor(), en["sub.fallbackAdd"]));
+  expect(putBodies()).toEqual([]);
+});
+
 test("removes only the selected duplicate fallback occurrence by index", async () => {
   fallbackSettings.models = ["a-2", "a-1", "a-2", "a-3"];
   await mount();
@@ -362,6 +414,103 @@ test("remount shows the committed fallback and roster while a fresh fallback GET
   }
   expectOrder(["a-2", "a-3"]);
   expect(pollInput().value).toBe("120000");
+});
+
+test("a legacy cache keeps fallback disabled through GET failure, roster Save, and remount", async () => {
+  const legacyCache = { available, chosen: ["a-1"] };
+  testWindow.sessionStorage.setItem(CACHE_KEY, JSON.stringify(legacyCache));
+  let releaseGet!: (response: Response) => void;
+  pendingFallbackResponse = new Promise<Response>(resolve => { releaseGet = resolve; });
+
+  const assertBlocked = async (expectedCache = legacyCache) => {
+    expect(labelledButton(editor(), en["sub.fallbackAdd"]).disabled).toBe(true);
+    expect(pollInput().disabled).toBe(true);
+    expect(saveButton().disabled).toBe(true);
+    expect(Array.from(editor().querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button"))
+      .every(control => control.disabled)).toBe(true);
+    await act(async () => { saveButton().click(); });
+    expect(putBodies()).toEqual([]);
+    expect(cached()).toEqual(expectedCache);
+    expect(cached()).not.toHaveProperty("fallback");
+    expect(cached()).not.toHaveProperty("pollMs");
+    // A failed read must never turn the page's empty placeholder into a saved empty chain.
+    expect(fallbackSettings).toEqual({ models: ["a-2"], pollMs: 45_000 });
+  };
+
+  try {
+    await mount();
+    expect(rows()).toHaveLength(0);
+    expect(pendingFallbackResponse).toBeNull();
+    await assertBlocked();
+  } finally {
+    await act(async () => {
+      releaseGet(Response.json({ error: "Fallback discovery failed" }, { status: 503 }));
+    });
+  }
+  expect(container.textContent).toContain(en["sub.loadFail"]);
+  await assertBlocked();
+
+  await click(labelledButton(container, en["sub.workspace.addToFeatured"].replace("{m}", "a-3")));
+  const rosterSaveRow = container.querySelector(".swi-save-row");
+  if (!rosterSaveRow) throw new Error("Roster Save row not found");
+  await click(saveButton(rosterSaveRow));
+  const savedRosterCache = { available, chosen: ["a-1", "a-3"] };
+  expect(putBodies(ROSTER_PATH)).toEqual([{ models: ["a-1", "a-3"] }]);
+  await assertBlocked(savedRosterCache);
+
+  const current = root!;
+  await act(async () => { current.unmount(); });
+  root = null;
+  clearClientResourceStoresForTests();
+  const getsBefore = requests.filter(request => request.path === FALLBACK_PATH && request.method === "GET").length;
+  pendingFallbackResponse = new Promise<Response>(resolve => { releaseGet = resolve; });
+  try {
+    await mount();
+    expect(requests.filter(request => request.path === FALLBACK_PATH && request.method === "GET")).toHaveLength(getsBefore + 1);
+    expect(pendingFallbackResponse).toBeNull();
+    await assertBlocked(savedRosterCache);
+  } finally {
+    await act(async () => {
+      releaseGet(Response.json({ error: "Fallback discovery still unavailable" }, { status: 503 }));
+    });
+  }
+  expect(container.textContent).toContain(en["sub.loadFail"]);
+  await assertBlocked(savedRosterCache);
+  expect(putBodies(ROSTER_PATH)).toEqual([{ models: ["a-1", "a-3"] }]);
+});
+
+test.each([false, true])("a captured old fallback GET cannot overwrite a newer draft or save (saved=%s)", async (saveNewer) => {
+  const committedA = { available, chosen: ["a-1"], fallback: ["a-2"], pollMs: 45_000 };
+  testWindow.sessionStorage.setItem(CACHE_KEY, JSON.stringify(committedA));
+  // Serialize A before any edit or PUT. Reading mutable fallbackSettings after the gate
+  // would accidentally return B and let the stale-response regression pass.
+  const capturedOldResponse = Response.json({ models: ["a-2"], pollMs: 45_000, available });
+  let releaseGet!: (response: Response) => void;
+  pendingFallbackResponse = new Promise<Response>(resolve => { releaseGet = resolve; });
+  const committedB = { available, chosen: ["a-1"], fallback: ["a-3"], pollMs: 90_000 };
+
+  try {
+    await mount();
+    expect(pendingFallbackResponse).toBeNull();
+    expectOrder(["a-2"]);
+    await addFallback("a-3");
+    await click(rowButton(0, "sub.removeAria", "a-2"));
+    await changePollMs(90_000);
+    if (saveNewer) await click(saveButton());
+    expectOrder(["a-3"]);
+    expect(pollInput().value).toBe("90000");
+    expect(cached()).toEqual(saveNewer ? committedB : committedA);
+  } finally {
+    await act(async () => { releaseGet(capturedOldResponse); });
+  }
+
+  // The delayed GET has now settled; both UI fields and the committed session seed
+  // must retain their respective newer-draft / newer-save semantics.
+  expect(capturedOldResponse.bodyUsed).toBe(true);
+  expectOrder(["a-3"]);
+  expect(pollInput().value).toBe("90000");
+  expect(cached()).toEqual(saveNewer ? committedB : committedA);
+  expect(putBodies()).toEqual(saveNewer ? [{ models: ["a-3"], pollMs: 90_000 }] : []);
 });
 
 test("invalid polling intervals disable Save without a PUT or cache mutation, and a valid interval recovers", async () => {

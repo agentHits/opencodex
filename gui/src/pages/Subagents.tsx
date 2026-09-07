@@ -8,7 +8,7 @@ import { useDataSurface } from "../data-surface";
 import { DataSurfaceSkeleton } from "../components/data-surface";
 import { useSubagentDelegation, type UltraModePatch, type UltraModeState } from "./use-subagent-delegation";
 
-type CachedSubagents = { available: string[]; chosen: string[]; fallback: string[]; pollMs: number };
+type CachedSubagents = { available: string[]; chosen: string[]; fallback?: string[]; pollMs?: number };
 
 function seedSubagents(cacheKey: string): CachedSubagents | null {
   return readSessionListCache<CachedSubagents>(cacheKey);
@@ -22,6 +22,9 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   const [fallback, setFallback] = useState<string[]>(() => cached?.fallback ?? []);
   const [fallbackPollMs, setFallbackPollMs] = useState(() => cached?.pollMs ?? 60000);
   const [fallbackBusy, setFallbackBusy] = useState(false);
+  const [fallbackLoaded, setFallbackLoaded] = useState(() => Array.isArray(cached?.fallback) && Number.isInteger(cached?.pollMs));
+  const fallbackRevision = useRef(0);
+  const rosterRevision = useRef(0);
   const fallbackSaveInFlight = useRef(false);
   const committed = useRef<CachedSubagents | null>(cached);
   const [status, setStatus] = useState("");
@@ -125,6 +128,8 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   const loadSubagents = useCallback(async (signal?: AbortSignal): Promise<CachedSubagents> => {
     // The resource layer's deadline abort must reach the wire — a signal dropped
     // here is a store that can only settle by race timeout.
+    const rosterReadRevision = rosterRevision.current;
+    const fallbackReadRevision = fallbackRevision.current;
     const [rosterRes, fallbackRes] = await Promise.all([
       fetch(`${apiBase}/api/subagent-models`, { signal }),
       fetch(`${apiBase}/api/subagent-model-fallback`, { signal }),
@@ -134,18 +139,23 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
     if (!response || !fallbackResponse) throw new Error(t("sub.loadFail"));
     const available = response.available ?? fallbackResponse.available ?? [];
     const availableSet = new Set(available);
+    const rosterCurrent = rosterReadRevision === rosterRevision.current && !saveInFlight.current;
+    const fallbackCurrent = fallbackReadRevision === fallbackRevision.current && !fallbackSaveInFlight.current;
     const next = {
       available,
-      chosen: (response.chosen ?? []).filter(model => availableSet.has(model)),
+      chosen: rosterCurrent ? (response.chosen ?? []).filter(model => availableSet.has(model)) : committed.current?.chosen ?? [],
       // Configured targets remain editable even when discovery no longer advertises them.
-      fallback: fallbackResponse.models ?? [],
-      pollMs: fallbackResponse.pollMs ?? 60000,
+      fallback: fallbackCurrent ? fallbackResponse.models ?? [] : committed.current?.fallback ?? [],
+      pollMs: fallbackCurrent ? fallbackResponse.pollMs ?? 60000 : committed.current?.pollMs ?? 60000,
     };
     if (signal?.aborted) throw signal.reason;
     committed.current = next;
-    setChosen(next.chosen);
-    setFallback(next.fallback);
-    setFallbackPollMs(next.pollMs);
+    if (rosterCurrent) setChosen(next.chosen);
+    if (fallbackCurrent) {
+      setFallback(next.fallback);
+      setFallbackPollMs(next.pollMs);
+      setFallbackLoaded(true);
+    }
     writeSessionListCache(cacheKey, next);
     return next;
   }, [apiBase, cacheKey, t]);
@@ -166,10 +176,12 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   const toggle = (m: string) => {
     if (busy) return;
     setStatus("");
+    rosterRevision.current += 1;
     setChosen(prev => prev.includes(m) ? prev.filter(x => x !== m) : (prev.length >= FEATURED_MAX ? prev : [...prev, m]));
   };
   const move = (i: number, dir: -1 | 1) => {
     if (busy) return;
+    rosterRevision.current += 1;
     setChosen(prev => {
       const next = [...prev];
       const j = i + dir;
@@ -182,6 +194,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   const save = async () => {
     if (busy || saveInFlight.current) return;
     saveInFlight.current = true;
+    rosterRevision.current += 1;
     setBusy(true);
     setStatus("");
     try {
@@ -191,9 +204,11 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
         body: JSON.stringify({ models: chosen }),
       });
       const d = await readJsonOrThrow<{ applied?: string[] }>(r, t("sub.saveFailed"));
+      rosterRevision.current += 1;
       const applied = d?.applied ?? chosen;
       if (d?.applied) setChosen(d.applied);
-      const next = { available, chosen: applied, fallback: committed.current?.fallback ?? [], pollMs: committed.current?.pollMs ?? 60000 };
+      // A legacy roster-only seed does not prove that an empty fallback was loaded.
+      const next = { ...committed.current, available, chosen: applied };
       committed.current = next;
       writeSessionListCache(cacheKey, next);
       setOk(true);
@@ -208,8 +223,9 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   };
 
   const saveFallback = async () => {
-    if (fallbackSaveInFlight.current || !Number.isInteger(fallbackPollMs) || fallbackPollMs < 5000 || fallbackPollMs > 600000) return;
+    if (!fallbackLoaded || fallbackSaveInFlight.current || !Number.isInteger(fallbackPollMs) || fallbackPollMs < 5000 || fallbackPollMs > 600000) return;
     fallbackSaveInFlight.current = true;
+    fallbackRevision.current += 1;
     const requestApiBase = apiBase;
     setFallbackBusy(true);
     setStatus("");
@@ -222,6 +238,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       const d = await readJsonOrThrow<{ models?: string[]; pollMs?: number }>(r, t("sub.fallbackSaveFailed"));
       if (currentUltraApiBase.current !== requestApiBase) return;
       if (!d || !Array.isArray(d.models) || typeof d.pollMs !== "number") throw new Error(t("sub.fallbackSaveFailed"));
+      fallbackRevision.current += 1;
       setFallback(d.models);
       setFallbackPollMs(d.pollMs);
       const next = { available, chosen: committed.current?.chosen ?? [], fallback: d.models, pollMs: d.pollMs };
@@ -260,6 +277,7 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       </div>
       {status && <Notice tone={ok ? "ok" : "err"}>{status}</Notice>}
       {state.showError && <Notice tone="err">{t("sub.loadFail")}</Notice>}
+      {!fallbackLoaded && state.showError && <button type="button" className="btn btn-ghost btn-sm" onClick={() => load()}>{t("common.retry")}</button>}
       <SubagentsWorkspace
         available={available}
         chosen={chosen}
@@ -269,9 +287,9 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
           onSave={() => { void save(); }}
           fallback={fallback}
           fallbackPollMs={fallbackPollMs}
-          fallbackBusy={fallbackBusy}
-          onFallbackChange={setFallback}
-          onFallbackPollMsChange={setFallbackPollMs}
+          fallbackBusy={fallbackBusy || !fallbackLoaded}
+          onFallbackChange={models => { fallbackRevision.current += 1; setFallback(models); }}
+          onFallbackPollMsChange={pollMs => { fallbackRevision.current += 1; setFallbackPollMs(pollMs); }}
           onFallbackSave={() => { void saveFallback(); }}
         delegation={{
           model: delegation.model,

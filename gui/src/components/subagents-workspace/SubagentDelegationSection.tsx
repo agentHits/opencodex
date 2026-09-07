@@ -6,7 +6,7 @@
  * better next to the roster it affects: the roster picks who may be called, this picks who
  * gets called first.
  */
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Select, Tooltip } from "../../ui";
 import { IconArrowDown, IconArrowUp, IconInfo, IconX } from "../../icons";
 import { useT, type TKey } from "../../i18n/shared";
@@ -63,12 +63,36 @@ export default function SubagentDelegationSection({
   const nativeMayUseV2 = ultraMode.enabled || (ultraMode.multiAgentMode !== "v1"
     && !(ultraMode.multiAgentMode === "v2" && ultraMode.keepNativeChatGptOnV1));
   const showV2Compatibility = !ultraLoadFailed && ultraMode.loaded === true && routedPreferred && nativeMayUseV2;
+  const fallbackControlsRef = useRef<HTMLDivElement>(null);
+  const nextRowId = useRef(0);
+  const rowIdentity = useRef<Array<{ model: string; id: number }>>([]);
+  // Reuse each configured occurrence across reorder; duplicates have distinct IDs.
+  if (rowIdentity.current.length !== fallback.length || rowIdentity.current.some((row, i) => row.model !== fallback[i])) {
+    const remaining = [...rowIdentity.current];
+    rowIdentity.current = fallback.map(modelName => {
+      const old = remaining.findIndex(row => row.model === modelName);
+      return old >= 0 ? remaining.splice(old, 1)[0] : { model: modelName, id: nextRowId.current++ };
+    });
+  }
+  const pendingFocus = useRef<{ row: number; action: string } | null>(null);
+  useLayoutEffect(() => {
+    const target = pendingFocus.current;
+    if (!target) return;
+    pendingFocus.current = null;
+    const row = fallbackControlsRef.current?.querySelectorAll(".swi-fallback-row")[target.row];
+    const action = row?.querySelector<HTMLButtonElement>(`button[data-action="${target.action}"]:not(:disabled)`)
+      ?? row?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?? fallbackControlsRef.current?.querySelector<HTMLButtonElement>('button[role="combobox"]');
+    action?.focus();
+  }, [fallback]);
   const validPollMs = Number.isInteger(fallbackPollMs) && fallbackPollMs >= 5000 && fallbackPollMs <= 600000;
   const moveFallback = (index: number, direction: -1 | 1) => {
     const next = [...fallback];
     const target = index + direction;
     if (fallbackBusy || target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
+    [rowIdentity.current[index], rowIdentity.current[target]] = [rowIdentity.current[target], rowIdentity.current[index]];
+    pendingFocus.current = { row: target, action: direction === -1 ? "up" : "down" };
     onFallbackChange(next);
   };
 
@@ -134,16 +158,20 @@ export default function SubagentDelegationSection({
           <div className="font-semibold">{t("sub.fallbackLabel")}</div>
           <div className="muted setting-hint">{t("sub.fallbackHint")}</div>
         </div>
-        <div className="swi-fallback-controls">
+        <div className="swi-fallback-controls" ref={fallbackControlsRef}>
           {fallback.map((modelName, index) => (
-            <div key={`${index}:${modelName}`} className="swi-fallback-row">
+            <div key={rowIdentity.current[index].id} className="swi-fallback-row">
               <span className="swi-fallback-model">{index + 1}. {modelName}
                 {!availableModels.includes(modelName) && <span className="muted setting-hint">{t("sub.fallbackUnavailable")}</span>}
               </span>
               <span className="swi-fallback-actions">
-                <button type="button" className="btn btn-ghost btn-icon btn-sm" onClick={() => moveFallback(index, -1)} disabled={fallbackBusy || index === 0} aria-label={t("sub.moveUp", { m: modelName })}><IconArrowUp /></button>
-                <button type="button" className="btn btn-ghost btn-icon btn-sm" onClick={() => moveFallback(index, 1)} disabled={fallbackBusy || index === fallback.length - 1} aria-label={t("sub.moveDown", { m: modelName })}><IconArrowDown /></button>
-                <button type="button" className="btn btn-ghost btn-icon btn-sm" onClick={() => onFallbackChange(fallback.filter((_, i) => i !== index))} disabled={fallbackBusy} aria-label={t("sub.removeAria", { m: modelName })}><IconX /></button>
+                <button type="button" className="btn btn-ghost btn-icon btn-sm" data-action="up" onClick={() => moveFallback(index, -1)} disabled={fallbackBusy || index === 0} aria-label={t("sub.moveUp", { m: modelName })}><IconArrowUp /></button>
+                <button type="button" className="btn btn-ghost btn-icon btn-sm" data-action="down" onClick={() => moveFallback(index, 1)} disabled={fallbackBusy || index === fallback.length - 1} aria-label={t("sub.moveDown", { m: modelName })}><IconArrowDown /></button>
+                <button type="button" className="btn btn-ghost btn-icon btn-sm" data-action="remove" onClick={() => {
+                  rowIdentity.current.splice(index, 1);
+                  pendingFocus.current = { row: Math.max(0, Math.min(index, fallback.length - 2)), action: "remove" };
+                  onFallbackChange(fallback.filter((_, i) => i !== index));
+                }} disabled={fallbackBusy} aria-label={t("sub.removeAria", { m: modelName })}><IconX /></button>
               </span>
             </div>
           ))}
