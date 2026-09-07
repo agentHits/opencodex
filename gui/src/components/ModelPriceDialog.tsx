@@ -62,8 +62,6 @@ export default function ModelPriceDialog({ model, apiBase, onRefresh, onClose }:
     if (requestRef.current) return;
     const bounded = createBoundedFetch(REQUEST_TIMEOUT_MS);
     requestRef.current = bounded;
-    setPhase("loading");
-    setErrorKey(null);
     try {
       const response = await fetch(endpoint, { signal: bounded.signal, cache: "no-store" });
       const result = await readJsonOrThrow<unknown>(response);
@@ -168,7 +166,12 @@ export default function ModelPriceDialog({ model, apiBase, onRefresh, onClose }:
         onSubmit={event => {
           event.preventDefault();
           if (requestRef.current) return;
-          if (phase === "unknown" || phase === "loadFailed") { void readOverride(phase === "unknown"); return; }
+          if (phase === "unknown" || phase === "loadFailed") {
+            setPhase("loading");
+            setErrorKey(null);
+            void readOverride(phase === "unknown");
+            return;
+          }
           if (phase === "refreshFailed") { void save(undefined); return; }
           if (locked) return;
           const cost = {
