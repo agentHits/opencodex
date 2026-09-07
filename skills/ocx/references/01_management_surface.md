@@ -394,7 +394,7 @@ JSON mode: `payload`.
 
 ### `ocx account refresh`
 
-Refresh account quotas and finish pending Codex validation when quota has recovered.
+Refresh account quotas without model validation; pending Codex accounts require dashboard consent.
 
 | Method | Route |
 |---|---|
@@ -407,7 +407,7 @@ Refresh account quotas and finish pending Codex validation when quota has recove
 
 JSON mode: `payload`.
 
-- For Codex, recovered pending accounts require a model validation request before becoming routable. Account listing, including list --refresh, never performs this validation.
+- CLI/admin-token refreshes only observe usage. After quota recovery, a human must click Refresh quotas in the dashboard to authorize model validation. Do not mint a GUI session to work around this consent boundary.
 
 ### `ocx account pause`
 

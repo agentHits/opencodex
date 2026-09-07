@@ -10,9 +10,10 @@ inference stream. The account identity and credentials are synthetic. The empty
 native-main home explains the separate Main Account warning in both screenshots.
 No live OpenAI account was used or charged.
 
-The browser was Microsoft Edge through Playwright, at 1440 × 1100, English/light
-theme, with external browser requests blocked. Verification ran on Windows.
-The final capture used runtime and GUI changes through `25798a590`.
+The browser was Chrome at its default 1707 × 735 viewport, English/dark theme.
+Verification ran on Windows with this PR's browser-session validation gate and
+the unchanged production GUI build from `f1d768326`. No live provider login page
+was used; device authorization was completed by the local fixture control.
 
 1. Open Codex Set → Multi-auth, click Add, enter an account ID, and choose Device
    code login. Authorize through the mock device service.
@@ -28,13 +29,15 @@ The final capture used runtime and GUI changes through `25798a590`.
    The server receives a completed validation response. Cumulative counts:
    three usage reads, one model call. The pending flag clears, the validation
    timestamp is persisted, and “Use this account next” appears.
-5. Select the recovered account and confirm the dialog. The real active-account
-   endpoint and stored config both report `weekly-demo` as selected and pinned.
+5. Select the recovered account and confirm the dialog. The stored config reports
+   `weekly-demo` as the active account.
 
-Both explicit refreshes used `POST /api/codex-auth/accounts/refresh` with the GUI
-session's CSRF header. The actual server accepted them. Separate live-server tests
-reject POSTs without CSRF or with a different Origin; GET quota refreshes never
-complete pending validation.
+Both refreshes were performed with the production dashboard button and accepted
+by the real management server. Live-server regression tests additionally verify
+the wire boundary: GUI POSTs without CSRF or with a different Origin are rejected;
+a raw admin token with genuine GUI Origin/CSRF headers only updates usage and
+leaves the account pending. Only the authenticated GUI session completes model
+validation. GET quota refreshes remain observational.
 
 | Capture | Weekly usage | Pending | Model calls so far |
 | --- | --- | --- | --- |

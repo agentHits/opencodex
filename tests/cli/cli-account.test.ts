@@ -2132,11 +2132,11 @@ describe("ocx account CLI (issue #180 matrix)", () => {
       const human = await run(["login", "openai"]);
       expect(human.code).toBe(0);
       expect(human.stdout).toContain("validation pending (routing disabled)");
-      expect(human.stdout).toContain("ocx account refresh openai");
+      expect(human.stdout).toContain("ocx gui");
       expect(human.stdout).not.toContain("Logged in");
       expect(human.stdout).not.toContain("ocx models");
       const machine = await run(["login", "openai", "--json"]);
-      expect(JSON.parse(machine.stdout)).toMatchObject({ validationPending: true, recoveryCommand: "ocx account refresh openai" });
+      expect(JSON.parse(machine.stdout)).toMatchObject({ validationPending: true, recoveryCommand: "ocx gui" });
       expect(JSON.parse(machine.stdout)).not.toHaveProperty("modelSelection");
     } finally {
       sleepSpy.mockRestore();

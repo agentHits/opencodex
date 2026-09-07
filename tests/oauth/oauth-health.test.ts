@@ -131,7 +131,7 @@ describe("collectOAuthHealthEntries", () => {
       .toEqual({
         provider: "codex", accountId: "pending-local",
         health: { status: "warning", reason: "validation_pending" },
-        action: "wait for quota recovery, then refresh Codex account quotas to finish validation",
+        action: "wait for quota recovery, then click Refresh quotas in the dashboard Codex account pool to finish validation",
       });
   });
   test("projects needsReauth account with reauth action", async () => {

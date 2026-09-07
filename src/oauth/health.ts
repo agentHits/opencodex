@@ -90,7 +90,7 @@ export const CODEX_REAUTH_ACTION = "reauthenticate via the dashboard Codex accou
 
 function actionFor(provider: string, health: OAuthAccountHealth): string | undefined {
   if (health.status === "warning" && health.reason === "validation_pending") {
-    return "wait for quota recovery, then refresh Codex account quotas to finish validation";
+    return "wait for quota recovery, then click Refresh quotas in the dashboard Codex account pool to finish validation";
   }
   if (health.status === "reauth_required") {
     if (provider === "codex") return CODEX_REAUTH_ACTION;

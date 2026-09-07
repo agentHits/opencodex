@@ -266,12 +266,12 @@ export async function fetchCodexRows(
   baseUrl: string,
   forceRefresh = false,
   includeQuota = forceRefresh,
-  options: { validatePending?: boolean } = {},
+  options: { refreshAction?: boolean } = {},
 ): Promise<FamilyRows> {
-  const validatePending = options.validatePending === true;
-  const accountsPath = `/api/codex-auth/accounts${validatePending ? "/refresh" : forceRefresh ? "?refresh=1" : ""}`;
+  const refreshAction = options.refreshAction === true;
+  const accountsPath = `/api/codex-auth/accounts${refreshAction ? "/refresh" : forceRefresh ? "?refresh=1" : ""}`;
   const [accountsRes, activeRes] = await Promise.all([
-    apiJson(deps, baseUrl, validatePending ? "POST" : "GET", accountsPath),
+    apiJson(deps, baseUrl, refreshAction ? "POST" : "GET", accountsPath),
     apiJson(deps, baseUrl, "GET", "/api/codex-auth/active"),
   ]);
   if (accountsRes.status !== 0 && accountsRes.status !== 200) {

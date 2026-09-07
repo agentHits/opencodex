@@ -5007,7 +5007,7 @@ describe("codex-auth API", () => {
     let replaceDuringWarmup = false;
     const refreshAccounts = async () => {
       const req = new Request("http://localhost/api/codex-auth/accounts/refresh", { method: "POST" });
-      const response = await handleCodexAuthAPI(req, new URL(req.url), config);
+      const response = await handleCodexAuthAPI(req, new URL(req.url), config, undefined, "gui-session");
       expect(response?.status).toBe(200);
     };
     const selectAccount = () => {
@@ -5094,7 +5094,7 @@ describe("codex-auth API", () => {
     }) as typeof fetch;
     const refresh = async () => {
       const req = new Request("http://localhost/api/codex-auth/accounts/refresh", { method: "POST" });
-      const response = await handleCodexAuthAPI(req, new URL(req.url), config);
+      const response = await handleCodexAuthAPI(req, new URL(req.url), config, undefined, "gui-session");
       expect(response?.status).toBe(200);
       return await response!.json();
     };
@@ -5118,6 +5118,30 @@ describe("codex-auth API", () => {
     expect(isCodexAccountUsable(config, accountId)).toBe(true);
   });
 
+  test.each([undefined, "admin-token", "local-read-capability"] as const)("non-browser refresh stays observational for principal %s", async principal => {
+    const accountId = "validation-consent";
+    const config = makeConfig({ codexAccounts: [{ id: accountId, plan: "pro", isMain: false }] });
+    saveConfig(config);
+    setLiveStateStoreConfig(config);
+    saveCodexAccountCredential(accountId, { accessToken: "consent-access", refreshToken: "consent-refresh",
+      expiresAt: Date.now() + 3600_000, chatgptAccountId: "consent-account" }, { validationPending: true });
+    let warmups = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/wham/usage")) return Response.json({ plan_type: "pro",
+        rate_limit: { secondary_window: { used_percent: 12, limit_window_seconds: 604800 } } });
+      warmups++;
+      return new Response('data: {"type":"response.completed"}\n\n');
+    }) as typeof fetch;
+    const req = new Request("http://localhost/api/codex-auth/accounts/refresh", { method: "POST",
+      headers: { "x-opencodex-gui-origin": "http://localhost", "x-opencodex-csrf-token": "forged" } });
+    const response = await handleCodexAuthAPI(req, new URL(req.url), config, undefined, principal);
+    expect(response?.status).toBe(200);
+    expect((await response!.json()).accounts.find((row: { id: string }) => row.id === accountId).quota.weeklyPercent).toBe(12);
+    expect(warmups).toBe(0);
+    expect(readCodexAccountRecord(accountId)?.codexValidationPending).toBe(true);
+    expect(isCodexAccountUsable(config, accountId)).toBe(false);
+  });
+
   test("explicit validation preserves an account's pause and selection state", async () => {
     const accountId = "paused-validation";
     const config = makeConfig({ codexAccounts: [{ id: accountId, plan: "pro", isMain: false }], pausedCodexAccountIds: [accountId] });
@@ -5136,7 +5160,7 @@ describe("codex-auth API", () => {
       throw new Error("unexpected request");
     }) as typeof fetch;
     const req = new Request("http://localhost/api/codex-auth/accounts/refresh", { method: "POST" });
-    expect((await handleCodexAuthAPI(req, new URL(req.url), config))?.status).toBe(200);
+    expect((await handleCodexAuthAPI(req, new URL(req.url), config, undefined, "gui-session"))?.status).toBe(200);
     expect(warmups).toBe(1);
     expect(readCodexAccountRecord(accountId)?.codexValidationPending).toBeUndefined();
     expect(loadConfig().pausedCodexAccountIds).toEqual([accountId]);

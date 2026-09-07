@@ -1987,6 +1987,7 @@ export async function handleCodexAuthAPI(
   url: URL,
   config: OcxConfig,
   convergeCodexCatalog?: CodexAuthCatalogConvergence,
+  principal?: import("../server/management-auth").ManagementPrincipal,
 ): Promise<Response | null> {
 
   if (url.pathname === "/api/codex-auth/accounts" && req.method === "GET") {
@@ -1995,9 +1996,11 @@ export async function handleCodexAuthAPI(
   }
 
   if (url.pathname === "/api/codex-auth/accounts/refresh" && req.method === "POST") {
-    // Completing validation spends inference and changes durable readiness, so it
-    // must pass the management mutation/CSRF boundary rather than a read-only GET.
-    return jsonResponse({ accounts: await listCodexAuthAccounts(config, true, { validatePending: true }) });
+    // Inference spends quota: only a dashboard session carries the consent
+    // required by AGENTS_INSTALL.md. Raw-admin/CLI refreshes remain observational.
+    return jsonResponse({ accounts: await listCodexAuthAccounts(config, true, {
+      validatePending: principal === "gui-session",
+    }) });
   }
 
   if (url.pathname === "/api/codex-auth/accounts" && req.method === "POST") {
