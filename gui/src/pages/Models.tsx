@@ -1,10 +1,11 @@
 import { CodexStaleBanner } from "../components/codex-stale-banner";
+import ModelPickerOrderEditor from "../components/ModelPickerOrderEditor";
 import ModelDisplayNameDialog from "../components/ModelDisplayNameDialog";
 import ModelPriceDialog from "../components/ModelPriceDialog";
 import { fetchCodexAppServerState } from "../codex-app-server-state";
 import type { AppServerStateOutcome } from "../codex-app-server-state";
 import { useCodexRestart } from "../use-codex-restart";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Switch, Notice, EmptyState, Select, Tooltip } from "../ui";
 import { IconChevron, IconBoxes, IconInfo, IconCheck, IconAlert, IconRefresh, IconPencil } from "../icons";
 import { useT } from "../i18n/shared";
@@ -18,7 +19,7 @@ import { setClientResourceData } from "../client-resource";
 import { createBoundedFetch, type BoundedFetch } from "../bounded-fetch";
 import {
   isModelPickerUsage, isPickerOrderSaved, isPickerOrderSettings, modelPickerOrder, modelPickerOrderMode,
-  type ModelPickerOrderMode, type PickerOrderSettings, type ModelPickerUsage,
+  type ModelPickerOrderMode, type PickerOrderSettings, type PickerOrderSaved, type ModelPickerUsage,
 } from "../model-picker-order";
 import { startVisibilityPoll } from "../visibility-poll";
 import { useDataSurface } from "../data-surface";
@@ -253,6 +254,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
   const [pickerDraft, setPickerDraft] = useState<ModelPickerOrderMode | null>(null);
   const [pickerBusy, setPickerBusy] = useState(false);
   const pickerFlight = useRef<BoundedFetch | null>(null);
+  const pickerGeneration = useRef(0);
   const pickerResource = useDataSurface<PickerOrderSettings>(
     pickerCacheKey, [apiBase],
     useCallback(async (signal: AbortSignal) => {
@@ -269,16 +271,22 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
   const pickerMode = pickerDraft ?? modelPickerOrderMode(
     pickerSettings?.pickerAvailable ?? [], pickerSettings?.pickerOrder ?? [], pickerSettings?.pickerOrderMode,
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
+    pickerGeneration.current++;
     setPickerDraft(null);
     setPickerBusy(false);
     return () => {
+      pickerGeneration.current++;
       pickerFlight.current?.controller.abort();
       pickerFlight.current?.clear();
       pickerFlight.current = null;
       cancelAppServerRead();
     };
   }, [apiBase, catalogActive, cancelAppServerRead]);
+  useLayoutEffect(() => {
+    // Pin inferred Custom before any late GET can switch mode and unmount its draft.
+    if (catalogActive && pickerDraft === null && pickerMode === "custom") setPickerDraft("custom");
+  }, [catalogActive, pickerDraft, pickerMode]);
   const [customCap, setCustomCap] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [providerCapCustomOpen, setProviderCapCustomOpen] = useState<Record<string, boolean>>({});
@@ -1825,49 +1833,61 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
     ? groups.filter(group => group.provider === selectedProvider)
     : groups;
 
+  const acceptPickerOrder = (data: PickerOrderSaved & { catalogRefresh?: unknown }, custom = false) => {
+    // A receipt proves only the saved fields. No old chosen/available snapshot is promoted.
+    const next: PickerOrderSettings = { pickerOrder: data.pickerOrder, pickerOrderMode: data.pickerOrderMode, pickerAvailable: [] };
+    setClientResourceData(pickerCacheKey, next);
+    writeSessionListCache(pickerCacheKey, next);
+    if (custom) setPickerDraft("custom");
+    pickerResource.refresh();
+    const refresh = data.catalogRefresh;
+    const converged = refresh !== null && typeof refresh === "object"
+      && "status" in refresh && refresh.status === "committed"
+      && "degraded" in refresh && refresh.degraded === false;
+    publishFeedback(converged, t(converged ? "models.pickerOrder.saved" : "models.pickerOrder.pending"));
+    void reloadAppServerState();
+  };
+
   const savePickerOrder = async () => {
     if (pickerFlight.current || !pickerSettings || pickerResource.state.showError || pickerMode === "custom") return;
+    const owner = pickerGeneration.current;
     const mode = pickerMode;
     const available = pickerSettings.pickerAvailable;
     const bounded = createBoundedFetch(15_000);
     pickerFlight.current = bounded;
     setPickerBusy(true);
+    const owns = () => pickerGeneration.current === owner && pickerFlight.current === bounded;
+    const current = () => owns() && !bounded.signal.aborted;
     try {
       let usage: ModelPickerUsage[] = [];
       if (mode === "most-used") {
         const response = await fetch(`${apiBase}/api/usage?range=all&surface=all`, { signal: bounded.signal });
+        if (!current()) return;
         const payload = await readJsonOrThrow<{ models?: unknown }>(response, t("models.pickerOrder.usageFailed"));
+        if (!current()) return;
         if (!isModelPickerUsage(payload?.models)) throw new Error(t("models.pickerOrder.usageFailed"));
         usage = payload.models;
       }
+      if (!current()) return;
       const order = modelPickerOrder(mode, available, usage, models);
       const response = await fetch(`${apiBase}/api/subagent-models`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, signal: bounded.signal,
         body: JSON.stringify({ pickerOrder: order, pickerOrderMode: mode === "default" ? null : mode }),
       });
+      if (!current()) return;
       const data = await readJsonOrThrow<unknown>(response, t("models.saveFailed"));
       if (!isPickerOrderSaved(data) || !("ok" in data) || data.ok !== true) throw new Error(t("models.saveFailed"));
-      if (bounded.signal.aborted || pickerFlight.current !== bounded) return;
-      const next = { ...pickerSettings, pickerOrder: data.pickerOrder, pickerOrderMode: data.pickerOrderMode };
-      // This aborts an older GET and advances the shared resource generation.
-      setClientResourceData(pickerCacheKey, next);
-      writeSessionListCache(pickerCacheKey, next);
+      if (!current()) return;
+      acceptPickerOrder({ pickerOrder: data.pickerOrder, pickerOrderMode: data.pickerOrderMode,
+        catalogRefresh: "catalogRefresh" in data ? data.catalogRefresh : undefined });
       setPickerDraft(null);
-
-      const refresh = "catalogRefresh" in data ? data.catalogRefresh : undefined;
-      const converged = refresh !== null && typeof refresh === "object"
-        && "status" in refresh && refresh.status === "committed"
-        && "degraded" in refresh && refresh.degraded === false;
-      publishFeedback(converged, t(converged ? "models.pickerOrder.saved" : "models.pickerOrder.pending"));
-      // Durable save is already accepted. Observational failure must not undo it.
-      void reloadAppServerState();
     } catch (error) {
-      if (pickerFlight.current === bounded) {
+      if (owns()) {
         publishFeedback(false, error instanceof Error ? error.message : t("models.networkError"));
       }
     } finally {
       bounded.clear();
-      if (pickerFlight.current === bounded) { pickerFlight.current = null; setPickerBusy(false); }
+      if (owns()) { pickerFlight.current = null; setPickerBusy(false); }
     }
   };
 
@@ -2039,7 +2059,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
             { value: "alphabetical", label: t("models.pickerOrder.alphabetical") },
             { value: "provider", label: t("models.pickerOrder.provider") },
             { value: "most-used", label: t("models.pickerOrder.mostUsed") },
-            ...(pickerMode === "custom" ? [{ value: "custom", label: t("models.pickerOrder.custom") }] : []),
+            { value: "custom", label: t("models.pickerOrder.custom") },
           ]}
           onChange={value => setPickerDraft(value as ModelPickerOrderMode)}
           disabled={pickerBusy || !pickerSettings || pickerResource.state.showError}
@@ -2058,6 +2078,9 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
         </>}
         <span className="muted text-label leading-body">{t("models.pickerOrder.hint")}</span>
       </div>
+      {pickerMode === "custom" && <ModelPickerOrderEditor key={apiBase} apiBase={apiBase} active={catalogActive}
+        identities={models} onBusyChange={setPickerBusy} onAccepted={data => acceptPickerOrder(data, true)} />}
+
 
       {(() => {
         const customCount = models.filter(m => m.custom).length;

@@ -2659,6 +2659,21 @@ export const en = {
   "usage.range.invalid": "Enter valid local dates and times, on or after 1970-01-01 UTC.",
   "usage.range.reversed": "The end must be at or after the start.",
   "usage.range.applied": "Selected interval: {start} – {end} (both inclusive).",
+  "models.pickerOrder.editorHint": "Reorder routed models, then save your draft. Featured rows are fixed; native models are not shown.",
+  "models.pickerOrder.nativeLocked": "This saved order includes native models. Apply a routed preset or Default before editing Custom.",
+  "models.pickerOrder.unknownChosen": "Featured choices are unknown. Reload before editing.",
+  "models.pickerOrder.changed": "Picker settings changed. Your draft is kept; reload to discard it and use current settings.",
+  "models.pickerOrder.savedReload": "Order saved. Reload current settings before editing again.",
+  "models.pickerOrder.requestFailed": "Request failed. Your draft is kept; retry or reload.",
+  "models.pickerOrder.empty": "No routed models are available.",
+  "models.pickerOrder.dragModel": "Drag {model}",
+  "models.pickerOrder.featured": "Featured",
+  "models.pickerOrder.upModel": "Move {model} up",
+  "models.pickerOrder.downModel": "Move {model} down",
+  "models.pickerOrder.position": "{model}: position {position} of {total}",
+  "models.pickerOrder.saveDraft": "Save draft",
+  "models.pickerOrder.reloadDraft": "Reload and discard draft",
+  "models.pickerOrder.catalogRequired": "Model identities are missing or ambiguous. Reload the Models page to refresh its catalog before editing Custom.",
 } as const;
 
 export type TKey = keyof typeof en;
