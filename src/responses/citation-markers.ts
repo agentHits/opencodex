@@ -95,18 +95,29 @@ export function createCitationMarkerFilter(): CitationMarkerFilter {
     push(delta: string): string {
       const combined = held + delta;
       held = "";
-      const start = combined.lastIndexOf(CITATION_MARKER_START);
-      if (start === -1) return stripCitationMarkers(combined);
-      const endAfterStart = combined.indexOf(CITATION_MARKER_END, start + 1);
-      if (endAfterStart !== -1) return stripCitationMarkers(combined);
-      // Over the bound: this is not a citation span we will ever close. Emit it verbatim
-      // so neither the retained text nor the per-delta rescan grows without limit.
-      if (combined.length - start > MAX_STREAMING_MARKER_SPAN_LENGTH) {
-        return stripCitationMarkers(combined.slice(0, start)) + combined.slice(start);
+      let start = combined.indexOf(CITATION_MARKER_START);
+      if (start === -1) return combined;
+      let out = combined.slice(0, start);
+      // Walk START-delimited segments independently so an earlier malformed START is never
+      // paired with a later span's END (the whole-string strip would do exactly that).
+      while (start !== -1) {
+        const nextStart = combined.indexOf(CITATION_MARKER_START, start + 1);
+        const segment = combined.slice(start, nextStart === -1 ? combined.length : nextStart);
+        const end = segment.indexOf(CITATION_MARKER_END, 1);
+        if (end !== -1) {
+          // A complete span: drop it, keep whatever trails it inside this segment.
+          out += segment.slice(end + 1);
+        } else if (nextStart === -1 && segment.length <= MAX_STREAMING_MARKER_SPAN_LENGTH) {
+          // Only a bounded trailing span can still be completed by a later delta.
+          held = segment;
+        } else {
+          // Superseded by a later START, or over the bound: ordinary text, emitted verbatim
+          // so neither the retained text nor the per-delta rescan grows without limit.
+          out += segment;
+        }
+        start = nextStart;
       }
-      // The trailing span is still open: emit everything before it, hold the rest.
-      held = combined.slice(start);
-      return stripCitationMarkers(combined.slice(0, start));
+      return out;
     },
     flush(): string {
       const rest = held;
@@ -115,4 +126,3 @@ export function createCitationMarkerFilter(): CitationMarkerFilter {
     },
   };
 }
-

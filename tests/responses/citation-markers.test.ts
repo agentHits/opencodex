@@ -109,4 +109,12 @@ describe("streaming citation marker filter (#3150)", () => {
     expect(out).toBe(`a${S}${"y".repeat(5_000)} tail`);
     expect(filter.flush()).toBe("");
   });
+
+  test("an oversized malformed span survives a later valid marker in the same delta", () => {
+    const filter = createCitationMarkerFilter();
+    const malformed = `${S}${"y".repeat(5_000)}`;
+    expect(filter.push(`a${span}${malformed}${S}cite${P}turn1view0${E} tail`))
+      .toBe(`a${malformed} tail`);
+    expect(filter.flush()).toBe("");
+  });
 });
