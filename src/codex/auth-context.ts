@@ -6,6 +6,7 @@ import {
   CodexCredentialRefreshStaleError,
   getValidCodexToken,
   isCodexAccountGenerationLive,
+  readCodexAccountRecord,
 } from "./account-store";
 import { isAccountNeedsReauth, markAccountNeedsReauth } from "./account-runtime-state";
 import { ConfigMutationLockError } from "../config";
@@ -196,6 +197,19 @@ export class CodexPoolAuthenticationError extends Error {
   constructor(message = "OpenAI account pool has no usable account credential") {
     super(message);
     this.name = "CodexPoolAuthenticationError";
+  }
+}
+
+class CodexAccountValidationPendingError extends CodexPoolAuthenticationError {
+  constructor() {
+    super("Codex account validation is pending; refresh quota after recovery to validate it");
+    this.name = "CodexAccountValidationPendingError";
+  }
+}
+
+function assertCodexAccountValidationReady(accountId: string): void {
+  if (accountId !== MAIN_CODEX_ACCOUNT_ID && readCodexAccountRecord(accountId)?.codexValidationPending) {
+    throw new CodexAccountValidationPendingError();
   }
 }
 
@@ -536,6 +550,7 @@ export class CodexThreadAffinityExpiredError extends Error {
 
 export function shouldMarkAccountNeedsReauthForCodexAuthFailure(cause: unknown): boolean {
   return !(cause instanceof CodexMainAccountHardLockError)
+    && !(cause instanceof CodexAccountValidationPendingError)
     && !(cause instanceof CodexReserveUnavailableError)
     && !(cause instanceof CodexCredentialGenerationConflictError)
     && !(cause instanceof CodexCredentialRefreshLockTimeoutError)
@@ -851,6 +866,9 @@ export async function resolveCodexAuthContext(
   } finally {
     selectionAdmission?.release();
   }
+  // Legacy selectors may retain an unusable account for actionable errors. A
+  // deferred credential must never become request auth through that fallback.
+  assertCodexAccountValidationReady(accountId);
   // Lazy prime: if the selected account has no quota yet, the pool is likely
   // unprimed (dashboard never opened, or startup prime was blocked). Kick a
   // best-effort prime so the NEXT routing decision has real scores. This never
@@ -938,6 +956,7 @@ export async function resolveCodexAuthContext(
 
   try {
     const token = await getValidCodexToken(accountId);
+    assertCodexAccountValidationReady(accountId);
     return {
       kind: "pool",
       accountId,
@@ -977,6 +996,7 @@ export function applyCodexAuthContextToProvider(
   mode: CodexAccountMode | undefined,
 ): OcxRuntimeProviderConfig {
   if (mode !== "pool" || (ctx.kind !== "pool" && ctx.kind !== "main-pool") || provider.authMode !== "forward") return provider;
+  assertCodexAccountValidationReady(ctx.accountId);
   return {
     ...provider,
     _codexAccountOverride: {
@@ -1019,6 +1039,7 @@ export function materializeCodexUpstreamAuth(
     if (value) selected.set(name, value);
   }
   if (ctx.kind === "pool" || ctx.kind === "main-pool") {
+    assertCodexAccountValidationReady(ctx.accountId);
     selected.set("authorization", `Bearer ${ctx.accessToken}`);
     selected.set("chatgpt-account-id", ctx.chatgptAccountId);
     if (ctx.kind === "main-pool") {

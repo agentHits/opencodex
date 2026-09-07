@@ -8,7 +8,7 @@ import { isSelectableCodexPoolAccount } from "./account-id";
 import { reconcileMainCodexAccountRuntimeState } from "./account-lifecycle";
 import { isCodexAccountPaused } from "./account-pause";
 import { isAccountNeedsReauth } from "./account-runtime-state";
-import { getValidCodexToken } from "./account-store";
+import { getValidCodexToken, readCodexAccountRecord } from "./account-store";
 import { getMainAccountToken, getValidMainAccountToken, MAIN_CODEX_ACCOUNT_ID } from "./main-account";
 import { isMainAccountHardLocked } from "./main-account-hard-lock";
 import { tryAcquireNativeMainProfileClaim } from "./native-main-admission";
@@ -100,7 +100,12 @@ function mainWarmupRestricted(config: OcxConfig): boolean {
 
 async function warmAccount(config: OcxConfig, accountId: string): Promise<void | false> {
   if (accountId !== MAIN_CODEX_ACCOUNT_ID) {
-    await warmCodexAccount(await getValidCodexToken(accountId));
+    if (readCodexAccountRecord(accountId)?.codexValidationPending) return false;
+    const token = await getValidCodexToken(accountId);
+    const record = readCodexAccountRecord(accountId);
+    if (!record?.credential || record.deletedAt != null || record.codexValidationPending
+      || record.generation !== token.generation) return false;
+    await warmCodexAccount(token);
     return;
   }
   const lease = tryAcquireNativeMainProfileClaim();
@@ -183,6 +188,7 @@ export async function runCodexQuotaAutoRefresh(
     ];
     const due = accountIds.flatMap(accountId => {
       if (isCodexAccountPaused(config, accountId)
+        || (accountId !== MAIN_CODEX_ACCOUNT_ID && readCodexAccountRecord(accountId)?.codexValidationPending)
         || isAccountNeedsReauth(accountId)
         || (accountId === MAIN_CODEX_ACCOUNT_ID && isMainAccountHardLocked(config))
         || (retryAfterByAccount.get(accountId) ?? 0) > now) return [];
