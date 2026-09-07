@@ -621,7 +621,7 @@ function saveRuntimeConfig(sourceConfig: OcxConfig, nextConfig: OcxConfig): void
 
 interface StagedNewCodexAccountState {
   credential: CodexAccountCredentials;
-  validatedAt: number;
+  validatedAt?: number;
 }
 
 type PersistNewCodexAccountOutcome =
@@ -674,8 +674,10 @@ function persistNewCodexAccount(
     }
 
     try {
-      saveCodexAccountCredential(addedAccount.id, staged.credential);
-      markCodexAccountValidated(addedAccount.id, staged.validatedAt);
+      saveCodexAccountCredential(addedAccount.id, staged.credential, {
+        validationPending: staged.validatedAt === undefined,
+      });
+      if (staged.validatedAt !== undefined) markCodexAccountValidated(addedAccount.id, staged.validatedAt);
       clearAccountNeedsReauth(addedAccount.id);
     } catch {
       // Config is already durable. Return the failure outcome through the coordinator so its
@@ -1047,6 +1049,7 @@ interface PoolQuotaRefreshFlight {
   state: {
     startCredentialGeneration?: number;
     resolvedCredentialGeneration?: number;
+    validatePending?: boolean;
   };
   promise: Promise<PoolQuotaResult>;
 }
@@ -1417,6 +1420,7 @@ async function fetchPoolAccountQuota(
   forceRefresh = false,
   configuredPlan?: string,
   getValidToken: typeof getValidCodexToken = getValidCodexToken,
+  validatePending = false,
 ): Promise<PoolQuotaResult> {
   const existing = getAccountQuota(accountId);
   if (!forceRefresh && existing && Date.now() - existing.updatedAt < POOL_CACHE_TTL) {
@@ -1436,11 +1440,16 @@ async function fetchPoolAccountQuota(
       ?? flight.state.startCredentialGeneration;
     return generation !== undefined && isCodexAccountGenerationLive(accountId, generation);
   });
-  if (current) return current.promise;
+  if (current) {
+    // A manual refresh joining a passive read must not lose its validation intent.
+    current.state.validatePending ||= validatePending;
+    return current.promise;
+  }
   if (poolQuotaFlightCount() >= MAX_POOL_QUOTA_FLIGHTS) throw new PoolQuotaProbeBusyError();
 
   const state: PoolQuotaRefreshFlight["state"] = {
     startCredentialGeneration: record?.generation,
+    validatePending,
   };
   const refresh = fetchFreshPoolAccountQuota(
     accountId,
@@ -1448,7 +1457,28 @@ async function fetchPoolAccountQuota(
     configuredPlan,
     generation => { state.resolvedCredentialGeneration = generation; },
     getValidToken,
-  );
+  ).then(async result => {
+    // Only an explicit account-list refresh finishes deferred registration. Passive quota
+    // polls and startup priming remain read-only with respect to inference spending.
+    const generation = result.freshCredentialGeneration;
+    const record = state.validatePending ? readCodexAccountRecord(accountId) : null;
+    if (record?.codexValidationPending && record.credential && record.deletedAt == null
+      && generation !== undefined && record.generation === generation
+      && !isCodexAccountPaused(loadConfig(), accountId)
+      && isCompleteCodexQuotaRecoverySnapshot(result.freshQuota ?? null, result.freshPlan ?? configuredPlan)) {
+      try {
+        await warmCodexAccount({
+          accessToken: record.credential.accessToken,
+          chatgptAccountId: record.credential.chatgptAccountId,
+        });
+        markCodexAccountValidated(accountId, Date.now(), generation);
+      } catch {
+        // Keep the durable restriction on any failed/partial inference response, even
+        // when WHAM just reported headroom. No raw upstream text enters diagnostics.
+      }
+    }
+    return result;
+  });
   const flight: PoolQuotaRefreshFlight = { state, promise: refresh };
   const activeFlights = flights ?? new Set<PoolQuotaRefreshFlight>();
   activeFlights.add(flight);
@@ -1739,7 +1769,7 @@ export async function listCodexAuthAccountsSnapshot(
       quotaResult = { quota: null, needsReauth: true };
     } else {
       try {
-        quotaResult = await fetchPoolAccountQuota(account.id, forceRefresh, account.plan);
+        quotaResult = await fetchPoolAccountQuota(account.id, forceRefresh, account.plan, getValidCodexToken, forceRefresh);
       } catch (error) {
         if (!(error instanceof PoolQuotaProbeBusyError)) throw error;
         quotaResult = {
@@ -2574,7 +2604,12 @@ export async function handleCodexAuthAPI(
                   break;
                 }
 
-                const warmup = await verifyCodexAccountWarmup(accountId, cred.access, oauthAccountId);
+                // A successful authenticated WHAM read can prove quota is exhausted without
+                // spending an inference request. Store the account, but defer inference validation
+                // and keep it unavailable to routing. Unknown/failed usage reads retain the gate.
+                const warmup = isCodexQuotaExhausted(quota, plan)
+                  ? { ok: true as const, validatedAt: undefined }
+                  : await verifyCodexAccountWarmup(accountId, cred.access, oauthAccountId);
                 if (!warmup.ok) {
                   const body = await warmup.response.json().catch(() => ({})) as { error?: string; reason?: string };
                   setCodexLoginState(flowId, {
@@ -2614,11 +2649,13 @@ export async function handleCodexAuthAPI(
                 };
 
                 if (existingIdx >= 0) {
-                  saveCodexAccountCredential(accountId, credential);
+                  saveCodexAccountCredential(accountId, credential, {
+                    validationPending: warmup.validatedAt === undefined,
+                  });
                   // A successful reauthentication replaces the credential generation. Do not let a
                   // failed optional WHAM probe make the replacement inherit quota from the old record.
                   if (reauth) clearAccountQuota(accountId);
-                  markCodexAccountValidated(accountId, warmup.validatedAt);
+                  if (warmup.validatedAt !== undefined) markCodexAccountValidated(accountId, warmup.validatedAt);
                   clearAccountNeedsReauth(accountId);
                   if (quota) setAccountQuotaFromParsed(accountId, quota);
                   // Keep the pool id stable; refresh display metadata after a successful login/reauth.

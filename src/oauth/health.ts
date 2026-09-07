@@ -1,7 +1,7 @@
 import { getCodexAccountHealthSnapshot, type CodexCooldownSource } from "../codex/routing";
 import { getAnthropicAccountHealthSnapshot } from "./anthropic-routing";
 import { isAccountNeedsReauth } from "../codex/account-runtime-state";
-import { getCodexAccountCredential, listCodexAccountIds } from "../codex/account-store";
+import { getCodexAccountCredential, listCodexAccountIds, readCodexAccountRecord } from "../codex/account-store";
 import { MAIN_CODEX_ACCOUNT_ID } from "../codex/main-account";
 import { readRuntimePort } from "../config/process-state";
 import { LOCAL_MANAGEMENT_READ_PATHS } from "../lib/local-management-capability";
@@ -15,7 +15,7 @@ export type OAuthAccountHealth =
   | { status: "healthy" }
   | { status: "cooldown"; until: string; reason: "rate_limit" | "quota" }
   | { status: "reauth_required"; reason: "unauthorized" | "forbidden" | "refresh_failed" }
-  | { status: "warning"; reason: "refresh_conflict" | "metadata_mismatch" | "stale_credentials" };
+  | { status: "warning"; reason: "refresh_conflict" | "metadata_mismatch" | "stale_credentials" | "validation_pending" };
 
 export type OAuthHealthLabel =
   | "Healthy"
@@ -24,7 +24,8 @@ export type OAuthHealthLabel =
   | "Reauthentication required"
   | "Refresh failed"
   | "Metadata mismatch"
-  | "Credential conflict";
+  | "Credential conflict"
+  | "Validation pending";
 
 /** Shared masked-id fallback when `maskAccountId` returns nullish. */
 export const MASKED_ACCOUNT_FALLBACK = "account-…????";
@@ -88,6 +89,9 @@ export function projectOAuthAccountHealth(input: {
 export const CODEX_REAUTH_ACTION = "reauthenticate via the dashboard Codex account pool";
 
 function actionFor(provider: string, health: OAuthAccountHealth): string | undefined {
+  if (health.status === "warning" && health.reason === "validation_pending") {
+    return "wait for quota recovery, then refresh Codex account quotas to finish validation";
+  }
   if (health.status === "reauth_required") {
     if (provider === "codex") return CODEX_REAUTH_ACTION;
     return `run \`ocx login ${provider}\``;
@@ -112,6 +116,8 @@ export function oauthHealthLabel(health: OAuthAccountHealth): OAuthHealthLabel {
       return health.reason === "refresh_failed" ? "Refresh failed" : "Reauthentication required";
     case "warning":
       switch (health.reason) {
+        case "validation_pending":
+          return "Validation pending";
         case "refresh_conflict":
           return "Credential conflict";
         case "metadata_mismatch":
@@ -198,6 +204,10 @@ export function projectCodexAccountHealth(input: {
   needsReauth: boolean;
   now?: number;
 }): OAuthAccountHealth {
+  if (!input.needsReauth && input.accountId !== MAIN_CODEX_ACCOUNT_ID
+    && readCodexAccountRecord(input.accountId)?.codexValidationPending) {
+    return { status: "warning", reason: "validation_pending" };
+  }
   const now = input.now ?? Date.now();
   const snap = getCodexAccountHealthSnapshot(input.accountId, now);
   return projectOAuthAccountHealth({

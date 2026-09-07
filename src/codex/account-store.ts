@@ -58,7 +58,8 @@ function isCredentialRecord(value: unknown): value is CodexAccountCredentialReco
     && (value.replacedAt === undefined || typeof value.replacedAt === "number")
     && (value.lastCodexValidatedAt === undefined || typeof value.lastCodexValidatedAt === "number")
     && (value.lastCodexValidationStatus === undefined || value.lastCodexValidationStatus === "ok" || value.lastCodexValidationStatus === "failed")
-    && (value.lastCodexValidationError === undefined || typeof value.lastCodexValidationError === "string");
+    && (value.lastCodexValidationError === undefined || typeof value.lastCodexValidationError === "string")
+    && (value.codexValidationPending === undefined || typeof value.codexValidationPending === "boolean");
 }
 
 export function refreshGrantFingerprintForToken(refreshToken: string): string {
@@ -120,9 +121,10 @@ function persistCredentialMutation(store: CodexAccountStore): void {
 
 function preservedValidationMetadata(record: CodexAccountCredentialRecord | undefined): Pick<
   CodexAccountCredentialRecord,
-  "lastCodexValidatedAt" | "lastCodexValidationStatus" | "lastCodexValidationError"
+  "lastCodexValidatedAt" | "lastCodexValidationStatus" | "lastCodexValidationError" | "codexValidationPending"
 > {
   return {
+    ...(record?.codexValidationPending === true ? { codexValidationPending: true } : {}),
     ...(record?.lastCodexValidatedAt !== undefined ? { lastCodexValidatedAt: record.lastCodexValidatedAt } : {}),
     ...(record?.lastCodexValidationStatus !== undefined ? { lastCodexValidationStatus: record.lastCodexValidationStatus } : {}),
     ...(record?.lastCodexValidationError !== undefined ? { lastCodexValidationError: record.lastCodexValidationError } : {}),
@@ -135,7 +137,11 @@ export function getCodexAccountCredential(id: string): CodexAccountCredentials |
   return record.credential ?? null;
 }
 
-export function saveCodexAccountCredential(id: string, cred: CodexAccountCredentials): void {
+export function saveCodexAccountCredential(
+  id: string,
+  cred: CodexAccountCredentials,
+  options: { validationPending?: boolean } = {},
+): void {
   withCredentialMutationLockSync(() => {
     const store = loadCodexAccountRecordStore();
     const current = store[id];
@@ -148,21 +154,29 @@ export function saveCodexAccountCredential(id: string, cred: CodexAccountCredent
       refreshGrantFingerprint,
       replacedAt: current ? Date.now() : undefined,
       ...preservedValidationMetadata(current),
+      ...(options.validationPending ? {
+        codexValidationPending: true,
+        lastCodexValidatedAt: undefined,
+        lastCodexValidationStatus: undefined,
+        lastCodexValidationError: undefined,
+      } : {}),
     };
     persistCredentialMutation(store);
   });
 }
 
-export function markCodexAccountValidated(id: string, atMs: number = Date.now()): void {
+export function markCodexAccountValidated(id: string, atMs: number = Date.now(), generation?: number): void {
   withCredentialMutationLockSync(() => {
     const store = loadCodexAccountRecordStore();
     const current = store[id];
     if (!current || current.deletedAt != null || !current.credential) return;
+    if (generation !== undefined && current.generation !== generation) return;
     store[id] = {
       ...current,
       lastCodexValidatedAt: atMs,
       lastCodexValidationStatus: "ok",
       lastCodexValidationError: undefined,
+      codexValidationPending: undefined,
     };
     persist(store);
   });

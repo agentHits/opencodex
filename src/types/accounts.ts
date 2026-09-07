@@ -34,4 +34,6 @@ export interface CodexAccountCredentialRecord {
   lastCodexValidatedAt?: number;
   lastCodexValidationStatus?: "ok" | "failed";
   lastCodexValidationError?: string;
+  /** OAuth succeeded while quota was exhausted; never route until deferred validation succeeds. */
+  codexValidationPending?: boolean;
 }

@@ -27,6 +27,7 @@ import {
   saveCodexAccountCredential,
 } from "../../src/codex/account-store";
 import * as accountStoreModule from "../../src/codex/account-store";
+import { isCodexAccountUsable } from "../../src/codex/account-usability";
 import * as reserveAvailabilityModule from "../../src/codex/reserve-availability";
 import { getMainAccountInfoCache, observeMainQuotaCredential } from "../../src/codex/main-account-cache";
 import {
@@ -123,6 +124,7 @@ async function completeMockCodexOAuth(options: {
   oauthAccountId: string;
   email: string;
   onWarmup: () => void;
+  warmupResponse?: () => Response;
   usageResponse?: () => Response;
   convergeCodexCatalog?: () => Promise<CatalogDisposition>;
 }): Promise<{
@@ -170,7 +172,7 @@ async function completeMockCodexOAuth(options: {
     }
     if (target === "https://chatgpt.com/backend-api/codex/responses") {
       options.onWarmup();
-      return new Response('event: response.completed\ndata: {"type":"response.completed"}\n\n', {
+      return options.warmupResponse?.() ?? new Response('event: response.completed\ndata: {"type":"response.completed"}\n\n', {
         status: 200,
         headers: { "Content-Type": "text/event-stream" },
       });
@@ -4946,6 +4948,177 @@ describe("codex-auth API", () => {
       statusSpy.mockRestore();
       openSpy.mockRestore();
     }
+  });
+
+  test.each([
+    { plan: "pro", primary: 0, secondary: 100 },
+    { plan: "pro", primary: 100, secondary: 0 },
+    { plan: "free", primary: 100, secondary: undefined },
+  ])("OAuth stores an exhausted account without inference: %j", async ({ plan, primary, secondary }) => {
+    const accountId = "quota-pending";
+    const config = makeConfig();
+    setLiveStateStoreConfig(config);
+    let warmups = 0;
+    const added = await completeMockCodexOAuth({
+      config, requestBody: { id: accountId }, oauthAccountId: "acct-quota-pending", email: "quota@example.test",
+      onWarmup: () => { warmups++; },
+      warmupResponse: () => new Response("quota limited", { status: 429 }),
+      usageResponse: () => Response.json({ plan_type: plan, rate_limit: {
+        primary_window: { used_percent: primary, limit_window_seconds: plan === "free" ? 2592000 : 18000 },
+        ...(secondary !== undefined ? { secondary_window: { used_percent: secondary, limit_window_seconds: 604800 } } : {}),
+      } }),
+    });
+    expect(added.state.status).toBe("done");
+    expect(warmups).toBe(0);
+    expect(config.codexAccounts?.map(account => account.id)).toContain(accountId);
+    expect(readCodexAccountRecord(accountId)?.codexValidationPending).toBe(true);
+    expect(readCodexAccountRecord(accountId)?.lastCodexValidatedAt).toBeUndefined();
+    expect(isAccountNeedsReauth(accountId)).toBe(false);
+    expect(isCodexAccountUsable(config, accountId)).toBe(false);
+    // Neither a restart's lost runtime state nor an expired quota cache is evidence of recovery.
+    clearAccountQuota();
+    clearCodexUpstreamHealth();
+    expect(isCodexAccountUsable(loadConfig(), accountId)).toBe(false);
+    globalThis.fetch = (async () => new Response("unavailable", { status: 503 })) as typeof fetch;
+    const listed = await listCodexAuthAccounts(config, true);
+    expect(listed.find(account => account.id === accountId)).toMatchObject({
+      needsReauth: false, health: { status: "warning", reason: "validation_pending" },
+    });
+    expect(isCodexAccountUsable(config, accountId)).toBe(false);
+  });
+
+  test("quota-pending registration validates only after a fresh recovered snapshot and completed inference", async () => {
+    const accountId = "quota-recovery";
+    const config = makeConfig({ codexAccounts: [{ id: accountId, email: "quota@example.test", plan: "pro", isMain: false }] });
+    saveConfig(config);
+    setLiveStateStoreConfig(config);
+    saveCodexAccountCredential(accountId, {
+      accessToken: "quota-access", refreshToken: "quota-refresh", expiresAt: Date.now() + 3600_000, chatgptAccountId: "acct-quota",
+    }, { validationPending: true });
+    let used: number | undefined = 100;
+    let terminal = "response.incomplete";
+    let warmups = 0;
+    let replaceDuringWarmup = false;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/wham/usage")) return Response.json({ plan_type: "pro", rate_limit: {
+        ...(used !== undefined ? { secondary_window: { used_percent: used, limit_window_seconds: 604800 } } : {}),
+      } });
+      if (String(input).endsWith("/codex/responses")) {
+        warmups++;
+        if (replaceDuringWarmup) {
+          replaceDuringWarmup = false;
+          saveCodexAccountCredential(accountId, {
+            ...getCodexAccountCredential(accountId)!, accessToken: "replacement-access",
+          }, { validationPending: true });
+        }
+        return new Response(`data: ${JSON.stringify({ type: terminal })}\n\n`);
+      }
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+    await listCodexAuthAccounts(config, true);
+    expect(warmups).toBe(0);
+    used = undefined;
+    await listCodexAuthAccounts(config, true);
+    expect(warmups).toBe(0);
+    used = 0;
+    config.pausedCodexAccountIds = [accountId];
+    saveConfig(config);
+    await listCodexAuthAccounts(config, true);
+    expect(warmups).toBe(0);
+    config.pausedCodexAccountIds = [];
+    saveConfig(config);
+    clearAccountQuota();
+    await listCodexAuthAccounts(config, false);
+    expect(warmups).toBe(0); // Passive reads never spend inference.
+    await listCodexAuthAccounts(config, true);
+    expect(warmups).toBe(1);
+    expect(isCodexAccountUsable(config, accountId)).toBe(false);
+    terminal = "response.completed";
+    replaceDuringWarmup = true;
+    await listCodexAuthAccounts(config, true);
+    expect(warmups).toBe(2);
+    expect(isCodexAccountUsable(config, accountId)).toBe(false);
+    await listCodexAuthAccounts(config, true);
+    expect(warmups).toBe(3);
+    expect(isCodexAccountUsable(config, accountId)).toBe(true);
+    expect(readCodexAccountRecord(accountId)?.lastCodexValidationStatus).toBe("ok");
+    await listCodexAuthAccounts(config, true);
+    expect(warmups).toBe(3);
+  });
+
+  test("explicit refresh joining a passive quota read retains deferred validation intent", async () => {
+    const accountId = "quota-coalesced";
+    const config = makeConfig({ codexAccounts: [{ id: accountId, email: "quota@example.test", plan: "pro", isMain: false }] });
+    saveConfig(config);
+    setLiveStateStoreConfig(config);
+    saveCodexAccountCredential(accountId, {
+      accessToken: "quota-access", refreshToken: "quota-refresh", expiresAt: Date.now() + 3600_000, chatgptAccountId: "acct-quota",
+    }, { validationPending: true });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let usageCalls = 0;
+    let warmups = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/wham/usage")) {
+        usageCalls++;
+        await gate;
+        return Response.json({ plan_type: "pro", rate_limit: { secondary_window: { used_percent: 0, limit_window_seconds: 604800 } } });
+      }
+      if (String(input).endsWith("/codex/responses")) {
+        warmups++;
+        return new Response('data: {"type":"response.completed"}\n\n');
+      }
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+    const passive = listCodexAuthAccounts(config, false);
+    for (let i = 0; i < 100 && usageCalls === 0; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    expect(usageCalls).toBe(1);
+    const explicit = listCodexAuthAccounts(config, true);
+    // Let the second list pass its main-account read and join the held pool flight.
+    for (let i = 0; i < 20; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    const [, listed] = await Promise.all([passive, explicit]);
+    expect(usageCalls).toBe(1);
+    expect(warmups).toBe(1);
+    expect(listed.find(account => account.id === accountId)?.health.status).toBe("healthy");
+    expect(isCodexAccountUsable(config, accountId)).toBe(true);
+  });
+
+  test("quota-pending reauth replaces only the same identity and clears stale validation", async () => {
+    const accountId = "quota-reauth";
+    const config = makeConfig({ codexAccounts: [{ id: accountId, email: "quota@example.test", plan: "pro", isMain: false }] });
+    saveConfig(config);
+    setLiveStateStoreConfig(config);
+    saveCodexAccountCredential(accountId, {
+      accessToken: "old-access", refreshToken: "old-refresh", expiresAt: Date.now() + 3600_000, chatgptAccountId: "acct-quota",
+    });
+    accountStoreModule.markCodexAccountValidated(accountId);
+    const options = {
+      config, requestBody: { id: accountId, reauth: true }, oauthAccountId: "other-account", email: "quota@example.test",
+      onWarmup: () => { throw new Error("exhausted accounts must not warm up"); },
+      usageResponse: () => Response.json({ plan_type: "pro", rate_limit: { secondary_window: { used_percent: 100 } } }),
+    };
+    const rejected = await completeMockCodexOAuth(options);
+    expect(rejected.state.status).toBe("error");
+    expect(getCodexAccountCredential(accountId)?.accessToken).toBe("old-access");
+    const added = await completeMockCodexOAuth({ ...options, oauthAccountId: "acct-quota" });
+    expect(added.state.status).toBe("done");
+    expect(readCodexAccountRecord(accountId)?.codexValidationPending).toBe(true);
+    expect(readCodexAccountRecord(accountId)?.lastCodexValidatedAt).toBeUndefined();
+    expect(getCodexAccountCredential(accountId)?.accessToken).not.toBe("old-access");
+    expect(isCodexAccountUsable(config, accountId)).toBe(false);
+  });
+
+  test.each([401, 403, 429, 503])("unknown quota retains the failed warmup gate (HTTP %s)", async status => {
+    const config = makeConfig();
+    const result = await completeMockCodexOAuth({
+      config, requestBody: { id: "quota-unknown" }, oauthAccountId: "acct-unknown", email: "unknown@example.test",
+      onWarmup: () => {}, warmupResponse: () => new Response("private error", { status }),
+      usageResponse: () => new Response("unknown", { status: 503 }),
+    });
+    expect(result.state.status).toBe("error");
+    expect(result.state.error).not.toContain("private error");
+    expect(getCodexAccountCredential("quota-unknown")).toBeNull();
   });
 
   test("OAuth creation rejects a namespace claimed during warmup without persisting", async () => {

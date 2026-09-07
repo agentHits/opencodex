@@ -211,6 +211,7 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
       if (!cred) continue;
       const needsRefresh = cred.expiresAt <= nowMs + horizonMs;
       const needsWarmup = opts.codexWarmupEnabled
+        && !record.codexValidationPending
         && (record.lastCodexValidatedAt === undefined || nowMs - record.lastCodexValidatedAt > opts.codexWarmupMaxAgeSeconds * 1000);
       if (!needsRefresh && !needsWarmup) continue;
       const key = `codex:${id}`;
