@@ -2159,6 +2159,9 @@ export async function handleCodexAuthAPI(
       const exists = (runtimeConfig.codexAccounts ?? [])
         .some(account => isSelectableCodexPoolAccount(account) && account.id === body.accountId);
       if (!exists) return jsonResponse({ error: "Account not found" }, 400);
+      if (readCodexAccountRecord(body.accountId)?.codexValidationPending) {
+        return jsonResponse({ error: "Account validation is pending. Refresh quota after recovery to validate it." }, 409);
+      }
     }
     runtimeConfig.activeCodexAccountId = body.accountId ?? undefined;
     // "Use this account now" outranks selection order until the account is spent:

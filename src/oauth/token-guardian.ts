@@ -220,7 +220,9 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
         try {
           const token = await getValidCodexToken(id);
           if (needsRefresh) result.refreshed.push(key);
-          if (needsWarmup) {
+          const current = readCodexAccountRecord(id);
+          if (needsWarmup && current?.credential && current.deletedAt == null
+            && !current.codexValidationPending && current.generation === token.generation) {
             await warmCodexAccount({
               accessToken: token.accessToken,
               chatgptAccountId: token.chatgptAccountId,

@@ -8,7 +8,9 @@ import {
   collectOAuthHealthEntries,
   collectOAuthHealthEntriesForCli,
   projectOAuthAccountHealth,
+  projectCodexAccountHealth,
 } from "../../src/oauth/health";
+import { saveCodexAccountCredential } from "../../src/codex/account-store";
 import { getAccountSet, markAccountNeedsReauth, saveCredential } from "../../src/oauth/store";
 import {
   clearAccountNeedsReauth,
@@ -58,6 +60,18 @@ afterEach(() => {
 });
 
 describe("projectOAuthAccountHealth", () => {
+  test("pending Codex pool validation warns while reauthentication and native main keep their own health", () => {
+    saveCodexAccountCredential("pending-health", {
+      accessToken: "pending-access", refreshToken: "pending-refresh", expiresAt: Date.now() + 3600_000,
+      chatgptAccountId: "pending-health",
+    }, { validationPending: true });
+    expect(projectCodexAccountHealth({ accountId: "pending-health", needsReauth: false }))
+      .toEqual({ status: "warning", reason: "validation_pending" });
+    expect(projectCodexAccountHealth({ accountId: "pending-health", needsReauth: true }))
+      .toEqual({ status: "reauth_required", reason: "refresh_failed" });
+    expect(projectCodexAccountHealth({ accountId: MAIN_CODEX_ACCOUNT_ID, needsReauth: false }))
+      .toEqual({ status: "healthy" });
+  });
   test("reauth beats cooldown", () => {
     expect(projectOAuthAccountHealth({
       needsReauth: true,

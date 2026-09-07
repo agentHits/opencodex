@@ -177,6 +177,24 @@ describe("token guardian", () => {
     expect(readCodexAccountRecord("acct-late")?.lastCodexValidatedAt).toBeUndefined();
   });
 
+  test("guardian rechecks pending replacement after asynchronous token resolution", async () => {
+    const mock = mockWarmupFetch();
+    writeConfig({
+      tokenGuardian: { enabled: true, codexWarmupEnabled: true, tickSeconds: 60, leadSeconds: 60 },
+      providers: { openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", codexAccountMode: "pool", refreshPolicy: "proactive" } },
+    });
+    const credential = {
+      accessToken: "original", refreshToken: "rt-original", expiresAt: Date.now() + 3600_000, chatgptAccountId: "cg-pending",
+    };
+    saveCodexAccountCredential("acct-resolving", credential);
+    const sweep = guardianSweep(Date.now());
+    saveCodexAccountCredential("acct-resolving", { ...credential, accessToken: "replacement" }, { validationPending: true });
+    const result = await sweep;
+    expect(mock.calls()).toBe(0);
+    expect(result.warmed).toEqual([]);
+    expect(readCodexAccountRecord("acct-resolving")?.codexValidationPending).toBe(true);
+  });
+
   test("guardian preserves deferred registration without probing an exhausted account", async () => {
     const mock = mockWarmupFetch();
     writeConfig({

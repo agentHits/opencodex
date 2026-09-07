@@ -4999,6 +4999,16 @@ describe("codex-auth API", () => {
     let terminal = "response.incomplete";
     let warmups = 0;
     let replaceDuringWarmup = false;
+    const selectAccount = () => {
+      const req = new Request("http://localhost/api/codex-auth/active", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId }),
+      });
+      return handleCodexAuthAPI(req, new URL(req.url), config);
+    };
+    const pendingSelection = await selectAccount();
+    expect(pendingSelection?.status).toBe(409);
+    expect(loadConfig().activeCodexAccountId).toBeUndefined();
+    expect(loadConfig().activeCodexAccountPinned).toBeUndefined();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       if (String(input).endsWith("/wham/usage")) return Response.json({ plan_type: "pro", rate_limit: {
         ...(used !== undefined ? { secondary_window: { used_percent: used, limit_window_seconds: 604800 } } : {}),
@@ -5042,6 +5052,8 @@ describe("codex-auth API", () => {
     expect(warmups).toBe(3);
     expect(isCodexAccountUsable(config, accountId)).toBe(true);
     expect(readCodexAccountRecord(accountId)?.lastCodexValidationStatus).toBe("ok");
+    expect((await selectAccount())?.status).toBe(200);
+    expect(loadConfig().activeCodexAccountId).toBe(accountId);
     await listCodexAuthAccounts(config, true);
     expect(warmups).toBe(3);
   });

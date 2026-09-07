@@ -62,6 +62,7 @@ describe("codex-account-store CRUD", () => {
 
   test("pending validation survives credential refresh and cannot be cleared by a stale probe", async () => {
     const store = await import("../../src/codex/account-store");
+    const { codexCredentialMutationEpoch } = await import("../../src/codex/credential-mutation-epoch");
     const cred = { accessToken: "access-pending", refreshToken: "refresh-pending", expiresAt: Date.now() + 3600_000, chatgptAccountId: "acct-pending" };
     store.saveCodexAccountCredential("pending", cred, { validationPending: true });
     const generation = store.readCodexAccountRecord("pending")!.generation;
@@ -72,7 +73,9 @@ describe("codex-account-store CRUD", () => {
     store.markCodexAccountValidated("pending", Date.now(), generation);
     expect(store.readCodexAccountRecord("pending")?.codexValidationPending).toBe(true);
     expect(store.readCodexAccountRecord("pending")?.lastCodexValidatedAt).toBeUndefined();
+    const beforeValidation = codexCredentialMutationEpoch();
     store.markCodexAccountValidated("pending", Date.now(), generation + 1);
+    expect(codexCredentialMutationEpoch()).toBe(beforeValidation + 1);
     expect(store.readCodexAccountRecord("pending")?.codexValidationPending).toBeUndefined();
     expect(store.readCodexAccountRecord("pending")?.lastCodexValidationStatus).toBe("ok");
   });

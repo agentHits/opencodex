@@ -180,7 +180,10 @@ export function markCodexAccountValidated(id: string, atMs: number = Date.now(),
       lastCodexValidationError: undefined,
       codexValidationPending: undefined,
     };
-    persist(store);
+    // Becoming routable invalidates credential-derived caches; a timestamp-only
+    // update on an already validated account preserves the existing epoch policy.
+    if (current.codexValidationPending) persistCredentialMutation(store);
+    else persist(store);
   });
 }
 
