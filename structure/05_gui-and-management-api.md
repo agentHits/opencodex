@@ -364,6 +364,18 @@ overlay-version and timezone checks. Preset warming never consumes custom summar
 The response retains its preset range discriminator for compatibility and explicitly marks
 `customWindow`, `since`, and `until`; the chart uses the window's local calendar days with
 the existing 366-day cap. GUI custom reports bypass the held preset/session cache.
+Both dashboard and CLI reject a custom report unless the server echoes `customWindow: true`
+and the exact requested numeric `since` and `until`. An older daemon that silently returns a
+preset report cannot supply totals labelled with the requested custom interval.
+
+Resetting a manual model price keeps the map, even when temporarily empty, through persistence
+reconciliation. This removes only the requested entry and preserves sibling rates independently
+written to disk. The Desktop sign-in preference likewise distinguishes saved from applied state:
+its pending flag survives cache refresh/remount until a successful sync confirms application.
+
+Subagent fallback settings load independently of the main roster. Their failure disables only
+fallback controls and provides a retry; available fallback options come from that endpoint's
+availability list while already-configured stale values remain editable.
 
 Account quota discovery is capability-based. Cheap OAuth and provider-key lists include
 `quotaMode` (`probe`, `passive`, or `unsupported`) without contacting upstream quota APIs.
