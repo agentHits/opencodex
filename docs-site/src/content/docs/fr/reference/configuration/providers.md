@@ -473,6 +473,24 @@ avec un contexte de `922000` et une entrée maximale de `922000` ; OpenRouter i
 }
 ```
 
+## Éditeur de noms d'affichage des modèles
+
+Dans le tableau de bord, **Models** permet d'enregistrer durablement des noms lisibles pour les modèles découverts. Développez le fournisseur,
+repérez un modèle découvert et choisissez **Name**. La boîte de dialogue garde le sélecteur exact
+`provider/model` visible pendant que vous enregistrez un libellé lisible. Choisissez **Reset name**
+pour revenir aux métadonnées du fournisseur ou au sélecteur utilisé par défaut. **Name** ne change
+que l'affichage ; le crayon distinct consacré à l'alias modifie l'alias court de routage et n'est
+pas un éditeur de nom d'affichage. Les lignes OpenAI natives et celles des modèles personnalisés
+conservent leurs commandes existantes.
+
+Si la modification est enregistrée mais que l'actualisation échoue, la boîte de dialogue reflète
+la valeur enregistrée et garde **Retry** disponible. Retry relance la convergence du catalogue
+si le serveur a signalé son échec, ou recharge la liste si seule la requête de liste a échoué.
+La reprise d'une réinitialisation conserve cette opération ; elle ne rétablit pas l'ancien nom.
+Les requêtes ont un délai maximal de 60 secondes couvrant l'écriture et l'actualisation de la liste
+qui suit. Un dépassement de délai n'annule pas une écriture : utilisez **Retry** pour vérifier
+le nom actuel avant d'effectuer une autre modification.
+
 ## Exemple complet
 
 ```json

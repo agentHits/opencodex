@@ -518,6 +518,23 @@ bildirir; senkronize edilen katalog `xhigh`'ı ayrı tutarken `max` bildirir.
 }
 ```
 
+## Model görünen adı düzenleyicisi
+
+Kontrol panelindeki **Models**, keşfedilen modeller için okunabilir adları kalıcı olarak kaydetmenizi sağlar. Sağlayıcıyı genişletin, keşfedilen
+bir modeli bulun ve **Name** seçeneğini seçin. Okunabilir bir etiket kaydederken iletişim kutusu
+tam `provider/model` seçicisini görünür tutar. Sağlayıcı meta verilerine veya varsayılan seçici
+gösterimine dönmek için **Reset name** seçeneğini seçin. **Name** yalnızca görünümü değiştirir;
+ayrı takma ad kalemi kısa yönlendirme takma adını değiştirir ve bir görünen ad düzenleyicisi
+değildir. Yerel OpenAI ve özel model satırları mevcut kontrollerini korur.
+
+Değişiklik kaydedildiği halde yenileme başarısız olursa iletişim kutusu kaydedilen geçersiz kılma
+değerini yansıtır ve **Retry** kullanılabilir kalır. Sunucu katalog yakınsamasının başarısız
+olduğunu bildirdiyse Retry bu işlemi tekrarlar; yalnızca liste isteği başarısız olduysa listeyi
+yeniden yükler. Sıfırlama sonrası kurtarma, sıfırlama işlemini korur ve eski adı geri getirmez.
+İsteklerin, yazma işlemini ve ardından gelen liste yenilemesini kapsayan 60 saniyelik bir süresi
+vardır. Zaman aşımı yazma işlemini geri almaz: başka bir değişiklik yapmadan önce **Retry** ile
+geçerli adı kontrol edin.
+
 ## Tam örnek
 
 ```json
