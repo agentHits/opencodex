@@ -5519,7 +5519,7 @@ describe("gui exhaustive-deps suppression stays scoped and effective", () => {
 });
 
 
-interface PublicationStep { name: string; id?: string; if?: string; run?: string }
+interface PublicationStep { name: string; id?: string; if?: string; run?: string; env?: Record<string, string> }
 async function publicationSteps(): Promise<PublicationStep[]> {
   const yaml = Bun.YAML.parse(await readText(".github/workflows/release.yml")) as {
     jobs: { publish: { steps: PublicationStep[] } };
@@ -5534,6 +5534,7 @@ test("release recovery requires same-run publication and preserves successful-st
   const release = steps.find(step => step.name === "Create GitHub release")!;
   expect(publish.id).toBe("publication");
   expect(smoke.id).toBe("registry-smoke");
+  expect(smoke.env?.PUBLISHED).toBe("${{ steps.publication.outputs.published }}");
   for (const step of [smoke, release]) {
     expect(step.if).toBe("${{ inputs.dry-run != true && steps.publication.outputs.published == 'true' }}");
   }
@@ -5566,6 +5567,7 @@ test.skipIf(process.platform === "win32")("release shell recovers only unverifie
     const calls = join(dir, "calls");
     for (const path of [output, summary, calls]) writeFileSync(path, "");
     const prelude = String.raw`
+      node() { echo "@fixture/renamed"; }
       npm() {
         echo "$*" >> "$CALLS"
         case "$1" in
@@ -5609,7 +5611,12 @@ test.skipIf(process.platform === "win32")("release shell recovers only unverifie
       expect(receipt.includes("published=true")).toBe(scenario.receipt);
       expect(receipt.includes("verification=")).toBe(scenario.verification !== "");
       if (scenario.verification) expect(receipt).toContain(`verification=${scenario.verification}`);
-      expect(log.filter(line => line.startsWith("view "))).toHaveLength(scenario.reads);
+      const reads = log.filter(line => line.startsWith("view "));
+      expect(reads).toHaveLength(scenario.reads);
+      for (const read of reads) expect(read).toBe("view @fixture/renamed@9.8.7 version --fetch-retries=0 --fetch-timeout=8000");
+      const tags = log.filter(line => line.startsWith("dist-tag "));
+      expect(tags).toEqual(scenario.verification === "verified"
+        ? ["dist-tag ls @fixture/renamed --fetch-retries=0 --fetch-timeout=8000"] : []);
       expect(log.filter(line => line.startsWith("publish "))).toHaveLength(scenario.dry || scenario.mode === "missing-receipt" ? 0 : 1);
       if (scenario.verification === "pending") {
         expect(stdout).toContain("::warning::npm publish succeeded");
