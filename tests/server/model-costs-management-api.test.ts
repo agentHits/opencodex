@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearModelCache } from "../../src/codex/model-cache";
 import { resetCodexModelEntitlementCacheForTests } from "../../src/codex/model-entitlements";
-import { saveConfigPreservingClaudeCode } from "../../src/config";
+import { armClaudeCodeBaseline, saveConfigPreservingClaudeCode } from "../../src/config";
 import { handleManagementAPI } from "../../src/server/management-api";
 import { handleModelRoutes } from "../../src/server/management/model-routes";
 import { listManagementModelRows } from "../../src/server/management/model-rows";
@@ -134,11 +134,11 @@ describe("provider model costs API", () => {
     expect(h.convergeCalls).toBe(0);
   });
 
-  test("reset of the last entry removes the map and repeated reset remains successful", async () => {
+  test("reset of the last entry keeps an empty map and repeated reset remains successful", async () => {
     const h = harness(fixture({ "org/model": COST }));
     for (let attempt = 0; attempt < 2; attempt++) {
       expect((await h.call("PUT", { modelId: "org/model", cost: null })).status).toBe(200);
-      expect(Object.hasOwn(h.config.providers[PROVIDER]!, "modelCosts")).toBe(false);
+      expect(h.config.providers[PROVIDER]!.modelCosts).toEqual({});
       expect(await (await h.call("GET")).json()).toEqual({ provider: PROVIDER, modelCosts: {} });
     }
   });
@@ -154,6 +154,23 @@ describe("provider model costs API", () => {
     expect(await (await harness(disk).call("GET")).json()).toEqual({ provider: PROVIDER, modelCosts: { sibling: SIBLING, "org/model": COST } });
     await h.call("PUT", { modelId: "org/model", cost: null });
     expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).providers[PROVIDER].modelCosts).toEqual({ sibling: SIBLING });
+    expect(activeUserCostOverlays().some(row => row.provider === PROVIDER && row.modelId === "org/model")).toBe(false);
+  });
+
+  test("resetting the last live price preserves a sibling added by another disk writer", async () => {
+    const config = fixture({ "org/model": COST });
+    const path = join(home, "config.json");
+    writeFileSync(path, JSON.stringify(config));
+    armClaudeCodeBaseline(config);
+    const concurrent = fixture({ "org/model": COST, sibling: SIBLING });
+    writeFileSync(path, JSON.stringify(concurrent));
+    const h = harness(config, saveConfigPreservingClaudeCode);
+
+    expect((await h.call("PUT", { modelId: "org/model", cost: null })).status).toBe(200);
+    const disk = JSON.parse(readFileSync(path, "utf8")) as OcxConfig;
+    expect(disk.providers[PROVIDER]!.modelCosts).toEqual({ sibling: SIBLING });
+    expect(config.providers[PROVIDER]!.modelCosts).toEqual({ sibling: SIBLING });
+    expect(activeUserCostOverlays().find(row => row.provider === PROVIDER && row.modelId === "sibling")?.cost4).toEqual(SIBLING);
     expect(activeUserCostOverlays().some(row => row.provider === PROVIDER && row.modelId === "org/model")).toBe(false);
   });
 
