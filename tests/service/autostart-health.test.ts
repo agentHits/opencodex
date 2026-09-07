@@ -3,7 +3,7 @@ import { deriveStartupHealth, formatStartupRoutingDetail, startupHealthSummary }
 import { unusedProxyWarningLines } from "../../src/cli/status";
 import { classifyCodexRouting, hasInjectedCodexRouting } from "../../src/codex/inject";
 import { handleManagementAPI } from "../../src/server/management-api";
-import { getCachedStartupHealth, invalidateStartupHealthCache, markStartupHealthDiagnosticStale } from "../../src/server/startup-health-cache";
+import { getCachedStartupHealth, getStartupHealthSnapshot, invalidateStartupHealthCache, markStartupHealthDiagnosticStale } from "../../src/server/startup-health-cache";
 import type { OcxConfig } from "../../src/types";
 
 const base = {
@@ -275,6 +275,43 @@ describe("Codex startup health", () => {
 
     releaseProbe(deriveStartupHealth({ ...base, routingKind: "native" }));
     await pendingProbe;
+    invalidateStartupHealthCache();
+  });
+
+  test("settings snapshot starts a probe without waiting for it", async () => {
+    invalidateStartupHealthCache();
+    let releaseProbe!: (value: ReturnType<typeof deriveStartupHealth>) => void;
+    const pendingProbe = new Promise<ReturnType<typeof deriveStartupHealth>>(resolve => {
+      releaseProbe = resolve;
+    });
+
+    const health = getStartupHealthSnapshot(
+      { codexAutoStart: true },
+      { probe: async () => pendingProbe },
+    );
+
+    expect(health.diagnosticStale).toBe(true);
+    releaseProbe(deriveStartupHealth({ ...base, routingKind: "native" }));
+    await pendingProbe;
+    invalidateStartupHealthCache();
+  });
+
+  test("settings GET uses the non-blocking startup-health snapshot in production", async () => {
+    invalidateStartupHealthCache();
+    const url = new URL("http://localhost/api/settings");
+
+    const response = await Promise.race([
+      handleManagementAPI(
+        new Request(url),
+        url,
+        { port: 10100, providers: {}, defaultProvider: "openai", codexAutoStart: true } as OcxConfig,
+      ),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 100)),
+    ]);
+
+    expect(response?.status).toBe(200);
+    const body = await response!.json() as { startupHealth?: { diagnosticStale?: boolean } };
+    expect(body.startupHealth?.diagnosticStale).toBe(true);
     invalidateStartupHealthCache();
   });
 });

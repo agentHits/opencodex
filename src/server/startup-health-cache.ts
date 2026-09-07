@@ -50,6 +50,22 @@ export interface StartupHealthCacheDeps {
   ) => Promise<StartupHealth | null>;
 }
 
+/**
+ * Return the last completed probe immediately and refresh it in the background.
+ *
+ * Settings are consumed by several dashboard controls. They must not block on a
+ * Windows service-manager probe; the dedicated /api/startup-health route owns
+ * the fresh, bounded diagnostic read.
+ */
+export function getStartupHealthSnapshot(
+  config: Pick<OcxConfig, "codexAutoStart">,
+  deps: StartupHealthCacheDeps = {},
+): StartupHealth {
+  const now = deps.now ?? Date.now;
+  if (!cached || now() - cached.timestamp >= CACHE_TTL_MS) refreshInBackground(config, deps);
+  return cached ? markStartupHealthDiagnosticStale(cached.value) : conservativeFallback(config);
+}
+
 export function markStartupHealthDiagnosticStale(value: StartupHealth): StartupHealth {
   if (!value.localRoutingDependency) return { ...value, diagnosticStale: true };
   return {
