@@ -16,6 +16,11 @@ import { parseKiroEvent } from "../../../src/adapters/kiro-events";
 import { resetKiroThrottleStateForTests } from "../../../src/adapters/kiro-retry";
 import { resetKiroCalibration } from "../../../src/adapters/kiro-calibration";
 import { buildResponseJSON } from "../../../src/bridge";
+import {
+  clearDebugSetting,
+  getDebugSettings,
+  setDebugSettings,
+} from "../../../src/lib/debug-settings";
 import { encodeMessage } from "../../../src/lib/eventstream-decoder";
 import { estimateTokens } from "../../../src/lib/token-estimate";
 import { createTranslatorBudget } from "../../../src/lib/translator-budget";
@@ -34,11 +39,16 @@ const origApiRegion = process.env.KIRO_API_REGION;
 const origArn = process.env.KIRO_PROFILE_ARN;
 const origCredsFile = process.env.KIRO_CREDS_FILE;
 const origCredentialsFile = process.env.KIRO_CREDENTIALS_FILE;
-const origDebugFrames = process.env.OCX_DEBUG_FRAMES;
+let origDebug: string | undefined;
+let origDebugFrames: string | undefined;
+let origDebugOverride: boolean | undefined;
 const realFetch = globalThis.fetch;
 let tmp: string;
 
 beforeEach(() => {
+  origDebug = process.env.OCX_DEBUG;
+  origDebugFrames = process.env.OCX_DEBUG_FRAMES;
+  origDebugOverride = getDebugSettings().runtimeOverride.debug;
   tmp = mkdtempSync(join(tmpdir(), "kiro-stream-"));
   process.env.HOME = tmp;
   process.env.KIRO_REGION = "us-east-1";
@@ -46,7 +56,9 @@ beforeEach(() => {
   delete process.env.KIRO_PROFILE_ARN;
   delete process.env.KIRO_CREDS_FILE;
   delete process.env.KIRO_CREDENTIALS_FILE;
+  delete process.env.OCX_DEBUG;
   delete process.env.OCX_DEBUG_FRAMES;
+  clearDebugSetting("debug");
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -57,7 +69,10 @@ afterEach(() => {
   if (origArn === undefined) delete process.env.KIRO_PROFILE_ARN; else process.env.KIRO_PROFILE_ARN = origArn;
   if (origCredsFile === undefined) delete process.env.KIRO_CREDS_FILE; else process.env.KIRO_CREDS_FILE = origCredsFile;
   if (origCredentialsFile === undefined) delete process.env.KIRO_CREDENTIALS_FILE; else process.env.KIRO_CREDENTIALS_FILE = origCredentialsFile;
+  if (origDebug === undefined) delete process.env.OCX_DEBUG; else process.env.OCX_DEBUG = origDebug;
   if (origDebugFrames === undefined) delete process.env.OCX_DEBUG_FRAMES; else process.env.OCX_DEBUG_FRAMES = origDebugFrames;
+  if (origDebugOverride === undefined) clearDebugSetting("debug");
+  else setDebugSettings({ debug: origDebugOverride });
   removeTreeWithRetry(tmp);
 });
 
