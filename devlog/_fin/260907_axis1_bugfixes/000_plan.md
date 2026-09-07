@@ -1,5 +1,7 @@
 # Axis 1: measured bug fixes and failure diagnostics
 
+Completed: see [031_delivery_record.md](031_delivery_record.md) for merged commits, final CI, attribution and deferrals.
+
 Archetype: satisfy existing contracts. Trigger: owner assigned axis 1 (#3809, #3464, #3661). Goal: deliver reviewable fixes through a manual PR chain and merge the verified scope. Non-goals: new account/retry policy, auth defaults, multipart recovery, releases, native stacks, sibling edits. Stop: merged feasible scope plus explicit unresolved dispositions. Escalation: defer a policy-dependent or unreproducible slice; reclaim a worker slice after two failed packets. Evidence: this unit plus ignored `.tmp/axis1/` and `.codexclaw` receipts. Resources: task-owned worktree/branches and GitHub repository access; Astra high leaves within host capacity; no caller-specified token or wall-clock budget.
 
 Baseline: origin/dev 137d6a727; source PR #3809 at 4a1012359a522ddd6d7ff77203c9e5f3632d605c. Assigned 5cc8 checkout has pre-existing changes and remains untouched. Code lives in /tmp/ocx-axis1-20260907.
