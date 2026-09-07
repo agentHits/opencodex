@@ -65,6 +65,8 @@ describe("codex-account-store CRUD", () => {
     const cred = { accessToken: "access-pending", refreshToken: "refresh-pending", expiresAt: Date.now() + 3600_000, chatgptAccountId: "acct-pending" };
     store.saveCodexAccountCredential("pending", cred, { validationPending: true });
     const generation = store.readCodexAccountRecord("pending")!.generation;
+    store.markCodexAccountValidated("pending");
+    expect(store.readCodexAccountRecord("pending")?.codexValidationPending).toBe(true);
     expect(store.saveCodexAccountCredentialIfGeneration("pending", generation, { ...cred, accessToken: "refreshed-access" })).toBe(true);
     expect(store.readCodexAccountRecord("pending")?.codexValidationPending).toBe(true);
     store.markCodexAccountValidated("pending", Date.now(), generation);

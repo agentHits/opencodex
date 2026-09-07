@@ -226,7 +226,7 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
               chatgptAccountId: token.chatgptAccountId,
               model: opts.codexWarmupModel,
             });
-            markCodexAccountValidated(id, Date.now());
+            markCodexAccountValidated(id, Date.now(), token.generation);
             result.warmed.push(key);
           }
           backoff.delete(key);

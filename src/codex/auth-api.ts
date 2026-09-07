@@ -674,10 +674,10 @@ function persistNewCodexAccount(
     }
 
     try {
-      saveCodexAccountCredential(addedAccount.id, staged.credential, {
+      const generation = saveCodexAccountCredential(addedAccount.id, staged.credential, {
         validationPending: staged.validatedAt === undefined,
       });
-      if (staged.validatedAt !== undefined) markCodexAccountValidated(addedAccount.id, staged.validatedAt);
+      if (staged.validatedAt !== undefined) markCodexAccountValidated(addedAccount.id, staged.validatedAt, generation);
       clearAccountNeedsReauth(addedAccount.id);
     } catch {
       // Config is already durable. Return the failure outcome through the coordinator so its
@@ -2649,13 +2649,13 @@ export async function handleCodexAuthAPI(
                 };
 
                 if (existingIdx >= 0) {
-                  saveCodexAccountCredential(accountId, credential, {
+                  const generation = saveCodexAccountCredential(accountId, credential, {
                     validationPending: warmup.validatedAt === undefined,
                   });
                   // A successful reauthentication replaces the credential generation. Do not let a
                   // failed optional WHAM probe make the replacement inherit quota from the old record.
                   if (reauth) clearAccountQuota(accountId);
-                  if (warmup.validatedAt !== undefined) markCodexAccountValidated(accountId, warmup.validatedAt);
+                  if (warmup.validatedAt !== undefined) markCodexAccountValidated(accountId, warmup.validatedAt, generation);
                   clearAccountNeedsReauth(accountId);
                   if (quota) setAccountQuotaFromParsed(accountId, quota);
                   // Keep the pool id stable; refresh display metadata after a successful login/reauth.

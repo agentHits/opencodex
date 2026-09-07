@@ -159,6 +159,24 @@ describe("token guardian", () => {
     expect(mock.count()).toBeGreaterThan(0);
   });
 
+  test("a late guardian probe cannot validate a replacement pending credential", async () => {
+    writeConfig({
+      tokenGuardian: { enabled: true, codexWarmupEnabled: true, tickSeconds: 60, leadSeconds: 60 },
+      providers: { openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", codexAccountMode: "pool", refreshPolicy: "proactive" } },
+    });
+    const credential = {
+      accessToken: "original", refreshToken: "rt-original", expiresAt: Date.now() + 3600_000, chatgptAccountId: "cg-pending",
+    };
+    saveCodexAccountCredential("acct-late", credential);
+    globalThis.fetch = (async () => {
+      saveCodexAccountCredential("acct-late", { ...credential, accessToken: "replacement" }, { validationPending: true });
+      return new Response('data: {"type":"response.completed"}\n\n');
+    }) as typeof fetch;
+    await guardianSweep(Date.now());
+    expect(readCodexAccountRecord("acct-late")?.codexValidationPending).toBe(true);
+    expect(readCodexAccountRecord("acct-late")?.lastCodexValidatedAt).toBeUndefined();
+  });
+
   test("guardian preserves deferred registration without probing an exhausted account", async () => {
     const mock = mockWarmupFetch();
     writeConfig({

@@ -141,8 +141,8 @@ export function saveCodexAccountCredential(
   id: string,
   cred: CodexAccountCredentials,
   options: { validationPending?: boolean } = {},
-): void {
-  withCredentialMutationLockSync(() => {
+): number {
+  return withCredentialMutationLockSync(() => {
     const store = loadCodexAccountRecordStore();
     const current = store[id];
     const refreshGrantFingerprint = current?.credential?.refreshToken === cred.refreshToken
@@ -162,6 +162,7 @@ export function saveCodexAccountCredential(
       } : {}),
     };
     persistCredentialMutation(store);
+    return store[id].generation;
   });
 }
 
@@ -170,6 +171,7 @@ export function markCodexAccountValidated(id: string, atMs: number = Date.now(),
     const store = loadCodexAccountRecordStore();
     const current = store[id];
     if (!current || current.deletedAt != null || !current.credential) return;
+    if (current.codexValidationPending && generation === undefined) return;
     if (generation !== undefined && current.generation !== generation) return;
     store[id] = {
       ...current,
