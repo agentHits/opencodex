@@ -339,7 +339,7 @@ describe("Anthropic vision planning and management config", () => {
         config,
       );
       const getBody = await get!.json() as Record<string, any>;
-      expect(getBody.webSearch).toEqual({ model: "claude-haiku-4-5", backend: "anthropic", streamRoutedModelOutput: false });
+      expect(getBody.webSearch).toEqual({ enabled: true, model: "claude-haiku-4-5", backend: "anthropic", streamRoutedModelOutput: false });
       expect(getBody.vision).toEqual({
         enabled: true,
         model: "claude-sonnet-5",
@@ -363,7 +363,7 @@ describe("Anthropic vision planning and management config", () => {
       );
       expect(clear.status).toBe(200);
       const clearBody = await clear.json() as Record<string, any>;
-      expect(clearBody.webSearch).toEqual({ model: "gpt-5.6-luna", streamRoutedModelOutput: false });
+      expect(clearBody.webSearch).toEqual({ enabled: true, model: "gpt-5.6-luna", streamRoutedModelOutput: false });
       expect(clearBody.vision).toEqual({
         enabled: true,
         model: "gpt-5.4-mini",
