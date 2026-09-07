@@ -13,9 +13,18 @@ import {
   type RuntimeApiDeps,
 } from "./runtime-api";
 import { isModelsRuntimeSubcommand } from "./models-runtime-subcommands";
+import { isValidProviderName } from "../config/provider-name";
+import { isValidModelDiscoveryModelId } from "../providers/model-discovery-limits";
+import { redactSecretString } from "../lib/redact";
+import type { ProviderCostOverlay } from "../types";
+import { MAX_COST4_RATE } from "../usage/expected-prices";
+import { isValidCost4Rate } from "../usage/user-cost-overlays";
 
 const USAGE = `Usage:
   ocx models live [--provider <name>] [--json]
+  ocx models price <provider/model> [--json]
+  ocx models set-price <provider/model> --input N --output N [--cache-read N] [--cache-write N] [--json]
+  ocx models set-price <provider/model> --auto [--json]
   ocx models edit <custom-id> [--model-id <id>] [--display-name <name|->]
       [--context-window <tokens|0>] [--modalities <text,image,audio|->]
       [--reasoning-efforts <none,minimal,low,medium,high,xhigh,max,ultra|->]
@@ -28,7 +37,10 @@ const USAGE = `Usage:
   ocx models new-policy [on|off] [--provider <name>] [--json]
   ocx models new-arrivals [--json]
   ocx models context <status|value <tokens> [--set-all]|provider <name> on [--value <tokens>]|provider <name> off|all <on|off>> [--json]
-  ocx models shadow <status|set> [model|-] [--enabled <on|off>] [--json]`;
+  ocx models shadow <status|set> [model|-] [--enabled <on|off>] [--json]
+
+Prices are USD per 1M tokens. Omitted cache rates default to 0.
+Price selectors use the exact upstream model ID after the first slash.`;
 
 type ModelRow = {
   provider?: string;
@@ -53,6 +65,58 @@ async function live(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     const flags = [row.native ? "native" : "routed", row.custom ? "custom" : "", row.initialSelectionPending ? "initial discovery pending" : row.disabled ? "disabled" : "enabled"].filter(Boolean);
     return `${row.namespaced ?? `${row.provider}/${row.id}`}  [${flags.join(", ")}]`;
   }));
+}
+
+async function price(write: boolean, argv: string[], deps: RuntimeApiDeps): Promise<void> {
+  const args = [...argv];
+  const selector = args.shift() ?? "";
+  const slash = selector.indexOf("/");
+  const provider = selector.slice(0, slash);
+  const modelId = selector.slice(slash + 1);
+  if (slash < 1 || !isValidProviderName(provider) || !isValidModelDiscoveryModelId(modelId)) {
+    throw new CliUsageError("model selector must be provider/model with an exact upstream model id", USAGE);
+  }
+  if (redactSecretString(modelId) !== modelId) {
+    throw new CliUsageError("modelId cannot be displayed safely", USAGE);
+  }
+  const wantsJson = takeFlag(args, "--json");
+  const path = `/api/providers/${encodeURIComponent(provider)}/model-costs`;
+  if (!write) {
+    rejectArgs(args, USAGE);
+    const result = await runtimeRequest<{ provider: string; modelCosts: Record<string, ProviderCostOverlay> }>(path, {}, deps);
+    const cost = Object.hasOwn(result.modelCosts, modelId) ? result.modelCosts[modelId]! : null;
+    printData({ provider: result.provider, modelId, cost }, wantsJson, [
+      cost === null ? `${selector}: automatic pricing` : `${selector}: ${JSON.stringify(cost)} USD per 1M tokens`,
+    ]);
+    return;
+  }
+  const auto = takeFlag(args, "--auto");
+  const input = takeOption(args, "--input");
+  const output = takeOption(args, "--output");
+  const cacheRead = takeOption(args, "--cache-read");
+  const cacheWrite = takeOption(args, "--cache-write");
+  rejectArgs(args, USAGE);
+  if (auto && [input, output, cacheRead, cacheWrite].some(value => value !== undefined)) {
+    throw new CliUsageError("--auto cannot be combined with price rates", USAGE);
+  }
+  if (!auto && (input === undefined || output === undefined)) {
+    throw new CliUsageError("--input and --output are required unless --auto is used", USAGE);
+  }
+  const rate = (raw: string, flag: string): number => {
+    const value = Number(raw);
+    if (!raw.trim() || !isValidCost4Rate(value)) {
+      throw new CliUsageError(`${flag} must be a finite number between 0 and ${MAX_COST4_RATE}`, USAGE);
+    }
+    return value;
+  };
+  const cost: ProviderCostOverlay | null = auto ? null : {
+    input: rate(input!, "--input"),
+    output: rate(output!, "--output"),
+    cacheRead: rate(cacheRead ?? "0", "--cache-read"),
+    cacheWrite: rate(cacheWrite ?? "0", "--cache-write"),
+  };
+  const result = await runtimeRequest(path, { method: "PUT", body: JSON.stringify({ modelId, cost }) }, deps);
+  printData(result, wantsJson, [auto ? `${selector}: automatic pricing restored.` : `${selector}: manual pricing saved.`]);
 }
 
 async function edit(argv: string[], deps: RuntimeApiDeps): Promise<void> {
@@ -328,6 +392,8 @@ export async function handleModelsRuntimeCommand(sub: string, argv: string[], de
   if (!isModelsRuntimeSubcommand(sub)) return null;
   let action: (() => Promise<void>) | undefined;
   if (sub === "live") action = () => live(argv, deps);
+  else if (sub === "price") action = () => price(false, argv, deps);
+  else if (sub === "set-price") action = () => price(true, argv, deps);
   else if (sub === "edit") action = () => edit(argv, deps);
   else if (sub === "enable") action = () => visibility(true, argv, deps);
   else if (sub === "disable") action = () => visibility(false, argv, deps);

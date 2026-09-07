@@ -1,5 +1,6 @@
 import { CodexStaleBanner } from "../components/codex-stale-banner";
 import ModelDisplayNameDialog from "../components/ModelDisplayNameDialog";
+import ModelPriceDialog from "../components/ModelPriceDialog";
 import { fetchCodexAppServerState } from "../codex-app-server-state";
 import type { AppServerStateOutcome } from "../codex-app-server-state";
 import { useCodexRestart } from "../use-codex-restart";
@@ -330,6 +331,8 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
   const [v2HelpOpen, setV2HelpOpen] = useState(false);
   const [customModalOpen, setCustomModalOpen] = useState(false);
   const [displayNameModel, setDisplayNameModel] = useState<ModelRow | null>(null);
+  const [priceModel, setPriceModel] = useState<ModelRow | null>(null);
+  const priceTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [displayNameSaving, setDisplayNameSaving] = useState(false);
   const [displayNameRequestError, setDisplayNameRequestError] = useState<string | null>(null);
   const [displayNameRecovery, setDisplayNameRecovery] = useState<{
@@ -1696,6 +1699,23 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
                          {t("models.customBadge")}
                        </span>
                      )}
+                     {!m.native && m.provider !== "combo" && (
+                       <>
+                         {m.manualPricing === true && <span className="models-chip muted text-caption">{t("pricing.override.badge")}</span>}
+                         <button
+                           type="button"
+                           className="btn btn-ghost btn-sm text-caption models-display-name-trigger"
+                           aria-haspopup="dialog"
+                           aria-label={t("pricing.override.actionLabel", { model: m.namespaced })}
+                           onClick={event => {
+                             priceTriggerRef.current = event.currentTarget;
+                             setPriceModel(m);
+                           }}
+                         >
+                           {t("pricing.override.action")}
+                         </button>
+                       </>
+                     )}
                      {!m.custom && recentIds.has(m.id) && <span className="badge badge-amber">{t("models.newBadge")}</span>}
                      {m.contextCapped && <span className="models-chip muted mono text-caption">{t("models.contextCappedValue", { value: fmtK(m.contextCap ?? contextCapValue) })}</span>}
                    </div>
@@ -2649,6 +2669,21 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
           onSave={value => void saveDisplayName(value)}
           onReset={() => void saveDisplayName(null)}
           onClose={closeDisplayNameEdit}
+        />
+      )}
+      {priceModel && (
+        <ModelPriceDialog
+          key={`${apiBase}/${priceModel.namespaced}`}
+          model={priceModel}
+          apiBase={apiBase}
+          onRefresh={signal => load(true, signal)}
+          onClose={() => {
+            const trigger = priceTriggerRef.current;
+            setPriceModel(null);
+            window.setTimeout(() => {
+              if (trigger?.isConnected) trigger.focus();
+            }, 0);
+          }}
         />
       )}
     </>

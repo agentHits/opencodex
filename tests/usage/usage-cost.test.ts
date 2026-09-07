@@ -1140,7 +1140,7 @@ describe("provider cost overlay (user-configured)", () => {
     });
   });
 
-  test("an all-zero overlay on a suffix-shaped configured provider falls through to compiled pricing, not the base provider's overlay", () => {
+  test("an explicit zero overlay on a suffix-shaped configured provider wins over every fallback", () => {
     refreshUserCostOverlays({
       providers: {
         acme: { modelCosts: { "claude-opus-4-6": USER_PRICE } },
@@ -1150,16 +1150,12 @@ describe("provider cost overlay (user-configured)", () => {
       },
     } as unknown as OcxConfig);
     const price = resolveMatchedPrice("acme-pabcdef", "claude-opus-4-6");
-    // The all-zero row falls through to compiled/catalog pricing — the
-    // documented fallback order — and never to acme's user-configured price.
+    // Operator zero is an explicit free estimate, not missing catalog metadata.
     expect(price).not.toBeNull();
     expect(price?.provider).toBe("acme-pabcdef");
-    expect(price?.source).toBe("jawcode");
+    expect(price?.source).toBe("user");
     expect(price?.cost4).not.toEqual(USER_PRICE);
-    // A real positive catalog price, without pinning the vendor's current
-    // rate (the catalog lives outside this PR and may change independently).
-    expect(price?.cost4?.input).toBeGreaterThan(0);
-    expect(price?.cost4?.output).toBeGreaterThan(0);
+    expect(price?.cost4).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
   });
 
   test("a generated account label (not a configured provider) still collapses to the base provider's overlay", () => {
@@ -1200,7 +1196,7 @@ describe("provider cost overlay (user-configured)", () => {
     expect(resolveMatchedPrice("acme-pabcdef", "acme-custom-model")).toBeNull();
   });
 
-  test("all-zero user overlay falls through to the expected overlay price", () => {
+  test("all-zero user overlay gives known-zero request and combo estimates until reset", () => {
     const zero: ExpectedPriceOverlay[] = [{
       provider: "deepseek",
       modelId: "deepseek-chat",
@@ -1210,10 +1206,13 @@ describe("provider cost overlay (user-configured)", () => {
       status: "verified",
     }];
     const price = resolveMatchedPrice("deepseek", "deepseek-chat", undefined, zero);
-    expect(price?.source).toBe("expected");
-    // A real positive expected-overlay price, without pinning the current
-    // rate (the overlay table may change independently of this feature).
-    expect(price?.cost4.input).toBeGreaterThan(0);
+    expect(price?.source).toBe("user");
+    expect(price?.cost4).toEqual(zero[0]!.cost4);
+    const input = { provider: "deepseek", model: "deepseek-chat", usageStatus: "reported" as const,
+      usage: { inputTokens: 1_000_000, outputTokens: 100_000 } };
+    expect(estimateRequestCost(input, undefined, zero)?.cost.total).toBe(0);
+    expect(estimateComboCost([{ ...input, ordinal: 1 }], undefined, undefined, zero)?.cost.total).toBe(0);
+    expect(resolveMatchedPrice("deepseek", "deepseek-chat", undefined, [])?.cost4.input).toBeGreaterThan(0);
   });
 
   test("combo fails closed when a user-priced attempt shares a combo with an unpriced one", () => {
