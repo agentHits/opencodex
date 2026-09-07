@@ -73,6 +73,34 @@ describe("Anthropic vision executor", () => {
     oauthAccessError = undefined;
   });
 
+  test.each([64 * 1024, 80 * 1024])("keeps only complete partial description frames at %i bytes without waiting for cancel", async (size) => {
+    const prefix = `data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "partial 한글" } })}\n\n`;
+    const tail = `data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "discard" } })}`;
+    const encoder = new TextEncoder();
+    const body = prefix + ":" + "x".repeat(64 * 1024 - encoder.encode(prefix + "\n\n" + tail).length - 1) + "\n\n" + tail;
+    let cancelled = false;
+    const out = await parseAnthropicVisionSSE(new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(encoder.encode(body + "z".repeat(size - 64 * 1024))); },
+      cancel() { cancelled = true; return new Promise<void>(() => {}); },
+    }, { highWaterMark: 0 })));
+    expect(cancelled).toBe(true);
+    expect(out).toEqual({ text: "partial 한글" });
+  });
+
+  test.each([401, 503])("bounds HTTP %i error bodies even when cancellation never settles", async (status) => {
+    let reads = 0;
+    let cancelled = false;
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) { reads += 1; controller.enqueue(new Uint8Array(4096).fill(120)); },
+      cancel() { cancelled = true; return new Promise<void>(() => {}); },
+    }, { highWaterMark: 0 }), { status })) as typeof fetch;
+    const out = await describeImageAnthropic(DATA_IMAGE, "high", "", "anthropic-vision-test", anthropicProvider, settings);
+    expect(reads).toBe(16);
+    expect(cancelled).toBe(true);
+    expect(out.error).toBe(status === 401
+      ? `anthropic vision sidecar auth failed: ${PUBLIC_OAUTH_ERROR}` : "anthropic vision sidecar HTTP 503");
+  });
+
   test("projects OAuth, upstream-auth, and transport failures onto safe replacement errors", async () => {
     oauthAccessError = new Error(`credential read failed at ${AUTH_ERROR_CANARY}`);
     const credentialFailure = await describeImageAnthropic(
