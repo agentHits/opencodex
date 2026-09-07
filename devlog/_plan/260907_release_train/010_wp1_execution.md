@@ -58,3 +58,5 @@ Chain-top CI: run 34106345180 @6eadb1658 (lane=all) success, aggregate `ci` succ
 - Lane E docs landed: #3883 (1649247c1) → #3884 (74089fdc3); tree c415b6abd == prospective merge tree (differs from tested 986ae11d only by D's landed files; shared locale reference files auto-merged in disjoint sections). run 34121907231. #3782 commented (docs caveat, stays open).
 - Lane E #3887 (#3774 DnD slice) merged 1e188b787; tree 139cade3f == tested; run 34124333662 (two CI-found repairs: EffectSetState lint in ModelPickerOrderEditor, stale-GET fixtures). #3774 slice comment, stays open.
 - Remaining: #3892 (#3336) → final Windows/control run on train head → wp3 readiness doc.
+- Lane E #3892 (#3336 carry + pricing-PUT race fix) merged f802f7112; tree 402b8e750 == tested; run 34126879673. Closed #3336.
+- All chains landed. Final train head dev f802f7112; full lane=all (Windows 6 + macos control) dispatched: run 34127950924.
