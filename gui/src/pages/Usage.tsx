@@ -830,7 +830,7 @@ export default function Usage({ apiBase, connected = false, apiKeyId }: { apiBas
   }, [apiBase, apiKeyId, connected, range, scope, surface, since, until]);
 
   const presetKey = usageCacheKey(apiBase, range, surface, connected, scope, apiKeyId);
-  const resourceKey = customWindow ? `${presetKey}:custom:${since}:${until}` : presetKey;
+  const resourceKey = customWindow ? JSON.stringify([presetKey, since, until]) : presetKey;
   // Arbitrary custom windows belong only to the subscription-scoped resource store.
   const cached = customWindow ? null : readHeldUsage(apiBase, range, surface, connected, scope, apiKeyId);
   // Range and surface identify different reports, so the key changes with both. That prevents
