@@ -12,14 +12,16 @@ search usable on xAI's public Responses endpoint…":
 ```
 Routed code-mode turns also carry the host contract for the nested helpers, stated in the same three
 injection sites as the result-emission rule (shared catalog nudge, Cursor code-mode guidance, native
-routed Responses instructions): `tools.apply_patch` takes one string whose first and last lines are
-the bare patch markers, the isolate has no `import`/`require`, and a command that outlives
+routed Responses instructions): `tools.apply_patch` takes one string that opens and closes with the
+bare patch marker lines (blank lines or indentation around them are tolerated; a decorated or missing
+marker is rejected), the isolate has no `import`/`require`, and a command that outlives
 `yield_time_ms` is polled through `write_stdin` with empty `chars` rather than a shell sleep loop.
-When an exec-bridge result still carries one of the host's failure strings ("expects a string
+When a code-mode exec result still carries one of the host's failure strings ("expects a string
 input", "The first line of the patch must be", "The last line of the patch must be", "Unsupported
 import in exec"), the native routed Responses, Kiro, and Cursor result paths append a one-line
-recovery hint naming the broken rule; Cursor's error classification and Kiro's whitespace and
-failed-wrapper grouping are unchanged. Both halves live in `src/adapters/exec-tool-result-normalize.ts`
+recovery hint naming the broken rule; flat shell bridges and foreign MCP namespaces are never
+annotated, and Cursor's error classification and Kiro's whitespace and failed-wrapper grouping are
+unchanged. Both halves live in `src/adapters/exec-tool-result-normalize.ts`
 so the pre-call and post-hoc wording cannot drift. This guidance and annotation change rewrites
 neither the model's JavaScript nor its patch payload; the existing name-alias delimiter
 normalization in `src/responses/code-mode-helper-compat.ts` is unchanged, and the host still rejects a
@@ -41,9 +43,9 @@ Insert after the paragraph ending "…and unrelated native custom payloads stay 
 
 ```
 Routed code-mode turns are also told the host's rules for the nested helpers before the first
-call: `tools.apply_patch` takes one string whose first and last lines are the bare patch markers,
-the isolate has no `import`, and long-running commands are polled through `write_stdin`. When an
-exec result on the native routed Responses, Kiro, or Cursor path still carries one of the host's
+call: `tools.apply_patch` takes one string that opens and closes with the bare patch marker lines,
+the isolate has no `import`, and long-running commands are polled through `write_stdin`. When a
+code-mode exec result on the native routed Responses, Kiro, or Cursor path still carries one of the host's
 failure messages, opencodex appends a one-line hint naming the rule. This change does not rewrite
 the model's code or its patch text.
 ```
@@ -77,4 +79,3 @@ Append `040_delivery_record.md` with PR number, head SHA, CI run id, per-job res
 improve (LOOP-PESSIMIST-01: prose cannot force compliance; effect on real Grok defect rate is
 unmeasured until a live re-probe), and the residual: Anthropic/Google/OpenAI-chat/command-code
 tool-result paths do not annotate host failures because they have no exec-result seam today.
-

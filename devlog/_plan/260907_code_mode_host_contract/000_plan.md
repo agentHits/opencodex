@@ -77,18 +77,26 @@ New exports in `exec-tool-result-normalize.ts` (full text in 010/020):
    non-exhaustive), `session_id` + `write_stdin` polling.
 2. `CODE_MODE_HOST_FAILURE_GUIDANCE` — marker → recovery rows for the four host strings, matched
    case-insensitively.
-3. `annotateCodeModeHostFailure(text, {toolName, toolNamespace})` — gated by
-   `isCodexExecBridgeTool`, refuses text already carrying `[recovery: `, appends one recovery
-   line; else `undefined`. Pure, idempotent, byte-identical on the negative path.
+3. `annotateCodeModeHostFailure(text, {toolName, toolNamespace})` — gated by a new, narrower
+   `isCodexCodeModeExecResult` (bare `exec` or its `opencodex-responses` display alias; flat shell
+   bridges and foreign MCP namespaces excluded because the four strings originate only in the
+   isolate), refuses text already carrying the exported `CODE_MODE_HOST_RECOVERY_PREFIX`, appends
+   one recovery line; else `undefined`. Pure, idempotent, byte-identical on the negative path.
+   The empty-output repair keeps its wider `isCodexExecBridgeTool` gate.
 
 Cursor keeps its own `RUNTIME_FAILURE_GUIDANCE` table and its `isError` policy byte-identical;
 it gains one exec-gated branch that inserts the shared annotation WITHOUT changing `isError`
 (audit blockers 2 and 3). Kiro substitutes the annotation only where it would otherwise carry the
 raw text, leaving whitespace and failed-wrapper grouping untouched (blocker 1).
 
-Accepted residual: an exec result that legitimately prints one of the four phrases (e.g. `cat` of
-this devlog) gains a recovery line. The line is additive text on an exec result and never changes
-error status, and the gate excludes every non-exec tool.
+Accepted residual: a code-mode exec result that legitimately prints one of the four phrases (e.g.
+`cat` of this devlog) gains a recovery line. The line is additive text and never changes error
+status; the gate excludes every non-code-mode tool, shell bridge, and foreign namespace.
+
+Marker wording: the live probe shows the host tolerates blank lines and indentation around the
+markers and rejects a decorated or missing marker. Every sentence, recovery hint and doc paragraph
+says "opens/closes with the bare marker line … blank lines or indentation are tolerated" and never
+"the first character must be".
 
 Why prose and not repair: `devlog/_plan/260905_apply_patch_envelope_gap/010_disposition.md`
 refused rewriting JavaScript bodies (MODE B). An object argument inside a program has the same
@@ -157,3 +165,12 @@ quo. Wording: "early warning". Final layer: Codex host validation (unchanged).
 Root cause across 1-3: the roadmap treated "reuse the seam" as "spread into the seam" without
 re-reading each seam's own policy. Round 2 re-audits with the same reviewer.
 
+## Audit round 2 — synthesis
+
+| # | Sev | Disposition |
+|---|---|---|
+| 1 Cursor lowercase replay falls through to legacy loop | High | Folded: the exec-gated branch returns early on an already-annotated result; lowercase and capitalised replay tests assert text/isError/changed (020). |
+| 2 Namespace-negative test contradicts the predicate; flat shells annotated | Med | Folded: new `isCodexCodeModeExecResult` gate; shell-bridge, foreign-namespace and Cursor-alias tests; docs say flat catalogs untouched and mean it (020/030). |
+| 3 Responses replay `toBe(replayed)` cannot hold | Med | Folded: assert output-item and program identity plus deep-equal idempotence of successive passes (020). |
+| 4 Marker wording contradicts whitespace probe | Med | Folded: "bare marker line … blank lines or indentation tolerated" in sentence, hints, structure and docs-site text (010/020/030). |
+| 5 Off-by-one anchors | Low | Folded: 116, 32, 45-46, 97-106 (010/020). |

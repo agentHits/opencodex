@@ -5,7 +5,7 @@ authorized push and a draft PR so exact-head CI exists for this and later heads.
 
 ## MODIFY `src/adapters/exec-tool-result-normalize.ts`
 
-Insert after the `CODE_MODE_RESULT_ECHO_SENTENCE` declaration (its closing `;` is at line 117):
+Insert after the `CODE_MODE_RESULT_ECHO_SENTENCE` declaration (its closing `;` is at line 116):
 
 ```ts
 
@@ -22,7 +22,7 @@ Insert after the `CODE_MODE_RESULT_ECHO_SENTENCE` declaration (its closing `;` i
  * had not stated.
  */
 export const CODE_MODE_HOST_CONTRACT_SENTENCE =
-  "Host contract for the nested helpers: `tools.apply_patch(patch)` takes exactly one string, never an object such as `{input: ...}`; that string's first line must be the bare marker `*** Begin Patch` and its last line `*** End Patch`, with no code fence, prose, or extra asterisks around either marker. The isolate has no `import`, `require`, or module loader; use the globals the exec tool description lists (for example `tools`, `text`, `notify`, `store`/`load`, `ALL_TOOLS`). For a command that may outlive `yield_time_ms`, let `tools.exec_command` return a `session_id` and poll it on later calls with `tools.write_stdin({session_id, chars: \"\"})` instead of blocking a shell in a sleep loop.";
+  "Host contract for the nested helpers: `tools.apply_patch(patch)` takes exactly one string, never an object such as `{input: ...}`; the patch text opens with the bare marker line `*** Begin Patch` and closes with the bare marker line `*** End Patch`, written without a code fence, prose, or extra asterisks on those lines (blank lines or indentation around the markers are tolerated; a decorated or missing marker is rejected). The isolate has no `import`, `require`, or module loader; use the globals the exec tool description lists (for example `tools`, `text`, `notify`, `store`/`load`, `ALL_TOOLS`). For a command that may outlive `yield_time_ms`, let `tools.exec_command` return a `session_id` and poll it on later calls with `tools.write_stdin({session_id, chars: \"\"})` instead of blocking a shell in a sleep loop.";
 ```
 
 ## MODIFY `src/adapters/tool-catalog-nudge.ts`
@@ -82,7 +82,7 @@ AFTER:
 import { CODE_MODE_HOST_CONTRACT_SENTENCE, CODE_MODE_RESULT_ECHO_SENTENCE, normalizeEmptyExecToolResultText } from "./exec-tool-result-normalize";
 ```
 
-Insert before `/** Native routed Responses needs the same first-call/output contract… */` (line 33):
+Insert before `/** Native routed Responses needs the same first-call/output contract… */` (line 32):
 ```ts
 /** Append each sentence a replayed instructions string does not already carry, in order. */
 function appendMissing(instructions: string, sentences: readonly string[]): string {
@@ -93,7 +93,7 @@ function appendMissing(instructions: string, sentences: readonly string[]): stri
 }
 ```
 
-Lines 46-47 BEFORE (4-space indent):
+Lines 45-46 BEFORE (4-space indent):
 ```ts
     instructions: instructions.includes(CODE_MODE_RESULT_ECHO_SENTENCE)
       ? instructions : [instructions, CODE_MODE_RESULT_ECHO_SENTENCE].filter(Boolean).join("\n\n"),
@@ -184,4 +184,3 @@ wp2/wp3 will extend it).
 NOT RUN locally by instruction. Poll `gh run list --branch codex/code-mode-host-contract --json databaseId,headSha,status,conclusion,name`
 in short `exec_command` calls; when the Cross-platform CI run for `git rev-parse HEAD` completes,
 `cxc receipt test --session <id> --cwd <worktree> -- gh run view <id> --exit-status`.
-

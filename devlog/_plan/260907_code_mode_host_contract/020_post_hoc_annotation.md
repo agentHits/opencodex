@@ -22,11 +22,11 @@ export const CODE_MODE_HOST_FAILURE_GUIDANCE: ReadonlyArray<{ marker: string; gu
   },
   {
     marker: "the first line of the patch must be",
-    guidance: "The patch string's first line must be the bare marker `*** Begin Patch` with no code fence, prose, or extra asterisks around it.",
+    guidance: "The patch text must open with the bare marker line `*** Begin Patch`: no code fence, prose, or extra asterisks on that line (blank lines or indentation before it are tolerated).",
   },
   {
     marker: "the last line of the patch must be",
-    guidance: "The patch string's last line must be the bare marker `*** End Patch` with no trailing text or extra asterisks.",
+    guidance: "The patch text must close with the bare marker line `*** End Patch`: no trailing text or extra asterisks on that line (blank lines after it are tolerated).",
   },
   {
     marker: "unsupported import in exec",
@@ -34,11 +34,26 @@ export const CODE_MODE_HOST_FAILURE_GUIDANCE: ReadonlyArray<{ marker: string; gu
   },
 ];
 
-const HOST_FAILURE_RECOVERY_PREFIX = "[recovery: ";
+/** Prefix of every recovery line this module appends; callers use it to recognise replayed annotations. */
+export const CODE_MODE_HOST_RECOVERY_PREFIX = "[recovery: ";
 
 /**
- * Append a one-line recovery hint when an exec-bridge result carries a known host failure string.
- * Returns undefined when the tool is not an exec bridge, no marker matches, or a recovery line is
+ * The code-mode `exec` tool itself — bare, or under Cursor's `opencodex-responses` display namespace.
+ * The four host strings above originate only in that isolate, so flat shell bridges
+ * (`exec_command`, `shell`, …) and every foreign MCP namespace (`mcp__docker__exec`) are excluded: an
+ * unrelated server's output that happens to contain the phrase must not receive Codex guidance.
+ * Narrower than `isCodexExecBridgeTool` on purpose; the empty-output repair keeps the wider gate.
+ */
+export function isCodexCodeModeExecResult(toolName?: string, toolNamespace?: string): boolean {
+  if (!toolName) return false;
+  const lower = toolName.toLowerCase();
+  if (toolNamespace) return toolNamespace.includes("opencodex-responses") && lower === "exec";
+  return lower === "exec" || lower === "mcp__opencodex-responses__exec" || lower === "mcp_opencodex-responses_exec";
+}
+
+/**
+ * Append a one-line recovery hint when a code-mode exec result carries a known host failure string.
+ * Returns undefined when the tool is not the code-mode exec, no marker matches, or a recovery line is
  * already present (a replayed annotated result must not grow a second one). Never touches error
  * status: the host already decided whether the call failed.
  */
@@ -46,13 +61,16 @@ export function annotateCodeModeHostFailure(
   text: string,
   options: { toolName?: string; toolNamespace?: string } = {},
 ): string | undefined {
-  if (!isCodexExecBridgeTool(options.toolName, options.toolNamespace)) return undefined;
-  if (text.includes(HOST_FAILURE_RECOVERY_PREFIX)) return undefined;
+  if (!isCodexCodeModeExecResult(options.toolName, options.toolNamespace)) return undefined;
+  if (text.includes(CODE_MODE_HOST_RECOVERY_PREFIX)) return undefined;
   const lower = text.toLowerCase();
   const hit = CODE_MODE_HOST_FAILURE_GUIDANCE.find(({ marker }) => lower.includes(marker));
-  return hit ? `${text}\n${HOST_FAILURE_RECOVERY_PREFIX}${hit.guidance}]` : undefined;
+  return hit ? `${text}\n${CODE_MODE_HOST_RECOVERY_PREFIX}${hit.guidance}]` : undefined;
 }
 ```
+
+Flat shell tools are deliberately not annotated: the strings come from the code-mode host, and the
+"flat catalogs untouched" statement in the docs is therefore literally true.
 
 ## MODIFY `src/adapters/responses-code-mode.ts`
 
@@ -125,11 +143,12 @@ empty-success nor a failed-empty wrapper, so every existing grouping expectation
 
 ## MODIFY `src/adapters/cursor/tool-result-normalize.ts`
 
-Imports (lines 12-18) gain `annotateCodeModeHostFailure`. `RUNTIME_FAILURE_GUIDANCE` (lines 50-67) and its
+Imports (lines 12-18) gain `CODE_MODE_HOST_RECOVERY_PREFIX`, `annotateCodeModeHostFailure` and
+`isCodexCodeModeExecResult`. `RUNTIME_FAILURE_GUIDANCE` (lines 50-67) and its
 loop (lines 107-113) stay byte-identical: Cursor's marker semantics, case sensitivity and
 `isError:true` policy are its own.
 
-Lines 96-105 BEFORE (2-space indent):
+Lines 97-106 BEFORE (2-space indent):
 ```ts
   if (isCodexExecBridgeTool(options.toolName, options.toolNamespace) && isEmptyOrFailedExecWrapper(text.trim())) {
     return {
@@ -154,14 +173,19 @@ AFTER (append one branch directly after that block):
       changed: true,
     };
   }
-  // A host failure string inside an exec-bridge result gets the rule it broke appended. The
-  // helper is exec-gated and refuses already-annotated text, so a replayed result does not grow
-  // a second line; Cursor's isError decision is left exactly as the caller passed it.
-  const hostFailure = annotateCodeModeHostFailure(text, options);
-  if (hostFailure !== undefined) return { text: hostFailure, isError, changed: true };
+  // A host failure string inside a code-mode exec result gets the rule it broke appended, with
+  // Cursor's isError decision left exactly as the caller passed it. A replayed result that already
+  // carries a recovery line returns here unchanged: falling through would let the legacy loop
+  // below match the lowercase import marker a second time and flip isError.
+  if (isCodexCodeModeExecResult(options.toolName, options.toolNamespace)) {
+    if (text.includes(CODE_MODE_HOST_RECOVERY_PREFIX)) return { text, isError, changed: false };
+    const hostFailure = annotateCodeModeHostFailure(text, options);
+    if (hostFailure !== undefined) return { text: hostFailure, isError, changed: true };
+  }
 ```
 The existing `unsupported import in exec` row in `RUNTIME_FAILURE_GUIDANCE` still serves node_repl /
-Computer Use tools; for exec-bridge tools the new branch runs first and carries the shared hint.
+Computer Use tools; for the code-mode exec the new branch runs first, carries the shared hint, and
+terminates replay before the legacy loop can see it.
 
 ## NEW `tests/adapters/exec-tool-result-normalize.test.ts`
 
@@ -190,13 +214,18 @@ describe("code-mode host failure annotation", () => {
     expect(annotateCodeModeHostFailure("Script error:\ntool `apply_patch` expects a string input", { toolName: "exec" })).toContain("exactly one string");
     expect(annotateCodeModeHostFailure(
       "apply_patch verification failed: invalid patch: The first line of the patch must be '*** Begin Patch'",
-      { toolName: "exec_command" },
-    )).toContain("bare marker `*** Begin Patch`");
+      { toolName: "exec" },
+    )).toContain("bare marker line `*** Begin Patch`");
   });
 
-  test("leaves non-exec tools, non-matching text and already-annotated text byte-identical", () => {
+  test("leaves non-exec tools, shell bridges, foreign namespaces, non-matching text and already-annotated text alone", () => {
     expect(annotateCodeModeHostFailure("expects a string input", { toolName: "read_file" })).toBeUndefined();
-    expect(annotateCodeModeHostFailure("expects a string input", { toolName: "exec_command", toolNamespace: "mcp__docker" })).toBeUndefined();
+    // Flat shell bridges never run the isolate, so the four strings cannot be theirs.
+    expect(annotateCodeModeHostFailure("expects a string input", { toolName: "exec_command" })).toBeUndefined();
+    // A foreign MCP server's own exec is not Codex's, even when its output quotes the phrase.
+    expect(annotateCodeModeHostFailure("expects a string input", { toolName: "exec", toolNamespace: "mcp__docker" })).toBeUndefined();
+    // Cursor's display namespace for the same code-mode tool still counts.
+    expect(annotateCodeModeHostFailure("expects a string input", { toolName: "exec", toolNamespace: "mcp__opencodex-responses" })).toContain("[recovery:");
     expect(annotateCodeModeHostFailure("all good", { toolName: "exec" })).toBeUndefined();
     const once = annotateCodeModeHostFailure("expects a string input", { toolName: "exec" });
     if (!once) throw new Error("expected one annotation");
@@ -232,9 +261,13 @@ entry is required and `tests/test-layout-tooling.test.ts` names it if missing.
     const wire = JSON.parse(createResponsesPassthroughAdapter(routed).buildRequest(parseRequest(body)).body);
     expect(wire.input[1].output).toBe(`${failure}\n[recovery: tools.apply_patch takes exactly one string argument; pass the patch text itself, not an object such as {input: ...}.]`);
     expect(JSON.parse(wire.input[0].arguments).input).toBe(body.input[0].input);
-    // Replayed history already carrying the hint is not annotated twice.
+    // Replayed history already carrying the hint is not annotated twice: the output item and the
+    // program keep their identity, and a second pass over the normalized body is a deep no-op.
     const replayed = raw(wire.input[1].output);
-    expect(normalizeResponsesCodeMode(replayed, parseRequest(replayed), routed)).toBe(replayed);
+    const once = normalizeResponsesCodeMode(replayed, parseRequest(replayed), routed) as typeof replayed;
+    expect(once.input[1]).toBe(replayed.input[1]);
+    expect(once.input[0]).toBe(replayed.input[0]);
+    expect(normalizeResponsesCodeMode(once, parseRequest(once), routed)).toEqual(once);
   });
 ```
 
@@ -252,7 +285,7 @@ entry is required and `tests/test-layout-tooling.test.ts` names it if missing.
     const { body } = await createKiroAdapter(provider).buildRequest(parsedWith(messages, [execTool]));
     const resultText = JSON.parse(body).conversationState.currentMessage.userInputMessage
       .userInputMessageContext.toolResults[0].content[0].text;
-    expect(resultText).toBe(`${failure}\n[recovery: The patch string's first line must be the bare marker \`*** Begin Patch\` with no code fence, prose, or extra asterisks around it.]`);
+    expect(resultText).toBe(`${failure}\n[recovery: The patch text must open with the bare marker line \`*** Begin Patch\`: no code fence, prose, or extra asterisks on that line (blank lines or indentation before it are tolerated).]`);
   });
 ```
 - In the grouped-result table (the `execResult` cases around lines 1195-1262) add one case:
@@ -271,13 +304,24 @@ entry is required and `tests/test-layout-tooling.test.ts` names it if missing.
 
 `tests/providers/cursor/cursor-toolresult-normalize.test.ts` — add after the `test.each` runtime-failure table:
 ```ts
-  test("an exec-bridge result carrying a host failure string gains the shared hint and keeps its isError", () => {
-    const out = normalizeCursorToolResultText("Unsupported import in exec: node:fs", { toolName: "exec" });
-    expect(out.changed).toBe(true);
-    expect(out.isError).toBe(false);
-    expect(out.text).toContain("[recovery: Imports are not available in this exec context");
-    // Replay of the annotated text with isError=false must not grow a second line.
-    expect(normalizeCursorToolResultText(out.text, { toolName: "exec" }).changed).toBe(false);
+  test.each(["Unsupported import in exec: node:fs", "unsupported import in exec: node:fs"])(
+    "a code-mode exec result carrying %p gains the shared hint, keeps its isError, and is not re-annotated on replay",
+    (payload) => {
+      const out = normalizeCursorToolResultText(payload, { toolName: "exec" });
+      expect(out.changed).toBe(true);
+      expect(out.isError).toBe(false);
+      expect(out.text).toBe(`${payload}\n[recovery: Imports are not available in this exec context; use the injected globals (tools, text, notify, store, load, ALL_TOOLS) instead.]`);
+      // Replay through Responses history arrives with isError=false; the legacy lowercase marker
+      // row must not get a second look at it.
+      const replay = normalizeCursorToolResultText(out.text, { toolName: "exec", isError: false });
+      expect(replay).toEqual({ text: out.text, isError: false, changed: false });
+    },
+  );
+
+  test("the legacy node_repl import row keeps its own isError policy", () => {
+    const out = normalizeCursorToolResultText("unsupported import in exec", { toolName: "js", toolNamespace: "mcp__node_repl" });
+    expect(out.isError).toBe(true);
+    expect(out.text).toContain("injected globals");
   });
 
   test("a non-exec tool whose successful output merely mentions a host phrase stays byte-identical", () => {
@@ -297,4 +341,3 @@ Stage only the files above (`git diff --cached --stat` first); commit `--no-veri
 
 NOT RUN locally. Exact-head Cross-platform CI on the wp2 head; receipt via
 `cxc receipt test --session <id> --cwd <worktree> -- gh run view <id> --exit-status`.
-
