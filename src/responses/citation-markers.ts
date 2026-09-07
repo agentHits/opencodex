@@ -69,12 +69,24 @@ export interface CitationMarkerFilter {
 }
 
 /**
+ * Upper bound on the text withheld for one unterminated START.
+ *
+ * A real span is `cite` plus a few turn-scoped ids, so it is far under this. Without a
+ * bound, a backend that emits a START and never terminates it makes `held` grow for the
+ * whole response, and every later delta re-scans that accumulated prefix.
+ */
+const MAX_STREAMING_MARKER_SPAN_LENGTH = 4_096;
+
+/**
  * Streaming filter.
  *
  * A marker can straddle a delta boundary — `\uE200cite` in one chunk and the rest in the
  * next — so a stateless per-delta strip would emit the tail of a span it never recognized.
  * This holds back the text from an unterminated START and releases it once the END arrives
  * (removed) or the stream ends (verbatim, so nothing the model actually said is lost).
+ *
+ * A span that grows past `MAX_STREAMING_MARKER_SPAN_LENGTH` is malformed ordinary text, so
+ * it is released verbatim instead of withheld; a later START can still open a valid span.
  */
 export function createCitationMarkerFilter(): CitationMarkerFilter {
   // Text from an open START that has not been terminated yet.
@@ -83,13 +95,29 @@ export function createCitationMarkerFilter(): CitationMarkerFilter {
     push(delta: string): string {
       const combined = held + delta;
       held = "";
-      const start = combined.lastIndexOf(CITATION_MARKER_START);
-      if (start === -1) return stripCitationMarkers(combined);
-      const endAfterStart = combined.indexOf(CITATION_MARKER_END, start + 1);
-      if (endAfterStart !== -1) return stripCitationMarkers(combined);
-      // The trailing span is still open: emit everything before it, hold the rest.
-      held = combined.slice(start);
-      return stripCitationMarkers(combined.slice(0, start));
+      let start = combined.indexOf(CITATION_MARKER_START);
+      if (start === -1) return combined;
+      let out = combined.slice(0, start);
+      // Walk START-delimited segments independently so an earlier malformed START is never
+      // paired with a later span's END (the whole-string strip would do exactly that).
+      while (start !== -1) {
+        const nextStart = combined.indexOf(CITATION_MARKER_START, start + 1);
+        const segment = combined.slice(start, nextStart === -1 ? combined.length : nextStart);
+        const end = segment.indexOf(CITATION_MARKER_END, 1);
+        if (end !== -1) {
+          // A complete span: drop it, keep whatever trails it inside this segment.
+          out += segment.slice(end + 1);
+        } else if (nextStart === -1 && segment.length <= MAX_STREAMING_MARKER_SPAN_LENGTH) {
+          // Only a bounded trailing span can still be completed by a later delta.
+          held = segment;
+        } else {
+          // Superseded by a later START, or over the bound: ordinary text, emitted verbatim
+          // so neither the retained text nor the per-delta rescan grows without limit.
+          out += segment;
+        }
+        start = nextStart;
+      }
+      return out;
     },
     flush(): string {
       const rest = held;
@@ -98,4 +126,3 @@ export function createCitationMarkerFilter(): CitationMarkerFilter {
     },
   };
 }
-
