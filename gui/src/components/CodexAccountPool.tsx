@@ -274,7 +274,7 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   const refreshQuotas = async () => {
     setRefreshingQuota(true);
     try {
-      const ok = await load(true);
+      const ok = await load(true, { validatePending: true });
       showActionFeedback(t(ok ? "codexAuth.quotaRefreshed" : "codexAuth.quotaRefreshFailed"), ok ? "ok" : "err");
     } finally {
       setRefreshingQuota(false);

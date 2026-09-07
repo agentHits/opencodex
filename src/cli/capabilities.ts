@@ -195,6 +195,18 @@ export const CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: ["account", "refresh"],
+    summary: "Refresh account quotas and finish pending Codex validation when quota has recovered.",
+    routes: [
+      { method: "POST", path: "/api/codex-auth/accounts/refresh" },
+      { method: "GET", path: "/api/provider-quotas" },
+    ],
+    flags: [{ name: "--json", value: "boolean", summary: "Emit the refresh result as JSON." }],
+    mutates: true,
+    json: "payload",
+    details: ["For Codex, recovered pending accounts require a model validation request before becoming routable. Account listing, including list --refresh, never performs this validation."],
+  },
+  {
     command: ["usage"],
     summary: "Token and estimated-cost report over a time range.",
     routes: [{ method: "GET", path: "/api/usage" }],

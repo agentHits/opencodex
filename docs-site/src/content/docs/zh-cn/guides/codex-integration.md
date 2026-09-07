@@ -310,6 +310,8 @@ fallback 行为，参见 [Sub-agent Surface](/guides/sub-agent-surface/)。
 
 如果新 OAuth 凭据的已认证用量查询确认5小时、每周或每月额度耗尽，则不调用模型而直接保存账号，显示**等待验证**。重启或刷新令牌也不会使其可用。额度恢复后刷新额度：只有完整的最新用量显示有余额，才会发送一个小型验证请求；请求完成后账号才可用于路由。查询或验证失败将保留等待状态。普通状态轮询不会发送该请求。初次注册时用量未知仍需常规预热验证。
 
+无界面环境可运行 `ocx account refresh openai` 执行相同验证。`ocx account list openai --quota --refresh` 仅查询用量，不验证等待中的账号。
+
 后台重新验证是独立功能，默认关闭。它要求 Token Guardian、`openai` 的 `proactive` 刷新策略及 `tokenGuardian.codexWarmupEnabled`，并跳过等待注册验证的账号。
 
 ## 恢复原生 Codex

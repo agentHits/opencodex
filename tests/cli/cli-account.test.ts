@@ -137,11 +137,12 @@ function json(body: unknown, status = 200): Response {
 
 async function mockManagementApi(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const body = req.method === "PUT" || req.method === "POST" ? await req.json() : undefined;
+  const body = req.method === "PUT" || req.method === "POST" ? await req.json().catch(() => undefined) : undefined;
   requests.push({ method: req.method, path: url.pathname, search: url.search, body });
 
-  if (req.method === "GET" && url.pathname === "/api/codex-auth/accounts") {
-    if (url.searchParams.get("refresh") === "1" && codexRefreshFailure) {
+  if ((req.method === "GET" && url.pathname === "/api/codex-auth/accounts")
+    || (req.method === "POST" && url.pathname === "/api/codex-auth/accounts/refresh")) {
+    if ((url.searchParams.get("refresh") === "1" || req.method === "POST") && codexRefreshFailure) {
       return json({ error: codexRefreshFailure.error }, codexRefreshFailure.status);
     }
     if (lastDeletedType === "codex" && postDeleteReadFailure) {
@@ -907,7 +908,7 @@ describe("ocx account CLI (issue #180 matrix)", () => {
 
     expect(human.code).toBe(0);
     expect(requests.some(request =>
-      request.path === "/api/codex-auth/accounts" && request.search === "?refresh=1"
+      request.path === "/api/codex-auth/accounts/refresh" && request.method === "POST"
     )).toBe(true);
     expect(human.stdout).toContain("weekly 42%");
     expect(human.stdout).toContain("monthly 17%");

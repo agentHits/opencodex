@@ -418,7 +418,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
     const configured = config?.providers[provider];
     const mode = configured?.authMode;
     const readAccounts = configured && isAccountProvider(provider, configured)
-      ? () => codexPool.load(true)
+      ? () => codexPool.load(true, { validatePending: true })
       : mode === "oauth"
         ? () => fetchAccountSets([provider], true)
         : mode === "forward" || mode === "local"

@@ -237,6 +237,8 @@ ocx service install    # persistent: auto-starts on login and respawns on crash
 
 新しい OAuth トークンによる使用量取得で5時間・週次・月次の上限到達が確認された場合、モデルを呼ばずに保存し、**検証待ち**と表示します。再起動やトークン更新後も使用できません。上限回復後に使用量を更新すると、十分な空き容量を示す完全な最新情報を確認してから小さなモデルリクエストを送り、完了した場合のみ使用可能になります。取得や検証の失敗では待機状態を維持します。通常の状態ポーリングは検証リクエストを送りません。初回登録時の使用量が不明な場合は通常の検証が必要です。
 
+ダッシュボードを使わずに `ocx account refresh openai` で同じ検証を実行できます。`ocx account list openai --quota --refresh` は使用量のみを取得し、待機中のアカウントを検証しません。
+
 バックグラウンド再検証は別機能で既定では無効です。Token Guardian、`openai` の `proactive` 更新ポリシー、`tokenGuardian.codexWarmupEnabled` が必要で、登録検証待ちのアカウントは除外します。
 
 ## ネイティブ Codexの復元

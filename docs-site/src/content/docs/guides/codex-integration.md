@@ -551,6 +551,8 @@ When a ChatGPT account is added or reauthenticated, OpenCodex normally verifies 
 
 If the new OAuth credential's authenticated usage lookup confirms an exhausted 5-hour, weekly, or monthly quota, the account is saved without this model request and shows **Validation pending**. It cannot serve pool requests, even after a restart or token refresh. Once quota recovers, **Refresh quotas** finishes validation: a fresh, complete usage reading with headroom permits one small model request, and only a completed response enables the account. Failed or incomplete readings and failed validation preserve the restriction. Passive account polling does not trigger deferred validation. Unknown usage during initial registration retains the normal warmup gate.
 
+On a headless installation, `ocx account refresh openai` performs the same validation. `ocx account list openai --quota --refresh` only reads usage and does not validate pending accounts.
+
 Background revalidation is separate and off by default. It requires Token Guardian, the `openai` provider's `proactive` refresh policy, and `tokenGuardian.codexWarmupEnabled`. It skips accounts awaiting deferred registration validation.
 
 ## Restoring native Codex

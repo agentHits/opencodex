@@ -421,6 +421,8 @@ Hesap ekleme veya yeniden kimlik doğrulama, normalde kaydetmeden önce `respons
 
 Yeni OAuth belirteciyle yapılan kota sorgusu 5 saatlik, haftalık veya aylık kotanın tükendiğini doğrularsa hesap model çağrısı olmadan kaydedilir ve **Doğrulama bekleniyor** gösterilir. Yeniden başlatma veya belirteç yenileme yönlendirmeyi açmaz. Kota geri geldiğinde kotaları yenileyin: kullanılabilir kapasite gösteren eksiksiz güncel veri küçük bir doğrulama isteğine izin verir. Yalnızca tamamlanan yanıt hesabı etkinleştirir. Hatalarda kısıtlama korunur. Pasif sorgulama bu isteği göndermez. İlk kayıtta bilinmeyen kota normal doğrulamayı gerektirir.
 
+Pano olmadan `ocx account refresh openai` aynı doğrulamayı gerçekleştirir. `ocx account list openai --quota --refresh` yalnızca kullanımı okur ve bekleyen hesapları doğrulamaz.
+
 Arka plan doğrulaması ayrı ve varsayılan olarak kapalıdır. Token Guardian, `openai` için `proactive` yenileme ilkesi ve `tokenGuardian.codexWarmupEnabled` gerektirir; kayıt doğrulaması bekleyen hesapları atlar.
 
 ## Yerel Codex'i geri yükleme

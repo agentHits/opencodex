@@ -339,7 +339,7 @@ export async function cmdRefresh(args: string[], deps: AccountDeps): Promise<num
     } else console.log(`no quota report available for ${name}`);
     return 0;
   }
-  const result = await fetchCodexRows(deps, baseUrl, true);
+  const result = await fetchCodexRows(deps, baseUrl, true, true, { validatePending: true });
   const failed = familyFailure(result, `failed to refresh ${name}`);
   if (failed !== null) return failed;
   if (wantsJson) console.log(JSON.stringify({ accounts: result.rows }, null, 2));
