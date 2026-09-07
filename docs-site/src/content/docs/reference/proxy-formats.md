@@ -278,6 +278,12 @@ These endpoints speak the Anthropic Messages dialect used by Claude Code and com
 Most requests are translated to Responses, routed normally, then translated back to Anthropic JSON
 or Anthropic SSE.
 
+On translated Messages requests, reasoning replay shares the request's translation budget.
+Envelope admission includes encoding/decoding copy overhead, not just the original signature
+length. Requests exceeding this budget return HTTP 413 with `translation_buffer_limit`;
+signatures and opaque reasoning data are never truncated to make a request fit. Native
+Anthropic passthrough retains its separate body-size contract.
+
 Base64 and URL image sources are translated in user messages and nested tool results. File-backed
 images (`source.type: "file"`) require native Anthropic passthrough; translated routes return a
 fixed HTTP 400 error asking for base64 or URL input. OpenCodex does not resolve another provider's

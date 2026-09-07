@@ -1480,6 +1480,23 @@ Unsupported constraints remain in `description` as model guidance instead of dis
 
 ## Reasoning display parity (hideThinkingSummary)
 
+Reasoning-envelope serialization uses preflight byte sizing and transient reservations before
+creating JSON, UTF-8, or base64 copies. Encoding also admits the matching decode projection, so
+a successfully encoded standalone envelope fits the standalone decoder's limit. Callers retain
+ownership of returned values; the helper releases only its temporary reservation. Inbound
+Anthropic translation carries one budget across all assistant blocks and accounts for retained
+envelopes until the response lifecycle disposes it. Standalone translation owns a temporary
+budget and disposes it on success or failure. Final translated-request sizing uses plain-JSON
+measurement rather than allocating a serialized copy just to measure it.
+
+[Decision Log]
+- 목적과 의도: Keep reasoning replay bounded while preserving opaque values exactly.
+- 기존 구현 및 제약 조건: Reasoning continuity needs JSON/base64 envelopes, and existing callers already own retained accounting and typed overflow handling.
+- 검토한 주요 대안: Per-field truncation, an independent fixed field limit, or shared transient admission plus cumulative inbound ownership.
+- 선택한 방식: Reserve conservative copy projections in the envelope helpers and use the existing request budget across inbound blocks.
+- 다른 대안 대신 이 방식을 선택한 이유: Truncation changes signed values; one field limit does not describe aggregate ownership. Existing budget errors retain the established HTTP and stream error contracts.
+- 장점, 단점 및 영향: Normal replay is unchanged; envelope admission includes copy overhead and is stricter than a raw-string length ceiling. These are translator accounting limits, not a process-wide RSS guarantee.
+
 `hideThinkingSummary` (request reasoning summary absent/"none" — the routed catalog default) is
 honored by BOTH reasoning paths: anthropic `thinking_delta` AND raw `reasoning_raw_delta`
 (openai-chat `reasoning_content`, kiro tags). Hidden reasoning emits an envelope-only reasoning
