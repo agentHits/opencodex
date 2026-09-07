@@ -5,7 +5,7 @@ import { MANAGEMENT_ROUTES } from "../../src/server/management/route-registry";
 
 const COST = { input: 1.25, output: 5, cacheRead: 0.125, cacheWrite: 2 };
 
-async function invoke(sub: string, args: string[], response: unknown = { ok: true }, status = 200) {
+async function invoke(sub: string, args: string[], response?: unknown, status = 200) {
   const calls: Array<{ path: string; method: string; body: unknown }> = [];
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -17,12 +17,17 @@ async function invoke(sub: string, args: string[], response: unknown = { ok: tru
     const code = await handleModelsRuntimeCommand(sub, args, {
       baseUrl: "http://127.0.0.1:1",
       fetchImpl: async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
         calls.push({
-          path: new URL(String(url)).pathname,
+          path,
           method: init?.method ?? "GET",
-          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          body,
         });
-        return Response.json(response, { status });
+        if (response instanceof Response) return response;
+        return Response.json(response === undefined
+          ? { ok: true, provider: path.split("/")[3], modelId: body?.modelId, cost: body?.cost }
+          : response, { status });
       },
     });
     return { code, calls, stdout: stdout.join("\n"), stderr: stderr.join("\n") };
@@ -119,9 +124,61 @@ describe("models manual price commands", () => {
 
   test("API rejection is reported with a nonzero exit and no success message", async () => {
     const result = await invoke("set-price", ["custom-price/model", "--auto"], { error: "provider not found" }, 404);
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(4);
     expect(result.stderr).toContain("provider not found");
     expect(result.stdout).toBe("");
+  });
+
+  test("duplicate, inline and stray price arguments never echo credential-shaped values", async () => {
+    const secret = "sk-" + "a".repeat(40);
+    for (const extra of [["--input", secret], [`--input=${secret}`], [secret]]) {
+      const result = await invoke("set-price", ["custom-price/model", "--input", "1", "--output", "2", ...extra]);
+      expect(result.code).toBe(2);
+      expect(result.calls).toHaveLength(0);
+      expect(result.stderr).not.toContain(secret);
+      expect(result.stderr).toContain("Unexpected argument(s)");
+      expect(result.stdout).toBe("");
+    }
+  });
+
+  test("malformed or mismatched success receipts fail without printing response contents", async () => {
+    const secret = "sk-" + "a".repeat(40);
+    const cost = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 };
+    const receipt = { ok: true, provider: "custom-price", modelId: "model", cost };
+    for (const response of [
+      null, {}, "malformed", new Response("{"), new Response(null, { status: 204 }),
+      { ...receipt, ok: false }, { ...receipt, provider: "other" }, { ...receipt, modelId: "other" },
+      { ...receipt, cost: null }, { ...receipt, cost: { input: 1, output: 2 } },
+      { ...receipt, cost: { ...cost, output: 3 } }, { ...receipt, cost: { ...cost, apiKey: secret } },
+    ]) {
+      const result = await invoke("set-price", ["custom-price/model", "--input", "1", "--output", "2"], response);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("Invalid model price persistence receipt");
+      expect(result.stderr).not.toContain(secret);
+    }
+    const badReset = await invoke("set-price", ["custom-price/model", "--auto"], receipt);
+    expect(badReset.code).toBe(1);
+    expect(badReset.stdout).toBe("");
+    const projected = await invoke("set-price", ["custom-price/model", "--input", "1", "--output", "2", "--json"], { ...receipt, apiKey: secret });
+    expect(projected.code).toBe(0);
+    expect(JSON.parse(projected.stdout)).toEqual(receipt);
+    expect(projected.stdout).not.toContain(secret);
+  });
+
+  test("invalid GET maps fail rather than appearing automatic or leaking extra rate fields", async () => {
+    for (const response of [
+      null, {}, new Response("{"), { provider: "other", modelCosts: {} },
+      { provider: "custom-price", modelCosts: [] },
+      { provider: "custom-price", modelCosts: { model: null } },
+      { provider: "custom-price", modelCosts: { model: { ...COST, input: -1 } } },
+      { provider: "custom-price", modelCosts: { model: { ...COST, extra: "unexpected" } } },
+    ]) {
+      const result = await invoke("price", ["custom-price/model", "--json"], response);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("Invalid model price response");
+    }
   });
 
   test("secret-shaped model selectors fail before request or output for read, set and reset", async () => {

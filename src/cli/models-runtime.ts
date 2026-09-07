@@ -67,7 +67,31 @@ async function live(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   }));
 }
 
+function priceRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+const PRICE_RATE_KEYS = ["input", "output", "cacheRead", "cacheWrite"] as const;
+
+function validPriceCost(value: unknown): value is ProviderCostOverlay {
+  return priceRecord(value) && Object.keys(value).length === PRICE_RATE_KEYS.length
+    && PRICE_RATE_KEYS.every(key => Object.hasOwn(value, key) && isValidCost4Rate(value[key]));
+}
+
 async function price(write: boolean, argv: string[], deps: RuntimeApiDeps): Promise<void> {
+  try {
+    await priceRequest(write, argv, deps);
+  } catch (error) {
+    // Duplicated, inline and stray options also reach parser diagnostics.
+    // Keep HTTP-specific RuntimeApiError exits while masking usage errors.
+    if (error instanceof CliUsageError) {
+      throw new CliUsageError(redactSecretString(error.message), error.usage);
+    }
+    throw error;
+  }
+}
+
+async function priceRequest(write: boolean, argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const args = [...argv];
   const selector = args.shift() ?? "";
   const slash = selector.indexOf("/");
@@ -83,9 +107,18 @@ async function price(write: boolean, argv: string[], deps: RuntimeApiDeps): Prom
   const path = `/api/providers/${encodeURIComponent(provider)}/model-costs`;
   if (!write) {
     rejectArgs(args, USAGE);
-    const result = await runtimeRequest<{ provider: string; modelCosts: Record<string, ProviderCostOverlay> }>(path, {}, deps);
-    const cost = Object.hasOwn(result.modelCosts, modelId) ? result.modelCosts[modelId]! : null;
-    printData({ provider: result.provider, modelId, cost }, wantsJson, [
+    const result = await runtimeRequest<unknown>(path, {}, deps);
+    if (!priceRecord(result) || result.provider !== provider || !priceRecord(result.modelCosts)
+      || !Object.values(result.modelCosts).every(validPriceCost)) {
+      throw new Error("Invalid model price response");
+    }
+    let cost: ProviderCostOverlay | null = null;
+    if (Object.hasOwn(result.modelCosts, modelId)) {
+      const stored = result.modelCosts[modelId];
+      if (!validPriceCost(stored)) throw new Error("Invalid model price response");
+      cost = { ...stored };
+    }
+    printData({ provider, modelId, cost }, wantsJson, [
       cost === null ? `${selector}: automatic pricing` : `${selector}: ${JSON.stringify(cost)} USD per 1M tokens`,
     ]);
     return;
@@ -116,7 +149,15 @@ async function price(write: boolean, argv: string[], deps: RuntimeApiDeps): Prom
     cacheWrite: rate(cacheWrite ?? "0", "--cache-write"),
   };
   const result = await runtimeRequest(path, { method: "PUT", body: JSON.stringify({ modelId, cost }) }, deps);
-  printData(result, wantsJson, [auto ? `${selector}: automatic pricing restored.` : `${selector}: manual pricing saved.`]);
+  const receivedCost = priceRecord(result) ? result.cost : undefined;
+  if (!priceRecord(result) || result.ok !== true || result.provider !== provider || result.modelId !== modelId
+    || (cost === null ? receivedCost !== null : !validPriceCost(receivedCost)
+      || !PRICE_RATE_KEYS.every(key => receivedCost[key] === cost[key]))) {
+    throw new Error("Invalid model price persistence receipt");
+  }
+  // Project the acknowledged fields only; unrelated response fields are not CLI output.
+  printData({ ok: true, provider, modelId, cost }, wantsJson,
+    [auto ? `${selector}: automatic pricing restored.` : `${selector}: manual pricing saved.`]);
 }
 
 async function edit(argv: string[], deps: RuntimeApiDeps): Promise<void> {

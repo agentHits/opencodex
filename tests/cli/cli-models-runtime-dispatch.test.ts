@@ -45,7 +45,9 @@ describe("models runtime subcommand dispatch (#3094)", () => {
       baseUrl: "http://127.0.0.1:1",
       fetchImpl: async (_url: string | URL | Request, init?: RequestInit) => {
         methods.push(init?.method ?? "GET");
-        return Response.json({ provider: "dispatch-test", modelCosts: {}, ok: true });
+        return Response.json(init?.method === "PUT"
+          ? { provider: "dispatch-test", modelId: "model", cost: null, ok: true }
+          : { provider: "dispatch-test", modelCosts: {} });
       },
     };
     expect(await handleModelsRuntimeCommand("price", ["dispatch-test/model"], deps)).toBe(0);
