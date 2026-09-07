@@ -58,12 +58,11 @@ export default function ModelPriceDialog({ model, apiBase, onRefresh, onClose }:
   const mutating = phase === "saving" || phase === "refreshing";
   const locked = phase !== "ready";
 
-  const readOverride = useCallback(async (recover = false) => {
+  const readOverride = useCallback((recover = false) => {
     if (requestRef.current) return;
     const bounded = createBoundedFetch(REQUEST_TIMEOUT_MS);
     requestRef.current = bounded;
-    try {
-      const response = await fetch(endpoint, { signal: bounded.signal, cache: "no-store" });
+    void fetch(endpoint, { signal: bounded.signal, cache: "no-store" }).then(async response => {
       const result = await readJsonOrThrow<unknown>(response);
       bounded.signal.throwIfAborted();
       if (!isRecord(result) || result.provider !== model.provider || !isRecord(result.modelCosts)) {
@@ -81,14 +80,14 @@ export default function ModelPriceDialog({ model, apiBase, onRefresh, onClose }:
       // request still running on the server or writes from another client.
       setRecovered(recover);
       setPhase("ready");
-    } catch {
+    }).catch(() => {
       if (requestRef.current !== bounded) return;
       setPhase(recover ? "unknown" : "loadFailed");
       setErrorKey(recover ? "pricing.override.recoveryFailed" : "pricing.override.loadFailed");
-    } finally {
+    }).finally(() => {
       bounded.clear();
       if (requestRef.current === bounded) requestRef.current = null;
-    }
+    });
   }, [endpoint, model.id, model.provider]);
 
   useEffect(() => {
