@@ -52,7 +52,10 @@ ancestors of `dev` (E verifies with `git merge-base --is-ancestor` before editin
   `startup-health-cache.ts` layer landed; C ships the cache/probe change with the existing route call unchanged and names the exact call site in its report.
 - E#3336 after A and B; E#3774/#18/#19/#20 have no prerequisites.
 Shared manifests `tests/fixtures/test-layout-expected.json` + `scripts/test-layout/layout.json` are explicitly multi-writer (append-only); the lane
-that cascades last resolves. Write sets are otherwise disjoint. Any lane that must touch another lane's owned file stops and reports to main instead of editing.
+that cascades last resolves. Amendment (wp1, lane D report): `gui/src/i18n/*.ts` are also multi-writer append-only — each lane adds its own
+feature-namespaced keys at the end of the relevant section in every locale (gui/AGENTS.md), never edits or removes existing keys; C's exclusive
+ownership is withdrawn. Lane B additionally owns `docs-site/**/getting-started/how-it-works.mdx` (en, ja, ko, ru, zh-cn) for the #3856 carry only.
+Write sets are otherwise disjoint. Any lane that must touch another lane's owned file stops and reports to main instead of editing.
 
 ## Delegated thread packet (sent verbatim with lane-specific rows)
 
