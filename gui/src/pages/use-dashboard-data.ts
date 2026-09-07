@@ -378,14 +378,15 @@ export function useDashboardData(apiBase: string) {
       startupHealthRef.current = merged;
       if (merged) writeSessionListCache(`${STARTUP_CACHE_PREFIX}${apiBase}`, merged);
     }
-    if (data.settings !== undefined) {
-      const prev = readSessionListCache<CachedControls>(controlsCacheKey(apiBase)) ?? {};
-      writeSessionListCache(controlsCacheKey(apiBase), {
-        ...prev,
-        settings: data.settings,
-      });
-    }
   }, [settingsPoll.data, apiBase]);
+
+  // Cache the merged UI state, including preference saves and successful applies.
+  // Raw GET settings cannot replace the local application receipt on a revisit.
+  useEffect(() => {
+    if (!settings) return;
+    const prev = readSessionListCache<CachedControls>(controlsCacheKey(apiBase)) ?? {};
+    writeSessionListCache(controlsCacheKey(apiBase), { ...prev, settings });
+  }, [settings, apiBase]);
 
   useEffect(() => {
     if (usagePoll.data !== undefined) {
@@ -626,7 +627,8 @@ export function useDashboardData(apiBase: string) {
       });
       const data = await requireJson<SettingsData>(res, "save failed");
       settingsMutationEpochRef.current += 1;
-      setSettings(prev => prev ? { ...prev, [key]: data[key], catalogRefreshPending: key === "codexDesktopAuthless" ? data.catalogRefreshPending : prev.catalogRefreshPending, startupHealth: data.startupHealth ?? prev.startupHealth } : prev);
+      // Saving the catalog preference is not proof that full Desktop sync applied it.
+      setSettings(prev => prev ? { ...prev, [key]: data[key], catalogRefreshPending: key === "codexDesktopAuthless" ? true : prev.catalogRefreshPending, startupHealth: data.startupHealth ?? prev.startupHealth } : prev);
       if (key === "codexDesktopAuthless") await runSync();
     } catch {
       setSettings(prev => prev ? { ...prev, [key]: !next } : prev);
