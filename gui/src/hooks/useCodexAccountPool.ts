@@ -237,7 +237,10 @@ export function useCodexAccountPool(apiBase: string, enabled = true): CodexAccou
 
       const accountsTask = (async (): Promise<boolean> => {
         try {
-          const response = await fetch(`${apiBase}/api/codex-auth/accounts${refreshQuota ? "?refresh=1" : ""}`, { signal: bounded.signal });
+          const response = await fetch(`${apiBase}/api/codex-auth/accounts${refreshQuota ? "/refresh" : ""}`, {
+            method: refreshQuota ? "POST" : "GET",
+            signal: bounded.signal,
+          });
           if (!response.ok) throw new Error("account load failed");
           const payload = await response.json();
           if (loadGenerationRef.current === generation) {

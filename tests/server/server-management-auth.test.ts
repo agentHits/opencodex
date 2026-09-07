@@ -958,6 +958,42 @@ describe("management and data-plane credential separation", () => {
     }
   });
 
+  test("deferred Codex validation requires a same-origin mutation session with CSRF", async () => {
+    const config = remoteConfig();
+    config.hostname = "127.0.0.1";
+    saveConfig(config);
+    const server = startServer(0);
+    try {
+      const bootstrap = await fetch(new URL("/opencodex-session", server.url));
+      const html = await bootstrap.text();
+      const token = html.match(/name="opencodex-session-token" content="([^"]+)"/)?.[1];
+      const csrf = html.match(/name="opencodex-session-csrf" content="([^"]+)"/)?.[1];
+      expect(token).toBeDefined();
+      expect(csrf).toBeDefined();
+      const headers = {
+        Origin: server.url.origin,
+        "x-opencodex-api-key": token!,
+        "x-opencodex-gui-origin": server.url.origin,
+      };
+      const url = new URL("/api/codex-auth/accounts/refresh", server.url);
+      const missing = await fetch(url, { method: "POST", headers });
+      expect(missing.status).toBe(401);
+      const crossOrigin = await fetch(url, {
+        method: "POST",
+        headers: { ...headers, Origin: "http://attacker.test", "x-opencodex-csrf-token": csrf! },
+      });
+      expect(crossOrigin.status).toBe(401);
+      const allowed = await fetch(url, {
+        method: "POST",
+        headers: { ...headers, "x-opencodex-csrf-token": csrf! },
+      });
+      expect(allowed.status).toBe(200);
+      expect(await allowed.json()).toHaveProperty("accounts");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("session bootstrap escapes both browser and server origin attributes", async () => {
     const response = serveSessionBootstrap({
       token: "ocx_session_safe",

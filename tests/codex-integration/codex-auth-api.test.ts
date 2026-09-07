@@ -5000,7 +5000,7 @@ describe("codex-auth API", () => {
     let warmups = 0;
     let replaceDuringWarmup = false;
     const refreshAccounts = async () => {
-      const req = new Request("http://localhost/api/codex-auth/accounts?refresh=1");
+      const req = new Request("http://localhost/api/codex-auth/accounts/refresh", { method: "POST" });
       const response = await handleCodexAuthAPI(req, new URL(req.url), config);
       expect(response?.status).toBe(200);
     };
@@ -5047,6 +5047,9 @@ describe("codex-auth API", () => {
     expect(warmups).toBe(0); // Passive reads never spend inference.
     await listCodexAuthAccounts(config, true);
     expect(warmups).toBe(0); // Forced background reads are not manual validation.
+    const readReq = new Request("http://localhost/api/codex-auth/accounts?refresh=1");
+    expect((await handleCodexAuthAPI(readReq, new URL(readReq.url), config))?.status).toBe(200);
+    expect(warmups).toBe(0); // A read-only management capability cannot validate either.
     expect(isCodexAccountUsable(config, accountId)).toBe(false);
     await refreshAccounts();
     expect(warmups).toBe(1);

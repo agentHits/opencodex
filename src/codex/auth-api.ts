@@ -1984,9 +1984,13 @@ export async function handleCodexAuthAPI(
 
   if (url.pathname === "/api/codex-auth/accounts" && req.method === "GET") {
     const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
-    // Background report/reset pollers also bypass caches; only this explicit
-    // accounts refresh opts into inference-backed validation of pending accounts.
-    return jsonResponse({ accounts: await listCodexAuthAccounts(config, forceRefresh, { validatePending: forceRefresh }) });
+    return jsonResponse({ accounts: await listCodexAuthAccounts(config, forceRefresh) });
+  }
+
+  if (url.pathname === "/api/codex-auth/accounts/refresh" && req.method === "POST") {
+    // Completing validation spends inference and changes durable readiness, so it
+    // must pass the management mutation/CSRF boundary rather than a read-only GET.
+    return jsonResponse({ accounts: await listCodexAuthAccounts(config, true, { validatePending: true }) });
   }
 
   if (url.pathname === "/api/codex-auth/accounts" && req.method === "POST") {
