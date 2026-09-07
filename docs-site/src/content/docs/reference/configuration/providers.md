@@ -249,6 +249,20 @@ label. A management client can set or reset one label with
 `{ "modelId": "grok-4.6", "displayName": "Grok 4.6" }`; send `displayName: null` to reset it.
 Provider `PATCH` does not edit this map. Use this dedicated `PUT` endpoint to change or remove labels.
 
+The dashboard exposes the same durable setting on **Models**. Expand the provider, find a
+discovered model, and choose **Name**. The dialog keeps the exact `provider/model` selector visible
+while you save a friendly label. Choose **Reset name** to return to provider metadata or the normal
+selector fallback. **Name** changes presentation only; the separate alias pencil changes the
+short routing alias and is not a display name editor. Native OpenAI and custom model rows keep their
+existing controls.
+
+If the change is saved but refreshing fails, the dialog reflects the saved override and keeps
+**Retry** available. Retry repeats catalog convergence when the server reported it failed, or
+reloads the list when only the list request failed. Reset recovery keeps the reset operation;
+it does not restore the old name. Requests have a 60-second deadline covering the write and its
+follow-up list refresh. A timeout does not undo a write: use **Retry** to check the current name
+before making another change.
+
 ## Codex catalog and root `config.toml` settings
 
 These settings belong in the root of `$CODEX_HOME/config.toml`, alongside
