@@ -2454,6 +2454,8 @@ export const zhTW: Record<TKey, string> = {
   "dash.visionTimeout": "逾時",
   "dash.visionTimeoutInvalid": "請輸入 {min} 到 {max} 毫秒之間的整數。",
   "dash.visionAdvancedPopover": "進階視覺設定",
+  "dash.codexDesktopAuthless": "無需登入即可開啟 Codex",
+  "dash.codexDesktopAuthlessHint": "預設關閉。為符合條件的本機連線略過獨立的 Desktop 登入。仍需上游供應商憑證。變更後請重新啟動 Codex。依賴帳戶的 Desktop 功能可能無法使用。",
   "models.newPolicyGlobal": "新模型預設停用", "models.newPolicyProvider": "新模型策略",
   "models.newPolicy_inherit": "繼承", "models.newPolicy_off": "關閉", "models.newPolicy_on": "開啟", "models.newBadge": "新增", "models.newCount": "{count} 個新增，已關閉",
   "models.aliases": "別名",

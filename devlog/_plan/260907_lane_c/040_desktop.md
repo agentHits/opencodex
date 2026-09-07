@@ -402,3 +402,7 @@ index 84ac5f67b..b6be3c2f6 100644
 ```
 
 Audit amendment: clear catalogRefreshPending only if sync status is affirmative success, not HTTP 200 skipped. Add skipped/no-write regression.
+
+## Lane E documentation handoff
+
+After run 34106956362 reported a GUI lint failure, include the separately prepared code-mode host-rule translations in the seven fr/ja/ko/ru/tr/zh-cn/zh-tw Codex integration guides. The patch adds 51 documentation lines matching the existing English paragraph; it does not modify runtime code or provider guides. Apply on the Desktop layer, record `docs handoff from lane E` and `[skip ci]` in its own commit, then cascade the fallback layer and dispatch the top CI again. Local documentation install/build remains NOT RUN.

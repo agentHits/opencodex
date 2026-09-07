@@ -2490,6 +2490,8 @@ export const zh: Record<TKey, string> = {
   "dash.visionTimeout": "超时",
   "dash.visionTimeoutInvalid": "请输入 {min} 到 {max} 毫秒之间的整数。",
   "dash.visionAdvancedPopover": "高级视觉设置",
+  "dash.codexDesktopAuthless": "无需登录即可打开 Codex",
+  "dash.codexDesktopAuthlessHint": "默认关闭。为符合条件的本地连接跳过单独的 Desktop 登录。仍需上游提供商凭据。更改后请重启 Codex。依赖账户的 Desktop 功能可能不可用。",
   "models.newPolicyGlobal": "新模型默认停用", "models.newPolicyProvider": "新模型策略",
   "models.newPolicy_inherit": "继承", "models.newPolicy_off": "关闭", "models.newPolicy_on": "开启", "models.newBadge": "新增", "models.newCount": "{count} 个新增，已关闭",
   "models.aliases": "别名",

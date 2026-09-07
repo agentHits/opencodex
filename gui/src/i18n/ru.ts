@@ -2492,6 +2492,8 @@ export const ru: Record<TKey, string> = {
   "dash.visionTimeout": "Таймаут",
   "dash.visionTimeoutInvalid": "Введите целое число от {min} до {max} миллисекунд.",
   "dash.visionAdvancedPopover": "Дополнительные настройки изображений",
+  "dash.codexDesktopAuthless": "Открывать Codex без входа",
+  "dash.codexDesktopAuthlessHint": "По умолчанию выключено. Пропускает отдельный вход в Desktop для допустимых локальных подключений. Учётные данные провайдера по-прежнему нужны. После изменения перезапустите Codex. Функции Desktop, связанные с аккаунтом, могут быть недоступны.",
   "models.newPolicyGlobal": "Добавлять новые модели выключенными", "models.newPolicyProvider": "Политика новых моделей",
   "models.newPolicy_inherit": "Наследовать", "models.newPolicy_off": "Выкл.", "models.newPolicy_on": "Вкл.", "models.newBadge": "НОВАЯ", "models.newCount": "Новых: {count}, выкл.",
   "models.aliases": "Псевдонимы",

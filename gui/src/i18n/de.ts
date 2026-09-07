@@ -2469,6 +2469,8 @@ export const de: Record<TKey, string> = {
   "dash.visionTimeout": "Timeout",
   "dash.visionTimeoutInvalid": "Geben Sie eine ganze Zahl von {min} bis {max} Millisekunden ein.",
   "dash.visionAdvancedPopover": "Erweiterte Vision-Einstellungen",
+  "dash.codexDesktopAuthless": "Codex ohne Anmeldung öffnen",
+  "dash.codexDesktopAuthlessHint": "Standardmäßig aus. Überspringt die separate Desktop-Anmeldung bei geeigneten lokalen Verbindungen. Zugangsdaten für den Anbieter bleiben erforderlich. Codex nach einer Änderung neu starten. Kontogebundene Desktop-Funktionen können fehlen.",
   "models.newPolicyGlobal": "Neue Modelle zunächst deaktivieren", "models.newPolicyProvider": "Richtlinie für neue Modelle",
   "models.newPolicy_inherit": "Übernehmen", "models.newPolicy_off": "Aus", "models.newPolicy_on": "An", "models.newBadge": "NEU", "models.newCount": "{count} neu, aus",
   "models.aliases": "Aliase",

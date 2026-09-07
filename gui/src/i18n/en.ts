@@ -575,6 +575,8 @@ export const en = {
   "models.keepNativeOnV1Hint": "ChatGPT encrypts v2 child tasks only when a ChatGPT-native parent stays on v2, so Grok and Claude cannot read them. Turn this on to keep Sol/Terra on v1 and avoid that encryption. Routed parents keep v2.",
   "models.v2Help": "Controls the multi-agent surface for all models.\n\nv1: Classic single-thread agent. Every model uses the v1 collab surface.\nbase: Upstream defaults — sol/terra use v2, luna uses v1, others follow the codex feature flag.\nv2: Multi-thread agent with spawn_agent. Every model uses the v2 collab surface.\n\nOn v2, Keep ChatGPT on v1 leaves Sol/Terra on the v1 surface so they can still spawn Grok or Claude. ChatGPT encrypts v2 child tasks; routed models cannot read them. Routed parents stay on v2.\n\nChanges apply to new sessions.",
   "dash.multiAgent": "Sub-agent",
+  "dash.codexDesktopAuthless": "Open Codex without signing in",
+  "dash.codexDesktopAuthlessHint": "Off by default. Skip the separate Desktop sign-in for eligible local connections. Upstream credentials are still required. Restart Codex after changing this setting. Account-gated Desktop features may be unavailable.",
   "models.v2Conflict": "[agents] max_threads is set — codex will refuse to start; remove it from config.toml",
   "models.v2Applied": "Sub-agent mode updated — applies to new sessions (restart the Codex app to refresh the picker)",
   "models.v2ThreadsLabel": "Max threads",
