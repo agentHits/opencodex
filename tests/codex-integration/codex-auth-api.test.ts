@@ -136,6 +136,7 @@ async function completeMockCodexOAuth(options: {
     accountId?: string;
     needsReauth?: boolean;
     catalogRefreshPending?: boolean;
+    validationPending?: boolean;
   };
 }> {
   const oauth = await import("../../src/oauth");
@@ -4972,6 +4973,11 @@ describe("codex-auth API", () => {
     expect(warmups).toBe(0);
     expect(config.codexAccounts?.map(account => account.id)).toContain(accountId);
     expect(readCodexAccountRecord(accountId)?.codexValidationPending).toBe(true);
+    expect(added.state.validationPending).toBe(true);
+    const recoveredStatus = new Request(`http://localhost/api/codex-auth/login-status?flowId=forgotten&accountId=${accountId}`);
+    expect(await (await handleCodexAuthAPI(recoveredStatus, new URL(recoveredStatus.url), config))?.json()).toMatchObject({
+      status: "done", validationPending: true,
+    });
     expect(readCodexAccountRecord(accountId)?.lastCodexValidatedAt).toBeUndefined();
     expect(isAccountNeedsReauth(accountId)).toBe(false);
     expect(isCodexAccountUsable(config, accountId)).toBe(false);

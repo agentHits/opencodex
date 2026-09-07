@@ -186,6 +186,7 @@ interface CodexLoginStateRow {
   code?: string;
   needsReauth?: boolean;
   catalogRefreshPending?: boolean;
+  validationPending?: boolean;
   doneAt?: number;
 }
 const codexAuthLoginState = new Map<string, CodexLoginStateRow>();
@@ -2720,6 +2721,7 @@ export async function handleCodexAuthAPI(
                     status: "done",
                     accountId,
                     email,
+                    ...(warmup.validatedAt === undefined ? { validationPending: true } : {}),
                     ...(catalogRefreshPending ? { catalogRefreshPending: true } : {}),
                     doneAt: Date.now(),
                   });
@@ -2832,7 +2834,9 @@ export async function handleCodexAuthAPI(
         && !isAccountNeedsReauth(accountId)
         && getCodexAccountCredential(accountId)
       ) {
-        return jsonResponse({ status: "done", accountId });
+        return jsonResponse({ status: "done", accountId,
+          ...(readCodexAccountRecord(accountId)?.codexValidationPending ? { validationPending: true } : {}),
+        });
       }
       return jsonResponse(st ? { ...st, email: maskEmail(st.email) ?? undefined } : { status: "expired" });
     }

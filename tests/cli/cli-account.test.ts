@@ -2125,6 +2125,24 @@ describe("ocx account CLI (issue #180 matrix)", () => {
     expect(result.stdout).toContain("#3 unsupported (unsupported_format)");
   });
 
+  test("quota-pending login reports registration and recovery instead of ready model guidance", async () => {
+    codexLoginStatus = { status: "done", validationPending: true };
+    const sleepSpy = spyOn(Bun, "sleep").mockImplementation(async () => {});
+    try {
+      const human = await run(["login", "openai"]);
+      expect(human.code).toBe(0);
+      expect(human.stdout).toContain("validation pending (routing disabled)");
+      expect(human.stdout).toContain("ocx account refresh openai");
+      expect(human.stdout).not.toContain("Logged in");
+      expect(human.stdout).not.toContain("ocx models");
+      const machine = await run(["login", "openai", "--json"]);
+      expect(JSON.parse(machine.stdout)).toMatchObject({ validationPending: true, recoveryCommand: "ocx account refresh openai" });
+      expect(JSON.parse(machine.stdout)).not.toHaveProperty("modelSelection");
+    } finally {
+      sleepSpy.mockRestore();
+    }
+  });
+
   test("pending Codex login keeps success and prints generic recovery guidance", async () => {
     codexLoginStatus = {
       status: "done",

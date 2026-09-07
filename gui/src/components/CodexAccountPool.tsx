@@ -199,13 +199,15 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   const handleAccountAdded = useCallback((completion: CodexAccountMutationCompletion) => {
     void controller.syncAfterAccountAdded();
     showActionFeedback(
-      t(completion.catalogRefreshPending
+      t(completion.validationPending
+        ? "pws.healthLabel.validationPending"
+        : completion.catalogRefreshPending
         ? "codexAuth.catalogRefreshPending"
         : "codexAuth.accountAdded"),
-      completion.catalogRefreshPending ? "warn" : "ok",
+      completion.validationPending || completion.catalogRefreshPending ? "warn" : "ok",
     );
     closeAddModal();
-    setModelsNotice({ catalogRefreshPending: completion.catalogRefreshPending });
+    setModelsNotice(completion.validationPending ? null : { catalogRefreshPending: completion.catalogRefreshPending });
   }, [closeAddModal, controller, showActionFeedback, t]);
 
   const setActive = async (id: string | null) => {
