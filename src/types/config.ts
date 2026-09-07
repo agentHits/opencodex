@@ -544,11 +544,7 @@ export interface OcxConfig {
    * set, the lower one wins for sub-agents. See src/server/effort-policy.ts.
    */
   subagentEffortCap?: string;
-  /**
-   * Optional map of model IDs (or model family / bare slugs) to an enforced reasoning effort tier
-   * ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max").
-   * Overrides incoming caller choices globally across all providers.
-   */
+  /** Global model effort overrides, after provider model/wide pins; none means omission. */
   modelPinnedEfforts?: Record<string, string>;
   /**
    * Models hidden from Codex discovery without blocking direct proxy calls. Routed provider ids

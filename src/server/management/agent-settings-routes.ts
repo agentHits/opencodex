@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { CatalogModel } from "../../codex/catalog";
 import { catalogModelSlug, filterCatalogVisibleModels, invalidateCodexModelsCache, nativeContextLimits, nativeModelRows, uniqueCatalogModelsForPublicList } from "../../codex/catalog";
+import { mergeModelPinnedEfforts, modelPinnedEffortsConfigError } from "../../config/provider-validation";
 import { captureConfigTopLevelRollback, parsedConfigRebaseDeletionKeys, projectConfigRebaseProvenance } from "../../config/rebase-provenance";
 import {
   DEFAULT_SUBAGENT_MODELS,
@@ -16,6 +17,7 @@ import {
   providerHeadersConfigError,
   saveConfigPreservingClaudeCode,
   subagentDefaultSyncEffective,
+  validateConfigCandidate,
 } from "../../config";
 import {
   clearLoginState,
@@ -608,46 +610,52 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
     });
   }
   if (url.pathname === "/api/effort-caps" && req.method === "PUT") {
-    let body: { effortCap?: unknown; subagentEffortCap?: unknown; modelPinnedEfforts?: unknown };
+    let body: unknown;
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
-    const { isCodexReasoningEffort, isDeclaredReasoningEffort } = await import("../../reasoning-effort");
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResponse({ error: "effort caps body must be a plain object" }, 400);
+    }
+    const patch = body as Record<string, unknown>;
+    const { isCodexReasoningEffort } = await import("../../reasoning-effort");
+    const draft = { ...projectConfigRebaseProvenance(config) };
+    const touched: (keyof OcxConfig)[] = [];
     for (const key of ["effortCap", "subagentEffortCap"] as const) {
-      if (!(key in body)) continue;
-      const value = body[key];
-      if (value === null || value === "") { deleteConfigTopLevelKey(config, key); continue; }
-      if (typeof value !== "string" || !isCodexReasoningEffort(value)) {
-        return jsonResponse({ error: `unknown reasoning effort "${String(value)}"` }, 400);
-      }
-      config[key] = value;
+      if (!Object.hasOwn(patch, key)) continue;
+      const value = patch[key];
+      if (value === null || value === "") deleteConfigTopLevelKey(draft, key);
+      else if (typeof value === "string" && isCodexReasoningEffort(value)) draft[key] = value;
+      else return jsonResponse({ error: "caps must be valid reasoning efforts or null" }, 400);
+      touched.push(key);
     }
-    if ("modelPinnedEfforts" in body) {
-      const val = body.modelPinnedEfforts;
-      if (val === null || val === undefined) {
-        deleteConfigTopLevelKey(config, "modelPinnedEfforts");
-      } else if (typeof val === "object" && !Array.isArray(val)) {
-        const efforts: Record<string, string> = { ...(config.modelPinnedEfforts ?? {}) };
-        for (const [m, eff] of Object.entries(val as Record<string, unknown>)) {
-          if (!m.trim()) return jsonResponse({ error: "modelPinnedEfforts keys must be nonblank model ids" }, 400);
-          if (eff === null || eff === "" || eff === undefined) {
-            delete efforts[m.trim()];
-            continue;
-          }
-          if (typeof eff === "string" && isDeclaredReasoningEffort(eff)) {
-            efforts[m.trim()] = eff;
-          } else {
-            return jsonResponse({ error: `unknown reasoning effort "${String(eff)}" for model "${m}"` }, 400);
-          }
-        }
-        if (Object.keys(efforts).length > 0) {
-          config.modelPinnedEfforts = efforts;
-        } else {
-          deleteConfigTopLevelKey(config, "modelPinnedEfforts");
-        }
-      } else {
-        return jsonResponse({ error: "modelPinnedEfforts must be a plain object or null" }, 400);
-      }
+    if (Object.hasOwn(patch, "modelPinnedEfforts")) {
+      const error = modelPinnedEffortsConfigError(patch.modelPinnedEfforts, "modelPinnedEfforts", true);
+      if (error) return jsonResponse({ error }, 400);
+      const pins = mergeModelPinnedEfforts(config.modelPinnedEfforts, patch.modelPinnedEfforts);
+      if (pins) draft.modelPinnedEfforts = pins;
+      else deleteConfigTopLevelKey(draft, "modelPinnedEfforts");
+      touched.push("modelPinnedEfforts");
     }
-    saveConfigPreservingClaudeCode(config);
+    const validation = validateConfigCandidate(draft);
+    if (!validation.ok) return jsonResponse({ error: validation.error }, 400);
+    if (touched.some(key => !Object.hasOwn(draft, key)) && config.configRebaseProvenance !== undefined
+      && parsedConfigRebaseDeletionKeys(config) === null) {
+      return jsonResponse({ error: "unsupported config deletion provenance" }, 409);
+    }
+    const projected = projectConfigRebaseProvenance(draft);
+    touched.push("configRebaseProvenance");
+    const rollback = captureConfigTopLevelRollback(config, touched);
+    try {
+      for (const key of touched) {
+        if (Object.hasOwn(projected, key)) Object.defineProperty(config, key, {
+          value: projected[key], writable: true, enumerable: true, configurable: true,
+        });
+        else deleteConfigTopLevelKey(config, key);
+      }
+      (deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode)(config);
+    } catch (error) {
+      rollback();
+      throw error;
+    }
     return jsonResponse({
       ok: true,
       effortCap: config.effortCap ?? null,

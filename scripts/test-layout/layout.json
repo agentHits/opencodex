@@ -1301,7 +1301,9 @@
     "zz-pr-coderabbit-readiness-revalidation.test.ts": "ci-workflows",
     "cli-models-price.test.ts": "cli",
     "model-costs-management-api.test.ts": "server",
-    "usage-time-range.test.ts": "usage"
+    "usage-time-range.test.ts": "usage",
+    "model-pinned-effort.test.ts": "codex-integration",
+    "model-pinned-effort-config.test.ts": "config"
   },
   "migrated": [
     "adapters",

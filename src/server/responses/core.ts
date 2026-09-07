@@ -270,7 +270,7 @@ import {
   upstreamErrorMessageFromPayload,
 } from "../../lib/errors";
 import type { AdmissionLease } from "../../lib/admission";
-import { supportedLadderFor } from "../effort-policy";
+import { prepareEffortNormalization, supportedLadderFor } from "../effort-policy";
 import { isThreadSpawnRequest } from "../effort-policy";
 import {
   applySubagentModelFallback,
@@ -2280,6 +2280,7 @@ async function applyFinalRouteRequestNormalization(args: {
   inboundTransport?: "websocket";
 }): Promise<void> {
   const { parsed, route, config, req, logCtx, inboundWire, inboundTransport } = args;
+  const effortSelector = prepareEffortNormalization(parsed, route);
 
   // Only Anthropic message routes retain the Codex-facing selector. Other providers must keep
   // their existing response.model contract even when their public and wire model ids differ.
@@ -2405,7 +2406,7 @@ async function applyFinalRouteRequestNormalization(args: {
 
   {
     const { applyPinnedEffort } = await import("../effort-policy");
-    const pinned = applyPinnedEffort(parsed, route, config);
+    const pinned = applyPinnedEffort(parsed, route, config, effortSelector);
     if (pinned) {
       logCtx.requestedEffort = pinned.from ? `${pinned.from}->${pinned.to}` : pinned.to;
       if (isInjectionDebugEnabled()) {
