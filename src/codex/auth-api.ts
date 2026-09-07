@@ -1838,7 +1838,28 @@ export async function listCodexAuthAccountsSnapshot(
 /** One opted-in account's metadata; reuse the bounded WHAM 401 recovery and generation fence. */
 export async function refreshCodexQuotaForActivation(config: OcxConfig, accountId: string): Promise<void> {
   if (accountId === MAIN_CODEX_ACCOUNT_ID) {
-    await fetchMainAccountInfoAttempt(true, 1, undefined, false, false);
+    const lease = tryAcquireNativeMainProfileClaim();
+    if (!lease) return;
+    try {
+      reconcileMainCodexAccountRuntimeState();
+      if (isAccountNeedsReauth(accountId)) return;
+      const identityGeneration = captureMainAccountIdentityGeneration();
+      const writerGeneration = captureConfigGeneration();
+      try {
+        // Refresh may need an exclusive claim; prepare before WHAM takes its shared claim.
+        if (!await getValidMainAccountToken({ preserveReauth: true })) return;
+      } catch (error) {
+        if (error instanceof MainAccountTokenRefreshError && error.reason === "reauth"
+          && isMainAccountIdentityGenerationLive(identityGeneration)) {
+          markAccountNeedsReauth(accountId, writerGeneration);
+        }
+        return;
+      }
+      if (isAccountNeedsReauth(accountId)) return;
+      await fetchMainAccountInfoAttempt(true, 1, lease, false, false);
+    } finally {
+      lease.release();
+    }
     return;
   }
   const account = configuredPoolAccount(config, accountId);
