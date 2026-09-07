@@ -17,8 +17,10 @@ Astra Dirac found two blockers: unmatched-item reordering and closure memory ove
 Track bounded reasoningItemKey separately from part identity; flush on changed explicit
 item identity, and close unrelated pending thinking before another item's red blocks.
 Only same identity (including both omitted) reorders red before pending thinking.
-Release retained thinkingBuf after text frame enqueue, before signature frame enqueue;
+Retain thinkingBuf through signature emission as before;
 queued frame budget stays authoritative, never weakened. Add near-limit valid control,
 shared-budget collector control, overflow/cancel regressions. Deferred thinking is an
 accepted visible-latency tradeoff; text/tool frames remain live with incremental-reader
 coverage. Late done after a different emitted block cannot reorder earlier content.
+
+Re-audit Dirac: VERDICT PASS, blockers=0. Accept tight artificial budget capacity reduction; retain original overflow assertions and production limits.
