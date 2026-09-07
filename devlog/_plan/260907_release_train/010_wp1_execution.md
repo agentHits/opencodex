@@ -55,3 +55,4 @@ Chain-top CI: run 34106345180 @6eadb1658 (lane=all) success, aggregate `ci` succ
 - Slot order now: D → E docs (#3883/#3884) → #3887 → #3892 → final Windows/control run on the train head.
 - Lane D landed: #3877 (4fe4ad8df) → #3902 (d05250de5) → #3903 (cb1113f6d) → #3904 (29405d314) → #3905 (da707ccb6); tree ded24302f == tested; run 34120761219 (non-Windows/control jobs green; two CI-found repairs: react-compiler EffectSetState in ModelPriceDialog, GUI test alert selectors). Closed issues #3817/#3667, PR #2956 (slice); #3719/#3379 slice comments, kept open.
 - Remaining: E docs (#3883/#3884, run 34121907231) → #3887 (#3774 DnD) → #3892 (#3336) → final Windows/control run on train head.
+- Lane E docs landed: #3883 (1649247c1) → #3884 (74089fdc3); tree c415b6abd == prospective merge tree (differs from tested 986ae11d only by D's landed files; shared locale reference files auto-merged in disjoint sections). run 34121907231. #3782 commented (docs caveat, stays open).
