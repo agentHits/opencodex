@@ -30,8 +30,11 @@ export async function afterOAuthCancellation<T>(
   start: () => T | Promise<T>,
 ): Promise<T> {
   const key = JSON.stringify([apiBase, provider]);
-  let pending: Promise<void> | undefined;
-  while ((pending = cancellations.get(key))) await pending;
+  const pending = cancellations.get(key);
+  if (pending) {
+    await pending;
+    return afterOAuthCancellation(apiBase, provider, start);
+  }
   // Check the hook's generation and dispatch in the same turn as the barrier
   // check, so another cancellation cannot slip into an extra await boundary.
   return start();
