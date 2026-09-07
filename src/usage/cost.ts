@@ -177,8 +177,8 @@ export function calculateCost(tokens: CostTokens, cost4: Cost4): CostBreakdown {
  * bundle) nonzero -> overlay verified -> overlay verified-derived -> jawcode
  * model-level vendor price (cross-provider fallback: a model follows its official
  * vendor price — WP5 policy, e.g. kiro/claude-opus-4-6 uses the anthropic price)
- * -> null. All-zero rows are overlay candidates (zero is "not billable here",
- * not "free").
+ * -> null. An explicit all-zero user override means free; all-zero catalog
+ * rows remain overlay candidates rather than evidence of free pricing.
  */
 export function resolveMatchedPrice(
   provider: string,
@@ -244,7 +244,7 @@ function resolveMatchedPriceInner(
 /**
  * Exact provider/model price lookup: user-configured `modelCosts` first, then
  * an exact official correction, the jawcode provider bundle, the expected-price overlay, then the
- * model-level vendor fallback. All-zero rows fall through ("not billable").
+ * model-level vendor fallback. All-zero catalog rows fall through; user zeros win.
  */
 function resolveMatchedPriceExact(
   provider: string,
@@ -302,14 +302,14 @@ function resolveMatchedPriceExact(
   };
 }
 
-/** User-configured overlay match (all-zero rows fall through like any other source). */
+/** User-configured overlay match; explicit zero rates are authoritative too. */
 function userOverlayMatch(
   provider: string,
   modelId: string,
   userOverlays: readonly ExpectedPriceOverlay[],
 ): MatchedPrice | null {
   const overlay = findExpectedPriceOverlay(provider, modelId, userOverlays);
-  if (!overlay || !validCost4(overlay.cost4) || !hasNonZeroCost(overlay.cost4)) return null;
+  if (!overlay || !validCost4(overlay.cost4)) return null;
   return {
     provider,
     modelId,

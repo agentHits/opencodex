@@ -228,6 +228,29 @@ re-estimated from the pricing active when the summary is read. This is an API-eq
 not a subscription charge. New main-pool requests use the reserved `main` label; legacy bare
 `openai` rows remain in an ambiguous bucket instead of being reassigned from current configuration.
 
+Manual model prices can also be edited from **Models → Price**. A manual-pricing badge survives
+catalog reloads. Prices are stored in `providers.<name>.modelCosts` and survive catalog sync.
+Explicit all-zero user rates mean a known-zero estimate; **Reset to automatic** removes the
+override and restores the usual catalog fallback. These remain display estimates, not bills.
+
+`GET /api/providers/{provider}/model-costs` returns `{ provider, modelCosts }`, with sanitized
+four-rate entries keyed by exact upstream model ID. `PUT` on the same route accepts
+`{ modelId, cost }`, where `cost` is `{ input, output, cacheRead, cacheWrite }` or `null` to reset.
+All four rates must be finite numbers from 0 through 1,000,000, in USD per 1M tokens.
+Unknown fields and malformed rates are rejected. A write preserves other models' overrides
+and returns `{ ok: true, provider, modelId, cost }`; reset returns `cost: null`.
+
+```bash
+ocx models price ollama/custom-model --json
+ocx models set-price ollama/custom-model --input 0.50 --output 1.50
+ocx models set-price ollama/custom-model --input 0 --output 0
+ocx models set-price ollama/custom-model --auto
+```
+
+Omitted CLI cache-read/cache-write rates default to zero. Use `--cache-read` and `--cache-write`
+to set them explicitly. A provider name remains an exact configuration identity; account display
+labels are not editable provider names.
+
 Rows in `models`, `providers`, and `days[].models` also carry `cacheHitRate`: the share of input
 tokens served from the provider's prompt cache, clamped to `[0, 1]`. It is `null` — never `0` —
 when the provider reported no cache telemetry or the row has no input tokens, because "no cache
