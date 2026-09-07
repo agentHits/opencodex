@@ -122,6 +122,18 @@ describe("projectOAuthAccountHealth", () => {
 });
 
 describe("collectOAuthHealthEntries", () => {
+  test("local Codex diagnostics expose pending validation with its recovery action", () => {
+    saveCodexAccountCredential("pending-local", {
+      accessToken: "pending-access", refreshToken: "pending-refresh", expiresAt: Date.now() + 3600_000,
+      chatgptAccountId: "pending-local",
+    }, { validationPending: true });
+    expect(collectOAuthHealthEntries().find(entry => entry.provider === "codex" && entry.accountId === "pending-local"))
+      .toEqual({
+        provider: "codex", accountId: "pending-local",
+        health: { status: "warning", reason: "validation_pending" },
+        action: "wait for quota recovery, then refresh Codex account quotas to finish validation",
+      });
+  });
   test("projects needsReauth account with reauth action", async () => {
     await saveCredential("kimi", {
       access: "kimi-access",

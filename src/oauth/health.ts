@@ -282,11 +282,9 @@ function collectLocalCodexEntries(now: number): OAuthHealthEntry[] {
     const hasPoolCredential = accountId !== MAIN_CODEX_ACCOUNT_ID && getCodexAccountCredential(accountId) !== null;
     if (!hasPoolCredential && !needsReauth && !snap) continue;
 
-    const health = projectOAuthAccountHealth({
+    const health = projectCodexAccountHealth({
+      accountId,
       needsReauth,
-      reauthReason: needsReauth ? "refresh_failed" : undefined,
-      cooldownUntilMs: snap?.cooldownUntil,
-      cooldownReason: cooldownReasonFromSource(snap?.cooldownSource),
       now,
     });
     pushEntry(entries, "codex", accountId, health);
