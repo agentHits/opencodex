@@ -117,3 +117,7 @@ index 639f1b34c..48bb7b539 100644
  
 
 ```
+
+## Main-owned route handoff
+
+At current dev, settings GET uses `startupHealth: await readStartupHealth(config)` at `src/server/management/config-routes.ts:332`. M changes only this settings read to the exported immediate snapshot and retains the dedicated `/api/startup-health` bounded read. Settings PUT at line 625 is separately present; it must remain reviewed explicitly rather than blindly replaced. C does not modify either call site.
