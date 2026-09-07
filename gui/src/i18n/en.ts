@@ -719,6 +719,18 @@ export const en = {
   "sub.workspace.selectModel": "Select a model",
   "sub.workspace.selectModelDesc": "Pick a model from the list to see details and feature it for spawn_agent.",
   "sub.workspace.selector": "Public selector",
+  "sub.fallbackLabel": "Sub-agent fallback chain",
+  "sub.fallbackHint": "Ordered models tried when a sub-agent model is unavailable or fails.",
+  "sub.fallbackAdd": "Add fallback model…",
+  "sub.fallbackPoll": "Availability check interval",
+  "sub.fallbackSaved": "Sub-agent fallback settings saved.",
+  "sub.fallbackSaveFailed": "Failed to save fallback settings",
+  "sub.fallbackUnavailable": "Not currently advertised; kept in the chain.",
+  "sub.fallbackPollInvalid": "Enter an integer from 5000 to 600000 ms.",
+  "sub.v2Compatibility.title": "Native-parent V2 compatibility",
+  "sub.v2Compatibility.risk": "If a native ChatGPT parent delegates to this routed model using V2, its task may be encrypted and fail before execution. Readable tasks from routed parents are unaffected.",
+  "sub.v2Compatibility.recoveryUnknown": "Recovery enabled/eligibility state is not exposed by this server. Use V1/plaintext-compatible delegation, or enable experimental V2 recovery only if eligible. Recovery adds quota, latency, backend dependence and possible fidelity loss; it does not fix the upstream protocol.",
+  "sub.v2Compatibility.details": "Compatibility details",
 
   // logs
   "logs.title": "Request Logs",

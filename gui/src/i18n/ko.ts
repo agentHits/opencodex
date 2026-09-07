@@ -703,6 +703,18 @@ export const ko: Record<TKey, string> = {
   "sub.ultraModeLoadFail": "울트라 모드 설정을 불러오지 못했습니다 — 프록시가 실행 중인가요?",
   "sub.ultraModeSaveFail": "울트라 모드 설정 저장에 실패했습니다",
   "sub.ultraModeSaved": "울트라 모드가 저장되었습니다. 새 Codex 세션부터 적용됩니다.",
+  "sub.fallbackLabel": "서브에이전트 폴백 체인",
+  "sub.fallbackHint": "서브에이전트 모델을 사용할 수 없거나 실패할 때 순서대로 시도할 모델입니다.",
+  "sub.fallbackAdd": "폴백 모델 추가…",
+  "sub.fallbackPoll": "가용성 확인 간격",
+  "sub.fallbackSaved": "서브에이전트 폴백 설정을 저장했습니다.",
+  "sub.fallbackSaveFailed": "폴백 설정을 저장하지 못했습니다",
+  "sub.fallbackUnavailable": "현재 목록에 없지만 체인에 유지됩니다.",
+  "sub.fallbackPollInvalid": "5000~600000ms 범위의 정수를 입력하세요.",
+  "sub.v2Compatibility.title": "네이티브 부모의 V2 호환성",
+  "sub.v2Compatibility.risk": "네이티브 ChatGPT 부모가 V2로 이 라우팅 모델에 위임하면 작업이 암호화되어 실행 전에 실패할 수 있습니다. 라우팅 부모가 보내는 읽을 수 있는 작업에는 영향이 없습니다.",
+  "sub.v2Compatibility.recoveryUnknown": "이 서버는 복구 활성화 여부와 사용 가능 상태를 제공하지 않습니다. V1·평문 호환 위임을 사용하거나, 조건을 충족할 때만 실험적 V2 복구를 켜세요. 복구에는 할당량·지연·백엔드 의존성과 원문 충실도 손실 가능성이 따르며, 업스트림 프로토콜을 고치지는 않습니다.",
+  "sub.v2Compatibility.details": "호환성 자세히 보기",
 
   // logs
   "logs.title": "요청 로그",
