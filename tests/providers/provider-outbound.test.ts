@@ -436,7 +436,7 @@ describe("#3462 Mihomo IPv6 fake-IP admission is gated on the scheme-matched pro
     writeFileSync(childTest, `import { test } from "bun:test";\ntest("Mihomo matrix", async () => { await import(${JSON.stringify(pathToFileURL(fixturePath("provider-outbound-mihomo.ts")).href)}); });\n`);
     try {
       const child = Bun.spawn([process.execPath, "test", childTest], {
-        cwd: repoRoot(), stdout: "pipe", stderr: "pipe",
+        cwd: repoRoot(), env: { ...process.env }, stdout: "pipe", stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
