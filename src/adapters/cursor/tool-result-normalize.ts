@@ -10,9 +10,12 @@
  */
 
 import {
+  CODE_MODE_HOST_RECOVERY_PREFIX,
   EMPTY_EXEC_OUTPUT_MESSAGE,
   EMPTY_EXEC_OUTPUT_REGEX,
   FAILED_EXEC_OUTPUT_MESSAGE,
+  annotateCodeModeHostFailure,
+  isCodexCodeModeExecResult,
   isFailedEmptyExecWrapper,
   isCodexExecBridgeTool,
 } from "../exec-tool-result-normalize";
@@ -103,6 +106,15 @@ export function normalizeCursorToolResultText(
       isError: false,
       changed: true,
     };
+  }
+  // A host failure string inside a code-mode exec result gets the rule it broke appended, with
+  // Cursor's isError decision left exactly as the caller passed it. A replayed result that already
+  // carries a recovery line returns here unchanged: falling through would let the legacy loop
+  // below match the lowercase import marker a second time and flip isError.
+  if (isCodexCodeModeExecResult(options.toolName, options.toolNamespace)) {
+    if (text.includes(CODE_MODE_HOST_RECOVERY_PREFIX)) return { text, isError, changed: false };
+    const hostFailure = annotateCodeModeHostFailure(text, options);
+    if (hostFailure !== undefined) return { text: hostFailure, isError, changed: true };
   }
   if (!isError) {
     for (const { marker, guidance } of RUNTIME_FAILURE_GUIDANCE) {

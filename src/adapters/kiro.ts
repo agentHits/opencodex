@@ -44,7 +44,7 @@ import { extractKiroImages, normalizeKiroImages, type KiroImage } from "./kiro-i
 import { sniffImageDimensions } from "./anthropic-image-guard";
 import { fetchKiroWithRetry, noteKiroTransientThrottle } from "./kiro-retry";
 import { convertKiroToolContext } from "./kiro-tools";
-import { EMPTY_EXEC_OUTPUT_MESSAGE, normalizeEmptyExecToolResultText } from "./exec-tool-result-normalize";
+import { EMPTY_EXEC_OUTPUT_MESSAGE, annotateCodeModeHostFailure, normalizeEmptyExecToolResultText } from "./exec-tool-result-normalize";
 import { identifyRoutedModel } from "./identity";
 import { buildNonOpenAIToolCatalogNudgeFromNames, isBareShellBridgeTool, isCodexCodeModeExecTool } from "./tool-catalog-nudge";
 import {
@@ -755,11 +755,17 @@ export function buildKiroPayload(
       // the task instead of calling text()/notify(). Checked before `text.trim()` because the
       // wrapper form ("Script completed\nWall time ...\nOutput:\n") is non-blank and would
       // otherwise pass through as if it were real output.
-      const normalizedExecText = normalizeEmptyExecToolResultText(text, {
-        toolName: tr.toolName,
-        toolNamespace: tr.toolNamespace,
-      });
-      const resultText = normalizedExecText ?? (text.trim() ? text : KIRO_EMPTY_TOOL_RESULT_MESSAGE);
+      const execOptions = { toolName: tr.toolName, toolNamespace: tr.toolNamespace };
+      const normalizedExecText = normalizeEmptyExecToolResultText(text, execOptions);
+      // A host failure string inside a non-empty exec result gets the rule it broke appended, but
+      // only when this request's emitted catalog is genuinely code mode (`codeModeExecName` above):
+      // a structured tool named exec, or exec beside a shell bridge, never ran the isolate. This is
+      // the only substitution the grouping path below also carries: whitespace and empty/failed
+      // wrappers keep their existing raw policy.
+      const annotatedExecText = normalizedExecText === undefined && codeModeExecName !== undefined
+        ? annotateCodeModeHostFailure(text, execOptions)
+        : undefined;
+      const resultText = normalizedExecText ?? annotatedExecText ?? (text.trim() ? text : KIRO_EMPTY_TOOL_RESULT_MESSAGE);
       const images = extractKiroImages(tr.content);
       const toolUseId = normalizeToolId(tr.toolCallId);
       const call = priorCalls.get(toolUseId);
@@ -768,7 +774,7 @@ export function buildKiroPayload(
       }
       // Keep real whitespace and failed wrappers, but no empty-success wrapper boilerplate.
       const rawGroupText = text.length > 0 && (!text.trim() || normalizedExecText !== EMPTY_EXEC_OUTPUT_MESSAGE)
-        ? text : undefined;
+        ? (annotatedExecText ?? text) : undefined;
       const last = turns.at(-1);
       if (
         adjacentResult?.rawId === tr.toolCallId
