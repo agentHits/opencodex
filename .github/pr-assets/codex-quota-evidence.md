@@ -12,13 +12,15 @@ No live OpenAI account was used or charged.
 
 The browser was Microsoft Edge through Playwright, at 1440 × 1100, English/light
 theme, with external browser requests blocked. Verification ran on Windows.
-The final capture used runtime and GUI changes through `094d253b1`.
+The final capture used runtime and GUI changes through `25798a590`.
 
 1. Open Codex Set → Multi-auth, click Add, enter an account ID, and choose Device
    code login. Authorize through the mock device service.
 2. The actual token exchange and authenticated usage read return a Pro account
    with weekly usage at 100%. Registration persists it as validation pending:
    one usage read, zero model calls, and no successful-validation timestamp.
+   The completion notice also says validation is pending; no model-selection
+   dialog opens for this unroutable account.
 3. Reload the page and click Refresh quotas while usage is still 100%.
    The account remains pending. Cumulative counts: two usage reads, zero model
    calls. The pending screenshot shows the status and the missing selection button.

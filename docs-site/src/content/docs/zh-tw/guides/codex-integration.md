@@ -317,7 +317,7 @@ ocx service install    # 常駐：登入時自動啟動，崩潰後自動重新�
 
 若新 OAuth 憑證的已驗證用量查詢確認5小時、每週或每月額度耗盡，則不呼叫模型而直接儲存帳號，顯示**等待驗證**。重新啟動或更新權杖也不會使其可用。額度恢復後重新整理額度：只有完整的最新用量顯示有餘額，才會傳送小型驗證請求；請求完成後帳號才可用於路由。查詢或驗證失敗將保留等待狀態。一般狀態輪詢不會傳送該請求。首次註冊時用量未知仍需一般預熱驗證。
 
-無介面環境可執行 `ocx account refresh openai` 進行相同驗證。`ocx account list openai --quota --refresh` 僅查詢用量，不驗證等待中的帳號。
+無介面環境可執行 `ocx account refresh openai` 進行相同驗證。`ocx account list openai --quota --refresh` 僅查詢用量，不驗證等待中的帳號。 暫停的帳號也可完成明確要求的驗證，但驗證不會恢復或選取該帳號。模型授權失敗會顯示需要重新驗證身分，即使用量查詢成功也不會隱藏此狀態。
 
 背景重新驗證是獨立功能，預設關閉。它需要 Token Guardian、`openai` 的 `proactive` 更新政策及 `tokenGuardian.codexWarmupEnabled`，並略過等待註冊驗證的帳號。
 

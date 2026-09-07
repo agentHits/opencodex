@@ -371,7 +371,7 @@ L’ajout ou la réauthentification vérifie normalement le compte avant son enr
 
 Si la lecture authentifiée des quotas avec le nouveau jeton OAuth confirme un quota de 5 heures, hebdomadaire ou mensuel épuisé, le compte est enregistré sans appel au modèle et affiche **Validation en attente**. Il reste exclu du routage après un redémarrage ou un renouvellement du jeton. Après récupération du quota, actualisez les quotas : une lecture récente et complète avec de la capacité disponible permet une petite requête de validation. Seule sa réussite active le compte. Tout échec conserve la restriction. Les lectures passives ne déclenchent pas cette requête. Un quota inconnu à l’inscription conserve la vérification habituelle.
 
-Sans tableau de bord, `ocx account refresh openai` effectue la même validation. `ocx account list openai --quota --refresh` consulte uniquement les quotas et ne valide pas les comptes en attente.
+Sans tableau de bord, `ocx account refresh openai` effectue la même validation. `ocx account list openai --quota --refresh` consulte uniquement les quotas et ne valide pas les comptes en attente. La validation explicite peut aboutir pendant une pause, sans reprendre ni sélectionner le compte. Les échecs d’autorisation du modèle demandent une réauthentification et restent visibles même si la lecture des quotas réussit.
 
 La revalidation en arrière-plan est distincte et désactivée par défaut. Elle nécessite Token Guardian, la politique `proactive` du fournisseur `openai` et `tokenGuardian.codexWarmupEnabled`, et ignore les comptes dont la validation d’inscription est en attente.
 

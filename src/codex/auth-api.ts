@@ -12,6 +12,7 @@ import {
   isCodexAccountGenerationLive,
   forceRefreshCodexPoolToken,
   markCodexAccountValidated,
+  markCodexAccountValidationFailed,
   readCodexAccountRecord,
   saveCodexAccountCredential,
   CodexCredentialGenerationConflictError,
@@ -375,7 +376,7 @@ function poolAccountDto(
     paused,
     priority,
     quota: quota ? { ...quota } : null,
-    needsReauth,
+    needsReauth: needsReauth || health.status === "reauth_required",
     hasCredential,
     ...(quotaResult.quotaProbeSkipped ? { quotaProbeSkipped: true as const } : {}),
     ...oauthAccountHealthFields("codex", account.id, health),
@@ -1465,7 +1466,6 @@ async function fetchPoolAccountQuota(
     const record = state.validatePending ? readCodexAccountRecord(accountId) : null;
     if (record?.codexValidationPending && record.credential && record.deletedAt == null
       && generation !== undefined && record.generation === generation
-      && !isCodexAccountPaused(loadConfig(), accountId)
       && isCompleteCodexQuotaRecoverySnapshot(result.freshQuota ?? null, result.freshPlan ?? configuredPlan)) {
       try {
         await warmCodexAccount({
@@ -1473,9 +1473,14 @@ async function fetchPoolAccountQuota(
           chatgptAccountId: record.credential.chatgptAccountId,
         });
         markCodexAccountValidated(accountId, Date.now(), generation);
-      } catch {
+      } catch (error) {
         // Keep the durable restriction on any failed/partial inference response, even
         // when WHAM just reported headroom. No raw upstream text enters diagnostics.
+        const reason = codexWarmupFailureReason(error);
+        if (reason === "http_status:401" || reason === "http_status:403") {
+          markCodexAccountValidationFailed(accountId, reason, generation);
+          markAccountNeedsReauth(accountId, captureConfigGeneration(), generation);
+        }
       }
     }
     return result;

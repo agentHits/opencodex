@@ -204,15 +204,20 @@ export function projectCodexAccountHealth(input: {
   needsReauth: boolean;
   now?: number;
 }): OAuthAccountHealth {
-  if (!input.needsReauth && input.accountId !== MAIN_CODEX_ACCOUNT_ID
-    && readCodexAccountRecord(input.accountId)?.codexValidationPending) {
+  const record = input.accountId !== MAIN_CODEX_ACCOUNT_ID ? readCodexAccountRecord(input.accountId) : null;
+  // A successful quota read is not evidence that model authorization recovered.
+  // Preserve this guidance until validation succeeds or reauthentication replaces it.
+  const validationAuthFailed = record?.codexValidationPending && record.lastCodexValidationStatus === "failed"
+    && (record.lastCodexValidationError === "http_status:401" || record.lastCodexValidationError === "http_status:403");
+  const needsReauth = input.needsReauth || Boolean(validationAuthFailed);
+  if (!needsReauth && record?.codexValidationPending) {
     return { status: "warning", reason: "validation_pending" };
   }
   const now = input.now ?? Date.now();
   const snap = getCodexAccountHealthSnapshot(input.accountId, now);
   return projectOAuthAccountHealth({
-    needsReauth: input.needsReauth,
-    reauthReason: input.needsReauth ? "refresh_failed" : undefined,
+    needsReauth,
+    reauthReason: needsReauth ? "refresh_failed" : undefined,
     cooldownUntilMs: snap?.cooldownUntil,
     cooldownReason: cooldownReasonFromSource(snap?.cooldownSource),
     now,
