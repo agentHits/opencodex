@@ -5,7 +5,7 @@ import {
   type HTMLElement as HappyHTMLElement,
   type HTMLInputElement as HappyHTMLInputElement,
 } from "happy-dom";
-import { act } from "react";
+import { act, useEffect } from "react";
 import type { Root } from "react-dom/client";
 import { en } from "../src/i18n/en";
 import { LanguageProvider } from "../src/i18n/provider";
@@ -436,7 +436,11 @@ test.each([undefined, false, true])("Desktop login preference %s persists before
     }
     return Response.json({}, { status: 503 });
   }) as typeof fetch;
-  function Harness() { latest = useDashboardData(apiBase); return null; }
+  function Harness() {
+    const data = useDashboardData(apiBase);
+    useEffect(() => { latest = data; }, [data]);
+    return null;
+  }
   try {
     const { createRoot } = await import("react-dom/client");
     await act(async () => {
@@ -474,7 +478,11 @@ test.each(["skipped", "catalog-only", "applied"])("Desktop preference pending st
     if (path.endsWith("/api/settings")) return Response.json({ codexAutoStart: true, codexDesktopAuthless: false, port: 10100, hostname: "127.0.0.1" });
     return Response.json({}, { status: 503 });
   }) as typeof fetch;
-  function Harness() { latest = useDashboardData(apiBase); return null; }
+  function Harness() {
+    const data = useDashboardData(apiBase);
+    useEffect(() => { latest = data; }, [data]);
+    return null;
+  }
   try {
     const { createRoot } = await import("react-dom/client");
     await act(async () => { root = createRoot(host); root.render(<LanguageProvider><Harness /></LanguageProvider>); });
@@ -525,7 +533,11 @@ for (const putPending of [false, undefined, true]) {
       }
       return Response.json({}, { status: 503 });
     }) as typeof fetch;
-    function Harness() { latest = useDashboardData(apiBase); return null; }
+    function Harness() {
+      const data = useDashboardData(apiBase);
+      useEffect(() => { latest = data; }, [data]);
+      return null;
+    }
     const { createRoot } = await import("react-dom/client");
     const render = async () => {
       await act(async () => { root = createRoot(host); root.render(<LanguageProvider><Harness /></LanguageProvider>); });
@@ -582,7 +594,11 @@ test.each([undefined, false])("Desktop GET pending %s preserves a cached pending
   globalThis.fetch = (async (input: RequestInfo | URL) => String(input).endsWith("/api/settings")
     ? Response.json({ codexAutoStart: true, codexDesktopAuthless: true, catalogRefreshPending: getPending, port: 10100, hostname: "127.0.0.1" })
     : Response.json({}, { status: 503 })) as typeof fetch;
-  function Harness() { latest = useDashboardData(apiBase); return null; }
+  function Harness() {
+    const data = useDashboardData(apiBase);
+    useEffect(() => { latest = data; }, [data]);
+    return null;
+  }
   try {
     const { createRoot } = await import("react-dom/client");
     for (let visit = 0; visit < 2; visit += 1) {
