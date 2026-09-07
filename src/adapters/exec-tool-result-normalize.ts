@@ -116,6 +116,21 @@ export const CODE_MODE_RESULT_ECHO_SENTENCE =
   "Nothing in the isolate is echoed automatically: a bare trailing `await tools.<name>(...)` or final expression value is DISCARDED, and the cell reports empty output. Pass anything you need to read to `text(...)` (or `notify(...)`) in the same cell — for example `text(JSON.stringify(await tools.exec_command({cmd: 'ls'})))` — and treat an empty result as your own missing `text(...)` call rather than a failed command or lost context.";
 
 /**
+ * Host rules a routed model most often breaks on its first code-mode edit or wait, stated BEFORE
+ * the call. Wording tracks the Codex host (0.153.2), probed live on 2026-09-07: a non-string
+ * argument to `apply_patch` throws "expects a string input"; a body whose first line is not the
+ * bare marker (decorated `*** Begin Patch ***`, a code fence, prose) throws "The first line of the
+ * patch must be '*** Begin Patch'" — surrounding newlines are tolerated; ES imports throw
+ * "Unsupported import in exec"; a command that outlives `yield_time_ms` returns `session_id` for
+ * `write_stdin` polling. xai/grok-4.6 hit the first two, abandoned apply_patch for heredoc writes,
+ * blocked a turn in a shell sleep loop, and died once on an import. None of that is repairable in
+ * the proxy (devlog/_plan/260905_apply_patch_envelope_gap/010 MODE B); it is a contract the proxy
+ * had not stated.
+ */
+export const CODE_MODE_HOST_CONTRACT_SENTENCE =
+  "Host contract for the nested helpers: `tools.apply_patch(patch)` takes exactly one string, never an object such as `{input: ...}`; the patch text opens with the bare marker line `*** Begin Patch` and closes with the bare marker line `*** End Patch`, written without a code fence, prose, or extra asterisks on those lines (blank lines or indentation around the markers are tolerated; a decorated or missing marker is rejected). The isolate has no `import`, `require`, or module loader; use the globals the exec tool description lists (for example `tools`, `text`, `notify`, `store`/`load`, `ALL_TOOLS`). For a command that may outlive `yield_time_ms`, let `tools.exec_command` return a `session_id` and poll it on later calls with `tools.write_stdin({session_id, chars: \"\"})` instead of blocking a shell in a sleep loop.";
+
+/**
  * Codex exec / shell-bridge tool names (flat and MCP-prefixed display aliases). An empty result
  * here is almost always a code-mode cell that never called text()/notify().
  */

@@ -1823,6 +1823,8 @@ describe("kiro code-mode catalog nudge", () => {
     // Reaches the ACTUAL Kiro wire prompt, not just the builder: the live 2026-08-28 session that
     // misread a blank result was a routed Kiro turn.
     expect(content).toContain("Nothing in the isolate is echoed automatically");
+    // Survives Kiro's 16 384-char injected-instruction bound on the real wire prompt.
+    expect(content).toContain("Host contract for the nested helpers");
     // The generic fallback must be gone, not merely accompanied.
     expect(content).not.toContain("If a listed tool exposes nested helpers such as a tools.* API");
   });
