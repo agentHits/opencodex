@@ -4999,6 +4999,11 @@ describe("codex-auth API", () => {
     let terminal = "response.incomplete";
     let warmups = 0;
     let replaceDuringWarmup = false;
+    const refreshAccounts = async () => {
+      const req = new Request("http://localhost/api/codex-auth/accounts?refresh=1");
+      const response = await handleCodexAuthAPI(req, new URL(req.url), config);
+      expect(response?.status).toBe(200);
+    };
     const selectAccount = () => {
       const req = new Request("http://localhost/api/codex-auth/active", {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId }),
@@ -5025,15 +5030,15 @@ describe("codex-auth API", () => {
       }
       throw new Error("unexpected request");
     }) as typeof fetch;
-    await listCodexAuthAccounts(config, true);
+    await refreshAccounts();
     expect(warmups).toBe(0);
     used = undefined;
-    await listCodexAuthAccounts(config, true);
+    await refreshAccounts();
     expect(warmups).toBe(0);
     used = 0;
     config.pausedCodexAccountIds = [accountId];
     saveConfig(config);
-    await listCodexAuthAccounts(config, true);
+    await refreshAccounts();
     expect(warmups).toBe(0);
     config.pausedCodexAccountIds = [];
     saveConfig(config);
@@ -5041,20 +5046,23 @@ describe("codex-auth API", () => {
     await listCodexAuthAccounts(config, false);
     expect(warmups).toBe(0); // Passive reads never spend inference.
     await listCodexAuthAccounts(config, true);
+    expect(warmups).toBe(0); // Forced background reads are not manual validation.
+    expect(isCodexAccountUsable(config, accountId)).toBe(false);
+    await refreshAccounts();
     expect(warmups).toBe(1);
     expect(isCodexAccountUsable(config, accountId)).toBe(false);
     terminal = "response.completed";
     replaceDuringWarmup = true;
-    await listCodexAuthAccounts(config, true);
+    await refreshAccounts();
     expect(warmups).toBe(2);
     expect(isCodexAccountUsable(config, accountId)).toBe(false);
-    await listCodexAuthAccounts(config, true);
+    await refreshAccounts();
     expect(warmups).toBe(3);
     expect(isCodexAccountUsable(config, accountId)).toBe(true);
     expect(readCodexAccountRecord(accountId)?.lastCodexValidationStatus).toBe("ok");
     expect((await selectAccount())?.status).toBe(200);
     expect(loadConfig().activeCodexAccountId).toBe(accountId);
-    await listCodexAuthAccounts(config, true);
+    await refreshAccounts();
     expect(warmups).toBe(3);
   });
 
@@ -5085,7 +5093,7 @@ describe("codex-auth API", () => {
     const passive = listCodexAuthAccounts(config, false);
     for (let i = 0; i < 100 && usageCalls === 0; i++) await new Promise<void>(resolve => setImmediate(resolve));
     expect(usageCalls).toBe(1);
-    const explicit = listCodexAuthAccounts(config, true);
+    const explicit = listCodexAuthAccounts(config, true, { validatePending: true });
     // Let the second list pass its main-account read and join the held pool flight.
     for (let i = 0; i < 20; i++) await new Promise<void>(resolve => setImmediate(resolve));
     release();

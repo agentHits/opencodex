@@ -1758,6 +1758,7 @@ export interface CodexAuthAccountsSnapshot {
 export async function listCodexAuthAccountsSnapshot(
   config: OcxConfig,
   forceRefresh = false,
+  options: { validatePending?: boolean } = {},
 ): Promise<CodexAuthAccountsSnapshot> {
   const runtimeConfig = getRuntimeConfig(config);
   const poolAccounts = (runtimeConfig.codexAccounts ?? []).filter(isSelectableCodexPoolAccount);
@@ -1769,7 +1770,7 @@ export async function listCodexAuthAccountsSnapshot(
       quotaResult = { quota: null, needsReauth: true };
     } else {
       try {
-        quotaResult = await fetchPoolAccountQuota(account.id, forceRefresh, account.plan, getValidCodexToken, forceRefresh);
+        quotaResult = await fetchPoolAccountQuota(account.id, forceRefresh, account.plan, getValidCodexToken, options.validatePending === true);
       } catch (error) {
         if (!(error instanceof PoolQuotaProbeBusyError)) throw error;
         quotaResult = {
@@ -1865,8 +1866,12 @@ export async function listCodexAuthAccountsSnapshot(
   };
 }
 
-export async function listCodexAuthAccounts(config: OcxConfig, forceRefresh = false): Promise<CodexAuthAccountDto[]> {
-  return (await listCodexAuthAccountsSnapshot(config, forceRefresh)).accounts;
+export async function listCodexAuthAccounts(
+  config: OcxConfig,
+  forceRefresh = false,
+  options: { validatePending?: boolean } = {},
+): Promise<CodexAuthAccountDto[]> {
+  return (await listCodexAuthAccountsSnapshot(config, forceRefresh, options)).accounts;
 }
 
 interface PauseExhaustedResult {
@@ -1979,7 +1984,9 @@ export async function handleCodexAuthAPI(
 
   if (url.pathname === "/api/codex-auth/accounts" && req.method === "GET") {
     const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
-    return jsonResponse({ accounts: await listCodexAuthAccounts(config, forceRefresh) });
+    // Background report/reset pollers also bypass caches; only this explicit
+    // accounts refresh opts into inference-backed validation of pending accounts.
+    return jsonResponse({ accounts: await listCodexAuthAccounts(config, forceRefresh, { validatePending: forceRefresh }) });
   }
 
   if (url.pathname === "/api/codex-auth/accounts" && req.method === "POST") {
