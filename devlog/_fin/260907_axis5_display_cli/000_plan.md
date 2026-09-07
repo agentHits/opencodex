@@ -31,3 +31,7 @@ Review-ready requirements remain visible; local suite prohibition is explicitly 
 CI scope refinement: the discovered editor is the final layer so the final commit and PR diff include gui/**, activating GUI lint/build/artifact jobs. ci.yml gates always run GUI tests; docs deployment is NOT dispatched because it publishes. Public docs receive static source consistency inspection here, with docs build explicitly unverified unless an existing build-only remote path is available.
 
 CI scheduling refinement: lower-layer head commits may use GitHub documented [skip ci] to avoid push/pull_request suite launches; this yields missing/pending evidence, NOT green. Final head has no skip marker and receives lane=all workflow_dispatch. Source: https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs (opened 2026-09-07). Admin merge records this explicit owner-requested lower-layer waiver. Do not propagate skip markers into integration merge messages.
+
+## Terminal status
+
+DONE: all three feature layers landed; see 020_delivery.md for exact commits, verification boundaries and deferred Mac test-runner investigation.
