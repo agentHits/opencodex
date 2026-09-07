@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { anthropicToResponsesBody } from "../../src/claude/inbound";
-import { decodeReasoningEnvelope, encodeReasoningEnvelope } from "../../src/responses/reasoning-envelope";
+import { describe, expect, spyOn, test } from "bun:test";
+import { anthropicToResponsesBody, anthropicToResponsesTranslation } from "../../src/claude/inbound";
+import { decodeReasoningEnvelope, encodeReasoningEnvelope, OCX_REASONING_PREFIX, type ReasoningEnvelope } from "../../src/responses/reasoning-envelope";
 import { responsesJsonToAnthropicMessage } from "../../src/claude/outbound";
+import { createTranslatorBudget, TranslatorBudgetExceededError, translatorObservedBufferSnapshot } from "../../src/lib/translator-budget";
+import { jsonUtf8Bytes } from "../../src/lib/json-byte-size";
+import * as budgets from "../../src/lib/translator-budget";
 
 describe("reasoning and tool/result envelopes", () => {
   test("preserves ordered thinking blocks and genuine signatures", () => {
@@ -75,5 +78,107 @@ describe("reasoning and tool/result envelopes", () => {
       output: [{ type: "reasoning", summary: [], encrypted_content: encodeReasoningEnvelope({ sig: "sig-only" }) }],
     }, "m") as any;
     expect(message.content).toEqual([{ type: "thinking", thinking: "", signature: "sig-only" }]);
+  });
+});
+
+describe("reasoning allocation admission", () => {
+  test.each(["ascii", "\"\\\n\u0000", "한글😀", "\ud800", "\udc00", ""])('sizes JSON strings exactly: %j', value => {
+    const data = { sig: value, red: [value, ""], txt: value, krc: value, omitted: undefined };
+    const expected = Buffer.byteLength(JSON.stringify(data));
+    expect(jsonUtf8Bytes(data, expected)).toBe(expected);
+    expect(() => jsonUtf8Bytes(data, expected - 1)).toThrow(TranslatorBudgetExceededError);
+  });
+
+  test("sizes the translated plain-JSON vocabulary", () => {
+    const data = { arr: [undefined, null, true, false, 0, -0, 1e30, NaN, Infinity, { text: "x" }], absent: undefined };
+    expect(jsonUtf8Bytes(data)).toBe(Buffer.byteLength(JSON.stringify(data)));
+  });
+
+  test.each<ReasoningEnvelope>([{ sig: "opaque" }, { red: ["one", "two"] }, { txt: "hidden" }, { krc: "opaque" }, { sig: "s", red: ["r"], txt: "t", krc: "k" }])(
+    "rejects before JSON/Buffer materialization and admits the exact projected boundary: %j", envelope => {
+      const json = JSON.stringify(envelope);
+      const size = Buffer.byteLength(json);
+      const base64Bytes = 4 * Math.ceil(size / 3);
+      const limit = Math.max(3 * size + 4 * base64Bytes + 2 * OCX_REASONING_PREFIX.length, 8 * (OCX_REASONING_PREFIX.length + base64Bytes));
+      const budget = createTranslatorBudget({ maxTurnBytes: limit - 1 });
+      const stringify = spyOn(JSON, "stringify");
+      const from = spyOn(Buffer, "from");
+      let error: unknown;
+      let serializations = 0;
+      let allocations = 0;
+      try { encodeReasoningEnvelope(envelope, budget); } catch (caught) { error = caught; }
+      finally {
+        serializations = stringify.mock.calls.length;
+        allocations = from.mock.calls.length;
+        stringify.mockRestore(); from.mockRestore();
+      }
+      expect(error).toBeInstanceOf(TranslatorBudgetExceededError);
+      expect(serializations).toBe(0);
+      expect(allocations).toBe(0);
+      expect(budget.snapshot().currentBytes).toBe(0);
+      budget.dispose();
+      const exact = createTranslatorBudget({ maxTurnBytes: limit });
+      try {
+        const encoded = encodeReasoningEnvelope(envelope, exact);
+        expect(encoded).toBe(OCX_REASONING_PREFIX + Buffer.from(json).toString("base64"));
+        expect(decodeReasoningEnvelope(encoded, exact)).toEqual(envelope);
+        expect(exact.snapshot().currentBytes).toBe(0);
+      } finally { exact.dispose(); }
+    },
+  );
+
+  test("bounds preencoded replay before decoding and preserves native blobs", () => {
+    const encoded = encodeReasoningEnvelope({ txt: "" });
+    const budget = createTranslatorBudget({ maxTurnBytes: encoded.length * 8 - 1 });
+    const from = spyOn(Buffer, "from");
+    let error: unknown;
+    let allocations = 0;
+    try { decodeReasoningEnvelope(encoded, budget); } catch (caught) { error = caught; }
+    finally { allocations = from.mock.calls.length; from.mockRestore(); }
+    expect(error).toBeInstanceOf(TranslatorBudgetExceededError);
+    expect(allocations).toBe(0);
+    expect(decodeReasoningEnvelope("native-opaque", budget)).toBeNull();
+    expect(budget.snapshot().currentBytes).toBe(0);
+    budget.dispose();
+    const exact = createTranslatorBudget({ maxTurnBytes: encoded.length * 8 });
+    try { expect(decodeReasoningEnvelope(encoded, exact)).toEqual({ txt: "" }); }
+    finally { exact.dispose(); }
+  });
+
+  test.each(["thinking", "redacted_thinking", "owned"])('accounts cumulatively for %s blocks across messages', type => {
+    const before = translatorObservedBufferSnapshot().currentBytes;
+    const block = type === "redacted_thinking" ? { type, data: "r" }
+      : { type: "thinking", thinking: "", signature: type === "owned" ? encodeReasoningEnvelope({ txt: "t" }) : "s" };
+    const budget = createTranslatorBudget({ maxTurnBytes: 256 });
+    try {
+      expect(() => anthropicToResponsesTranslation({ model: "m", messages: Array.from({ length: 8 }, () => ({ role: "assistant", content: [block] })) }, undefined, budget))
+        .toThrow(TranslatorBudgetExceededError);
+      expect(budget.snapshot().highWaterBytes).toBeLessThanOrEqual(256);
+    } finally { budget.dispose(); }
+    expect(translatorObservedBufferSnapshot().currentBytes).toBe(before);
+  });
+
+  test.each(["thinking", "redacted_thinking", "owned"])("handler maps %s admission failure to 413 without dispatch and disposes its budget", async type => {
+    const { handleClaudeMessages } = await import("../../src/server/claude-messages");
+    const signature = type === "owned" ? encodeReasoningEnvelope({ txt: "fixture" }) : "fixture";
+    const content = type === "redacted_thinking" ? { type, data: "fixture" }
+      : { type: "thinking", thinking: "", signature };
+    const request = new Request("http://localhost/v1/messages", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "fixture/model", messages: [{ role: "assistant", content: [content] }] }),
+    });
+    const beforeBytes = budgets.translatorObservedBufferSnapshot().currentBytes;
+    const beforeCount = budgets.translatorLiveBudgetCountForTests();
+    const create = budgets.createTranslatorBudget;
+    const factory = spyOn(budgets, "createTranslatorBudget").mockImplementation(() => create({ maxTurnBytes: 64 }));
+    const upstream = spyOn(globalThis, "fetch").mockImplementation(async () => { throw new Error("unexpected upstream dispatch"); });
+    try {
+      const response = await handleClaudeMessages(request, { port: 0, providers: {} }, { model: "", provider: "" });
+      expect(response.status).toBe(413);
+      expect(await response.json()).toMatchObject({ type: "error", error: { type: "request_too_large", code: "translation_buffer_limit" } });
+      expect(upstream).not.toHaveBeenCalled();
+      expect(budgets.translatorObservedBufferSnapshot().currentBytes).toBe(beforeBytes);
+      expect(budgets.translatorLiveBudgetCountForTests()).toBe(beforeCount);
+    } finally { factory.mockRestore(); upstream.mockRestore(); }
   });
 });

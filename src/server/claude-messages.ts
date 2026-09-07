@@ -7,6 +7,7 @@
  * unchanged. The Responses output (SSE or JSON) is converted back to Anthropic shape.
  */
 import { FORWARD_HEADERS } from "../adapters/openai-responses";
+import { jsonUtf8Bytes } from "../lib/json-byte-size";
 import { sseFieldValue } from "../lib/sse-decoder";
 import { enforceAnthropicImageLimits, sniffImageDimensions } from "../adapters/anthropic-image-guard";
 import { normalizeAnthropicImages } from "../adapters/anthropic-image-normalize";
@@ -753,13 +754,13 @@ async function handleClaudeMessagesWithBudget(
       };
       delete anthropicBody.thinking;
     }
-    const translation = anthropicToResponsesTranslation(anthropicBody, config.claudeCode);
+    const translation = anthropicToResponsesTranslation(anthropicBody, config.claudeCode, translatorBudget);
     internalBody = translation.body;
     // The Anthropic translator builds its body from model/input/store/stream plus sampling
     // fields only, so the caller intent is applied to the TRANSLATED body rather than the
     // inbound one.
     if (fastRow) internalBody.service_tier = "priority";
-    translatorBudget.chargeRetained(new TextEncoder().encode(JSON.stringify(internalBody)).byteLength, { kind: "request_copies" });
+    translatorBudget.chargeRetained(jsonUtf8Bytes(internalBody), { kind: "request_copies" });
     cacheKeySource = translation.cacheKeySource;
   } catch (err) {
     const overflow = isTranslatorBudgetExceededError(err);
