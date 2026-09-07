@@ -561,14 +561,56 @@ describe("Anthropic known-reset expiry", () => {
     now += 120_000;
     observe(id!);
     const quota = getCachedProviderAccountQuota("anthropic", id!);
-    expect(quota?.customWindows).toEqual(saved.customWindows.slice(1));
+    const retained = [saved.customWindows[1], saved.customWindows[2], { label: "Unknown reset", percent: 60 }];
+    expect(quota?.customWindows).toEqual(retained);
     expect(quota?.fiveHourPercent).toBe(41);
     expect(quota?.updatedAt).toBe(now);
     expect(saved.customWindows).toHaveLength(4);
     expect(saved.updatedAt).toBe(start);
     now += 30_000;
     observe(id!);
-    expect(getCachedProviderAccountQuota("anthropic", id!)?.customWindows).toEqual(saved.customWindows.slice(1));
+    expect(getCachedProviderAccountQuota("anthropic", id!)?.customWindows).toEqual(retained);
+  });
+
+  test("custom windows reject empty labels and invalid percentages while preserving valid objects", async () => {
+    const [id] = await seed(1);
+    const valid = [{ label: "Opus", percent: 0 }, { label: "Sonnet", percent: 100, resetAt: start + 60_000 }];
+    const saved = { customWindows: [
+      ...valid,
+      { label: "", percent: 50 }, { label: "   ", percent: 50 },
+      { label: "negative", percent: -1 }, { label: "too high", percent: 101 },
+      { label: "not finite", percent: Number.NaN }, { label: "infinite", percent: Infinity },
+    ], updatedAt: start };
+    setCachedProviderAccountQuotaForTests("anthropic", id!, saved);
+    const normalized = getCachedProviderAccountQuota("anthropic", id!);
+    expect(normalized?.customWindows).toEqual(valid);
+    expect(normalized?.customWindows?.[0]).toBe(valid[0]);
+    expect(saved.customWindows).toHaveLength(8);
+    setCachedProviderAccountQuotaForTests("anthropic", id!, normalized!);
+    expect(getCachedProviderAccountQuota("anthropic", id!)).toBe(normalized);
+  });
+
+  test("invalid reset metadata is removed without discarding valid usage", async () => {
+    const [id] = await seed(1);
+    const invalidResets = [0, -1, Number.NaN, Infinity, 8_640_000_000_000_001];
+    const saved = {
+      fiveHourPercent: 40, fiveHourResetAt: 0,
+      weeklyPercent: 50, weeklyResetAt: Infinity,
+      monthlyPercent: 60, monthlyResetAt: 8_640_000_000_000_001,
+      customWindows: invalidResets.map((resetAt, index) => ({ label: `window-${index}`, percent: 70, resetAt })),
+      updatedAt: start,
+    };
+    setCachedProviderAccountQuotaForTests("anthropic", id!, saved);
+    const normalized = getCachedProviderAccountQuota("anthropic", id!);
+    expect(normalized).toEqual({
+      fiveHourPercent: 40, weeklyPercent: 50, monthlyPercent: 60,
+      customWindows: invalidResets.map((_, index) => ({ label: `window-${index}`, percent: 70 })),
+      updatedAt: start,
+    });
+    expect(saved.customWindows[0]?.resetAt).toBe(0);
+    expect(saved.fiveHourResetAt).toBe(0);
+    setCachedProviderAccountQuotaForTests("anthropic", id!, normalized!);
+    expect(getCachedProviderAccountQuota("anthropic", id!)).toBe(normalized);
   });
 
   for (const [percent, reset, observedWindow] of [
@@ -728,6 +770,23 @@ describe("Anthropic known-reset expiry", () => {
       expect(getCachedProviderAccountQuota("kiro", "untouched")).toEqual({ monthlyPercent: 17, updatedAt: now });
     });
   }
+
+  test("persisted nonnumeric reset metadata does not erase otherwise valid windows", async () => {
+    const [id] = await seed(1);
+    writeFileSync(join(home, "provider-account-quota-cache.json"), JSON.stringify({ version: 1, rows: {
+      [`anthropic\u0000${id}`]: {
+        weeklyPercent: 80, weeklyResetAt: "unknown",
+        customWindows: [{ label: "Opus", percent: 70, resetAt: null }, { label: "Sonnet", percent: 60, resetAt: "later" }],
+        updatedAt: now,
+      },
+    } }));
+    clearAccountQuotaCache();
+    globalThis.fetch = (async () => new Response("busy", { status: 429 })) as typeof fetch;
+    const [row] = await fetchProviderAccountQuotas("anthropic");
+    expect(row?.quota).toEqual({ weeklyPercent: 80,
+      customWindows: [{ label: "Opus", percent: 70 }, { label: "Sonnet", percent: 60 }], updatedAt: now });
+    expect(row?.unavailable).toBe(true);
+  });
 
   test("fresh utilization without a reset does not inherit an expired reset", async () => {
     const [id] = await seed(1);

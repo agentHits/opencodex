@@ -1555,26 +1555,48 @@ type AccountQuotaCacheEntry = {
 /** Expired measurements become unknown; missing reset evidence never implies a fresh allowance. */
 function normalizeAnthropicQuota(quota: ProviderQuota | null | undefined, now: number): ProviderQuota | null {
   if (!quota) return null;
-  const expired = (resetAt: number | undefined): boolean => typeof resetAt === "number"
-    && Number.isFinite(resetAt) && resetAt > 0 && resetAt <= now;
+  const validReset = (resetAt: unknown): resetAt is number => typeof resetAt === "number"
+    && Number.isFinite(resetAt) && resetAt > 0 && Number.isFinite(new Date(resetAt).getTime());
   let result = quota;
   for (const [percent, reset] of [
     ["fiveHourPercent", "fiveHourResetAt"],
     ["weeklyPercent", "weeklyResetAt"],
     ["monthlyPercent", "monthlyResetAt"],
   ] as const) {
-    if (!expired(quota[reset])) continue;
+    const resetAt = quota[reset];
+    if (resetAt === undefined) continue;
+    const valid = validReset(resetAt);
+    if (valid && resetAt > now) continue;
     if (result === quota) result = { ...quota };
-    delete result[percent];
+    if (valid) delete result[percent];
     delete result[reset];
   }
   // Persisted rows validate only the outer quota object, so custom data may be malformed.
   if (quota.customWindows !== undefined) {
     const windows = Array.isArray(quota.customWindows) ? quota.customWindows : [];
-    const retained = windows.filter(window => window !== null && typeof window === "object"
-      && typeof window.label === "string" && typeof window.percent === "number"
-      && Number.isFinite(window.percent) && !expired(window.resetAt));
-    if (!Array.isArray(quota.customWindows) || retained.length !== windows.length) {
+    const retained: ProviderQuotaWindow[] = [];
+    let changed = !Array.isArray(quota.customWindows);
+    for (const window of windows) {
+      if (!window || typeof window !== "object" || typeof window.label !== "string" || !window.label.trim()
+        || typeof window.percent !== "number" || !Number.isFinite(window.percent)
+        || window.percent < 0 || window.percent > 100) {
+        changed = true;
+        continue;
+      }
+      if (validReset(window.resetAt) && window.resetAt <= now) {
+        changed = true;
+        continue;
+      }
+      if (window.resetAt !== undefined && !validReset(window.resetAt)) {
+        const normalized = { ...window };
+        delete normalized.resetAt;
+        retained.push(normalized);
+        changed = true;
+      } else {
+        retained.push(window);
+      }
+    }
+    if (changed) {
       if (result === quota) result = { ...quota };
       if (retained.length) result.customWindows = retained;
       else delete result.customWindows;

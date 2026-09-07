@@ -31,7 +31,7 @@ Operational contract when enabled:
   account within the same request (bounded). The cooldown uses a usable `Retry-After` when present,
   otherwise the latest valid reset time among windows Anthropic marks `rejected`, including
   weekly windows. Valid upstream deadlines are not shortened to a fixed cooldown ceiling.
-  A refusal with no usable deadline falls back to a default backoff.
+  A refusal with no usable deadline falls back to a 60-second default backoff.
 - Responses report the serving account's 5-hour and weekly utilization, and whichever of those
   two the response carries is recorded for that account — each window independently, and a
   refusal counts as well as a success. Usage-aware selection works from ordinary traffic,

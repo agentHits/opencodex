@@ -13,10 +13,19 @@ import type { OcxConfig, OcxProviderConfig } from "../../../src/types";
 import { removeTreeWithRetry } from "../../helpers/remove-tree";
 
 const originalHome = process.env.OPENCODEX_HOME;
+let originalFetch: typeof globalThis.fetch;
+let unexpectedGlobalFetches = 0;
 let home: string;
 let sent: { authorization: string | null; apiKey: string | null; body: Record<string, unknown> }[];
 
 beforeEach(() => {
+  home = "";
+  originalFetch = globalThis.fetch;
+  unexpectedGlobalFetches = 0;
+  globalThis.fetch = (async () => {
+    unexpectedGlobalFetches += 1;
+    throw new Error("Unexpected global fetch in Anthropic quota dispatch test");
+  }) as typeof fetch;
   home = mkdtempSync(join(tmpdir(), "ocx-anthropic-quota-dispatch-"));
   process.env.OPENCODEX_HOME = home;
   sent = [];
@@ -29,16 +38,25 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  clearAnthropicAccountPoolState();
-  forgetAnthropicFailoverQuorum();
-  clearGenericFailoverHealth();
-  // Cancel the debounced persistence before restoring the real home.
-  clearAccountQuotaCache();
-  resetProviderQuotaReconcileStateForTests();
-  clearResponseStateForTests();
-  if (originalHome === undefined) delete process.env.OPENCODEX_HOME;
-  else process.env.OPENCODEX_HOME = originalHome;
-  removeTreeWithRetry(home);
+  try {
+    // Provider code may catch the guard's rejection; the attempted network call still fails the test.
+    expect(unexpectedGlobalFetches).toBe(0);
+  } finally {
+    try {
+      // Cancel the debounced persistence before restoring the real home.
+      clearAccountQuotaCache();
+      clearAnthropicAccountPoolState();
+      forgetAnthropicFailoverQuorum();
+      clearGenericFailoverHealth();
+      resetProviderQuotaReconcileStateForTests();
+      clearResponseStateForTests();
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = originalHome;
+      if (home) removeTreeWithRetry(home);
+    }
+  }
 });
 
 function credential(index: number) {
@@ -136,8 +154,9 @@ test("main A429 -> B200 records both physical responses against their sending ac
     return answer(body.stream === true);
   });
   const response = await post(config);
+  const responseText = await response.text();
   expect(response.status).toBe(200);
-  expect(await response.text()).toContain("The answer is complete.");
+  expect(responseText).toContain("The answer is complete.");
   expect(sent.map(row => row.authorization)).toEqual([`Bearer ${credential(0).access}`, `Bearer ${credential(1).access}`]);
   expectQuota(a!, 100, 61);
   expectQuota(b!, 23, 47);
@@ -151,8 +170,8 @@ test("terminal 429 after both accounts are exhausted records both refused physic
     expectQuota(a!, 100, 61);
     return limited("0.89", "1");
   }));
-  expect(response.status).toBe(429);
   await response.text();
+  expect(response.status).toBe(429);
   expect(sent.map(row => row.authorization)).toEqual([`Bearer ${credential(0).access}`, `Bearer ${credential(1).access}`]);
   expectQuota(a!, 100, 61);
   expectQuota(b!, 89, 100);
@@ -165,15 +184,16 @@ test("manual active switch while A is pending keeps A's measurement off B", asyn
   const config = configFor(() => { entered.resolve(); return returned.promise; });
   const pending = post(config);
   await entered.promise;
+  let response!: Response;
   try {
     expect(sent[0]!.authorization).toBe(`Bearer ${credential(0).access}`);
     expect(await setActiveAccount("anthropic", b!)).toBe(true);
   } finally {
     returned.resolve(answer(false, "0.37", "0.53"));
+    response = await pending;
+    await response.text();
   }
-  const response = await pending;
   expect(response.status).toBe(200);
-  await response.text();
   expect(sent).toHaveLength(1);
   expect(getAccountSet("anthropic")!.activeAccountId).toBe(b!);
   expectQuota(a!, 37, 53);
@@ -186,15 +206,16 @@ test("credential replacement while A is pending skips its old-generation respons
   const returned = deferred<Response>();
   const pending = post(configFor(() => { entered.resolve(); return returned.promise; }));
   await entered.promise;
+  let response!: Response;
   try {
     expect(sent[0]!.authorization).toBe(`Bearer ${credential(0).access}`);
     await saveAccountCredential("anthropic", a!, { ...credential(0), access: "synthetic-replacement-access", refresh: "synthetic-replacement-refresh" });
   } finally {
     returned.resolve(answer(false));
+    response = await pending;
+    await response.text();
   }
-  const response = await pending;
   expect(response.status).toBe(200);
-  await response.text();
   expect(sent).toHaveLength(1);
   expect(getAccountSet("anthropic")!.accounts.find(row => row.id === a)!.credential.access).toBe("synthetic-replacement-access");
   expect(getCachedProviderAccountQuota("anthropic", a!)).toBeNull();
@@ -208,8 +229,8 @@ const overriddenHeaders: { label: string; headers: Record<string, string>; autho
 test.each(overriddenHeaders)("$label skips quota attribution even when a selected OAuth account exists", async ({ headers, authorization, apiKey }) => {
   const ids = await seed();
   const response = await post(configFor(body => answer(body.stream === true), headers));
-  expect(response.status).toBe(200);
   await response.text();
+  expect(response.status).toBe(200);
   expect(sent).toHaveLength(1);
   expect(sent[0]).toMatchObject({ authorization, apiKey });
   for (const id of ids) expect(getCachedProviderAccountQuota("anthropic", id)).toBeNull();
@@ -227,8 +248,9 @@ test("real web-search routed loop records A429 and B200 through fetchForRequest"
   });
   config.webSearchSidecar = { backend: "anthropic", enabled: true };
   const response = await post(config, { tools: [{ type: "web_search" }] });
+  const responseText = await response.text();
   expect(response.status).toBe(200);
-  expect(await response.text()).toContain("The answer is complete.");
+  expect(responseText).toContain("The answer is complete.");
   expect(sent.map(row => row.authorization)).toEqual([`Bearer ${credential(0).access}`, `Bearer ${credential(1).access}`]);
   expectQuota(a!, 100, 61);
   expectQuota(b!, 23, 47);
@@ -252,8 +274,9 @@ test("real terminal continuation records A429 before retrying the continuation o
     input: "Please modify the file now",
     tools: [{ type: "function", name: "read_file", description: "read a file", parameters: { type: "object" } }],
   });
+  const responseText = await response.text();
   expect(response.status).toBe(200);
-  expect(await response.text()).toContain("The answer is complete.");
+  expect(responseText).toContain("The answer is complete.");
   expect(sent.map(row => row.authorization)).toEqual([`Bearer ${credential(0).access}`, `Bearer ${credential(0).access}`, `Bearer ${credential(1).access}`]);
   expectQuota(a!, 100, 61);
   expectQuota(b!, 23, 47);
@@ -275,8 +298,9 @@ test("real image bridge routed loop records A429 and B200 through fetchForReques
     adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", authMode: "key", apiKey: "synthetic-image-key",
   };
   const response = await post(config, { stream: true, tools: [{ type: "image_generation" }] });
+  const responseText = await response.text();
   expect(response.status).toBe(200);
-  expect(await response.text()).toContain("The answer is complete.");
+  expect(responseText).toContain("The answer is complete.");
   expect(sent.map(row => row.authorization)).toEqual([`Bearer ${credential(0).access}`, `Bearer ${credential(1).access}`]);
   expectQuota(a!, 100, 61);
   expectQuota(b!, 23, 47);
