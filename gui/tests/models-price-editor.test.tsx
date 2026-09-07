@@ -219,7 +219,7 @@ describe("Models manual price editor", () => {
     expect(button("Reset to automatic").disabled).toBe(true);
     await click("Save");
     expect(mutations).toHaveLength(0);
-    expect(container.querySelector('[role="alert"]')!.textContent).toContain("Enter input and output rates");
+    expect(container.querySelector('dialog [role="alert"]')!.textContent).toContain("Enter input and output rates");
     await fill(["0", "0"]);
     expect(inputs().map(input => input.value)).toEqual(["0", "0", "0", "0"]);
     const before = catalogReads;
@@ -256,7 +256,7 @@ describe("Models manual price editor", () => {
       await fill([invalid]);
       await click("Save");
       expect(mutations).toHaveLength(0);
-      expect(container.querySelector('[role="alert"]')!.textContent).toContain("finite number");
+      expect(container.querySelector('dialog [role="alert"]')!.textContent).toContain("finite number");
     }
     await fill(["1000000", "0", "0.000001", "0.5"]);
     await click("Save");
@@ -268,7 +268,7 @@ describe("Models manual price editor", () => {
     await mount();
     await open();
     expect(inputs().every(input => input.disabled)).toBe(true);
-    expect(container.querySelector('[role="alert"]')!.textContent).toContain("Could not load");
+    expect(container.querySelector('dialog [role="alert"]')!.textContent).toContain("Could not load");
     expect(testWindow.document.activeElement).toBe(button("Reload price"));
     await click("Reload price");
     expect(mutations).toHaveLength(0);
@@ -296,14 +296,14 @@ describe("Models manual price editor", () => {
       expect(mutations).toHaveLength(1);
       expect(inputs().every(input => input.disabled)).toBe(true);
       expect(button("Reset to automatic").disabled).toBe(true);
-      expect(container.querySelector('[role="alert"]')!.textContent).toContain("may have changed");
+      expect(container.querySelector('dialog [role="alert"]')!.textContent).toContain("may have changed");
       await act(async () => button("Reset to automatic").dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true })));
       expect(mutations).toHaveLength(1);
       getFailure = true;
       await click("Reload price");
       expect(mutations).toHaveLength(1);
       expect(inputs()[0]!.disabled).toBe(true);
-      expect(container.querySelector('[role="alert"]')!.textContent).toContain("Editing stays locked");
+      expect(container.querySelector('dialog [role="alert"]')!.textContent).toContain("Editing stays locked");
       getFailure = false;
       await click("Reload price");
       expect(inputs().map(input => input.value)).toEqual(["0", "0", "0", "0"]);
@@ -396,10 +396,10 @@ describe("Models manual price editor", () => {
     await click("Reset to automatic");
     expect(mutations).toHaveLength(1);
     expect(inputs().every(input => input.disabled)).toBe(true);
-    expect(container.querySelector('[role="alert"]')!.textContent).toContain("price was saved");
+    expect(container.querySelector('dialog [role="alert"]')!.textContent).toContain("price was saved");
     await click("Refresh list");
     expect(mutations).toHaveLength(1);
-    expect(container.querySelector('[role="alert"]')!.textContent).toContain("price was saved");
+    expect(container.querySelector('dialog [role="alert"]')!.textContent).toContain("price was saved");
     expect(reads).toHaveLength(1);
     catalogFailure = false;
     await click("Refresh list");
