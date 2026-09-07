@@ -72,9 +72,10 @@ Not a NOOP.
 
 New exports in `exec-tool-result-normalize.ts` (full text in 010/020):
 
-1. `CODE_MODE_HOST_CONTRACT_SENTENCE` — pre-call: one string argument, bare markers as first/last
-   line with nothing before or after them, no `import`/`require` (globals per the exec description,
-   non-exhaustive), `session_id` + `write_stdin` polling.
+1. `CODE_MODE_HOST_CONTRACT_SENTENCE` — pre-call: one string argument; the patch opens and closes
+   with the bare marker lines (blank lines or indentation around them tolerated; decorated or
+   missing marker rejected); no `import`/`require` (globals per the exec description,
+   non-exhaustive); `session_id` + `write_stdin` polling.
 2. `CODE_MODE_HOST_FAILURE_GUIDANCE` — marker → recovery rows for the four host strings, matched
    case-insensitively.
 3. `annotateCodeModeHostFailure(text, {toolName, toolNamespace})` — gated by a new, narrower
@@ -89,9 +90,21 @@ it gains one exec-gated branch that inserts the shared annotation WITHOUT changi
 (audit blockers 2 and 3). Kiro substitutes the annotation only where it would otherwise carry the
 raw text, leaving whitespace and failed-wrapper grouping untouched (blocker 1).
 
+Code-mode context per seam: the native routed Responses seam already runs only after the body-level
+code-mode gate (`responses-code-mode.ts:35-37`), so its annotation is exact. Kiro has
+`codeModeExecName` in scope at the same call site (`kiro.ts:650`) and additionally requires it, so a
+structured `exec` or an `exec` beside a shell bridge is never annotated there. Cursor's
+`normalizeCursorToolResultText` is reached from six call sites without catalog context
+(`protobuf-request.ts:392,842,1062,1097,1158,1272`); threading code-mode context through them is a
+larger refactor than this unit, so Cursor coverage is name-based (exact `exec` under the
+`opencodex-responses` provider). That is an accepted residual, recorded here and in the
+structure doc: on Cursor a structured tool literally named `exec` whose output quotes one of the
+four phrases would gain an additive recovery line with no error flip.
+
 Accepted residual: a code-mode exec result that legitimately prints one of the four phrases (e.g.
 `cat` of this devlog) gains a recovery line. The line is additive text and never changes error
-status; the gate excludes every non-code-mode tool, shell bridge, and foreign namespace.
+status; the gate excludes every non-`exec` tool, every shell bridge, and every namespace other than
+the exact `opencodex-responses` display aliases.
 
 Marker wording: the live probe shows the host tolerates blank lines and indentation around the
 markers and rejects a decorated or missing marker. Every sentence, recovery hint and doc paragraph
@@ -174,3 +187,11 @@ re-reading each seam's own policy. Round 2 re-audits with the same reviewer.
 | 3 Responses replay `toBe(replayed)` cannot hold | Med | Folded: assert output-item and program identity plus deep-equal idempotence of successive passes (020). |
 | 4 Marker wording contradicts whitespace probe | Med | Folded: "bare marker line … blank lines or indentation tolerated" in sentence, hints, structure and docs-site text (010/020/030). |
 | 5 Off-by-one anchors | Low | Folded: 116, 32, 45-46, 97-106 (010/020). |
+
+## Audit round 3 — synthesis (GO-WITH-FIXES, blockers=3)
+
+| # | Sev | Disposition |
+|---|---|---|
+| 1 Bare `exec` name does not prove code mode | Med | Folded for Responses (body gate) and Kiro (`codeModeExecName` gate + structured/shell-bridge negative tests); accepted and narrowed for Cursor (name-based, additive text only) — see "Code-mode context per seam". |
+| 2 Namespace `includes` admits foreign tools | Med | Folded: exact equality against `opencodex-responses` / `mcp__opencodex-responses` and the two flattened aliases; `mcp__foreign-opencodex-responses` negative and both flattened positives added (020). |
+| 3 Summary retained the rejected whitespace claim | Low | Folded (this file, Design §1). |

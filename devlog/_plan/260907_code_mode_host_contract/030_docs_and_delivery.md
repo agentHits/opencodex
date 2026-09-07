@@ -20,8 +20,10 @@ When a code-mode exec result still carries one of the host's failure strings ("e
 input", "The first line of the patch must be", "The last line of the patch must be", "Unsupported
 import in exec"), the native routed Responses, Kiro, and Cursor result paths append a one-line
 recovery hint naming the broken rule; flat shell bridges and foreign MCP namespaces are never
-annotated, and Cursor's error classification and Kiro's whitespace and failed-wrapper grouping are
-unchanged. Both halves live in `src/adapters/exec-tool-result-normalize.ts`
+annotated, Responses and Kiro additionally require the request's verified code-mode catalog, Cursor
+matches the exact `exec` name under its `opencodex-responses` provider without catalog context, and
+Cursor's error classification and Kiro's whitespace and failed-wrapper grouping are unchanged. Both
+halves live in `src/adapters/exec-tool-result-normalize.ts`
 so the pre-call and post-hoc wording cannot drift. This guidance and annotation change rewrites
 neither the model's JavaScript nor its patch payload; the existing name-alias delimiter
 normalization in `src/responses/code-mode-helper-compat.ts` is unchanged, and the host still rejects a

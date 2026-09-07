@@ -37,18 +37,26 @@ export const CODE_MODE_HOST_FAILURE_GUIDANCE: ReadonlyArray<{ marker: string; gu
 /** Prefix of every recovery line this module appends; callers use it to recognise replayed annotations. */
 export const CODE_MODE_HOST_RECOVERY_PREFIX = "[recovery: ";
 
+/** Namespaces under which Cursor displays Codex's own Responses tools (see cursor/tool-naming.ts). */
+const CODEX_RESPONSES_DISPLAY_NAMESPACES: ReadonlySet<string> = new Set(["opencodex-responses", "mcp__opencodex-responses"]);
+/** Flattened spellings of the same code-mode exec when a client folds the namespace into the name. */
+const CODEX_CODE_MODE_EXEC_ALIASES: ReadonlySet<string> = new Set(["exec", "mcp__opencodex-responses__exec", "mcp_opencodex-responses_exec"]);
+
 /**
- * The code-mode `exec` tool itself — bare, or under Cursor's `opencodex-responses` display namespace.
- * The four host strings above originate only in that isolate, so flat shell bridges
- * (`exec_command`, `shell`, …) and every foreign MCP namespace (`mcp__docker__exec`) are excluded: an
- * unrelated server's output that happens to contain the phrase must not receive Codex guidance.
- * Narrower than `isCodexExecBridgeTool` on purpose; the empty-output repair keeps the wider gate.
+ * The code-mode `exec` tool by NAME — bare, or under Codex's own `opencodex-responses` display
+ * namespace, matched exactly. The four host strings above originate only in that isolate, so flat
+ * shell bridges (`exec_command`, `shell`, …) and every other namespace (`mcp__docker`,
+ * `mcp__foreign-opencodex-responses`) are excluded: an unrelated server's output that quotes the
+ * phrase must not receive Codex guidance. Narrower than `isCodexExecBridgeTool` on purpose; the
+ * empty-output repair keeps the wider gate. Callers that KNOW the catalog shape (Kiro's
+ * `codeModeExecName`, the Responses body gate) add that check on top; this predicate alone cannot
+ * tell a structured tool named `exec` from the freeform one.
  */
 export function isCodexCodeModeExecResult(toolName?: string, toolNamespace?: string): boolean {
   if (!toolName) return false;
   const lower = toolName.toLowerCase();
-  if (toolNamespace) return toolNamespace.includes("opencodex-responses") && lower === "exec";
-  return lower === "exec" || lower === "mcp__opencodex-responses__exec" || lower === "mcp_opencodex-responses_exec";
+  if (toolNamespace !== undefined) return CODEX_RESPONSES_DISPLAY_NAMESPACES.has(toolNamespace) && lower === "exec";
+  return CODEX_CODE_MODE_EXEC_ALIASES.has(lower);
 }
 
 /**
@@ -122,10 +130,14 @@ AFTER:
 ```ts
       const execOptions = { toolName: tr.toolName, toolNamespace: tr.toolNamespace };
       const normalizedExecText = normalizeEmptyExecToolResultText(text, execOptions);
-      // A host failure string inside a non-empty exec result gets the rule it broke appended. This
-      // is the only substitution the grouping path below also carries: whitespace and empty/failed
+      // A host failure string inside a non-empty exec result gets the rule it broke appended, but
+      // only when this request's emitted catalog is genuinely code mode (`codeModeExecName` above):
+      // a structured tool named exec, or exec beside a shell bridge, never ran the isolate. This is
+      // the only substitution the grouping path below also carries: whitespace and empty/failed
       // wrappers keep their existing raw policy.
-      const annotatedExecText = normalizedExecText === undefined ? annotateCodeModeHostFailure(text, execOptions) : undefined;
+      const annotatedExecText = normalizedExecText === undefined && codeModeExecName !== undefined
+        ? annotateCodeModeHostFailure(text, execOptions)
+        : undefined;
       const resultText = normalizedExecText ?? annotatedExecText ?? (text.trim() ? text : KIRO_EMPTY_TOOL_RESULT_MESSAGE);
       const images = extractKiroImages(tr.content);
       const toolUseId = normalizeToolId(tr.toolCallId);
@@ -222,10 +234,19 @@ describe("code-mode host failure annotation", () => {
     expect(annotateCodeModeHostFailure("expects a string input", { toolName: "read_file" })).toBeUndefined();
     // Flat shell bridges never run the isolate, so the four strings cannot be theirs.
     expect(annotateCodeModeHostFailure("expects a string input", { toolName: "exec_command" })).toBeUndefined();
-    // A foreign MCP server's own exec is not Codex's, even when its output quotes the phrase.
+    // A foreign MCP server's own exec is not Codex's, even when its output quotes the phrase, and a
+    // namespace that merely CONTAINS the provider name is still foreign.
     expect(annotateCodeModeHostFailure("expects a string input", { toolName: "exec", toolNamespace: "mcp__docker" })).toBeUndefined();
-    // Cursor's display namespace for the same code-mode tool still counts.
-    expect(annotateCodeModeHostFailure("expects a string input", { toolName: "exec", toolNamespace: "mcp__opencodex-responses" })).toContain("[recovery:");
+    expect(annotateCodeModeHostFailure("expects a string input", { toolName: "exec", toolNamespace: "mcp__foreign-opencodex-responses" })).toBeUndefined();
+    // Codex's own display namespaces and flattened aliases for the same code-mode tool still count.
+    for (const options of [
+      { toolName: "exec", toolNamespace: "opencodex-responses" },
+      { toolName: "exec", toolNamespace: "mcp__opencodex-responses" },
+      { toolName: "mcp__opencodex-responses__exec" },
+      { toolName: "mcp_opencodex-responses_exec" },
+    ]) {
+      expect(annotateCodeModeHostFailure("expects a string input", options)).toContain("[recovery:");
+    }
     expect(annotateCodeModeHostFailure("all good", { toolName: "exec" })).toBeUndefined();
     const once = annotateCodeModeHostFailure("expects a string input", { toolName: "exec" });
     if (!once) throw new Error("expected one annotation");
@@ -275,7 +296,8 @@ entry is required and `tests/test-layout-tooling.test.ts` names it if missing.
 - After `"an empty code-mode exec result carries the actionable reason…"` (line 323) add:
 ```ts
   test("a code-mode exec result carrying a host failure string names the broken rule", async () => {
-    const execTool = { name: "exec", description: "Run JavaScript", parameters: { type: "object" } };
+    // freeform: the Kiro seam annotates only when the emitted catalog is genuinely code mode.
+    const execTool = { name: "exec", description: "Run JavaScript", freeform: true, parameters: { type: "object" } };
     const failure = "apply_patch verification failed: invalid patch: The first line of the patch must be '*** Begin Patch'";
     const messages = [
       { role: "user", content: "run it" },
@@ -286,6 +308,29 @@ entry is required and `tests/test-layout-tooling.test.ts` names it if missing.
     const resultText = JSON.parse(body).conversationState.currentMessage.userInputMessage
       .userInputMessageContext.toolResults[0].content[0].text;
     expect(resultText).toBe(`${failure}\n[recovery: The patch text must open with the bare marker line \`*** Begin Patch\`: no code fence, prose, or extra asterisks on that line (blank lines or indentation before it are tolerated).]`);
+  });
+
+  test("a host failure string on a non-code-mode catalog stays raw", async () => {
+    const failure = "tool `apply_patch` expects a string input";
+    const messages = [
+      { role: "user", content: "run it" },
+      { role: "assistant", content: [{ type: "toolCall", id: "call-x", name: "exec", arguments: {} }] },
+      { role: "toolResult", toolCallId: "call-x", toolName: "exec", content: failure, isError: false },
+    ];
+    for (const tools of [
+      // A structured tool that merely shares the name exec.
+      [{ name: "exec", description: "Run a shell string", parameters: { type: "object" } }],
+      // Freeform exec beside a bare shell bridge is the flat-catalog shape, not code mode.
+      [
+        { name: "exec", description: "Run JavaScript", freeform: true, parameters: { type: "object" } },
+        { name: "exec_command", description: "Run", parameters: { type: "object" } },
+      ],
+    ]) {
+      const { body } = await createKiroAdapter(provider).buildRequest(parsedWith(messages, tools));
+      const resultText = JSON.parse(body).conversationState.currentMessage.userInputMessage
+        .userInputMessageContext.toolResults[0].content[0].text;
+      expect(resultText).toBe(failure);
+    }
   });
 ```
 - In the grouped-result table (the `execResult` cases around lines 1195-1262) add one case:
