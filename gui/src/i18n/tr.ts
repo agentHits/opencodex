@@ -714,6 +714,12 @@ export const tr: Record<TKey, string> = {
   "sub.fallbackPoll": "Kullanılabilirlik kontrol aralığı",
   "sub.fallbackSaved": "Alt ajan yedek ayarları kaydedildi.",
   "sub.fallbackSaveFailed": "Yedek ayarlar kaydedilemedi",
+  "sub.fallbackUnavailable": "Şu anda listelenmiyor; zincirde korunur.",
+  "sub.fallbackPollInvalid": "5000–600000 ms arasında bir tam sayı girin.",
+  "sub.v2Compatibility.title": "Yerel üst ajanın V2 uyumluluğu",
+  "sub.v2Compatibility.risk": "Yerel ChatGPT üst ajanı V2 ile bu yönlendirilmiş modele görev verirse görev şifrelenmiş olabilir ve yürütülmeden başarısız olabilir. Yönlendirilmiş üst ajanların okunabilir görevleri etkilenmez.",
+  "sub.v2Compatibility.recoveryUnknown": "Bu sunucu kurtarmanın etkinliğini veya uygunluğunu bildirmez. V1/düz metin kullanın ya da deneysel V2 kurtarmayı yalnızca uygunsa açın. Kurtarma kota, gecikme, arka uç bağımlılığı ve aslına uygunluk kaybı getirebilir; üst sistem protokolünü düzeltmez.",
+  "sub.v2Compatibility.details": "Uyumluluk ayrıntıları",
 
   // logs
   "logs.title": "İstek Günlükleri",

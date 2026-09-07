@@ -8,7 +8,7 @@
  */
 import { useState } from "react";
 import { Select, Tooltip } from "../../ui";
-import { IconInfo } from "../../icons";
+import { IconArrowDown, IconArrowUp, IconInfo, IconX } from "../../icons";
 import { useT, type TKey } from "../../i18n/shared";
 import { formatNamespacedModelId } from "../../provider-icons";
 import type { DelegationPatch, DelegationModelOption } from "../../pages/use-subagent-delegation";
@@ -58,6 +58,19 @@ export default function SubagentDelegationSection({
   // Proactive message, so it must render as OFF (and the toggle can install the
   // preset). Only a nonblank hint is "on".
   const ultraOn = (ultraMode.hintText ?? "").trim().length > 0;
+  const routedPreferred = available.some(option => option.namespaced === model
+    && !(option.provider === "openai" && option.namespaced === option.model));
+  const nativeMayUseV2 = ultraMode.enabled || (ultraMode.multiAgentMode !== "v1"
+    && !(ultraMode.multiAgentMode === "v2" && ultraMode.keepNativeChatGptOnV1));
+  const showV2Compatibility = !ultraLoadFailed && ultraMode.loaded === true && routedPreferred && nativeMayUseV2;
+  const validPollMs = Number.isInteger(fallbackPollMs) && fallbackPollMs >= 5000 && fallbackPollMs <= 600000;
+  const moveFallback = (index: number, direction: -1 | 1) => {
+    const next = [...fallback];
+    const target = index + direction;
+    if (fallbackBusy || target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    onFallbackChange(next);
+  };
 
   return (
     <div className="swi-delegation">
@@ -105,6 +118,17 @@ export default function SubagentDelegationSection({
         </div>
       </div>
 
+      {showV2Compatibility && (
+        <div className="swi-delegation-row swi-v2-compatibility" role="note">
+          <div className="setting-copy">
+            <div className="font-semibold">{t("sub.v2Compatibility.title")}</div>
+            <p className="muted setting-hint">{t("sub.v2Compatibility.risk")}</p>
+            <p className="muted setting-hint">{t("sub.v2Compatibility.recoveryUnknown")}</p>
+            <a href="https://github.com/lidge-jun/opencodex/issues/92" target="_blank" rel="noreferrer">{t("sub.v2Compatibility.details")}</a>
+          </div>
+        </div>
+      )}
+
       <div className="swi-delegation-row swi-fallback-editor">
         <div className="setting-copy">
           <div className="font-semibold">{t("sub.fallbackLabel")}</div>
@@ -112,21 +136,26 @@ export default function SubagentDelegationSection({
         </div>
         <div className="swi-fallback-controls">
           {fallback.map((modelName, index) => (
-            <div key={modelName} className="swi-fallback-row">
-              <span>{index + 1}. {modelName}</span>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => { const next = [...fallback]; if (index > 0) [next[index - 1], next[index]] = [next[index], next[index - 1]]; onFallbackChange(next); }} disabled={fallbackBusy || index === 0} aria-label={t("sub.moveUp", { m: modelName })}>↑</button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => { const next = [...fallback]; if (index < next.length - 1) [next[index], next[index + 1]] = [next[index + 1], next[index]]; onFallbackChange(next); }} disabled={fallbackBusy || index === fallback.length - 1} aria-label={t("sub.moveDown", { m: modelName })}>↓</button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onFallbackChange(fallback.filter(item => item !== modelName))} disabled={fallbackBusy}>×</button>
+            <div key={`${index}:${modelName}`} className="swi-fallback-row">
+              <span className="swi-fallback-model">{index + 1}. {modelName}
+                {!availableModels.includes(modelName) && <span className="muted setting-hint">{t("sub.fallbackUnavailable")}</span>}
+              </span>
+              <span className="swi-fallback-actions">
+                <button type="button" className="btn btn-ghost btn-icon btn-sm" onClick={() => moveFallback(index, -1)} disabled={fallbackBusy || index === 0} aria-label={t("sub.moveUp", { m: modelName })}><IconArrowUp /></button>
+                <button type="button" className="btn btn-ghost btn-icon btn-sm" onClick={() => moveFallback(index, 1)} disabled={fallbackBusy || index === fallback.length - 1} aria-label={t("sub.moveDown", { m: modelName })}><IconArrowDown /></button>
+                <button type="button" className="btn btn-ghost btn-icon btn-sm" onClick={() => onFallbackChange(fallback.filter((_, i) => i !== index))} disabled={fallbackBusy} aria-label={t("sub.removeAria", { m: modelName })}><IconX /></button>
+              </span>
             </div>
           ))}
-          <select className="input" value="" onChange={e => { if (e.target.value && !fallback.includes(e.target.value)) onFallbackChange([...fallback, e.target.value]); }} disabled={fallbackBusy}>
-            <option value="">{t("sub.fallbackAdd")}</option>
-            {availableModels.filter(modelName => !fallback.includes(modelName)).map(modelName => <option key={modelName} value={modelName}>{modelName}</option>)}
-          </select>
+          <Select value="" label={t("sub.fallbackAdd")} options={[
+            { value: "", label: t("sub.fallbackAdd") },
+            ...availableModels.filter(modelName => !fallback.includes(modelName)).map(modelName => ({ value: modelName, label: modelName })),
+          ]} onChange={value => { if (value && !fallback.includes(value)) onFallbackChange([...fallback, value]); }} disabled={fallbackBusy} />
           <label className="setting-hint">{t("sub.fallbackPoll")}
-            <input className="input" type="number" min={5000} max={600000} step={1000} value={fallbackPollMs} onChange={e => onFallbackPollMsChange(Number(e.target.value) || 60000)} disabled={fallbackBusy} /> ms
+            <input className="input" type="number" min={5000} max={600000} step={1000} value={fallbackPollMs} onChange={e => onFallbackPollMsChange(Number(e.target.value))} disabled={fallbackBusy} aria-invalid={!validPollMs} /> ms
           </label>
-          <button type="button" className="btn btn-primary btn-sm" onClick={onFallbackSave} disabled={fallbackBusy}>{t("common.save")}</button>
+          {!validPollMs && <div className="setting-hint" role="alert">{t("sub.fallbackPollInvalid")}</div>}
+          <button type="button" className="btn btn-primary btn-sm" onClick={onFallbackSave} disabled={fallbackBusy || !validPollMs}>{t("common.save")}</button>
         </div>
       </div>
 

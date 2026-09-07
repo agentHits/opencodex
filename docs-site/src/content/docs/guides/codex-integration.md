@@ -586,3 +586,10 @@ ocx restore back # point plain Codex at the running proxy again
 When opencodex runs as a managed [background service](/reference/cli/#ocx-service), it sets
 `OCX_SERVICE=1` so a service-driven restart does **not** thrash the Codex config — only an explicit
 `ocx stop` / `ocx service stop` restores native Codex.
+
+
+### Sub-agent fallback and V2 compatibility
+
+In **Subagents → Delegation settings**, edit the ordered fallback chain and its availability polling interval (5000–600000 ms), then save it separately from the featured roster. A configured target that is no longer advertised remains in the chain until you remove it. The roster and fallback chain are separate settings; this editor does not make the roster replace the fallback policy.
+
+When a routed preferred model may receive V2 work from a native ChatGPT parent, the panel explains the upstream encrypted-task limitation. Readable tasks from routed parents are unaffected. The guidance uses `/api/v2` mode and native V1 pin state; the current API does not expose recovery activation or request-specific eligibility, so the panel reports those as unknown. V1/plaintext-compatible delegation remains an alternative. Experimental V2 recovery, where eligible and explicitly enabled, adds quota usage, latency, backend dependence and possible fidelity loss; it does not repair the upstream protocol. See [sub-agent surfaces](/guides/sub-agent-surface/) and [the upstream limitation](https://github.com/lidge-jun/opencodex/issues/92).

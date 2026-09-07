@@ -22,6 +22,8 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   const [fallback, setFallback] = useState<string[]>(() => cached?.fallback ?? []);
   const [fallbackPollMs, setFallbackPollMs] = useState(() => cached?.pollMs ?? 60000);
   const [fallbackBusy, setFallbackBusy] = useState(false);
+  const fallbackSaveInFlight = useRef(false);
+  const committed = useRef<CachedSubagents | null>(cached);
   const [status, setStatus] = useState("");
   const [ok, setOk] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -49,12 +51,15 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       enabled?: boolean;
       multiAgentMode?: "v1" | "default" | "v2";
       multiAgentModeHintText?: string | null;
+      keepNativeChatGptOnV1?: boolean;
     }>(res, t("sub.ultraModeLoadFail"));
     if (!data) return false;
     if (signal?.aborted || generation !== ultraLoadGeneration.current || currentUltraApiBase.current !== apiBase) return false;
     setUltraLoadFailed(false);
     setUltraMode({
       enabled: data.enabled ?? false,
+      loaded: true,
+      keepNativeChatGptOnV1: data.keepNativeChatGptOnV1 === true,
       hintText: data.multiAgentModeHintText ?? null,
       // Ultra mode replaces Codex's effort-derived policy for every model. The
       // `default` surface still preserves upstream V1 pins (for example luna),
@@ -132,9 +137,12 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
     const next = {
       available,
       chosen: (response.chosen ?? []).filter(model => availableSet.has(model)),
-      fallback: (fallbackResponse.models ?? []).filter(model => availableSet.has(model)),
+      // Configured targets remain editable even when discovery no longer advertises them.
+      fallback: fallbackResponse.models ?? [],
       pollMs: fallbackResponse.pollMs ?? 60000,
     };
+    if (signal?.aborted) throw signal.reason;
+    committed.current = next;
     setChosen(next.chosen);
     setFallback(next.fallback);
     setFallbackPollMs(next.pollMs);
@@ -185,7 +193,9 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
       const d = await readJsonOrThrow<{ applied?: string[] }>(r, t("sub.saveFailed"));
       const applied = d?.applied ?? chosen;
       if (d?.applied) setChosen(d.applied);
-      writeSessionListCache(cacheKey, { available, chosen: applied, fallback, pollMs: fallbackPollMs });
+      const next = { available, chosen: applied, fallback: committed.current?.fallback ?? [], pollMs: committed.current?.pollMs ?? 60000 };
+      committed.current = next;
+      writeSessionListCache(cacheKey, next);
       setOk(true);
       setStatus(t("sub.saved", { n: applied.length, cmd: "ocx sync" }));
     } catch (error) {
@@ -198,8 +208,11 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
   };
 
   const saveFallback = async () => {
-    if (fallbackBusy) return;
+    if (fallbackSaveInFlight.current || !Number.isInteger(fallbackPollMs) || fallbackPollMs < 5000 || fallbackPollMs > 600000) return;
+    fallbackSaveInFlight.current = true;
+    const requestApiBase = apiBase;
     setFallbackBusy(true);
+    setStatus("");
     try {
       const r = await fetch(`${apiBase}/api/subagent-model-fallback`, {
         method: "PUT",
@@ -207,14 +220,20 @@ export default function Subagents({ apiBase }: { apiBase: string }) {
         body: JSON.stringify({ models: fallback, pollMs: fallbackPollMs }),
       });
       const d = await readJsonOrThrow<{ models?: string[]; pollMs?: number }>(r, t("sub.fallbackSaveFailed"));
-      if (d?.models) setFallback(d.models);
-      if (d?.pollMs) setFallbackPollMs(d.pollMs);
+      if (currentUltraApiBase.current !== requestApiBase) return;
+      if (!d || !Array.isArray(d.models) || typeof d.pollMs !== "number") throw new Error(t("sub.fallbackSaveFailed"));
+      setFallback(d.models);
+      setFallbackPollMs(d.pollMs);
+      const next = { available, chosen: committed.current?.chosen ?? [], fallback: d.models, pollMs: d.pollMs };
+      committed.current = next;
+      writeSessionListCache(cacheKey, next);
       setOk(true);
       setStatus(t("sub.fallbackSaved"));
     } catch (error) {
       setOk(false);
       setStatus(error instanceof Error && error.message ? error.message : t("sub.networkError"));
     } finally {
+      fallbackSaveInFlight.current = false;
       setFallbackBusy(false);
     }
   };
