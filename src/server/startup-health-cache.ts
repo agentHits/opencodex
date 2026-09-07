@@ -62,7 +62,8 @@ export function getStartupHealthSnapshot(
   deps: StartupHealthCacheDeps = {},
 ): StartupHealth {
   const now = deps.now ?? Date.now;
-  if (!cached || now() - cached.timestamp >= CACHE_TTL_MS) refreshInBackground(config, deps);
+  if (cached && now() - cached.timestamp < CACHE_TTL_MS) return cached.value;
+  refreshInBackground(config, deps);
   return cached ? markStartupHealthDiagnosticStale(cached.value) : conservativeFallback(config);
 }
 
@@ -150,15 +151,20 @@ function refreshInBackground(
 ): void {
   if (inflight) return;
   const startedGeneration = generation;
-  const probe = (deps.probe ?? runProbe)(config).then(value => {
-    if (startedGeneration === generation) {
-      cached = { timestamp: (deps.now ?? Date.now)(), value };
-    }
-    return value;
-  });
-  inflight = probe.finally(() => {
-    if (inflight === probe || startedGeneration === generation) inflight = null;
-  });
+  const probe: Promise<StartupHealth> = Promise.resolve()
+    .then(() => (deps.probe ?? runProbe)(config))
+    .then(value => {
+      if (startedGeneration === generation) {
+        cached = { timestamp: (deps.now ?? Date.now)(), value };
+      }
+      return value;
+    })
+    .catch(() => cached ? markStartupHealthDiagnosticStale(cached.value) : conservativeFallback(config))
+    .finally(() => {
+      // An invalidated probe must never clear the newer generation's flight.
+      if (inflight === probe) inflight = null;
+    });
+  inflight = probe;
 }
 
 /** Stale-while-revalidate: service-manager probes never hold open a model/UI request. */
