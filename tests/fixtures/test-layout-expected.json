@@ -458,6 +458,7 @@
   "errors-adapter-failure.test.ts": "server",
   "eventstream-decoder.test.ts": "responses",
   "exa-web-search.test.ts": "providers",
+  "exec-tool-result-normalize.test.ts": "adapters",
   "expand-user-path.test.ts": "config",
   "fast-row-ingress.test.ts": "providers",
   "fast-row-listing.test.ts": "codex-integration",
