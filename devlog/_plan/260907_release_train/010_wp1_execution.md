@@ -42,3 +42,8 @@ Top CI history:
 
 Chain-top CI: run 34106345180 @6eadb1658 (lane=all) success, aggregate `ci` success. Prospective merge tree `git merge-tree --write-tree origin/dev codex/rt-m6-2033` = 7621cac89 = tested tree; post-merge `origin/dev^{tree}` = 7621cac89. Every layer head and d00615d56 are ancestors of fetched dev. Stale CodeRabbit trailer findings on #3869/#3870 replied (heads carry trailers). Lanes notified of the new dev head; A told that M#3838 follows A#3858.
 
+
+## wp2 amendments (user instruction, 2026-09-07 ~10:50Z)
+- CI runner saturation: all queued Cross-platform runs cancelled; one chain at a time. Order: B → A → M7 (#3882) → C → E #3864 → D → E rest.
+- Per-chain gate excludes Windows shards and macos control; they run once on the final release-train head (wp3).
+- Lane B landed: #3871 (62fe747af) → #3872 (ddee5e8b4); tree 58536270a == tested; run 34111578200 (Linux 1/2/4, macOS 1/2, gates, policy, api, keyring, npm, docker green; test 3/4 = prompt-text-probe timing flake, untouched by B; Windows/control cancelled by policy). Closed #3856, #3849, issue #3855; #3781 slice comment.
