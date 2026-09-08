@@ -1,5 +1,7 @@
 # wp5: canonical reset-credit operation identity
 
+Historical phase record. Delivery is complete; see [071](071_delivery.md) and [072](072_final_proof.md) for terminal evidence.
+
 Depends on wp4 for the owner-requested delivery chain. C4; no live credit consumption. Source PR #3965 at `6c1477d19c7d1a77a1866cabfd2b4411f1a210d7` carries #3919 by luvs01. Revalidate both source heads and current dev before implementation; do not rewrite their branches.
 
 ## Published patch to carry

@@ -1,5 +1,7 @@
 # wp7: hosted verification and integration
 
+Historical phase record. Delivery is complete; see [071](071_delivery.md) and [072](072_final_proof.md) for terminal evidence.
+
 Depends on wp1–wp6. The owner explicitly requested a single manual branch chain. This cycle changes only its delivery records and evidence; a discovered product defect is assigned an audited repair cycle before integration continues.
 
 ## File changes

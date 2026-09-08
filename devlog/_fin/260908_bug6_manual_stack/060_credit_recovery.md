@@ -1,5 +1,7 @@
 # wp6: manual reset recovery
 
+Historical phase record. Delivery is complete; see [071](071_delivery.md) and [072](072_final_proof.md) for terminal evidence.
+
 Depends on wp5 canonical operation identity. C4. Implements the user-visible contract in public issue https://github.com/lidge-jun/opencodex/issues/3973 . No real account actions or credit consumption are authorized by this development task.
 
 ## File map and private implementation appendix
