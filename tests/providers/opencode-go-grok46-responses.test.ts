@@ -229,7 +229,12 @@ describe("OpenCode Go additional_tools placement", () => {
     "https://opencode.ai/zen/v1", "https://opencode.ai.evil.test/zen/go/v1",
     "http://opencode.ai/zen/go/v1", "https://opencode.ai:444/zen/go/v1",
     "https://opencode.ai/zen/go/v10", "https://opencode.ai/zen/go/v1//",
-    "https://user:secret@opencode.ai/zen/go/v1", "https://opencode.ai/zen/go/v1?tenant=test",
+    (() => {
+      const url = new URL("https://opencode.ai/zen/go/v1");
+      url.username = "fixture-user";
+      url.password = "synthetic-password";
+      return url.href;
+    })(), "https://opencode.ai/zen/go/v1?tenant=test",
     "https://opencode.ai/zen/go/v1?", "https://opencode.ai/zen/go/v1#",
     "https://opencode.ai/zen/go/v1#fragment", "https://example.test/v1",
   ])("does not promote for unapproved destination %s", baseUrl => {
