@@ -1,4 +1,5 @@
 import { normalizeRoutedAgentMessages } from "./routed-agent-messages";
+import { normalizeOpenCodeGoAdditionalTools } from "./opencode-go-additional-tools";
 import { createHash } from "node:crypto";
 import type { IncomingMeta, ProviderAdapter } from "./base";
 import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage, type TierDecision } from "../types";
@@ -2454,6 +2455,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         // Last, so promoted namespace children are also cleared of Codex-private fields.
         outBody = stripCanonicalOnlyToolFields(outBody, provider.supportsOpenAiWebSearchToolFields === false);
       }
+      if (!forward) outBody = normalizeOpenCodeGoAdditionalTools(outBody, provider.baseUrl);
       // Same predicate as the routedCompaction gate in handleResponses(): an authMode check would
       // let a noncanonical custom forward provider skip this rewrite while the server still routes
       // it as a summarizer turn (#422). The compaction body build removes the tool surface and must

@@ -380,6 +380,25 @@ does not set `modelResponsesUpstreamStreaming`: client `stream: true` remains re
 streaming until a current-runtime reproduction justifies a separate bounded-JSON compatibility
 policy.
 
+Go's non-forward Responses request path moves valid `additional_tools` wrappers into top-level
+`tools` through `src/adapters/opencode-go-additional-tools.ts`. Placement runs after existing
+custom/search/namespace lowering and before code-mode, compaction and final hosted-tool pruning.
+It does not recalculate wire identities or response aliases. The exact HTTPS Go destination
+allows the standard port and one optional trailing slash; credentials, query, fragment, foreign
+hosts and other paths do not acquire this behavior. Malformed wrappers remain unchanged and
+the shared mixed-ciphertext agent-message gate remains fail-closed.
+
+The canonical `opencode-go` registry entry defaults to `statelessResponses: true` because Go
+rejects reasoning ciphertext combined with `previous_response_id` (#3838). Existing derive
+logic fills absent values and preserves explicit false; renamed custom configurations receive
+no new destination-based migration. The existing stateless pass sets `store: false`, removes
+stored continuation parameters, and repairs orphan calls/results without claiming execution
+success. A local replay-cache hit supplies history; a miss cannot reconstruct it, so callers
+must resend complete history without `previous_response_id`. This flag also enables the existing
+visible content-to-summary rewrite for SSE and JSON; summary-channel items and opaque reasoning
+blobs keep their existing response handling. It does not change streaming selection or Chat
+model routes. Go fixtures cover Luna, Grok and Muse against both response formats.
+
 The canonical OpenCode Go transport also derives `x-opencode-session` from the existing hashed
 session lane before per-model wire selection. One conversation keeps one opaque affinity value
 across Responses, Chat, retries, and key rotation, while sibling subagents remain distinct. An

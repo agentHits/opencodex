@@ -24,3 +24,7 @@ Before: namespace normalization leaves valid declarations inside `input.addition
 Use production adapter fixtures, not a duplicate normalizer oracle. Namespace alpha.lookup and beta.lookup must both remain callable; duplicate wire identities follow the existing canonical owner. Nameless hosted tools must survive placement until provider/model pruning. Malformed wrapper, unapproved destination and forward controls stay byte-identical. Seed false must differ from default true. A two-turn synthetic continuation must preserve meaningful reasoning/tool history while removing stored-state references. Inspect existing stateless orphan repair and summary tests; extend any missing Go model coverage without weakening assertions.
 
 Hosted verification: PR CI covers changed runtime and provider suites, with final full dispatch before integration. Local product tests/install/typecheck/build are NOT RUN. Preserve original PR account-linked Co-authored-by credit; resolve identity from GitHub before commit. The full source investigation is in ignored `.tmp/bug6-01a07e9d/go-xai-plan.md`; it is not public implementation proof.
+
+## wp1 P refresh
+
+Previous wp0 D directs Go residual implementation. During live refresh dev advanced to c15662855 (#3975), changing only tests/codex-integration/codex-prompt-text-probe.test.ts. Hook-disabled merge incorporated that unrelated probe fixture correction before B; Go owners and this design are unchanged. The initial A narrative said unchanged dev based on the pre-fetch snapshot; this entry corrects it.

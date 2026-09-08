@@ -5,13 +5,17 @@
  * boundary that lets operators opt out if the upstream changes.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { providerConfigSeed } from "../../src/providers/derive";
+import { enrichProviderFromRegistry, providerConfigSeed } from "../../src/providers/derive";
 import { getProviderRegistryEntry } from "../../src/providers/registry";
 import { resolveWireProtocolOverride } from "../../src/server/adapter-resolve";
 import { handleResponses } from "../../src/server/responses/core";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
+import { createResponsesPassthroughAdapter } from "../../src/adapters/openai-responses";
+import { parseRequest } from "../../src/responses/parser";
+import { withTestTranslatorBudget } from "../helpers/translator-budget";
 
 const MODEL = "gpt-5.6-luna";
+const GO_RESPONSES_MODELS = [MODEL, "grok-4.6", "muse-spark-1.3-contributor"];
 
 function opencodeGo(overrides: Partial<OcxProviderConfig> = {}): OcxProviderConfig {
   const entry = getProviderRegistryEntry("opencode-go");
@@ -41,6 +45,167 @@ describe("OpenCode Go GPT 5.6 Luna wire selection (#1482)", () => {
         .toBe("openai-chat");
     }
   });
+});
+
+describe("OpenCode Go stateless Responses", () => {
+  test("seeds and backfills the canonical preset while preserving explicit false and custom names", () => {
+    expect(opencodeGo().statelessResponses).toBe(true);
+    const stale = opencodeGo();
+    delete stale.statelessResponses;
+    enrichProviderFromRegistry("opencode-go", stale);
+    expect(stale.statelessResponses).toBe(true);
+    const overridden = opencodeGo({ statelessResponses: false });
+    enrichProviderFromRegistry("opencode-go", overridden);
+    expect(overridden.statelessResponses).toBe(false);
+    const renamed = opencodeGo();
+    delete renamed.statelessResponses;
+    enrichProviderFromRegistry("my-go", renamed);
+    expect(renamed.statelessResponses).toBeUndefined();
+    expect(providerConfigSeed(getProviderRegistryEntry("cerebras")!).statelessResponses).toBeUndefined();
+  });
+
+  test.each(GO_RESPONSES_MODELS)("%s repairs orphan calls/results and preserves paired results", model => {
+    const input = [
+      { type: "function_call", call_id: "call_done", name: "probe", arguments: "{}" },
+      { type: "function_call", call_id: "call_missing", name: "probe", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_done", output: "actual result" },
+      { type: "function_call_output", call_id: "call_unknown", output: "orphan result" },
+    ];
+    const raw = { model, input, previous_response_id: "resp_unrecorded_go", stream: true };
+    const original = structuredClone(raw);
+    for (const expanded of [false, true]) {
+      const parsed = parseRequest(raw);
+      parsed._previousResponseInputExpanded = expanded;
+      const adapter = withTestTranslatorBudget(createResponsesPassthroughAdapter({
+        ...opencodeGo(), adapter: "openai-responses",
+      }));
+      const sent = JSON.parse(adapter.buildRequest(parsed).body);
+      expect(sent.previous_response_id).toBeUndefined();
+      expect(sent.store).toBe(false);
+      expect(sent.input).toEqual([
+        input[0], input[1], input[2],
+        expect.objectContaining({ type: "function_call_output", call_id: "call_missing", output: expect.stringContaining("no tool result was recorded") }),
+        expect.objectContaining({ type: "message", role: "user", content: expect.any(Array) }),
+      ]);
+      expect(JSON.stringify(sent.input[4])).toContain("orphan result");
+      expect(raw).toEqual(original);
+    }
+    const stateful = withTestTranslatorBudget(createResponsesPassthroughAdapter({
+      ...opencodeGo({ statelessResponses: false }), adapter: "openai-responses",
+    }));
+    const sent = JSON.parse(stateful.buildRequest(parseRequest(raw)).body);
+    expect(sent.previous_response_id).toBe("resp_unrecorded_go");
+    expect(sent.store).not.toBe(false);
+    expect(sent.input).toEqual(input);
+  });
+});
+
+describe("OpenCode Go stateless reasoning and continuation routes", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  for (const model of GO_RESPONSES_MODELS) for (const streaming of [true, false]) {
+    test(`${model} preserves reasoning and tool history across two ${streaming ? "SSE" : "JSON"} turns`, async () => {
+      const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+      // Opaque synthetic provider state, never a real credential or decrypted task.
+      const blob = "provider-minted-go-reasoning-state";
+      const prefix = `${model.replaceAll(".", "_")}_${streaming ? "sse" : "json"}`;
+      const reasoning = [
+        { type: "reasoning", id: `rs_${prefix}_summary`, status: "completed", summary: [{ type: "summary_text", text: "Already summarized" }] },
+        { type: "reasoning", id: `rs_${prefix}_content`, status: "completed", content: [{ type: "reasoning_text", text: "Visible thinking" }], summary: [] },
+        { type: "reasoning", id: `rs_${prefix}_blob`, status: "completed", content: [{ type: "reasoning_text", text: "Opaque item trace" }], summary: [], encrypted_content: blob },
+      ];
+      const call = { type: "function_call", id: `fc_${prefix}`, status: "completed", call_id: `call_${prefix}`, name: "probe", arguments: "{}" };
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({ url: String(input), body: JSON.parse(String(init?.body ?? "{}")) });
+        const output = requests.length === 1 ? [...reasoning, call] : [{
+          type: "message", id: `msg_${prefix}`, status: "completed", role: "assistant",
+          content: [{ type: "output_text", text: "Continuation accepted", annotations: [] }],
+        }];
+        const response = { id: `resp_${prefix}_${requests.length}`, object: "response", status: "completed", model, output };
+        if (!streaming) return Response.json(response);
+        const payloads: Record<string, unknown>[] = [{ type: "response.created", response: { ...response, status: "in_progress", output: [] } }];
+        for (const [index, item] of output.entries()) {
+          payloads.push({ type: "response.output_item.added", output_index: index, item });
+          if (requests.length === 1 && index === 1) payloads.push({
+            type: "response.reasoning_text.delta", item_id: item.id, output_index: index, content_index: 0, delta: "Visible thinking",
+          });
+          payloads.push({ type: "response.output_item.done", output_index: index, item });
+        }
+        payloads.push({ type: "response.completed", response });
+        return new Response(payloads.map((payload, sequence_number) =>
+          `data: ${JSON.stringify({ ...payload, sequence_number })}\n\n`
+        ).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      }) as typeof fetch;
+      const config = { providers: { "opencode-go": opencodeGo() } } as unknown as OcxConfig;
+      const drive = async (body: Record<string, unknown>) => {
+        const response = await handleResponses(new Request("http://localhost/v1/responses", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: `opencode-go/${model}`, stream: streaming, reasoning: { summary: "auto" },
+            tools: [{ type: "function", name: "probe", parameters: { type: "object" } }], ...body }),
+        }), config, { model: "", provider: "" }, { inboundWire: "responses" });
+        expect(response.status).toBe(200);
+        const text = await response.text();
+        if (!streaming) return { document: JSON.parse(text), text };
+        const events = text.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+        const terminal = events.find(event => event.type === "response.completed");
+        expect(terminal).toBeDefined();
+        return { document: terminal.response, text };
+      };
+      const initial = { type: "message", role: "user", content: [{ type: "input_text", text: "Run probe" }] };
+      const first = await drive({ input: [initial] });
+      expect(first.document.output[0]).toEqual(reasoning[0]);
+      expect(first.document.output[1]).toEqual({
+        type: "reasoning", id: `rs_${prefix}_content`, status: "completed", summary: [{ type: "summary_text", text: "Visible thinking" }],
+      });
+      expect(first.document.output[2]).toEqual(reasoning[2]);
+      expect(first.document.output[3]).toMatchObject(call);
+      if (streaming) {
+        expect(first.text).toContain('"type":"response.reasoning_summary_text.delta"');
+        expect(first.text).not.toContain('"type":"response.reasoning_text.delta"');
+      }
+      const result = { type: "function_call_output", call_id: call.call_id, output: "probe succeeded" };
+      // Explicit full-history serialization is independent of cache overlap detection: the
+      // cache stores upstream content-channel shapes, while the client saw summary shapes.
+      const fullHistory = { model, input: [initial, ...first.document.output, result],
+        previous_response_id: first.document.id, store: true, stream: streaming,
+        conversation: "conversation_fixture", background: true, metadata: { fixture: "go" }, prompt: { id: "prompt_fixture" },
+      };
+      const originalHistory = structuredClone(fullHistory);
+      const parsed = parseRequest(fullHistory);
+      parsed._previousResponseInputExpanded = true;
+      const adapter = withTestTranslatorBudget(createResponsesPassthroughAdapter({ ...opencodeGo(), adapter: "openai-responses" }));
+      const explicit = JSON.parse(adapter.buildRequest(parsed).body);
+      for (const field of ["previous_response_id", "conversation", "background", "metadata", "prompt"]) {
+        expect(explicit[field]).toBeUndefined();
+      }
+      expect(explicit.store).toBe(false);
+      expect(explicit.input).toContainEqual(result);
+      expect(JSON.stringify(explicit.input)).toContain("Visible thinking");
+      expect(explicit.input).toContainEqual(expect.objectContaining({ type: "reasoning", encrypted_content: blob }));
+      expect(fullHistory).toEqual(originalHistory);
+      // A delta continuation exercises the server's real stored-history expansion.
+      const second = await drive({
+        input: [result], previous_response_id: first.document.id,
+      });
+      expect(second.text).toContain("Continuation accepted");
+      expect(requests).toHaveLength(2);
+      for (const request of requests) {
+        expect(request.url).toBe("https://opencode.ai/zen/go/v1/responses");
+        expect(request.body.previous_response_id).toBeUndefined();
+        expect(request.body.store).toBe(false);
+        expect(request.body.stream).toBe(streaming);
+      }
+      const replay = requests[1]!.body.input as Array<Record<string, unknown>>;
+      expect(replay.filter(item => item.type === "function_call")).toEqual([
+        expect.objectContaining({ call_id: call.call_id, name: "probe", arguments: "{}" }),
+      ]);
+      expect(replay.filter(item => item.type === "function_call_output")).toEqual([result]);
+      expect(replay).toContainEqual(expect.objectContaining({ type: "reasoning", encrypted_content: blob }));
+      expect(JSON.stringify(replay)).toContain("Already summarized");
+      expect(JSON.stringify(replay)).not.toContain("no tool result was recorded");
+    });
+  }
 });
 
 describe("OpenCode Go Luna Responses route (#1482)", () => {

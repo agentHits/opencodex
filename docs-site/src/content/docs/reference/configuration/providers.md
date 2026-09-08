@@ -921,6 +921,26 @@ ids with context `922000` and max input `922000`; OpenRouter seeds `openai/gpt-5
 }
 ```
 
+## OpenCode Go Responses compatibility
+
+On non-forward Responses requests to `https://opencode.ai/zen/go/v1`, OpenCodex moves
+Codex's `additional_tools` input declarations into top-level `tools` after tool and namespace
+normalization. Supported hosted tools are preserved until model-specific filtering; malformed
+wrappers remain unchanged. This does not discard ciphertext or unknown agent-message content.
+
+The canonical `opencode-go` preset defaults to `statelessResponses: true`: requests use explicit
+history with `store: false`, without `previous_response_id`, `conversation`, `background`,
+`metadata`, or stored `prompt` references. This avoids Go's rejection of reasoning ciphertext
+combined with `previous_response_id`. Local continuation-cache hits can supply earlier history;
+after a cache miss, resend the complete conversation without `previous_response_id`. Stateless
+repair labels orphan results and missing tool results; it cannot reconstruct lost history or
+prove whether a missing tool execution succeeded.
+
+An explicit `statelessResponses: false` is preserved. Existing canonical preset configurations
+receive the default only when the setting is absent; custom renamed entries keep their configured
+value and do not acquire this default by destination matching. Chat model routes keep their
+existing protocol. The stateless flag does not force Responses streaming into JSON.
+
 ## OpenCode Go reasoning efforts
 
 Go catalog rows preserve their configured reasoning efforts exactly, including during
