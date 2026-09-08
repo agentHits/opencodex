@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { fetchQoderModels, parseQoderModelList, setFetchQoderModelsForTests } from "../src/adapters/qoder/live-models";
-import { clearQoderBinaryCache, QODER_GLOBAL_PROFILE } from "../src/adapters/qoder/profiles";
-import { fetchProviderModels } from "../src/codex/catalog/provider-fetch";
-import { clearModelCache, providerCacheGenerations } from "../src/codex/model-cache";
-import type { OcxProviderConfig } from "../src/types";
+import { fetchQoderModels, parseQoderModelList, setFetchQoderModelsForTests } from "../../src/adapters/qoder/live-models";
+import { clearQoderBinaryCache, QODER_GLOBAL_PROFILE } from "../../src/adapters/qoder/profiles";
+import { fetchProviderModels } from "../../src/codex/catalog/provider-fetch";
+import { clearModelCache, providerCacheGenerations } from "../../src/codex/model-cache";
+import type { OcxProviderConfig } from "../../src/types";
 
 beforeEach(() => clearQoderBinaryCache());
 afterEach(() => {

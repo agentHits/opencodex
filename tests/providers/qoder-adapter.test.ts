@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
 import type { ChildProcess } from "node:child_process";
-import { buildQoderArgs, buildQoderChildEnv, createQoderAdapter } from "../src/adapters/qoder/adapter";
-import { clearQoderBinaryCache, QODER_GLOBAL_PROFILE } from "../src/adapters/qoder/profiles";
-import type { AdapterEvent, OcxParsedRequest, OcxProviderConfig } from "../src/types";
-import { createTestTranslatorBudget } from "./helpers/translator-budget";
+import { buildQoderArgs, buildQoderChildEnv, createQoderAdapter } from "../../src/adapters/qoder/adapter";
+import { clearQoderBinaryCache, QODER_GLOBAL_PROFILE } from "../../src/adapters/qoder/profiles";
+import type { AdapterEvent, OcxParsedRequest, OcxProviderConfig } from "../../src/types";
+import { createTestTranslatorBudget } from "../helpers/translator-budget";
 
 const enc = new TextEncoder();
 beforeEach(() => clearQoderBinaryCache());
