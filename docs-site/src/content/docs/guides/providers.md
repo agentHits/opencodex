@@ -649,6 +649,40 @@ OpenCodex provides official adapter support for Tencent Cloud's CodeBuddy Code C
 - **Tool Ownership:** In v1, the CLI is spawned with `--tools ""` and `--strict-mcp-config`, ensuring Codex maintains exclusive tool ownership. The provider operates in text and reasoning mode; client tool execution is not delegated to the vendor CLI.
 - **Entitlements and Billing:** The provider uses the same vendor-documented CodeBuddy account/CLI authentication surface. Availability and billing of free, promotional, trial, or subscription credits remain determined by the user's CodeBuddy account entitlement.
 
+### Official Qoder CLI (Global & CN)
+
+OpenCodex provides official adapter support for Qoder through the `qoder` (Global) and `qoder-cn` (China) presets. Both use a user-supplied Personal Access Token and the vendor's headless CLI; OpenCodex never reads Qoder Desktop sessions, browser cookies, refresh tokens, or private console APIs.
+
+```json
+{
+  "providers": {
+    "qoder": {
+      "adapter": "qoder",
+      "baseUrl": "https://qoder.com",
+      "apiKey": "${QODER_PERSONAL_ACCESS_TOKEN}"
+    },
+    "qoder-cn": {
+      "adapter": "qoder",
+      "baseUrl": "https://qoder.cn",
+      "apiKey": "${QODERCN_PERSONAL_ACCESS_TOKEN}"
+    }
+  }
+}
+```
+
+- **Prerequisites:** Install the official CLI for the region you use:
+  ```bash
+  npm install -g @qoder-ai/qodercli        # Global: qoder / qodercli
+  npm install -g @qodercn-ai/qoderclicn    # CN: qodercn / qoderclicn
+  ```
+- **Authentication:** Create a PAT in the account integrations page
+  ([Global](https://qoder.com/account/integrations), [CN](https://qoder.cn/account/integrations)) and paste it as the provider's API key. The stored key reaches the CLI only as `QODER_PERSONAL_ACCESS_TOKEN` (Global) or `QODERCN_PERSONAL_ACCESS_TOKEN` (CN) in a scoped child environment.
+- **Region Isolation:** Each preset accepts only its canonical destination (`https://qoder.com` or `https://qoder.cn`) and resolves its own executable. Credentials, model cache, usage, and health are independent; neither region falls back to the other. An older custom provider named `qoder` with a different destination keeps its existing adapter and URL.
+- **Model Discovery:** `qoder --list-models` is the authoritative entitlement roster for the current PAT. The cache is bound to an irreversible fingerprint of the token, so switching accounts never reuses another account's roster. If discovery fails, the provider degrades to a stale cache and then the documented static seed.
+- **Tool Ownership:** The CLI runs single-turn `stream-json` with `--tools ""`, `--strict-mcp-config`, setting sources disabled, and session persistence disabled, so Codex keeps exclusive tool ownership. v1 is text and reasoning only; image input fails explicitly.
+- **Quota:** No public quota API is used, so totals and reset times are unavailable. Insufficient-credit errors (vendor code 118) surface as HTTP 429 `insufficient_quota`.
+- **Operators:** Qoder Global is operated by BRIGHT ZENITH PRIVATE LIMITED under the [product service terms](https://qoder.com/product-service); Qoder CN by 通义云启（杭州）信息技术有限公司 with Alibaba Cloud. Verify `ocx provider test qoder` (or `qoder-cn`) after configuring.
+
 ### A6API credit quota
 
 A custom `openai-chat` provider using `authMode: "key"` and the canonical
