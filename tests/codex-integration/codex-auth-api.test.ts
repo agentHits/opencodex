@@ -31,6 +31,8 @@ import * as accountStoreModule from "../../src/codex/account-store";
 import * as reserveAvailabilityModule from "../../src/codex/reserve-availability";
 import { getMainAccountInfoCache, observeMainQuotaCredential } from "../../src/codex/main-account-cache";
 import { openManualResetCreditOperation } from "../../src/codex/reset-credit-operation-ledger";
+import { quotaRecoveryRecordForTests, resetQuotaRecoveryForTests } from "../../src/codex/quota-401-recovery";
+import { watchdogMs } from "../helpers/ci-watchdog";
 import {
   clearCodexUpstreamHealth,
   clearCodexUpstreamHealthForAccount,
@@ -551,6 +553,7 @@ beforeEach(() => {
   clearCodexWebSocketRegistry();
   resetMainCodexAccountIdentityTrackingForTests();
   resetJwtPlanNotesForTests();
+  resetQuotaRecoveryForTests();
 });
 
 afterEach(async () => {
@@ -566,6 +569,7 @@ afterEach(async () => {
   clearPoolRotationState();
   clearCodexWebSocketRegistry();
   globalThis.fetch = previousFetch;
+  resetQuotaRecoveryForTests();
   if (previousOpencodexHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousOpencodexHome;
   if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
@@ -5673,7 +5677,15 @@ describe("manual reset cooldown recovery (#3973)", () => {
     const now = Date.now(); const clock = spyOn(Date, "now").mockReturnValue(now);
     const firstUsage = gate(); const release401 = gate();
     let pending: ReturnType<typeof consume> | undefined;
+    const forceRefresh = accountStoreModule.forceRefreshCodexPoolToken;
+    let observedProvenance: string | undefined;
+    const refreshSpy = spyOn(accountStoreModule, "forceRefreshCodexPoolToken").mockImplementation(async (id, options) => {
+      const result = await forceRefresh(id, options);
+      observedProvenance = result.provenance;
+      return result;
+    });
     try {
+      expect(quotaRecoveryRecordForTests("manual-a")).toBeUndefined();
       const config = setup();
       const original = getCodexAccountCredential("manual-a")!;
       // Establish a non-undefined replacement stamp before the manual claim.
@@ -5693,6 +5705,7 @@ describe("manual reset cooldown recovery (#3973)", () => {
       expect(replacement.replacedAt).toBe(before.replacedAt);
       release401.release();
       expect(await (await pending)?.json()).toEqual({ code: "reset", remaining: 2 });
+      expect(observedProvenance).toBe("external-replacement");
       expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).not.toBeNull();
       // No OAuth call: forceRefresh adopted the time-valid external replacement.
       expect(urls).toEqual([CONSUME, USAGE, USAGE]);
@@ -5700,8 +5713,9 @@ describe("manual reset cooldown recovery (#3973)", () => {
       expect(claims).toHaveLength(1);
       for (const claim of claims) settleManualResetCooldown(config, claim, false);
     } finally {
-      release401.release(); if (pending) await pending;
-      clock.mockRestore();
+      release401.release();
+      try { if (pending) await pending; }
+      finally { refreshSpy.mockRestore(); clock.mockRestore(); }
     }
   });
 
@@ -5850,7 +5864,7 @@ describe("manual reset cooldown recovery (#3973)", () => {
     let rejectDeadline!: (error: Error) => void;
     const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
     // Failure bound only: success is synchronized on dispatch latches, never elapsed time.
-    const timeout = setTimeout(() => rejectDeadline(new Error("mock dispatch did not reach its expected phase")), 10_000);
+    const timeout = setTimeout(() => rejectDeadline(new Error("mock dispatch did not reach its expected phase")), watchdogMs(10_000));
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input); urls.push(url);
@@ -5912,7 +5926,7 @@ describe("manual reset cooldown recovery (#3973)", () => {
       globalThis.fetch = originalFetch;
       for (const result of results) if (result.status === "rejected") throw result.reason;
     }
-  }, 20_000);
+  }, 60_000);
 
   test("main Q-first/P-last publication preserves post-reset cache, credits and hard-lock readiness", async () => {
     const config = makeConfig({ codexMainAccountHardLock: true });
