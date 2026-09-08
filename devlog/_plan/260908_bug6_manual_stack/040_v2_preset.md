@@ -74,3 +74,21 @@ Suggested main-owned scratch outputs: `ui-v2/source-manifest.json`, `ui-v2/reque
 
 
 Main decision: preserve original 23-file diff and all regressions. Suggested extra CLI/API test cases remain a targeted audit decision rather than mandatory scope expansion. Sync structure/03_catalog-and-subagents.md and structure/05_gui-and-management-api.md with the response-only recommendation and explicit-write behavior. Render QA uses the existing built artifact.
+
+## wp4 P refresh and artifact publication
+
+Previous wp3 D: PR3992 at3ceef0121 passed CI34181398746, target-check rerun34181398713, independent source/security audit and425page remote docs build. Proceed server-owned preset. Candidate5b60a4fa7+e5a6f35b8 was independently audited25files; all25preimage files on actual predecessor3ceef0121 equal candidatebase8000e2482. Preserve original contribution and both layers of agent guides.
+
+UI proof uses the immutable matching hosted dashboard artifact and reviewed auxiliary stdlib fixture at /tmp/ocx-bug6-prep-v2-01a07e9d/.tmp/ui-v2/server.py. No product server/build or actual account operations. Capture and inspect representative desktop/mobileEN/KO, valid/custom/restore/save/clear/missing/malformed/error cases; hosted tests retain in-place delayed-server-switch coverage. Publish only sanitized screenshot assets on an owned evidence branch via noverify push and link immutable commit URLs in this PR, so adding review evidence does not rewrite the tested product head. This evidence-only branch is not another product PR or native stack. Actual product delivery remains the one six-layer chain. Preserve asset provenance/buildGUI-tree checks and teardown proof.
+
+## C render foldback: narrow editor layout
+
+Real prebuilt GUI capture at320px shows an unbroken configuration-key hint clipped and the textarea compressed beside both actions;390px has no page overflow but editing space is unnecessarily narrow. Evidence ui-qa/ko-320-custom.png and ko-mobile-custom.png under ignored scratch. This is a bounded improvement of the changed preset surface, not a claim that the original PR introduced the old layout.
+
+MODIFY gui/src/styles-subagents-workspace.css only: add overflow-wrap:anywhere to existing delegation setting hints; give the preset editor a minmax(0,1fr)/auto/auto grid with min-width0 textarea; reuse existing640px media breakpoint to span textarea across a full first row and place two actions on the second row. NoJS, labels, fields or authority semantics change. Rebuild only remotely; compare head-stamped320/390/1440captures and DOMwidth/textareawidth, plus existing frontendgates. Retain prior functional UI request evidence becauseJS unchanged; verify a representative Save on finalrender. Main re-audits this CSS scope before B and captures finalartifact before publishing screenshotproof.
+
+## C verification foldback: bounded guard probes
+
+Run34183701289 timed out on macos1/2 after test-home-guard passed its unregistered-home case, then Bun reported a dangling process. Runtime root cause remains unproven (H1retainedchildhandles/H2syncwait/H3isolate state); source establishes an unbounded synchronous probe owner. This is a verification-harness correction, not a claim to fix Bun internals. No production guard behavior changes.
+
+MODIFY tests/ci-workflows/test-home-guard.test.ts only: convert runProbe and all its callers to awaited async Bun.spawn; reuse exported captureTestOutput from scripts/test.ts (its executable entry is import.meta.main gated, already imported by test-runner tests); preserve exact argv/cwd/environment filtering/fake homes and all existing assertions. Use existing watchdogMs(5000) below CI60s test ceiling, bounded execution/TERM/KILL/reap/output-drain stages with cleared timers and cleanup of probe scratch. Require natural exit0, no signal, complete output; timeout/nonzero/incomplete/unreaped is a thrown diagnostic, never a success marker. Record safe probe-boundary ID/PID/exit diagnostics without inherited environment. Add synthetic nonzero-exit and nonterminating-probe controls proving failures are reported and owned child gone; do not skip guards or extend CI deadlines. All product verification stays remote. If new diagnostics still stall/fail, investigate that boundary; passing the converted harness is not an upstream-root-cause claim.

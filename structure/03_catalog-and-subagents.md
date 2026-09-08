@@ -478,6 +478,17 @@ unchanged proxy metadata after a native policy change. Native and legacy-tagged 
 remain intact: tags do not establish historical authorship or revoke old instructions,
 and mixed-version transition detection is not guaranteed.
 
+The native mode hint is separate from proxy guidance and native `[agents]` defaults.
+`src/codex/multi-agent-mode-policy.ts` owns the proactive recommendation; the dashboard
+obtains it from `/api/v2` rather than maintaining its own preset. An explicit dashboard,
+API or CLI hint write passes through `setMultiAgentModeHintText`, which replaces only
+the two byte-exact released OpenCodex presets with the current recommendation. Other
+valid custom text, including whitespace variants, is preserved. Reads, unrelated writes
+and upgrades do not migrate stored hints. The writer retains its native capability check
+and stores only `features.multi_agent_v2.multi_agent_mode_hint_text` in Codex TOML;
+`null` removes that key. The hint affects new native Codex sessions when their v2 surface
+is active, without changing reasoning effort or the proxy guidance switch.
+
 Claude Code `ocx-*` agent definitions consume the same effective `claudeCode.blockedSkills` policy
 as inbound bundle elision. When the list is non-empty (default: `claude-api`), generated definitions
 whose marker-stripped model resolves to a routed id receive a preventive instruction not to invoke
