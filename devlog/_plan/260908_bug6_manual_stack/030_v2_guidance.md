@@ -47,3 +47,7 @@ Remote-only focused activation: `bun test tests/codex-integration/multi-agent-co
 
 
 Main decision: preserve the complete original diff. The optional extra server caller fixture is deferred unless source audit reveals an untested change; do not duplicate the existing replay matrix merely for volume. Sync structure/03_catalog-and-subagents.md to the new tag and policy boundary.
+
+## wp3 P refresh
+
+Previous wp2 D: PR3991 head00eb47886 passed run34180674115, source audit and remote docs425pages; proceed guidance carry. Prepared layer3 consists of24977adf2,21757b71a,8000e2482, based on d1f61e933. Intervening wp2 changes affect xAI adapter/tests, provider/adapters docs and structure04; none overlap the9layer3 files. Original #3944 remains open at6fb0fc6f. Independent prepared-source/security audit PASS in isolated v2GuidanceReviewer.md; actual adoption requires unchanged-delta/interdiff verification and own hostedCI.
