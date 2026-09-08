@@ -45,3 +45,7 @@ Before each merge refresh head/base, membership, reviews, required checks and ac
 - wp0 A: independent Astra high reviewer returned PASS, zero blockers. Full source appendices remain in ignored scratch. An absent REST stack field means unknown membership, not proven absence; inspect the stacks endpoint before delivery.
 - wp0 B/C handoff: all eight numbered roadmap documents are complete. Structural validation passed with 30 pre-existing user files preserved. Next cycle is wp1 Go residual implementation. Candidate cycles c1–c6 require their scoped audited delta and matching-head PR CI; c7 retains all six terminal dispositions and final integration proof.
 - Remote documentation verification uses isolated `macmini-cf` scratch, not the deploy-docs workflow. Existing Node 24.20.0 is available under the remote user's nvm tree; select the repository-pinned Bun in that scratch environment and record actual versions. No live service or account state is touched.
+
+## Integration entry
+
+All six source work-phases are verified: newPR3986/3991/3992/3993/4002 candidates passed their exact-head PRCI and source audits; #3965 independently landed and is a verified NOOP for a new PR. The actual product stack is those five newPRs. Previous wp6 D certifies6904ecd9c with CI34188893148. Final full-matrix integration and source closeout remain wp7.

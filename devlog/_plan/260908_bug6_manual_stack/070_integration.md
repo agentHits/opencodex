@@ -33,3 +33,11 @@ Depends on wp1–wp6. The owner explicitly requested a single manual branch chai
 ## Validation limits
 
 Local product tests, installs, typechecks and builds: NOT RUN by owner instruction. Hosted tests and independent source audits provide product evidence; docs-only filesystem/link/whitespace checks provide document evidence. Neither substitutes for the other.
+
+## wp7 P refresh
+
+Previous wp6 D:6904ecd9c passed CI34188893148 and source/security/interdiff audits; coldmain, busy, same-tick replacement and converged-flight regressions passed; docs425pages plus renderedlink/KOparity passed. Latestdev402be7c1f is pinned for integration. Read-only merge-tree predicts conflicts only in reference/management-api.md and codex-auth-api.test.ts because dev already contains the canonicalalias prefix. Both dev versions exactly equal our adopted alias predecessor9eb44cfb4; resolve those two to our current versions, which include that prefix plus the audited recovery. No pre-existing userfile overlaps the incomingdevdelta.
+
+Merge402be7c1f into the topbranch with hooksdisabled, preserving all other incomingfiles. Record exactresolvedtree, recheckcurrentdev, publishnoverify, and dispatchci.yml lane=all on that exacthead. NewPRchain is3986→3991→3992→3993→4002;3965alreadymerged. All original candidateheads retain passingPRCI; any rewrittenhead gets freshproof. Refresh each target/head/membership/review/CI before its separately authorized ordinary merge. Use merge commits to preserve ancestry/attribution, retarget each nextchild todev, and prove resolved integration content is covered by the certifiedtop. Current-headrequiredchecks and source/security duties remain separate.
+
+After productlanding, close only satisfied sourceitems, including superseded3995 aftercore3973lands; preserve3997. Archive this unit with an evidence-only closing PR if needed, so completedrecords do not change the tested product tree. Verify that closingdelta is documentation-only and receives its properCI; retain exact product-tree equivalence to the full-matrix candidate rather than attributing skipped productjobs to passingexecution. No release/main/preview/deployment changes.
