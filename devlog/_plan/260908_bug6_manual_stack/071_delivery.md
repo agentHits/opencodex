@@ -30,3 +30,11 @@ Pin dev `402be7c1f88283eb8465c3aec8437ccecd2542ec` and merge it into the top can
 Before each ordinary merge, refresh actor permission, head/base, native membership, reviewer objections and checks. Use merge commits and retarget children bottom-up. Final full-matrix run, actual merge SHAs, source closures, and tree/ancestry proof will be appended after those actions occur; none is claimed by this planning snapshot.
 
 Attribution retained: jpierrevd for #3838 intent; luvs01 for #3944/#3951/#3919/#3965 and adapted #3995 coverage/documentation. Lossy mixed-ciphertext filtering from #3838 is deliberately declined; current fail-closed behavior remains. #3997/#3996 is independent and stays outside this delivery.
+
+## Integrated candidate and failed full dispatch
+
+Integration commit `f1b436324d335a64789e7899a4ed491183a9c216` retains all incoming dev changes. The independently inspected resolution matched predicted tree `4e1a2458e243da43a32d49664364e88d3473da32` before the three delivery-record updates; all 30 pre-existing user files remained unchanged. PR CI `34190212954` passed. Full dispatch `34190287787` completed with 24 successful jobs, one failed Windows3/6 test job and a failed aggregate. The failure was the first `restart --help` test's null subprocess status at its fixed10s synchronous bound; later help cases passed. This failed run is not landing evidence.
+
+The final docs archive from this integrated head has SHA-256 `a51cdbd83f409472defcb7758873734edba167f116a17869ec345366e0e9063d`. Remote frozen install and build passed with 425 pages; the rendered CLI recovery link resolves to the API section, and English/Korean reset replay text is present.
+
+The audited repair is confined to the CLI test harness, preserving all original command assertions and private homes while making exit, termination and capture failures explicit. A fresh exact-head full dispatch remains required after the repair. Neither a historical root cause nor absence of future timing failures is claimed.
