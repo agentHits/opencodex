@@ -6,7 +6,7 @@
 - Trigger: owner request on 2026-09-08 to use one stack, repeated PABCD, Astra high delegates, no local suites, no-verify pushes, and merge through dev.
 - Goal: Go/xAI child-result compatibility, separated V2 guidance and server-owned presets, and correctly scoped reset-credit recovery.
 - Non-goals: releases, main/preview, account changes, real credit consumption, unrelated cleanup, native GitHub stacks, local product tests/install/typecheck/build.
-- Verifier: independent source audits and GitHub `ci.yml` at each candidate head; final dispatch `lane=all`. Docs-only verification checks numbered artifacts and whitespace without running product code. Every activation fixture and observable result is specified in the phase designs.
+- Verifier: independent source audits and GitHub `ci.yml` at each candidate head; final dispatch `lane=all`. Roadmap-only verification checks numbered artifacts and whitespace without running product code. Public docs-site changes additionally require remote `cd docs-site && bun install --frozen-lockfile && bun run build` success; artifact/whitespace checks alone do not certify documentation builds. Every activation fixture and observable result is specified in the phase designs.
 - Stop: every named item has a fresh terminal disposition, all nonempty layers have landed through reviewed PRs, final hosted gates pass, and fetched ancestry plus landed-tree comparison prove integration.
 - Artifacts: this numbered unit, ignored `.tmp/bug6-01a07e9d/`, and session-bound `.codexclaw` ledger/receipts. New unpublished security analysis stays in scratch only.
 - Outcomes: DONE requires all evidence; NOOP requires proof the full named contract already landed; unresolved work remains pending; genuine external blockers are reported without inventing proof.
@@ -41,7 +41,11 @@ Before each merge refresh head/base, membership, reviews, required checks and ac
 
 ## Continuity ledger
 
-- wp0 P: live source intake and complete decade designs in progress; no product changes.
-- wp0 A: independent Astra high reviewer returned PASS, zero blockers. Full source appendices remain in ignored scratch. An absent REST stack field means unknown membership, not proven absence; inspect the stacks endpoint before delivery.
+- wp0 P completed: live source intake and all eight decade designs were prepared; no product changes.
+- wp0 A: independent Astra high reviewer returned PASS, zero blockers. Full source appendices remain in ignored scratch. The final integration refresh returned an empty stacks response for bottom PR #3986; refresh every PR before delivery. A missing field or failed request alone is not evidence of absence.
 - wp0 B/C handoff: all eight numbered roadmap documents are complete. Structural validation passed with 30 pre-existing user files preserved. Next cycle is wp1 Go residual implementation. Candidate cycles c1–c6 require their scoped audited delta and matching-head PR CI; c7 retains all six terminal dispositions and final integration proof.
 - Remote documentation verification uses isolated `macmini-cf` scratch, not the deploy-docs workflow. Existing Node 24.20.0 is available under the remote user's nvm tree; select the repository-pinned Bun in that scratch environment and record actual versions. No live service or account state is touched.
+
+## Integration entry
+
+All six source work-phases are verified: newPR3986/3991/3992/3993/4002 candidates passed their exact-head PRCI and source audits; #3965 independently landed and is a verified NOOP for a new PR. The actual product stack is those five newPRs. Previous wp6 D certifies6904ecd9c with CI34188893148. Final full-matrix integration and source closeout remain wp7.
