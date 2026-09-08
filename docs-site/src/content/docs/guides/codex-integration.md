@@ -253,11 +253,11 @@ When a routed provider cannot return a native compaction blob, OpenCodeX stores 
 own `ocx1:` envelope. Native ChatGPT cannot verify that envelope if OpenCodeX is later removed from
 the request path.
 
-Enable client-side compaction to keep V2 sub-agent routing while preventing new `ocx1:` history:
+Enable client-side compaction to keep V2 sub-agent routing while preventing new `ocx1:` compaction summaries:
 
 ```bash
 ocx system settings --client-compaction on   # or "codexClientCompaction": true in config.json
-ocx sync                                     # rewrites ~/.codex/config.toml; restart Desktop
+ocx sync                                     # rewrites the active config (default: ~/.codex/config.toml); restart Desktop
 ```
 
 The setting defaults to off. For authenticated loopback routing, OpenCodeX selects its existing
