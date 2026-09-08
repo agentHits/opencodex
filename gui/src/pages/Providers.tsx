@@ -234,6 +234,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
   const [oauthTosPending, setOauthTosPending] = useState<
     { provider: string; addAccount: boolean; accountId?: string } | null
   >(null);
+  const [antigravityChoicePending, setAntigravityChoicePending] = useState<{ addAccount: boolean } | null>(null);
   /** Bumped after OAuth login so ProviderDetails switches to the Accounts tab. */
   const [accountsFocus, setAccountsFocus] = useState<{ token: number; provider: string | null }>({
     token: 0,
@@ -482,6 +483,10 @@ export default function Providers({ apiBase }: { apiBase: string }) {
    */
   const requestLoginOAuth = (provider: string, addAccount = false, accountId?: string) => {
     if (busy === provider) return;
+    if (provider === "google-antigravity" && !accountId) {
+      setAntigravityChoicePending({ addAccount });
+      return;
+    }
     if (oauthTosRisk(provider)) {
       setOauthTosPending({ provider, addAccount, ...(accountId ? { accountId } : {}) });
       return;
@@ -553,6 +558,24 @@ export default function Providers({ apiBase }: { apiBase: string }) {
 
   const onAccountManage = (provider: string) => {
     revealProviderAccounts(provider);
+  };
+
+  const onContinueAntigravityOAuth = () => {
+    const addAccount = antigravityChoicePending?.addAccount ?? false;
+    setAntigravityChoicePending(null);
+    if (oauthTosRisk("google-antigravity")) {
+      setOauthTosPending({ provider: "google-antigravity", addAccount });
+      return;
+    }
+    void loginOAuth("google-antigravity", addAccount);
+  };
+
+  const onAntigravityImportSuccess = () => {
+    setAntigravityChoicePending(null);
+    void fetchOauth();
+    void fetchAccountSets(["google-antigravity"]);
+    bumpModelsRefresh();
+    revealProviderAccounts("google-antigravity");
   };
 
   return (
@@ -726,6 +749,10 @@ export default function Providers({ apiBase }: { apiBase: string }) {
           setOauthTosPending(null);
           void loginOAuth(pending.provider, pending.addAccount, pending.accountId);
         }}
+        antigravityChoicePending={antigravityChoicePending}
+        onCancelAntigravityChoice={() => setAntigravityChoicePending(null)}
+        onContinueAntigravityOAuth={onContinueAntigravityOAuth}
+        onAntigravityImportSuccess={onAntigravityImportSuccess}
       />
     </>
   );

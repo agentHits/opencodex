@@ -101,3 +101,59 @@
   gap: 8px;
   align-items: center;
 }
+
+.auth-choice-card {
+  background: var(--glass-rail);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border, #2e2e36);
+  border-radius: var(--radius-md, 12px);
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  transition: border-color var(--motion-fast, 0.15s ease);
+}
+
+.auth-choice-card:hover {
+  border-color: var(--border-hover, #3c3c46);
+}
+
+.auth-choice-card-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auth-choice-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auth-choice-modal {
+  max-width: 680px;
+  width: 100%;
+}
+
+.auth-choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.auth-choice-card-title {
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  color: var(--text, #ffffff);
+  line-height: 1.25;
+}
+
+.auth-choice-card-desc {
+  font-size: var(--text-xs, 12px);
+  color: var(--muted, #8a8a9a);
+  line-height: 1.3;
+}

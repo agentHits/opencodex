@@ -109,11 +109,11 @@ export default function ProviderCatalog({
       : <span className="badge badge-muted">{t("modal.badge.apiKey")}</span>;
     // Free pricing is orthogonal to auth: NVIDIA (freeTier + key required) shows BOTH
     // the Free badge and the API-key badge — free pricing never hides a key requirement.
-    const free = (p.freeTier || p.keyOptional) && p.auth === "key"
-      ? <span className="badge badge-green">{t("modal.badge.free")}</span>
-      : null;
-    return <>{free}{auth}</>;
-  };
+  const free = (p.freeTier || p.keyOptional) && p.auth === "key"
+    ? <span className="badge badge-green">{t("modal.badge.free")}</span>
+    : null;
+  return <>{free}{auth}</>;
+};
 
   return (
     <div className="provider-catalog">
@@ -237,7 +237,15 @@ export default function ProviderCatalog({
                 ) : busy ? (
                   onCancelLogin && <button type="button" className="btn btn-ghost" onClick={() => onCancelLogin(row.id)}>{t("common.cancel")}</button>
                 ) : (
-                  onLogin && <button type="button" className="btn btn-primary" onClick={() => onLogin(row.id)}>{t("modal.accountLogin")}</button>
+                  onLogin && (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => onLogin(row.id)}
+                    >
+                      {t("modal.accountLogin")}
+                    </button>
+                  )
                 )}
               </div>
               </div>
