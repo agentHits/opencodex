@@ -899,6 +899,39 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(designB).not.toContain('model_provider = "opencodex"');
   });
 
+  test("client compaction opt-in leaves pre-existing ocx1 resume history byte-for-byte unchanged", () => {
+    writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
+    const sessionsDir = join(codexHome, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const rolloutPath = join(sessionsDir, "rollout-ocx1.jsonl");
+    const rollout = `${JSON.stringify({
+      type: "compacted",
+      payload: {
+        replacement_history: [{
+          type: "compaction",
+          encrypted_content: "ocx1:cG9ydGFibGUgc3VtbWFyeQ==",
+        }],
+      },
+    })}\n`;
+    writeFileSync(rolloutPath, rollout, "utf8");
+    const db = new Database(join(codexHome, "state_5.sqlite"));
+    db.run(`CREATE TABLE threads (
+      id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, model_provider TEXT NOT NULL,
+      source TEXT, first_user_message TEXT, has_user_event INTEGER
+    )`);
+    db.run("INSERT INTO threads VALUES ('thread-ocx1', ?, 'opencodex', 'cli', 'hello', 1)", rolloutPath);
+    db.close();
+
+    const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
+    expect(enabled.status).toBe(0);
+    expect(String(JSON.parse(enabled.stdout).message)).toContain("affects future compactions only");
+    expect(readFileSync(rolloutPath, "utf8")).toBe(rollout);
+    const verifier = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
+    expect(verifier.query("SELECT model_provider FROM threads WHERE id = 'thread-ocx1'").get())
+      .toEqual({ model_provider: "opencodex" });
+    verifier.close();
+  });
+
   test("authless Desktop opt-in never weakens non-loopback admission", () => {
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
 

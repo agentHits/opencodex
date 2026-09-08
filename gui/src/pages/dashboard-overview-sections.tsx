@@ -531,6 +531,7 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="font-semibold">{t("dash.codexClientCompaction")}</div>
             <div className="muted setting-hint">{t("dash.codexClientCompactionHint")}</div>
+            {settings?.catalogRefreshPending && <div className="muted setting-hint" role="status">{t("codexAuth.catalogRefreshPending")}</div>}
           </div>
           <button
             type="button"

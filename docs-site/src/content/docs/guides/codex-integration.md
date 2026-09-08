@@ -260,8 +260,10 @@ ocx system settings --client-compaction on   # or "codexClientCompaction": true 
 ocx sync                                     # rewrites ~/.codex/config.toml; restart Desktop
 ```
 
-The setting defaults to off. When enabled, OpenCodeX selects its existing dedicated provider form
-with `requires_openai_auth = true`:
+The setting defaults to off. For authenticated loopback routing, OpenCodeX selects its existing
+dedicated provider form with `requires_openai_auth = true`. If `codexDesktopAuthless` is also
+enabled, that stronger compatibility setting takes precedence and writes
+`requires_openai_auth = false`:
 
 ```toml
 model_provider = "opencodex"
@@ -279,11 +281,11 @@ selected provider. Provider-level V2 policy is independent: plaintext delivery, 
 passthrough through `allowEncryptedV2AgentTasks`, and configured recovery or fallback behavior do
 not change.
 
-This preference affects future compactions only. It does not rewrite existing `ocx1:` history;
-use the explicit history recovery workflow for an affected thread. New threads use the
-`opencodex` provider identity while the mode is active, so the existing resume-history compatibility
-and restore behavior applies. Turning the setting off and syncing restores the default Design B
-root override.
+This preference affects future compactions only. It does not rewrite existing `ocx1:` history or
+re-tag existing resume-history metadata; use the explicit history recovery workflow for an affected
+thread. New threads use the `opencodex` provider identity while the mode is active. Turning the
+setting off and syncing restores the default Design B root override unless
+`codexDesktopAuthless` or non-loopback admission still requires the provider-table form.
 
 ### Authless Codex Desktop (opt-in)
 

@@ -23,7 +23,11 @@ const USAGE = `Usage:
   ocx system codex-cli-update check [--json]
   ocx system update check [--channel <latest|preview>] [--json]
   ocx system update run [--channel <latest|preview>] [--restart <on|off>] --yes [--json]
-  ocx system update status <job-id> [--json]`;
+  ocx system update status <job-id> [--json]
+
+--client-compaction favors native replay portability for future compactions while
+keeping OpenCodeX routing active; the configured provider may process summaries
+and consume its quota.`;
 
 async function status(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const args = [...argv];
