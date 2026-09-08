@@ -49,9 +49,32 @@ current bearer, so the key only keeps the join on the proxy path. It is written 
 `openai_base_url` form, is removed together with it, and a user-owned
 `experimental_realtime_ws_base_url` is never overwritten.
 
+### Voice transport and task handoffs
+
+Codex owns the microphone and speaker, WebRTC media negotiation, captions, mute controls, and
+voice cleanup when switching threads. OpenCodex relays call creation and the sideband connection;
+work delegated by voice uses the normal Responses routing path. Choosing a text provider does
+not replace the realtime speech model or enable voice in a client that does not support it.
+
+The upstream [WebRTC helper change](https://github.com/openai/codex/commit/1b53f6a44eff890b5169bde8d3bd5b12b8766946)
+and [TUI voice integration](https://github.com/openai/codex/commit/b01c3986fd2e79b8a477a08d81430f52f22bc0dc)
+describe these client responsibilities, including speaking final answers from voice handoffs.
+Their merge dates do not establish when the same behavior reached the desktop app.
+
+Optional `OCX_LIVE_FRAME_LOG` diagnostics write only frame timestamp, direction, kind, byte count,
+and a replacement-character flag (`ts`, `dir`, `kind`, `bytes`, `fffd`). They do not store voice
+text or frame excerpts. For binary frames, UTF-8 decoding can itself produce replacement
+characters, so the flag alone does not identify where corruption occurred. Existing log files
+are not rewritten.
+
+### Fast mode
+
 The injected `fast_mode` follows the tri-state `fastMode` setting: `true` writes `fast_mode = true`,
 `false` writes `fast_mode = false`, and unset leaves an existing `fast_mode` untouched without
 adding a `[features]` table.
+
+Fast mode is separate from voice transport. A supported model's service-tier speed description
+does not guarantee lower microphone, WebRTC, or end-to-end voice latency through OpenCodex.
 
 The proxy listens on port `10100` by default and serves `POST /v1/responses`,
 `POST /v1/responses/compact`, `POST /v1/images/generations`, `POST /v1/images/edits`,
