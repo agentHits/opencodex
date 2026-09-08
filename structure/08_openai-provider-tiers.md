@@ -73,8 +73,10 @@ The dashboard's bulk pause action refreshes all account quotas and mutates only 
 plan-relevant window is freshly confirmed at exactly 100%; unknown and failed refreshes are skipped.
 
 A confirmed manual reset-credit consumption may immediately reconcile that account's
-pre-existing ordinary reset-derived cooldown after a complete, non-exhausted usage
-observation started after the reset. Recovery owns the specific cooldown and authenticates
+eligible pre-existing ordinary reset-derived cooldown after a complete, non-exhausted usage
+observation started after the reset. Paused or reauthentication-required accounts and
+cooldowns held by another in-flight probe remain excluded; their cooldowns are retained.
+Recovery owns the specific cooldown and authenticates
 main and added Pool accounts through their respective credential contracts. Main usage
 publication keeps the latest successfully published observation authoritative. Pool recovery
 across a credential refresh requires the actual self/joined refresh lineage, not matching

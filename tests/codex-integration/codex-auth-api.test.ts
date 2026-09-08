@@ -983,10 +983,24 @@ describe("codex-auth API", () => {
   test("busy usage observation preserves confirmed reset success without a retry directive", async () => {
     const config = makeConfig();
     seedPoolAccount(config, { id: "quota-reset-busy", email: "busy@example.test" });
+    // Adapted from #3995 (e172453052bf7bbc4a0ae5aa24592982c0c64b15).
+    recordCodexUpstreamOutcome(config, "quota-reset-busy", 429, {
+      now: Date.now(), resetAt: Date.now() + 3_600_000, modelId: "gpt-5.6-sol", fixedAccount: true,
+    });
+    const cooldown = getCodexQuotaHealthSnapshot("quota-reset-busy", "shared");
+    expect(cooldown).not.toBeNull();
     const cleanup = seedCodexAuthAdmissionForTests({ quotaFlights: 16 });
-    globalThis.fetch = (async (input: RequestInfo | URL) => String(input).includes("/consume")
-      ? Response.json({ code: "reset" })
-      : Promise.reject(new Error("unexpected mock URL"))) as typeof fetch;
+    let consumeCalls = 0; let usageCalls = 0;
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input); urls.push(url);
+      if (url === "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume") {
+        consumeCalls += 1;
+        return Response.json({ code: "reset" });
+      }
+      if (url === "https://chatgpt.com/backend-api/wham/usage") usageCalls += 1;
+      throw new Error("unexpected mock URL");
+    }) as typeof fetch;
     try {
       const req = new Request("http://localhost/api/codex-auth/reset-credits/consume", {
         method: "POST",
@@ -997,6 +1011,13 @@ describe("codex-auth API", () => {
       expect(response?.status).toBe(200);
       expect(response?.headers.get("Retry-After")).toBeNull();
       expect(await response?.json()).toEqual({ code: "reset" });
+      expect(consumeCalls).toBe(1);
+      expect(usageCalls).toBe(0);
+      expect(urls).toEqual(["https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"]);
+      expect(getCodexQuotaHealthSnapshot("quota-reset-busy", "shared")).toEqual(cooldown);
+      const claims = claimManualResetCooldowns(config, "quota-reset-busy");
+      try { expect(claims).toHaveLength(1); }
+      finally { for (const claim of claims) settleManualResetCooldown(config, claim, false); }
     } finally {
       cleanup();
     }
@@ -3054,6 +3075,42 @@ describe("codex-auth API", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  // Adapted from luvs01's #3995, e172453052bf7bbc4a0ae5aa24592982c0c64b15.
+  test.each(["reset", "already_redeemed"])("cold main %s returns fresh WHAM credits without a prior lookup", async code => {
+    writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({
+      tokens: { access_token: "cold-main-reset-token", account_id: "cold-main-reset-account" },
+    }));
+    // Intentionally no listing, reconciliation, writer observation or quota seed.
+    let consumeCalls = 0; let usageCalls = 0;
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input); urls.push(url);
+      if (url === "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume") {
+        consumeCalls += 1;
+        return Response.json({ code, remaining: 99 });
+      }
+      if (url === "https://chatgpt.com/backend-api/wham/usage") {
+        usageCalls += 1;
+        return Response.json({ plan_type: "team", rate_limit: { secondary_window: { used_percent: 12 } },
+          rate_limit_reset_credits: { available_count: 1 } });
+      }
+      throw new Error("unexpected mock URL");
+    }) as typeof fetch;
+    try {
+      const req = new Request("http://localhost/api/codex-auth/reset-credits/consume", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: MAIN_CODEX_ACCOUNT_ID }),
+      });
+      const response = await handleCodexAuthAPI(req, new URL(req.url), makeConfig());
+      expect(response?.status).toBe(200);
+      expect(await response?.json()).toEqual({ code, remaining: 1 });
+      expect(consumeCalls).toBe(1); expect(usageCalls).toBe(1);
+      expect(urls).toEqual(["https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+        "https://chatgpt.com/backend-api/wham/usage"]);
+    } finally { globalThis.fetch = originalFetch; }
   });
 
   test("reset-credit consume returns remaining from fresh main WHAM credits", async () => {
@@ -5778,6 +5835,84 @@ describe("manual reset cooldown recovery (#3973)", () => {
       clock.mockRestore();
     }
   });
+
+  // Adapt #3995/e172453052's two-flight convergence to fresh-before-old scheduling.
+  test("reset publishes a fourth usage request before two old current-generation flights complete", async () => {
+    const config = setup();
+    const oldCredential = getCodexAccountCredential("manual-a")!;
+    const oldGeneration = readCodexAccountRecord("manual-a")!.generation;
+    const firstStarted = gate(); const release401 = gate(); const secondStarted = gate(); const secondFinish = gate();
+    const replayStarted = gate(); const replayFinish = gate(); const freshStarted = gate();
+    const latches = [firstStarted, release401, secondStarted, secondFinish, replayStarted, replayFinish, freshStarted];
+    const pending: Promise<unknown>[] = [];
+    const urls: string[] = []; const usageBearers: Array<string | null> = [];
+    let usageCalls = 0; let consumeCalls = 0; let completedOldResponses = 0;
+    let rejectDeadline!: (error: Error) => void;
+    const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+    // Failure bound only: success is synchronized on dispatch latches, never elapsed time.
+    const timeout = setTimeout(() => rejectDeadline(new Error("mock dispatch did not reach its expected phase")), 10_000);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); urls.push(url);
+      if (url === CONSUME) { consumeCalls += 1; return Response.json({ code: "reset" }); }
+      if (url !== USAGE) throw new Error("unexpected mock URL");
+      usageBearers.push(new Headers(init?.headers).get("Authorization"));
+      switch (++usageCalls) {
+        case 1:
+          firstStarted.release(); await release401.promise;
+          return new Response("{}", { status: 401 });
+        case 2:
+          secondStarted.release(); await secondFinish.promise; completedOldResponses += 1;
+          return Response.json({ ...usage(88), rate_limit_reset_credits: { available_count: 66 } });
+        case 3:
+          replayStarted.release(); await replayFinish.promise; completedOldResponses += 1;
+          return Response.json({ ...usage(99), rate_limit_reset_credits: { available_count: 77 } });
+        case 4:
+          freshStarted.release(); return Response.json(usage(12));
+        default: throw new Error("unexpected mock usage dispatch");
+      }
+    }) as typeof fetch;
+    try {
+      const first = listCodexAuthAccounts(config, true); pending.push(first);
+      void first.catch(rejectDeadline);
+      await Promise.race([firstStarted.promise, deadline]);
+      // A fresh external generation starts its own ordinary flight while P's old 401 is held.
+      saveCodexAccountCredential("manual-a", { ...oldCredential, accessToken: "converged-access", refreshToken: "converged-refresh" });
+      expect(readCodexAccountRecord("manual-a")!.generation).toBe(oldGeneration + 1);
+      const second = listCodexAuthAccounts(config, true); pending.push(second);
+      void second.catch(rejectDeadline);
+      await Promise.race([secondStarted.promise, deadline]);
+      release401.release();
+      await Promise.race([replayStarted.promise, deadline]);
+      // Both old flights now use the current generation; neither response has completed.
+      expect(usageBearers).toEqual([`Bearer ${oldCredential.accessToken}`, "Bearer converged-access", "Bearer converged-access"]);
+      expect(completedOldResponses).toBe(0);
+      const reset = consume(config); pending.push(reset);
+      void reset.catch(rejectDeadline);
+      await Promise.race([freshStarted.promise, deadline]);
+      const response = await Promise.race([reset, deadline]);
+      expect(response?.status).toBe(200);
+      expect(await response?.json()).toEqual({ code: "reset", remaining: 2 });
+      expect(completedOldResponses).toBe(0);
+      expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toBeNull();
+      const fresh = structuredClone(getAccountQuota("manual-a"));
+      expect(fresh).toMatchObject({ weeklyPercent: 12, resetCredits: 2 });
+      secondFinish.release(); replayFinish.release();
+      await Promise.all([first, second]);
+      expect(completedOldResponses).toBe(2);
+      expect(getAccountQuota("manual-a")).toEqual(fresh);
+      expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toBeNull();
+      expect(consumeCalls).toBe(1); expect(usageCalls).toBe(4);
+      expect(usageBearers).toEqual([`Bearer ${oldCredential.accessToken}`, "Bearer converged-access", "Bearer converged-access", "Bearer converged-access"]);
+      expect(urls).toEqual([USAGE, USAGE, USAGE, CONSUME, USAGE]);
+    } finally {
+      clearTimeout(timeout);
+      for (const latch of latches) latch.release();
+      const results = await Promise.allSettled(pending);
+      globalThis.fetch = originalFetch;
+      for (const result of results) if (result.status === "rejected") throw result.reason;
+    }
+  }, 20_000);
 
   test("main Q-first/P-last publication preserves post-reset cache, credits and hard-lock readiness", async () => {
     const config = makeConfig({ codexMainAccountHardLock: true });

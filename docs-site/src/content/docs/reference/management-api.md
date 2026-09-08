@@ -435,7 +435,9 @@ consume request. A previously unseen ID supplied after settlement starts a new e
 redemption; clients retrying an existing action should keep its ID.
 
 After a confirmed manual `reset`, OpenCodex checks fresh usage for that same account
-and can reconcile its pre-existing shared reset-derived cooldown immediately. Usage
+and can reconcile its eligible pre-existing shared reset-derived cooldown immediately.
+Paused accounts, accounts requiring reauthentication and cooldowns already owned by an
+in-flight probe remain excluded from this recovery; their cooldowns are retained. Usage
 started before the reset, incomplete or exhausted usage, a changed account, and a newer
 quota failure do not qualify. Older main-account usage responses cannot replace a newer
 published observation. If usage needs credential refresh, recovery requires that refresh's
