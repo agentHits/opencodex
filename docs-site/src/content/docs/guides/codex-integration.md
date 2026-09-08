@@ -277,9 +277,9 @@ requires_openai_auth = true
 
 Codex then owns compaction and stores a portable plaintext summary rather than a new OpenCodeX
 envelope. The compacting request still routes through OpenCodeX and can consume quota on the
-selected provider. Provider-level V2 policy is independent: plaintext delivery, encrypted task
-passthrough through `allowEncryptedV2AgentTasks`, and configured recovery or fallback behavior do
-not change.
+selected provider. V2 sub-agent requests keep their existing provider selection and quota
+accounting. Client-side compaction does not change plaintext delivery, encrypted task passthrough
+through `allowEncryptedV2AgentTasks`, or configured recovery and fallback behavior.
 
 This preference affects future compactions only. It does not rewrite existing `ocx1:` history or
 re-tag existing resume-history metadata; use the explicit history recovery workflow for an affected
