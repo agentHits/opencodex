@@ -17,3 +17,7 @@ Before the raw-body outbound normalizer requires array content and leaves the is
 ## Verification
 
 Pin parent/child fixtures to synthetic input. The strict upstream stub must reject the pre-fix request shape and accept the normalized one; destination-negative controls prove the guard is active. Hosted PR CI and final full dispatch execute adapter/server regressions. Local tests/install/typecheck/build remain NOT RUN. Source audit checks raw-body call placement and all consumers of the added option. There is no serialized configuration field or migration: option creation and consumption are both in-memory adapter calls.
+
+## wp2 P refresh
+
+Previous wp1 D: PR3986 at d1f61e933 passed run34178540141 and independent source/security audit, with18Go replay scenarios and remote docs425pages. Proceed to xAI string residual. Candidate339e42c1e was prepared in an isolated worktree under the owner-authorized parallel-preparation amendment; it is not yet adopted. Its base exactly equals the certified preceding layer, and the eight-file diff matches this plan. Existing xAI predicate remains the destination owner; no account changes. Issue3907 is still open. Main revalidates candidate before B and retains fresh hosted CI before wp2 closure.
