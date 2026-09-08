@@ -1595,13 +1595,13 @@ async function fetchProviderModelsWithAuth(
     const fresh = getFreshCached(name, ttlMs, Date.now(), authorityIdentity);
     if (fresh) {
       return observed(withConfiguredRetention(
-        applyConfigHintsToCachedModels(name, prov, fresh, contextCap, metadataModelIdCaseFold),
+        applyConfigHintsToCachedModels(name, prov, fresh, contextCap, metadataModelIdCaseFold, captured.effectiveAlias),
       ), "authoritative");
     }
     const scopedStale = getStaleCached(name, authorityIdentity);
     if (isModelsFetchCoolingDown(name) && scopedStale) {
       return observed(withConfiguredRetention(
-        applyConfigHintsToCachedModels(name, prov, scopedStale, contextCap, metadataModelIdCaseFold),
+        applyConfigHintsToCachedModels(name, prov, scopedStale, contextCap, metadataModelIdCaseFold, captured.effectiveAlias),
       ), "degraded");
     }
     const live = await fetchQoderModels(profile, apiKey);
@@ -1609,7 +1609,7 @@ async function fetchProviderModelsWithAuth(
       const discovered = live.models.map(id => ({
         id,
         provider: name,
-        ...catalogHintsFromProviderConfig(name, prov, id, contextCap, metadataModelIdCaseFold),
+        ...catalogHintsFromProviderConfig(name, prov, id, contextCap, metadataModelIdCaseFold, captured.effectiveAlias),
       }));
       const forCache = withConfiguredRetention(discovered, { retainComboTargets: false });
       if (!setCached(name, forCache, Date.now(), cacheGeneration, authorityIdentity)) {
@@ -1625,7 +1625,7 @@ async function fetchProviderModelsWithAuth(
     }
     const stale = getStaleCached(name, authorityIdentity);
     return observed(withConfiguredRetention(
-      stale ? applyConfigHintsToCachedModels(name, prov, stale, contextCap, metadataModelIdCaseFold) : configured,
+      stale ? applyConfigHintsToCachedModels(name, prov, stale, contextCap, metadataModelIdCaseFold, captured.effectiveAlias) : configured,
     ), "degraded");
   }
   if (prov.adapter === "cursor") {

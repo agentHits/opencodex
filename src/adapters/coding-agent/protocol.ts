@@ -195,7 +195,9 @@ export function mapStreamMessageToEvents(message: StreamMessage, state: StreamPa
       // match deliberately narrow so other coding-agent CLIs retain their established
       // generic-upstream handling for ambiguous text such as "insufficient credits".
       const insufficientQuota = vendorCode === 118 || /credit usage limit/i.test(detail);
-      const authentication = /not logged in|invalid (?:personal access )?token|authentication/i.test(detail);
+      // Anchor to credential verdicts. A bare "authentication" substring also matches upstream
+      // service-degradation text, and a false 401 drives reauth messaging and key-pool rotation.
+      const authentication = /not logged in|invalid (?:personal access )?token|authentication (?:failed|error|required)|unauthorized/i.test(detail);
       const rateLimited = !insufficientQuota && /rate limit|too many requests/i.test(detail);
       const modelUnavailable = /model (?:is )?(?:not found|unavailable|unsupported)|invalid model/i.test(detail);
       events.push({
