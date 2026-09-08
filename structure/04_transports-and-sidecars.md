@@ -383,9 +383,12 @@ policy.
 Go's non-forward Responses request path moves valid `additional_tools` wrappers into top-level
 `tools` through `src/adapters/opencode-go-additional-tools.ts`. Placement runs after existing
 custom/search/namespace lowering and before code-mode, compaction and final hosted-tool pruning.
-It does not recalculate wire identities or response aliases. The exact HTTPS Go destination
-allows the standard port and one optional trailing slash; credentials, query, fragment, foreign
-hosts and other paths do not acquire this behavior. Malformed wrappers remain unchanged and
+It does not recalculate wire identities or response aliases. The matcher reads the constructed
+send URL, resolving it with URL semantics, and requires HTTPS `opencode.ai`, the standard port
+and exact `/zen/go/v1/responses`. Normal and endpoint-inclusive bases or split `responsesPath`
+configurations agree; a custom path resolving to Zen or elsewhere does not acquire Go placement.
+Credentials, query, fragment, foreign hosts and other resource paths are excluded. The existing
+URL constructor canonicalizes trailing base slashes before this check. Malformed wrappers remain unchanged and
 the shared mixed-ciphertext agent-message gate remains fail-closed.
 
 The canonical `opencode-go` registry entry defaults to `statelessResponses: true` because Go
@@ -396,7 +399,11 @@ stored continuation parameters, and repairs orphan calls/results without claimin
 success. A local replay-cache hit supplies history; a miss cannot reconstruct it, so callers
 must resend complete history without `previous_response_id`. This flag also enables the existing
 visible content-to-summary rewrite for SSE and JSON; summary-channel items and opaque reasoning
-blobs keep their existing response handling. It does not change streaming selection or Chat
+blobs keep their existing response handling. The shared recording callback applies the same
+reasoning rewrite under the exact client-visible predicate before caching output, after tool
+restoration and function normalization. This keeps full-content replay fingerprints comparable
+for both full-history-plus-ID and delta continuations without weakening identity checks. Hidden
+summaries and opaque blobs keep their existing cache representation. It does not change streaming selection or Chat
 model routes. Go fixtures cover Luna, Grok and Muse against both response formats.
 
 The canonical OpenCode Go transport also derives `x-opencode-session` from the existing hashed

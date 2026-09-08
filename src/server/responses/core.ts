@@ -347,6 +347,7 @@ import {
 } from "../responses-item-id-repair";
 import {
   createReasoningSummaryChannelPayloadRewrite,
+  rewriteReasoningSummaryInJson,
   rewriteReasoningSummaryInJsonString,
   routeUsesContentChannelReasoning,
 } from "../responses-reasoning-summary-rewrite";
@@ -4730,6 +4731,11 @@ async function handleResponsesInner(
       const restoredResponse = (functionRepairSchemas.size > 0
         ? JSON.parse(normalizeFunctionCompletionJson(JSON.stringify(restored)))
         : restored) as { id?: unknown; output?: unknown; status?: unknown };
+      // Replay overlap compares the items the client echoes, including visible reasoning shape.
+      const replayResponse = parsed.options.hideThinkingSummary !== true
+        && routeUsesContentChannelReasoning(route.provider, route.modelId)
+        ? rewriteReasoningSummaryInJson(restoredResponse) as typeof restoredResponse
+        : restoredResponse;
       if (
         undeclaredToolGuardActive
         && undeclaredToolCallNameInResponse(
@@ -4741,7 +4747,7 @@ async function handleResponsesInner(
       ) {
         return;
       }
-      rememberPassthroughResponse?.(restoredResponse);
+      rememberPassthroughResponse?.(replayResponse);
       const firstCompletion = !inspectedCompletionSeen;
       inspectedCompletionSeen = true;
       if (firstCompletion && (inspectedTerminal === null || firstTerminalAllowsRecall)) {

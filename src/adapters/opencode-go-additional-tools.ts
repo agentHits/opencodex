@@ -3,15 +3,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Console Go accepts public tools but rejects the private additional_tools input wrapper. */
-export function normalizeOpenCodeGoAdditionalTools(body: unknown, baseUrl: string): unknown {
+export function normalizeOpenCodeGoAdditionalTools(body: unknown, responseUrl: string): unknown {
   let destination: URL;
   try {
-    destination = new URL(baseUrl);
+    destination = new URL(responseUrl);
   } catch {
     return body;
   }
   if (destination.origin !== "https://opencode.ai"
-    || !/^\/zen\/go\/v1\/?$/.test(destination.pathname)
+    || destination.pathname !== "/zen/go/v1/responses"
     || destination.username || destination.password
     || destination.href.includes("?") || destination.href.includes("#")) return body;
   if (!isRecord(body) || !Array.isArray(body.input)) return body;

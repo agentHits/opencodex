@@ -28,3 +28,13 @@ Hosted verification: PR CI covers changed runtime and provider suites, with fina
 ## wp1 P refresh
 
 Previous wp0 D directs Go residual implementation. During live refresh dev advanced to c15662855 (#3975), changing only tests/codex-integration/codex-prompt-text-probe.test.ts. Hook-disabled merge incorporated that unrelated probe fixture correction before B; Go owners and this design are unchanged. The initial A narrative said unchanged dev based on the pre-fetch snapshot; this entry corrects it.
+
+## C audit foldback and repair plan
+
+Independent review at 9b42c1a80 found two blockers. F1 accepted: the stateless flag enables content-to-summary output normalization, but the continuation cache records original output; full-history overlap then fails. The adapter-only full-history fixture bypassed the affected server boundary. F2 accepted: baseUrl-only matching misses split/endpoint-inclusive configurations and can affect an overridden non-Go resource. Neither finding conflicts with preserving opaque items or existing fail-closed policy.
+
+Repair F1: MODIFY `src/server/responses/core.ts` at `rememberPassthroughResponseChecked` only. After current namespace/custom/function restoration, apply existing `rewriteReasoningSummaryInJson` under the same `hideThinkingSummary !== true && routeUsesContentChannelReasoning(provider, model)` condition as client output, then record that representation. Preserve item content and IDs under the existing opaque-item rule; do not weaken overlap comparison or use ID-only matching. This aligns stored output with the actual client serialization for SSE and JSON. Extend the current Go server fixture to send actual full-history plus previous_response_id and assert each prior call/message occurs exactly once; retain delta replay and hiding/opaque controls. The shared callback is an explicit narrow scope expansion required by this newly activated path, not unrelated state refactoring.
+
+Repair F2: the helper now accepts the final resolved Responses request URL already built by the adapter. Match exact origin and `/zen/go/v1/responses`, rejecting userinfo/query/fragment. Positive fixtures cover normal base, endpoint-inclusive base and split custom path; negative fixtures cover an override resolving to Zen/non-Go and assert both actual request URL and body. Update destination wording in docs and preserve all prior host/port/immutability controls.
+
+Re-review the repaired diff with the same implementation auditor; retain CI failures and repair evidence. No local product commands are authorized.

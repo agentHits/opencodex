@@ -104,21 +104,29 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => { globalThis.fetch = originalFetch; });
 
-  for (const model of GO_RESPONSES_MODELS) for (const streaming of [true, false]) {
-    test(`${model} preserves reasoning and tool history across two ${streaming ? "SSE" : "JSON"} turns`, async () => {
+  const continuations = [
+    { id: "full", name: "full history", fullHistory: true, summary: "auto" },
+    { id: "delta", name: "delta", fullHistory: false, summary: "auto" },
+    { id: "hidden", name: "hidden-summary full history", fullHistory: true, summary: "none" },
+  ];
+  for (const model of GO_RESPONSES_MODELS) for (const streaming of [true, false]) for (const continuation of continuations) {
+    test(`${model} preserves ${continuation.name} across two ${streaming ? "SSE" : "JSON"} turns`, async () => {
       const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
       // Opaque synthetic provider state, never a real credential or decrypted task.
       const blob = "provider-minted-go-reasoning-state";
-      const prefix = `${model.replaceAll(".", "_")}_${streaming ? "sse" : "json"}`;
+      const prefix = `${model.replaceAll(".", "_")}_${streaming ? "sse" : "json"}_${continuation.id}`;
       const reasoning = [
         { type: "reasoning", id: `rs_${prefix}_summary`, status: "completed", summary: [{ type: "summary_text", text: "Already summarized" }] },
         { type: "reasoning", id: `rs_${prefix}_content`, status: "completed", content: [{ type: "reasoning_text", text: "Visible thinking" }], summary: [] },
         { type: "reasoning", id: `rs_${prefix}_blob`, status: "completed", content: [{ type: "reasoning_text", text: "Opaque item trace" }], summary: [], encrypted_content: blob },
       ];
       const call = { type: "function_call", id: `fc_${prefix}`, status: "completed", call_id: `call_${prefix}`, name: "probe", arguments: "{}" };
+      const priorMessage = { type: "message", id: `msg_${prefix}_prior`, status: "completed", role: "assistant",
+        content: [{ type: "output_text", text: "Probe requested", annotations: [] }],
+      };
       globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         requests.push({ url: String(input), body: JSON.parse(String(init?.body ?? "{}")) });
-        const output = requests.length === 1 ? [...reasoning, call] : [{
+        const output = requests.length === 1 ? [...reasoning, call, priorMessage] : [{
           type: "message", id: `msg_${prefix}`, status: "completed", role: "assistant",
           content: [{ type: "output_text", text: "Continuation accepted", annotations: [] }],
         }];
@@ -141,7 +149,7 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
       const drive = async (body: Record<string, unknown>) => {
         const response = await handleResponses(new Request("http://localhost/v1/responses", {
           method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ model: `opencode-go/${model}`, stream: streaming, reasoning: { summary: "auto" },
+          body: JSON.stringify({ model: `opencode-go/${model}`, stream: streaming, reasoning: { summary: continuation.summary },
             tools: [{ type: "function", name: "probe", parameters: { type: "object" } }], ...body }),
         }), config, { model: "", provider: "" }, { inboundWire: "responses" });
         expect(response.status).toBe(200);
@@ -155,39 +163,30 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
       const initial = { type: "message", role: "user", content: [{ type: "input_text", text: "Run probe" }] };
       const first = await drive({ input: [initial] });
       expect(first.document.output[0]).toEqual(reasoning[0]);
-      expect(first.document.output[1]).toEqual({
+      expect(first.document.output[1]).toEqual(continuation.summary === "auto" ? {
         type: "reasoning", id: `rs_${prefix}_content`, status: "completed", summary: [{ type: "summary_text", text: "Visible thinking" }],
-      });
+      } : reasoning[1]);
       expect(first.document.output[2]).toEqual(reasoning[2]);
       expect(first.document.output[3]).toMatchObject(call);
+      expect(first.document.output[4]).toEqual(priorMessage);
       if (streaming) {
-        expect(first.text).toContain('"type":"response.reasoning_summary_text.delta"');
-        expect(first.text).not.toContain('"type":"response.reasoning_text.delta"');
+        const channel = continuation.summary === "auto" ? "reasoning_summary_text" : "reasoning_text";
+        expect(first.text).toContain(`"type":"response.${channel}.delta"`);
       }
       const result = { type: "function_call_output", call_id: call.call_id, output: "probe succeeded" };
-      // Explicit full-history serialization is independent of cache overlap detection: the
-      // cache stores upstream content-channel shapes, while the client saw summary shapes.
-      const fullHistory = { model, input: [initial, ...first.document.output, result],
-        previous_response_id: first.document.id, store: true, stream: streaming,
+      // Echo exactly the client-visible history through handleResponses. An upstream-shape
+      // cache would prepend it again after the content-to-summary rewrite (F1).
+      const nextBody = {
+        input: continuation.fullHistory ? [initial, ...first.document.output, result] : [result],
+        previous_response_id: first.document.id, store: true,
         conversation: "conversation_fixture", background: true, metadata: { fixture: "go" }, prompt: { id: "prompt_fixture" },
       };
-      const originalHistory = structuredClone(fullHistory);
-      const parsed = parseRequest(fullHistory);
-      parsed._previousResponseInputExpanded = true;
-      const adapter = withTestTranslatorBudget(createResponsesPassthroughAdapter({ ...opencodeGo(), adapter: "openai-responses" }));
-      const explicit = JSON.parse(adapter.buildRequest(parsed).body);
+      const originalHistory = structuredClone(nextBody);
+      const second = await drive(nextBody);
       for (const field of ["previous_response_id", "conversation", "background", "metadata", "prompt"]) {
-        expect(explicit[field]).toBeUndefined();
+        expect(requests[1]!.body[field]).toBeUndefined();
       }
-      expect(explicit.store).toBe(false);
-      expect(explicit.input).toContainEqual(result);
-      expect(JSON.stringify(explicit.input)).toContain("Visible thinking");
-      expect(explicit.input).toContainEqual(expect.objectContaining({ type: "reasoning", encrypted_content: blob }));
-      expect(fullHistory).toEqual(originalHistory);
-      // A delta continuation exercises the server's real stored-history expansion.
-      const second = await drive({
-        input: [result], previous_response_id: first.document.id,
-      });
+      expect(nextBody).toEqual(originalHistory);
       expect(second.text).toContain("Continuation accepted");
       expect(requests).toHaveLength(2);
       for (const request of requests) {
@@ -201,8 +200,16 @@ describe("OpenCode Go stateless reasoning and continuation routes", () => {
         expect.objectContaining({ call_id: call.call_id, name: "probe", arguments: "{}" }),
       ]);
       expect(replay.filter(item => item.type === "function_call_output")).toEqual([result]);
+      expect(replay.filter(item => item.type === "message" && item.role === "user")).toEqual([initial]);
+      expect(replay.filter(item => item.type === "message" && item.role === "assistant")).toEqual([
+        expect.objectContaining({ role: "assistant", content: priorMessage.content }),
+      ]);
+      expect(replay.filter(item => item.type === "reasoning")).toHaveLength(3);
       expect(replay).toContainEqual(expect.objectContaining({ type: "reasoning", encrypted_content: blob }));
       expect(JSON.stringify(replay)).toContain("Already summarized");
+      if (continuation.summary === "auto") expect(replay).toContainEqual(expect.objectContaining({
+        type: "reasoning", summary: [{ type: "summary_text", text: "Visible thinking" }],
+      }));
       expect(JSON.stringify(replay)).not.toContain("no tool result was recorded");
     });
   }

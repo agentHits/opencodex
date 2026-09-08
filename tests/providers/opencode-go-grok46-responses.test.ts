@@ -210,12 +210,12 @@ describe("OpenCode Go additional_tools placement", () => {
     expect((sent.input as Array<{ type: string }>).some(item => item.type === "additional_tools")).toBe(false);
   });
 
-  test.each(["https://opencode.ai/zen/go/v1", "https://opencode.ai:443/zen/go/v1/"])(
-    "promotes only wrappers on %s without mutating frozen caller data", baseUrl => {
+  test.each(["https://opencode.ai/zen/go/v1/responses", "https://opencode.ai:443/zen/go/v1/responses"])(
+    "promotes only wrappers on %s without mutating frozen caller data", responseUrl => {
       const message = Object.freeze({ type: "message", role: "user", content: "keep" });
       const tools = Object.freeze([lookup]);
       const raw = Object.freeze({ input: Object.freeze([message, Object.freeze({ type: "additional_tools", tools })]) });
-      const result = normalizeOpenCodeGoAdditionalTools(raw, baseUrl) as { input: unknown[]; tools: unknown[] };
+      const result = normalizeOpenCodeGoAdditionalTools(raw, responseUrl) as { input: unknown[]; tools: unknown[] };
       expect(result).not.toBe(raw);
       expect(result.input).toEqual([message]);
       expect(result.input[0]).toBe(message);
@@ -226,9 +226,37 @@ describe("OpenCode Go additional_tools placement", () => {
   );
 
   test.each([
+    { baseUrl: "https://opencode.ai/zen/go/v1" },
+    { baseUrl: "https://opencode.ai:443/zen/go/v1/" },
+    { baseUrl: "https://opencode.ai/zen/go/v1//" },
+    { baseUrl: "https://opencode.ai/zen/go/v1/responses" },
+    { baseUrl: "https://opencode.ai", responsesPath: "/zen/go/v1/responses" },
+  ])("promotes on the final Go endpoint for $baseUrl", destination => {
+    const raw = { input: [{ type: "additional_tools", tools: [lookup] }] };
+    const request = buildRequest("gpt-5.6-luna", raw, { ...provider(), ...destination });
+    expect(new URL(request.url).href).toBe("https://opencode.ai/zen/go/v1/responses");
+    expect(JSON.parse(request.body)).toMatchObject({ input: [], tools: [lookup] });
+  });
+
+  test("a custom path overriding a Go base does not inherit Go placement", () => {
+    const raw = { input: [{ type: "additional_tools", tools: [lookup] }] };
+    const request = buildRequest("gpt-5.6-luna", raw, { ...provider(), responsesPath: "/../../v1/responses" });
+    expect(new URL(request.url).href).toBe("https://opencode.ai/zen/v1/responses");
+    expect(JSON.parse(request.body).input).toEqual(raw.input);
+  });
+
+  test.each([
+    "https://opencode.ai/zen/go/v1", "https://opencode.ai/zen/go/v1/responses/",
+    "https://opencode.ai/zen/go/v1//responses",
+  ])("leaves a noncanonical final resource %s unchanged", responseUrl => {
+    const raw = { input: [{ type: "additional_tools", tools: [lookup] }] };
+    expect(normalizeOpenCodeGoAdditionalTools(raw, responseUrl)).toBe(raw);
+  });
+
+  test.each([
     "https://opencode.ai/zen/v1", "https://opencode.ai.evil.test/zen/go/v1",
     "http://opencode.ai/zen/go/v1", "https://opencode.ai:444/zen/go/v1",
-    "https://opencode.ai/zen/go/v10", "https://opencode.ai/zen/go/v1//",
+    "https://opencode.ai/zen/go/v10",
     (() => {
       const url = new URL("https://opencode.ai/zen/go/v1");
       url.username = "fixture-user";
@@ -239,8 +267,9 @@ describe("OpenCode Go additional_tools placement", () => {
     "https://opencode.ai/zen/go/v1#fragment", "https://example.test/v1",
   ])("does not promote for unapproved destination %s", baseUrl => {
     const raw = { input: [{ type: "additional_tools", tools: [lookup] }] };
-    expect(normalizeOpenCodeGoAdditionalTools(raw, baseUrl)).toBe(raw);
-    expect(build("gpt-5.6-luna", raw, provider(baseUrl)).input).toEqual(raw.input);
+    const request = buildRequest("gpt-5.6-luna", raw, provider(baseUrl));
+    expect(normalizeOpenCodeGoAdditionalTools(raw, request.url)).toBe(raw);
+    expect(JSON.parse(request.body).input).toEqual(raw.input);
   });
 
   test("keeps forward wrappers and mixed ciphertext unchanged", () => {
@@ -258,7 +287,7 @@ describe("OpenCode Go additional_tools placement", () => {
     for (const raw of [null, [], { input: "ping" }, { input: [] },
       { input: [{ type: "additional_tools", tools: null }] },
       { tools: null, input: [{ type: "additional_tools", tools: [lookup] }] },
-    ]) expect(normalizeOpenCodeGoAdditionalTools(raw, provider().baseUrl)).toBe(raw);
+    ]) expect(normalizeOpenCodeGoAdditionalTools(raw, "https://opencode.ai/zen/go/v1/responses")).toBe(raw);
     const malformed = { type: "additional_tools", tools: null };
     expect(build("gpt-5.6-luna", { input: [malformed, { type: "additional_tools", tools: [] }] }))
       .toMatchObject({ input: [malformed], tools: [] });
