@@ -465,6 +465,19 @@ cause delegation. The TOML edit owns only marker-tagged values, preserves existi
 user-owned `[agents]` defaults rather than overwriting them, and rejects ambiguous table shapes
 without changing the file.
 
+V2 proxy guidance uses `<opencodex_subagent_guidance>` for both built-in metadata and
+custom `injectionPrompt` bodies. The built-in text reports the resolved preferred model,
+effort, roster and fallback chain without prescribing delegation, spawn overrides or
+`fork_turns`. Custom bodies retain their placeholder behavior. The guidance switch and
+catalog-state gates still apply; stale or unknown catalog state suppresses proxy guidance.
+V1 retains its `<multi_agent_mode>` proactive text at `max` or `ultra`.
+
+Replay deduplication compares the latest exact generated developer text separately for
+each tag family, preserving built-in → custom → built-in transitions without duplicating
+unchanged proxy metadata after a native policy change. Native and legacy-tagged history
+remain intact: tags do not establish historical authorship or revoke old instructions,
+and mixed-version transition detection is not guaranteed.
+
 Claude Code `ocx-*` agent definitions consume the same effective `claudeCode.blockedSkills` policy
 as inbound bundle elision. When the list is non-empty (default: `claude-api`), generated definitions
 whose marker-stripped model resolves to a routed id receive a preventive instruction not to invoke
