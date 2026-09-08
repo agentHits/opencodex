@@ -6,8 +6,8 @@ import {
   mapStreamMessageToEvents,
   readJsonLines,
   usageFromResult,
-} from "../src/adapters/coding-agent/protocol";
-import type { OcxParsedRequest } from "../src/types";
+} from "../../src/adapters/coding-agent/protocol";
+import type { OcxParsedRequest } from "../../src/types";
 
 // The stream-json protocol for coding-agent CLIs
 // (src/adapters/coding-agent/protocol.ts); these fixtures exercise it via CodeBuddy frames.
