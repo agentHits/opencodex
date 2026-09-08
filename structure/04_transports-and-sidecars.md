@@ -1785,3 +1785,13 @@ The field is omitted when no classified recovery result exists, and existing com
 branches that return the original target failure keep that response.
 `recovery_unavailable` includes cache/singleflight capacity and does not prove an
 upstream request was attempted. No retry or broader envelope acceptance is enabled.
+
+## Voice diagnostic metadata
+
+`src/server/live.ts` owns optional `OCX_LIVE_FRAME_LOG` diagnostics for both sideband directions.
+The JSONL schema contains only `ts`, `dir`, `kind`, `bytes`, and `fffd`. It never stores frame
+content or transcript excerpts, and logging failures do not affect transparent frame delivery.
+Binary detection decodes only the supplied buffer view; malformed UTF-8 can itself produce U+FFFD,
+so the flag does not identify the peer responsible for corruption. Existing diagnostic files are
+not rewritten. Audio devices, WebRTC media negotiation, captions and spoken handoff delivery remain
+client responsibilities.
