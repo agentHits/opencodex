@@ -1000,6 +1000,17 @@ export function proxyDownRestartHint(input: {
   return `The ocx proxy is not running. ${uncleanExit}Codex/Claude clients pinned to 127.0.0.1:${input.port} fail with errors like "error sending request for url (http://127.0.0.1:${input.port}/v1/responses)". ${restart}`;
 }
 
+/** Explain the expected channel and latency trade-off for native ChatGPT routing. */
+export function chatgptPublicEndpointHint(
+  providers: Record<string, unknown> | undefined,
+): string | null {
+  const openai = providers?.openai;
+  if (!openai || typeof openai !== "object" || (openai as { adapter?: unknown }).adapter !== "openai-responses") {
+    return null;
+  }
+  return "ChatGPT-family requests use the public ChatGPT endpoint through this proxy, so upstream queue delay before the first output can be higher than DeepSeek/Kimi. The native Codex app channel is unavailable through the proxy pool; use a latency-sensitive provider or run Codex natively when that channel matters. service_tier=priority is a request preference; inspect response tier in logs to see what the backend granted.";
+}
+
 export async function runDoctor(args: string[] = []): Promise<void> {
   if (args.includes("--fix-codex-runtime")) {
     const resolved = resolveCodexRuntime();
@@ -1330,6 +1341,8 @@ export async function runDoctor(args: string[] = []): Promise<void> {
 
   // Hints, not fixes.
   const hints: string[] = [];
+  const chatgptHint = chatgptPublicEndpointHint(doctorConfig.providers);
+  if (chatgptHint) hints.push(chatgptHint);
   const proxyDown = proxyDownRestartHint({
     proxyRunning: Boolean(live),
     port: live?.port ?? doctorConfig.port ?? 10100,

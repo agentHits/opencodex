@@ -12,6 +12,7 @@ import {
   collectConfiguredProxy,
   collectProxyEnv,
   collectRunningProxyEnv,
+  chatgptPublicEndpointHint,
   collectWslDualInstall,
   fetchServiceMemory,
   formatResponseTempLines,
@@ -639,6 +640,15 @@ describe("service memory section (#314 WP4)", () => {
     expect(hint).toContain("127.0.0.1:10100");
     expect(hint).toContain("ocx start");
     expect(hint).toContain("ocx service install");
+  });
+
+  test("ChatGPT public endpoint hint explains channel latency without claiming a fixed delay", () => {
+    const hint = chatgptPublicEndpointHint({ openai: { adapter: "openai-responses" } });
+    expect(hint).toContain("public ChatGPT endpoint");
+    expect(hint).toContain("native Codex app channel");
+    expect(hint).toContain("DeepSeek/Kimi");
+    expect(hint).not.toContain("11s");
+    expect(chatgptPublicEndpointHint({})).toBeNull();
   });
 
   test("proxyDownRestartHint prefers 'ocx service start' when a service is installed", () => {

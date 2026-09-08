@@ -76,6 +76,18 @@ adding a `[features]` table.
 Fast mode is separate from voice transport. A supported model's service-tier speed description
 does not guarantee lower microphone, WebRTC, or end-to-end voice latency through OpenCodex.
 
+### ChatGPT-family channel and latency
+
+Native ChatGPT-family requests routed through opencodex use the public ChatGPT endpoint. The
+native Codex app channel is not available through the proxy pool, so the upstream may spend time
+queueing a request before the first output even when the local proxy and network path are healthy.
+This channel difference can make the same request feel slower than a DeepSeek or Kimi provider.
+
+`service_tier: priority` is a request preference. It does not prove that the upstream granted that
+tier. Check the response tier shown in request logs when you need to distinguish the requested
+preference from the backend's decision. For latency-sensitive work, choose a provider with a
+shorter observed queue or run Codex natively when the app channel is required.
+
 The proxy listens on port `10100` by default and serves `POST /v1/responses`,
 `POST /v1/responses/compact`, `POST /v1/images/generations`, `POST /v1/images/edits`,
 `GET /v1/models`, `GET /healthz`, and the `/api/*` management surface.
