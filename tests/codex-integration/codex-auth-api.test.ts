@@ -24,6 +24,7 @@ import {
   getCodexAccountCredential,
   listCodexAccountIds,
   readCodexAccountRecord,
+  removeCodexAccountCredential,
   saveCodexAccountCredential,
 } from "../../src/codex/account-store";
 import * as accountStoreModule from "../../src/codex/account-store";
@@ -32,12 +33,17 @@ import { getMainAccountInfoCache, observeMainQuotaCredential } from "../../src/c
 import { openManualResetCreditOperation } from "../../src/codex/reset-credit-operation-ledger";
 import {
   clearCodexUpstreamHealth,
+  clearCodexUpstreamHealthForAccount,
+  getCodexQuotaHealthSnapshot,
+  claimManualResetCooldowns,
+  settleManualResetCooldown,
   clearThreadAccountMap,
   getCodexUpstreamHealth,
   recordCodexUpstreamOutcome,
   resetCodexRoutingForManualSelection,
   resolveCodexAccountForThread,
 } from "../../src/codex/routing";
+import { pinnedCodexAccountId, setCodexAccountPin } from "../../src/codex/account-priority";
 import { clearPoolRotationState } from "../../src/codex/pool-rotation";
 import {
   clearCodexWebSocketRegistry,
@@ -972,13 +978,13 @@ describe("codex-auth API", () => {
     }
   });
 
-  test("busy pool-quota probe maps reset-credit refresh to 503 server_busy with Retry-After 1", async () => {
+  test("busy usage observation preserves confirmed reset success without a retry directive", async () => {
     const config = makeConfig();
     seedPoolAccount(config, { id: "quota-reset-busy", email: "busy@example.test" });
     const cleanup = seedCodexAuthAdmissionForTests({ quotaFlights: 16 });
     globalThis.fetch = (async (input: RequestInfo | URL) => String(input).includes("/consume")
       ? Response.json({ code: "reset" })
-      : previousFetch(input)) as typeof fetch;
+      : Promise.reject(new Error("unexpected mock URL"))) as typeof fetch;
     try {
       const req = new Request("http://localhost/api/codex-auth/reset-credits/consume", {
         method: "POST",
@@ -986,9 +992,9 @@ describe("codex-auth API", () => {
         body: JSON.stringify({ accountId: "quota-reset-busy" }),
       });
       const response = await handleCodexAuthAPI(req, new URL(req.url), config);
-      expect(response?.status).toBe(503);
-      expect(response?.headers.get("Retry-After")).toBe("1");
-      expect(await response?.json()).toMatchObject({ code: "server_busy" });
+      expect(response?.status).toBe(200);
+      expect(response?.headers.get("Retry-After")).toBeNull();
+      expect(await response?.json()).toEqual({ code: "reset" });
     } finally {
       cleanup();
     }
@@ -5452,5 +5458,292 @@ describe("codex-auth helpers", () => {
     expect(isAccountNeedsReauth(id)).toBe(true);
     clearAccountNeedsReauth(id);
     expect(isAccountNeedsReauth(id)).toBe(false);
+  });
+});
+
+
+describe("manual reset cooldown recovery (#3973)", () => {
+  const USAGE = "https://chatgpt.com/backend-api/wham/usage";
+  const CONSUME = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
+  const OP = "be810596-310c-4c21-95cb-e47f984398a0";
+  function gate() {
+    let release!: () => void;
+    const promise = new Promise<void>(resolve => { release = resolve; });
+    return { promise, release };
+  }
+  function usage(percent = 12) {
+    return { plan_type: "team", rate_limit: { secondary_window: { used_percent: percent } },
+      rate_limit_reset_credits: { available_count: 2 } };
+  }
+  function setup() {
+    const config = makeConfig({ activeCodexAccountId: "manual-a", accountPoolStrategy: "fill-first" });
+    seedPoolAccount(config, { id: "manual-a", email: "manual@example.test", plan: "team" });
+    setCodexAccountPin(config, "manual-a");
+    cool(config, "manual-a");
+    return config;
+  }
+  function cool(config: OcxConfig, id: string, modelId = "gpt-5.6-sol", now = Date.now()) {
+    recordCodexUpstreamOutcome(config, id, 429, { now, resetAt: now + 3_600_000, modelId, fixedAccount: true });
+  }
+  function consume(config: OcxConfig, id = "manual-a", operationId = OP) {
+    const req = new Request("http://localhost/api/codex-auth/reset-credits/consume", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: id, operationId }),
+    });
+    return handleCodexAuthAPI(req, new URL(req.url), config);
+  }
+  function mock(consumeResponse: () => Response | Promise<Response>, usageResponse: () => Response | Promise<Response>) {
+    const urls: string[] = [];
+    globalThis.fetch = (async input => {
+      const url = String(input);
+      urls.push(url);
+      if (url === CONSUME) return consumeResponse();
+      if (url === USAGE) return usageResponse();
+      throw new Error("unexpected mock URL");
+    }) as typeof fetch;
+    return urls;
+  }
+
+  test.each(["reset", "already_redeemed", "nothing_to_reset", "no_credit", "unknown"])(
+    "only a new reset recovers, preserving pin/selection and other scopes: %s", async code => {
+      const config = setup();
+      cool(config, "manual-a", "gpt-5.3-codex-spark");
+      cool(config, "manual-a", "gpt-reserve");
+      const spark = getCodexQuotaHealthSnapshot("manual-a", "spark");
+      const reserve = getCodexQuotaHealthSnapshot("manual-a", "reserve");
+      const urls = mock(() => Response.json({ code }), () => Response.json(usage()));
+      const result = await consume(config);
+      expect(result?.status).toBe(200);
+      expect(getCodexQuotaHealthSnapshot("manual-a", "shared") === null).toBe(code === "reset");
+      expect(getCodexQuotaHealthSnapshot("manual-a", "spark")).toEqual(spark);
+      expect(getCodexQuotaHealthSnapshot("manual-a", "reserve")).toEqual(reserve);
+      expect(config.activeCodexAccountId).toBe("manual-a");
+      expect(pinnedCodexAccountId(config)).toBe("manual-a");
+      expect(urls).toEqual(code === "reset" || code === "already_redeemed" ? [CONSUME, USAGE] : [CONSUME]);
+      if (code === "reset") {
+        cool(config, "manual-a");
+        const replay = await consume(config);
+        expect(await replay?.json()).toEqual({ code: "reset", replayed: true });
+        expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).not.toBeNull();
+        expect(urls).toEqual([CONSUME, USAGE]);
+      }
+    },
+  );
+
+  test.each(["credits-only", "exhausted", "short-exhausted", "tertiary-only", "empty", "non-2xx", "malformed", "timeout"])(
+    "confirmed reset stays successful but incomplete/failed observation retains cooldown: %s", async kind => {
+      const config = setup();
+      const urls = mock(() => Response.json({ code: "reset" }), () => {
+        if (kind === "timeout") throw new DOMException("fixture", "TimeoutError");
+        if (kind === "non-2xx") return new Response("fixture", { status: 503 });
+        if (kind === "malformed") return new Response("not-json");
+        if (kind === "empty") return Response.json({});
+        if (kind === "credits-only") return Response.json({ rate_limit_reset_credits: { available_count: 2 } });
+        if (kind === "tertiary-only") return Response.json({ plan_type: "team", rate_limit: { tertiary_window: { used_percent: 5 } } });
+        if (kind === "short-exhausted") return Response.json({ ...usage(), rate_limit: {
+          primary_window: { used_percent: 100, limit_window_seconds: 18_000 }, secondary_window: { used_percent: 12 },
+        } });
+        return Response.json(usage(100));
+      });
+      expect((await consume(config))?.status).toBe(200);
+      expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).not.toBeNull();
+      const nextClaims = claimManualResetCooldowns(config, "manual-a");
+      expect(nextClaims).toHaveLength(1);
+      for (const claim of nextClaims) settleManualResetCooldown(config, claim, false);
+      expect(await (await consume(config))?.json()).toEqual({ code: "reset", replayed: true });
+      expect(urls).toEqual([CONSUME, USAGE]);
+    },
+  );
+
+  test("recovery never follows a physical-account match to another local alias", async () => {
+    const config = setup();
+    seedPoolAccount(config, { id: "manual-alias", email: "alias@example.test", plan: "team", chatgptAccountId: "acct-manual-a" });
+    cool(config, "manual-alias");
+    const untouched = getCodexQuotaHealthSnapshot("manual-alias", "shared");
+    const urls = mock(() => Response.json({ code: "reset" }), () => Response.json(usage()));
+    expect((await consume(config))?.status).toBe(200);
+    expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toBeNull();
+    expect(getCodexQuotaHealthSnapshot("manual-alias", "shared")).toEqual(untouched);
+    expect(urls).toEqual([CONSUME, USAGE]);
+  });
+
+  test.each(["team", "go", "free"])("monthly governing usage can recover %s", async plan => {
+    const config = setup();
+    const urls = mock(() => Response.json({ code: "reset" }), () => Response.json({ plan_type: plan,
+      rate_limit: { primary_window: { used_percent: 4, limit_window_seconds: 2_628_000 } },
+    }));
+    expect((await consume(config))?.status).toBe(200);
+    expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toBeNull();
+    expect(urls).toEqual([CONSUME, USAGE]);
+  });
+
+  test.each(["throw", "non-2xx", "unknown"])("ambiguous consume releases only its own cooldown claim: %s", async failure => {
+    const config = setup();
+    const urls = mock(() => {
+      if (failure === "throw") throw new Error("fixture");
+      return failure === "non-2xx" ? new Response("fixture", { status: 503 }) : Response.json({ code: "unknown" });
+    }, () => Response.json(usage()));
+    const response = await consume(config);
+    expect(response?.status).toBe(failure === "throw" ? 500 : failure === "non-2xx" ? 503 : 200);
+    expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).not.toBeNull();
+    const claims = claimManualResetCooldowns(config, "manual-a");
+    expect(claims).toHaveLength(1);
+    for (const claim of claims) settleManualResetCooldown(config, claim, false);
+    expect(urls).toEqual([CONSUME]);
+  });
+
+  test("post-reset 401 refresh carries the successful replay's dispatch and credential proof", async () => {
+    const config = setup(); const generation = readCodexAccountRecord("manual-a")!.generation;
+    const urls: string[] = []; let reads = 0;
+    globalThis.fetch = (async input => {
+      const url = String(input); urls.push(url);
+      if (url === CONSUME) return Response.json({ code: "reset" });
+      if (url === USAGE) return ++reads === 1 ? new Response("{}", { status: 401 }) : Response.json(usage());
+      if (url === "https://auth.openai.com/oauth/token") return Response.json({
+        access_token: "refreshed-access", refresh_token: "refreshed-refresh", expires_in: 3600,
+      });
+      throw new Error("unexpected mock URL");
+    }) as typeof fetch;
+    expect((await consume(config))?.status).toBe(200);
+    expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toBeNull();
+    expect(readCodexAccountRecord("manual-a")!.generation).toBe(generation + 1);
+    expect(urls).toEqual([CONSUME, USAGE, "https://auth.openai.com/oauth/token", USAGE]);
+  });
+
+  test.each(["consume", "usage"])("new 429 during %s survives the old reset claim", async stage => {
+    const config = setup();
+    const started = gate(); const finish = gate();
+    let later: ReturnType<typeof getCodexQuotaHealthSnapshot>;
+    mock(async () => {
+      if (stage === "consume") { started.release(); await finish.promise; }
+      return Response.json({ code: "reset" });
+    }, async () => {
+      if (stage === "usage") { started.release(); await finish.promise; }
+      return Response.json(usage());
+    });
+    const pending = consume(config);
+    try {
+      await started.promise;
+      cool(config, "manual-a", "gpt-5.6-sol", Date.now() + 1);
+      later = getCodexQuotaHealthSnapshot("manual-a", "shared");
+    } finally { finish.release(); }
+    expect((await pending)?.status).toBe(200);
+    expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toEqual(later!);
+  });
+
+  test.each(["replace", "remove", "readd", "pause", "recreate"])("usage cannot recover after %s", async change => {
+    const config = setup(); const started = gate(); const finish = gate();
+    mock(() => Response.json({ code: "reset" }), async () => {
+      started.release(); await finish.promise; return Response.json(usage());
+    });
+    const pending = consume(config);
+    try {
+      await started.promise;
+      if (change === "replace") saveCodexAccountCredential("manual-a", {
+        accessToken: "replacement", refreshToken: "replacement-refresh", expiresAt: Date.now() + 3_600_000,
+        chatgptAccountId: "replacement-account",
+      });
+      if (change === "remove") config.codexAccounts = [];
+      if (change === "readd") {
+        removeCodexAccountCredential("manual-a");
+        saveCodexAccountCredential("manual-a", { accessToken: "readded-access", refreshToken: "readded-refresh",
+          expiresAt: Date.now() + 3_600_000, chatgptAccountId: "acct-manual-a" });
+      }
+      if (change === "pause") config.pausedCodexAccountIds = ["manual-a"];
+      if (change === "recreate") { clearCodexUpstreamHealthForAccount("manual-a"); cool(config, "manual-a"); }
+    } finally { finish.release(); }
+    expect((await pending)?.status).toBe(200);
+    expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).not.toBeNull();
+    if (change === "pause") expect(config.pausedCodexAccountIds).toEqual(["manual-a"]);
+  });
+
+  test.each([false, true])("old usage cannot prove reset or overwrite a newer observation (old finishes first=%s)", async oldFirst => {
+    const config = setup(); const oldStarted = gate(); const oldFinish = gate();
+    const freshStarted = gate(); const freshFinish = gate(); let reads = 0;
+    const urls = mock(() => Response.json({ code: "reset" }), async () => {
+      reads += 1;
+      if (reads === 1) { oldStarted.release(); await oldFinish.promise; return Response.json(usage(99)); }
+      freshStarted.release(); await freshFinish.promise; return Response.json(usage(12));
+    });
+    const frozenNow = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(frozenNow);
+    const old = listCodexAuthAccounts(config, true);
+    let reset: ReturnType<typeof consume> | undefined;
+    try {
+      await oldStarted.promise;
+      reset = consume(config);
+      await freshStarted.promise;
+      if (oldFirst) {
+        oldFinish.release(); await old;
+        expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).not.toBeNull();
+      }
+      freshFinish.release();
+      expect((await reset)?.status).toBe(200);
+      expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toBeNull();
+      oldFinish.release(); await old;
+      expect(getAccountQuota("manual-a")?.weeklyPercent).toBe(12);
+      expect(urls).toEqual([USAGE, CONSUME, USAGE]);
+    } finally {
+      oldFinish.release(); freshFinish.release();
+      await old; if (reset) await reset;
+      clock.mockRestore();
+    }
+  });
+
+  test("main reset usage does not erase an existing reauth quarantine", async () => {
+    const config = makeConfig();
+    writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({
+      tokens: { access_token: "manual-main-token", account_id: "manual-main-account" },
+    }));
+    reconcileMainCodexAccountRuntimeState();
+    cool(config, MAIN_CODEX_ACCOUNT_ID);
+    markAccountNeedsReauth(MAIN_CODEX_ACCOUNT_ID);
+    const urls = mock(() => Response.json({ code: "reset" }), () => Response.json(usage()));
+    expect((await consume(config, MAIN_CODEX_ACCOUNT_ID))?.status).toBe(200);
+    expect(isAccountNeedsReauth(MAIN_CODEX_ACCOUNT_ID)).toBe(true);
+    expect(getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, "shared")).not.toBeNull();
+    expect(urls).toEqual([CONSUME, USAGE]);
+  });
+
+  test("conflicting main token/header identity supplies no recovery proof", async () => {
+    const config = makeConfig();
+    const payload = Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "token-account" } })).toString("base64url");
+    writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({
+      tokens: { access_token: "manual-main-token", id_token: `e30.${payload}.sig`, account_id: "header-account" },
+    }));
+    reconcileMainCodexAccountRuntimeState(); cool(config, MAIN_CODEX_ACCOUNT_ID);
+    const urls = mock(() => Response.json({ code: "reset" }), () => Response.json(usage()));
+    expect(await (await consume(config, MAIN_CODEX_ACCOUNT_ID))?.json()).toEqual({ code: "reset" });
+    expect(getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, "shared")).not.toBeNull();
+    expect(urls).toEqual([CONSUME]);
+  });
+
+  test.each(["same", "bearer", "other-account", "aba"])("main recovery uses its own live credential proof: %s", async change => {
+    const config = makeConfig();
+    const writeMain = (accountId: string, accessToken = "manual-main-token") => {
+      writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({ tokens: { access_token: accessToken, account_id: accountId } }));
+    };
+    writeMain("manual-main-account"); reconcileMainCodexAccountRuntimeState();
+    cool(config, MAIN_CODEX_ACCOUNT_ID);
+    const started = gate(); const finish = gate(); let usageCalls = 0;
+    mock(() => Response.json({ code: "reset" }), async () => {
+      usageCalls += 1;
+      if (usageCalls === 1) { started.release(); await finish.promise; }
+      return Response.json(usage());
+    });
+    const pending = consume(config, MAIN_CODEX_ACCOUNT_ID);
+    try {
+      await started.promise;
+      expect(getNativeMainProfileRequestCount()).toBe(1);
+      if (change === "bearer") writeMain("manual-main-account", "replacement-main-token");
+      if (change === "other-account" || change === "aba") {
+        writeMain("other-main-account"); reconcileMainCodexAccountRuntimeState();
+        if (change === "aba") { writeMain("manual-main-account"); reconcileMainCodexAccountRuntimeState(); }
+        cool(config, MAIN_CODEX_ACCOUNT_ID);
+      }
+    } finally { finish.release(); }
+    expect((await pending)?.status).toBe(200);
+    expect(getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, "shared") === null).toBe(change === "same");
+    expect(getNativeMainProfileRequestCount()).toBe(0);
   });
 });
