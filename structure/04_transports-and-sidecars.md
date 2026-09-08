@@ -373,6 +373,22 @@ have no exec-result seam today and are not annotated.
 - 다른 대안 대신 이 방식을 선택한 이유: One-field stripping exposes the next schema mismatch and turning `external_web_access:false` into xAI live search widens the caller's network policy; destination scoping leaves custom gateways and canonical OpenAI byte-shape native.
 - 장점, 단점 및 영향: Grok 4.5/4.6 no longer fail every default Codex turn with an unsupported-argument 400; live search remains available when explicitly enabled, while cached search degrades to no hosted search on xAI rather than silently going live.
 
+### xAI string agent-message continuation
+
+`normalizeRoutedAgentMessages` owns raw Responses `agent_message` lowering. Its existing
+nonempty all-readable array behavior remains shared by non-forward destinations. The optional
+`allowStringContent` argument defaults to false and is enabled only by the non-forward adapter
+call when `isXaiResponsesDestination` recognizes HTTPS `api.x.ai` or `cli-chat-proxy.grok.com`
+on the standard port. A nonblank string becomes one `input_text` part with the original text;
+the same author/recipient attribution is retained and the private transport item id is removed.
+
+This addresses readable child-result delivery (#3907), not scheduling or decryption. Blank,
+malformed, ciphertext-only and mixed unknown/encrypted content retains the existing fail-closed
+path. Forward destinations never enable the option. The parser and encrypted-task recovery
+owners are unchanged, and no broad content-schema validation or adapter-wide string conversion
+is introduced. Mocked server fixtures cover parent, child, and parent-result continuation over
+SSE and JSON while preserving actual tool-call/result pairs.
+
 OpenCode Go documents `gpt-5.6-luna` on `/zen/go/v1/responses` while sibling models use its Chat or
 Anthropic endpoints. The built-in preset therefore selects `openai-responses` only for Luna and
 keeps the provider-wide `openai-chat` default for other non-pinned models. This endpoint correction
