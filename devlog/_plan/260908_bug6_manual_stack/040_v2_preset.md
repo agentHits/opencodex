@@ -74,3 +74,9 @@ Suggested main-owned scratch outputs: `ui-v2/source-manifest.json`, `ui-v2/reque
 
 
 Main decision: preserve original 23-file diff and all regressions. Suggested extra CLI/API test cases remain a targeted audit decision rather than mandatory scope expansion. Sync structure/03_catalog-and-subagents.md and structure/05_gui-and-management-api.md with the response-only recommendation and explicit-write behavior. Render QA uses the existing built artifact.
+
+## wp4 P refresh and artifact publication
+
+Previous wp3 D: PR3992 at3ceef0121 passed CI34181398746, target-check rerun34181398713, independent source/security audit and425page remote docs build. Proceed server-owned preset. Candidate5b60a4fa7+e5a6f35b8 was independently audited25files; all25preimage files on actual predecessor3ceef0121 equal candidatebase8000e2482. Preserve original contribution and both layers of agent guides.
+
+UI proof uses the immutable matching hosted dashboard artifact and reviewed auxiliary stdlib fixture at /tmp/ocx-bug6-prep-v2-01a07e9d/.tmp/ui-v2/server.py. No product server/build or actual account operations. Capture and inspect representative desktop/mobileEN/KO, valid/custom/restore/save/clear/missing/malformed/error cases; hosted tests retain in-place delayed-server-switch coverage. Publish only sanitized screenshot assets on an owned evidence branch via noverify push and link immutable commit URLs in this PR, so adding review evidence does not rewrite the tested product head. This evidence-only branch is not another product PR or native stack. Actual product delivery remains the one six-layer chain. Preserve asset provenance/buildGUI-tree checks and teardown proof.
