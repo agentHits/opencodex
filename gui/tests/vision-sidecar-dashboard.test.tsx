@@ -447,7 +447,7 @@ test("client compaction preference survives a successful save followed by sync f
       });
     }
     if (path.endsWith("/api/sync")) {
-      writes.push({ path, body: null });
+      writes.push({ path, body: init?.body });
       return Response.json({ error: "sync unavailable" }, { status: 503 });
     }
     return Response.json({}, { status: 503 });
@@ -466,7 +466,7 @@ test("client compaction preference survives a successful save followed by sync f
     await act(async () => { await latest!.toggleCodexClientCompaction(); });
     expect(writes).toEqual([
       { path: `${apiBase}/api/settings`, body: { codexClientCompaction: true } },
-      { path: `${apiBase}/api/sync`, body: null },
+      { path: `${apiBase}/api/sync`, body: undefined },
     ]);
     expect(latest?.settings?.codexClientCompaction).toBe(true);
     expect(latest?.settings?.catalogRefreshPending).toBe(true);
@@ -497,7 +497,7 @@ test.each([undefined, false, true])("Desktop login preference %s persists before
       return Response.json({ codexAutoStart: body.codexAutoStart, catalogRefreshPending: false });
     }
     if (path.endsWith("/api/sync")) {
-      writes.push({ path, body: null });
+      writes.push({ path, body: init?.body });
       return Response.json({ error: "sync unavailable" }, { status: 503 });
     }
     if (path.endsWith("/api/settings")) {
@@ -520,7 +520,7 @@ test.each([undefined, false, true])("Desktop login preference %s persists before
     await act(async () => { await latest!.toggleCodexDesktopAuthless(); });
     expect(writes).toEqual([
       { path: `${apiBase}/api/settings`, body: { codexDesktopAuthless: !initial } },
-      { path: `${apiBase}/api/sync`, body: null },
+      { path: `${apiBase}/api/sync`, body: undefined },
     ]);
     expect(latest?.settings?.codexDesktopAuthless).toBe(!initial);
     expect(latest?.syncError).toBe("sync unavailable");
