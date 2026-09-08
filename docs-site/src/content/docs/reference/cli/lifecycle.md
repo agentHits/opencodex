@@ -59,6 +59,10 @@ Idempotently ensure a background proxy is running, then sync its live model cata
 Restore native Codex **without** stopping the proxy — strips the injected config lines and routed
 catalog entries so plain `codex` works natively again. `eject` is an alias of `restore`.
 
+Restoration reports failure instead of replacing changed configuration files when a saved journal
+lacks the corresponding injection hashes. The current files and journal remain available for
+review; see [recovery without injection hashes](/guides/codex-integration/#recovery-without-injection-hashes).
+
 Pass `back` to either spelling to re-point plain `codex` at an already-running proxy without changing
 the proxy lifecycle:
 
@@ -213,6 +217,10 @@ installs, proxy environment/config, ChatGPT reachability, Codex plugin and proje
 and pending history migration. The Codex app-home targeting section also detects the narrow Windows
 Orca runtime-home mismatch and explains service migration when applicable. Paths shown by this
 diagnostic redact the OS username. Doctor prints repair hints but does not apply them.
+
+Project-config diagnostics ignore provider examples inside TOML multiline strings, including
+`developer_instructions`. Real provider and profile settings after the closing delimiter are still
+checked, even when an escaped quote immediately precedes that delimiter.
 
 The **OAuth reliability** section reports whether credential storage is writable, whether refresh
 single-flight/lock files can be created under `OPENCODEX_HOME`, non-healthy OAuth or Codex pool
