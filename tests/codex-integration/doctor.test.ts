@@ -967,4 +967,20 @@ describe("doctor reports an unclean prior proxy exit", () => {
 
     expect(logged.join("\n")).not.toContain("may have exited unexpectedly");
   });
+
+  test("runDoctor outputs ChatGPT public endpoint hint when openai adapter is configured", async () => {
+    const { writeFileSync } = await import("fs");
+    const { join } = await import("path");
+    writeFileSync(
+      join(tempHome, "config.json"),
+      JSON.stringify({ port: 9, codexAutoStart: false, providers: { openai: { adapter: "openai-responses" } } }),
+      "utf8",
+    );
+
+    await runDoctor([]);
+
+    const output = logged.join("\n");
+    expect(output).toContain("public ChatGPT endpoint");
+    expect(output).toContain("native Codex app channel");
+  });
 });

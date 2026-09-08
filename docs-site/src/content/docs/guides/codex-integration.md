@@ -78,10 +78,14 @@ does not guarantee lower microphone, WebRTC, or end-to-end voice latency through
 
 ### ChatGPT-family channel and latency
 
-Native ChatGPT-family requests routed through opencodex use the public ChatGPT endpoint. The
-native Codex app channel is not available through the proxy pool, so the upstream may spend time
-queueing a request before the first output even when the local proxy and network path are healthy.
-This channel difference can make the same request feel slower than a DeepSeek or Kimi provider.
+Native ChatGPT-family requests routed through opencodex via the canonical ChatGPT-login `openai`
+forward provider (covering both Pool and Direct modes) use the public ChatGPT endpoint. The
+native Codex app channel is not available through the proxy pool, and provider routing or account
+selection does not bypass the upstream ChatGPT channel. The upstream may spend time queueing a
+request before the first output even when the local proxy and network path are healthy. This
+behavior is specific to ChatGPT-login routing and does not apply to `openai-apikey` or custom
+providers, which connect directly to their respective API endpoints without public ChatGPT channel
+queueing.
 
 `service_tier: priority` is a request preference. It does not prove that the upstream granted that
 tier. Check the response tier shown in request logs when you need to distinguish the requested
