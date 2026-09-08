@@ -43,6 +43,7 @@ import {
   claimManualResetCooldowns,
   settleManualResetCooldown,
   type ManualResetCooldownClaim,
+  type ManualResetRefreshLineage,
   clearCodexAccountCooldown,
   clearThreadAccountMapForAccount,
   getEffectiveActiveCodexAccountId,
@@ -943,6 +944,10 @@ async function fetchMainAccountInfoWhileOwned(
       const terminalAuthFailure = await isTerminalMainAuthResponse(resp, isMainAccountTokenVerifiablyLive());
       const retried = await retryMainAccountInfoIfIdentityChanged(requestAccountId, retriesRemaining, nativeMainLease, explicitRefresh);
       if (retried) return retried;
+      if (dispatchSequence < mainQuotaPublishedSequence) {
+        return { info: getMainAccountInfoCache() ?? EMPTY_MAIN_ACCOUNT_INFO,
+          credentialChecked: true, hasCredential: true };
+      }
       if (terminalAuthFailure) {
         // Account for this attempt's own synchronous invalidation, never prior external drift.
         const diagnosticStillLive = isMainAccountIdentityGenerationLive(quotaRefreshGeneration);
@@ -964,6 +969,12 @@ async function fetchMainAccountInfoWhileOwned(
     quotaPhase = "decode";
     if (data === null || typeof data !== "object" || Array.isArray(data)) {
       throw new Error("Invalid WHAM usage object");
+    }
+    // Check after body/retry awaits and before any cache, credits, policy or
+    // Reserve publication. Returning cached state supplies no fresh recovery proof.
+    if (dispatchSequence < mainQuotaPublishedSequence) {
+      return { info: getMainAccountInfoCache() ?? EMPTY_MAIN_ACCOUNT_INFO,
+        credentialChecked: true, hasCredential: true };
     }
     quotaPhase = "publish";
     // A delayed response from a replaced bearer cannot revoke a newer Reserve grant,
@@ -1005,6 +1016,7 @@ async function fetchMainAccountInfoWhileOwned(
     if (result.quota) {
       setAccountQuotaFromParsed(MAIN_CODEX_ACCOUNT_ID, result.quota, writerGeneration, mainQuotaWriter, policyQuota);
     }
+    mainQuotaPublishedSequence = dispatchSequence;
     return {
       info: result,
       quotaRefresh: { status: quota ? "ok" : "not_reported" },
@@ -1036,6 +1048,8 @@ async function fetchMainAccountInfoWhileOwned(
 }
 
 interface PoolQuotaResult {
+  /** Actual refresh result attached only to the successful usage replay. */
+  resetRefreshLineage?: ManualResetRefreshLineage;
   quota: StoredAccountQuota | null;
   needsReauth: boolean;
   /** Credential generation whose cache or network result this DTO state belongs to. */
@@ -1055,6 +1069,9 @@ interface PoolQuotaResult {
 
 // Process-local ordering, never a timestamp or a serialized account identifier.
 let quotaDispatchSequence = 0;
+// Shared native-main ownership permits concurrent usage readers. Only a later
+// successfully published response advances this fence; failed reads do not win.
+let mainQuotaPublishedSequence = 0;
 
 interface PoolQuotaProbeEvidence {
   onDispatch?: (sequence: number) => void;
@@ -1314,10 +1331,18 @@ async function recoverPoolQuotaFrom401(ctx: {
     }
     return { quota: existing ?? null, needsReauth: false, credentialGeneration: refreshed.generation };
   }
-  return await commitPoolQuotaResponse(replay, {
+  const result = await commitPoolQuotaResponse(replay, {
     accountId, existing, configuredPlan, generation: refreshed.generation, writerGeneration,
     mayPublish: ctx.quotaProbeEvidence.mayPublish,
   });
+  return result.freshCredentialGeneration === refreshed.generation ? {
+    ...result,
+    resetRefreshLineage: {
+      fromGeneration: rejectedGeneration,
+      toGeneration: refreshed.generation,
+      provenance: refreshed.provenance,
+    },
+  } : result;
 }
 
 /** Backoff after a refresh failure that proved nothing about the credential. */
@@ -1557,7 +1582,16 @@ async function refreshAfterManualReset(
     }
     const account = configuredPoolAccount(getRuntimeConfig(config), accountId);
     if (!account) return undefined;
-    const result = await fetchPoolAccountQuota(accountId, true, account.plan, getValidCodexToken,
+    // Reuse the just-authenticated consume credential for the first usage request.
+    // getValidCodexToken can silently advance a generation without exposing refresh
+    // provenance. A 401 here instead uses the existing classified refresh/replay path.
+    const resetToken: typeof getValidCodexToken = async () => {
+      if (auth.poolGeneration === undefined || !manualResetAuthStillLive(accountId, auth)) {
+        throw new CodexCredentialGenerationConflictError();
+      }
+      return { accessToken: auth.accessToken, chatgptAccountId: auth.chatgptAccountId, generation: auth.poolGeneration };
+    };
+    const result = await fetchPoolAccountQuota(accountId, true, account.plan, didReset ? resetToken : getValidCodexToken,
       didReset ? afterDispatchSequence : undefined);
     const record = readCodexAccountRecord(accountId);
     const recovered = didReset && record?.credential?.chatgptAccountId === auth.chatgptAccountId
@@ -1565,6 +1599,7 @@ async function refreshAfterManualReset(
       && isCompleteCodexQuotaRecoverySnapshot(result.freshQuota ?? null, result.freshPlan ?? account.plan);
     for (const claim of claims) settleManualResetCooldown(getRuntimeConfig(config), claim, recovered, {
       credentialGeneration: result.freshCredentialGeneration,
+      refreshLineage: result.resetRefreshLineage,
     });
     return record?.credential?.chatgptAccountId === auth.chatgptAccountId ? result.freshResetCredits : undefined;
   } catch {

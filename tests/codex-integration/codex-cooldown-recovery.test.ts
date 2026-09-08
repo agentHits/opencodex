@@ -7,7 +7,7 @@ import {
   runCodexCooldownRecoveryProbes,
   seedCodexAuthAdmissionForTests,
 } from "../../src/codex/auth-api";
-import { readCodexAccountRecord, saveCodexAccountCredential } from "../../src/codex/account-store";
+import { readCodexAccountRecord, saveCodexAccountCredential, saveCodexAccountCredentialIfGeneration } from "../../src/codex/account-store";
 import {
   codexQuotaWindowForPlan,
   getAccountQuota,
@@ -123,6 +123,27 @@ describe("Codex cooldown recovery worker", () => {
     expect(settleCodexQuotaRecoveryProbe(background!, true, {
       credentialGeneration: readCodexAccountRecord("a")!.generation,
     }, due(START + 2))).toBe(true);
+  });
+
+  test("manual recovery rejects an unrelated refresh edge and preserves exact-generation settlement", () => {
+    const config = makeConfig(["a"]); saveCredential("a"); cool(config, "a");
+    const [claim] = claimManualResetCooldowns(config, "a", START);
+    expect(claim?.kind).toBe("pool");
+    const before = readCodexAccountRecord("a")!;
+    const generation = before.generation;
+    expect(saveCodexAccountCredentialIfGeneration("a", generation, {
+      ...before.credential!, accessToken: "fresh-a", refreshToken: "fresh-refresh-a",
+    })).toBe(true);
+    expect(readCodexAccountRecord("a")!.replacedAt).toBe(before.replacedAt);
+    expect(settleManualResetCooldown(config, claim!, true, {
+      credentialGeneration: generation + 1,
+      refreshLineage: { fromGeneration: generation - 1, toGeneration: generation + 1, provenance: "self-refresh" },
+    }, START)).toBe(false);
+    expect(getCodexQuotaHealthSnapshot("a", "shared", START)).not.toBeNull();
+    // Rejection releases the lease rather than leaving manual recovery stuck.
+    const [exact] = claimManualResetCooldowns(config, "a", START);
+    expect(exact).toBeDefined();
+    expect(settleManualResetCooldown(config, exact!, true, { credentialGeneration: generation + 1 }, START)).toBe(true);
   });
 
   test("a replacement between auth and claiming cannot acquire the replacement's cooldown", () => {

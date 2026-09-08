@@ -75,7 +75,10 @@ plan-relevant window is freshly confirmed at exactly 100%; unknown and failed re
 A confirmed manual reset-credit consumption may immediately reconcile that account's
 pre-existing ordinary reset-derived cooldown after a complete, non-exhausted usage
 observation started after the reset. Recovery owns the specific cooldown and authenticates
-main and added Pool accounts through their respective credential contracts. It preserves
+main and added Pool accounts through their respective credential contracts. Main usage
+publication keeps the latest successfully published observation authoritative. Pool recovery
+across a credential refresh requires the actual self/joined refresh lineage, not matching
+replacement timestamps. It preserves
 newer failures, independent Spark/Reserve scopes, explicit Retry-After, pause, pin and
 selection state. Replay and `already_redeemed` are not new-reset evidence. Failed usage
 recovery leaves the cooldown in place and preserves the confirmed consume success;

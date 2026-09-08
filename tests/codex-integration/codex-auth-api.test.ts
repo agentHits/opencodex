@@ -54,6 +54,8 @@ import type { OcxConfig } from "../../src/types";
 import type { WsData } from "../../src/server/ws-bridge";
 import { handleNativeProfileAPI } from "../../src/codex/native-profile-api";
 import type { NativeProfileManager } from "../../src/codex/native-profile-manager";
+import { getMainPolicyQuota } from "../../src/codex/quota";
+import { getMainAccountHardLockStatus } from "../../src/codex/main-account-hard-lock";
 import { MAIN_CODEX_ACCOUNT_ID, setMainAccountPlan } from "../../src/codex/main-account";
 import { reconcileCodexPlansFromTokens, resetJwtPlanNotesForTests } from "../../src/codex/plan-from-token";
 import {
@@ -5610,6 +5612,93 @@ describe("manual reset cooldown recovery (#3973)", () => {
     expect(urls).toEqual([CONSUME, USAGE, "https://auth.openai.com/oauth/token", USAGE]);
   });
 
+  test("same-tick external G+1 adopted by 401 replay cannot settle manual recovery", async () => {
+    const now = Date.now(); const clock = spyOn(Date, "now").mockReturnValue(now);
+    const firstUsage = gate(); const release401 = gate();
+    let pending: ReturnType<typeof consume> | undefined;
+    try {
+      const config = setup();
+      const original = getCodexAccountCredential("manual-a")!;
+      // Establish a non-undefined replacement stamp before the manual claim.
+      saveCodexAccountCredential("manual-a", original);
+      const before = readCodexAccountRecord("manual-a")!;
+      expect(before.replacedAt).toBe(now);
+      let reads = 0;
+      const urls = mock(() => Response.json({ code: "reset" }), async () => {
+        if (++reads === 1) { firstUsage.release(); await release401.promise; return new Response("{}", { status: 401 }); }
+        return Response.json(usage());
+      });
+      pending = consume(config);
+      await firstUsage.promise;
+      saveCodexAccountCredential("manual-a", { ...original, accessToken: "external-access", refreshToken: "external-refresh" });
+      const replacement = readCodexAccountRecord("manual-a")!;
+      expect(replacement.generation).toBe(before.generation + 1);
+      expect(replacement.replacedAt).toBe(before.replacedAt);
+      release401.release();
+      expect(await (await pending)?.json()).toEqual({ code: "reset", remaining: 2 });
+      expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).not.toBeNull();
+      // No OAuth call: forceRefresh adopted the time-valid external replacement.
+      expect(urls).toEqual([CONSUME, USAGE, USAGE]);
+      const claims = claimManualResetCooldowns(config, "manual-a");
+      expect(claims).toHaveLength(1);
+      for (const claim of claims) settleManualResetCooldown(config, claim, false);
+    } finally {
+      release401.release(); if (pending) await pending;
+      clock.mockRestore();
+    }
+  });
+
+  test("manual 401 can join a genuine owned refresh and retain its +1 lineage", async () => {
+    const config = setup(); const before = readCodexAccountRecord("manual-a")!;
+    const firstUsage = gate(); const release401 = gate(); const oauthStarted = gate(); const releaseOAuth = gate(); const joined = gate();
+    const forceRefresh = accountStoreModule.forceRefreshCodexPoolToken;
+    let refreshCalls = 0;
+    let joinedProvenance: string | undefined;
+    const spy = spyOn(accountStoreModule, "forceRefreshCodexPoolToken").mockImplementation(async (id, options) => {
+      const result = forceRefresh(id, options);
+      const isJoiner = ++refreshCalls === 2;
+      if (isJoiner) joined.release();
+      const resolved = await result;
+      if (isJoiner) joinedProvenance = resolved.provenance;
+      return resolved;
+    });
+    const urls: string[] = []; let reads = 0;
+    globalThis.fetch = (async input => {
+      const url = String(input); urls.push(url);
+      if (url === CONSUME) return Response.json({ code: "reset" });
+      if (url === USAGE) {
+        if (++reads === 1) { firstUsage.release(); await release401.promise; return new Response("{}", { status: 401 }); }
+        return Response.json(usage());
+      }
+      if (url === "https://auth.openai.com/oauth/token") {
+        oauthStarted.release(); await releaseOAuth.promise;
+        return Response.json({ access_token: "joined-access", refresh_token: "joined-refresh", expires_in: 3600 });
+      }
+      throw new Error("unexpected mock URL");
+    }) as typeof fetch;
+    const pending = consume(config);
+    let owner: ReturnType<typeof forceRefresh> | undefined;
+    try {
+      await firstUsage.promise;
+      owner = accountStoreModule.forceRefreshCodexPoolToken("manual-a", {
+        rejectedGeneration: before.generation, rejectedAccessToken: before.credential!.accessToken,
+      });
+      await oauthStarted.promise;
+      release401.release(); await joined.promise;
+      releaseOAuth.release();
+      expect((await owner).provenance).toBe("self-refresh");
+      expect((await pending)?.status).toBe(200);
+      expect(joinedProvenance).toBe("joined-lineage");
+      expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toBeNull();
+      expect(readCodexAccountRecord("manual-a")!.generation).toBe(before.generation + 1);
+      expect(urls).toEqual([CONSUME, USAGE, "https://auth.openai.com/oauth/token", USAGE]);
+    } finally {
+      release401.release(); releaseOAuth.release();
+      if (owner) await owner; await pending;
+      spy.mockRestore();
+    }
+  });
+
   test.each(["consume", "usage"])("new 429 during %s survives the old reset claim", async stage => {
     const config = setup();
     const started = gate(); const finish = gate();
@@ -5688,6 +5777,80 @@ describe("manual reset cooldown recovery (#3973)", () => {
       await old; if (reset) await reset;
       clock.mockRestore();
     }
+  });
+
+  test("main Q-first/P-last publication preserves post-reset cache, credits and hard-lock readiness", async () => {
+    const config = makeConfig({ codexMainAccountHardLock: true });
+    const accessToken = "ordered-main-token"; const accountId = "ordered-main-account";
+    writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({ tokens: { access_token: accessToken, account_id: accountId } }));
+    reconcileMainCodexAccountRuntimeState();
+    const writer = observeMainQuotaCredential(accessToken, accountId)!;
+    setAccountQuotaFromParsed(MAIN_CODEX_ACCOUNT_ID, { weeklyPercent: 100, resetCredits: 5 }, captureConfigGeneration(), writer);
+    expect(getMainAccountHardLockStatus(config).state).toBe("blocked");
+    cool(config, MAIN_CODEX_ACCOUNT_ID);
+    const oldStarted = gate(); const oldFinish = gate(); let reads = 0;
+    const urls = mock(() => Response.json({ code: "reset" }), () => {
+      if (++reads === 1) return new Response(new ReadableStream<Uint8Array>({
+        async start(controller) {
+          oldStarted.release(); await oldFinish.promise;
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ ...usage(100),
+            rate_limit_reset_credits: { available_count: 7 } })));
+          controller.close();
+        },
+      }), { headers: { "Content-Type": "application/json" } });
+      if (reads === 2) return Response.json(usage(12));
+      // Later omission also verifies the private retained-credit slot was not overwritten by P.
+      return Response.json({ plan_type: "team", rate_limit: { secondary_window: { used_percent: 14 } } });
+    });
+    const old = fetchMainAccountInfoSnapshot(true);
+    try {
+      await oldStarted.promise;
+      const reset = await consume(config, MAIN_CODEX_ACCOUNT_ID);
+      expect(await reset?.json()).toEqual({ code: "reset", remaining: 2 });
+      expect(getCodexQuotaHealthSnapshot(MAIN_CODEX_ACCOUNT_ID, "shared")).toBeNull();
+      const freshCache = structuredClone(getMainAccountInfoCache());
+      const freshShared = structuredClone(getAccountQuota(MAIN_CODEX_ACCOUNT_ID));
+      const freshPolicy = structuredClone(getMainPolicyQuota());
+      expect(freshCache?.quota).toMatchObject({ weeklyPercent: 12, resetCredits: 2 });
+      expect(getMainAccountHardLockStatus(config).state).toBe("ready");
+      oldFinish.release();
+      const stale = await old;
+      expect(stale.quotaRefresh).toBeUndefined();
+      expect(getMainAccountInfoCache()).toEqual(freshCache);
+      expect(getAccountQuota(MAIN_CODEX_ACCOUNT_ID)).toEqual(freshShared);
+      expect(getMainPolicyQuota()).toEqual(freshPolicy);
+      expect(getMainAccountHardLockStatus(config).state).toBe("ready");
+      const displayed = (await listCodexAuthAccounts(config, false)).find(account => account.isMain)!;
+      expect(displayed.quota).toMatchObject({ weeklyPercent: 12, resetCredits: 2 });
+      await fetchMainAccountInfoSnapshot(true);
+      const afterOmission = (await listCodexAuthAccounts(config, false)).find(account => account.isMain)!;
+      expect(afterOmission.quota?.resetCredits).toBe(2);
+      expect(getMainAccountHardLockStatus(config).state).toBe("ready");
+      expect(urls).toEqual([USAGE, CONSUME, USAGE, USAGE]);
+    } finally { oldFinish.release(); await old; }
+  });
+
+  test("a newer failed main read does not outrank an older successful publication", async () => {
+    writeFileSync(join(TEST_CODEX_HOME, "auth.json"), JSON.stringify({
+      tokens: { access_token: "publication-main-token", account_id: "publication-main-account" },
+    }));
+    reconcileMainCodexAccountRuntimeState();
+    const started = gate(); const finish = gate(); let reads = 0;
+    const urls = mock(() => { throw new Error("consume is not expected"); }, async () => {
+      if (++reads === 1) { started.release(); await finish.promise; return Response.json(usage()); }
+      return new Response("fixture unavailable", { status: 503 });
+    });
+    const old = fetchMainAccountInfoSnapshot(true);
+    try {
+      await started.promise;
+      expect((await fetchMainAccountInfoSnapshot(true)).quotaRefresh).toEqual({ status: "http_error", httpStatus: 503 });
+      finish.release();
+      expect((await old).quotaRefresh).toEqual({ status: "ok" });
+      expect(getMainAccountInfoCache()?.quota).toMatchObject({ weeklyPercent: 12, resetCredits: 2 });
+      expect(getMainPolicyQuota()?.weeklyPercent).toBe(12);
+      expect(getMainAccountHardLockStatus({ codexMainAccountHardLock: true }).state).toBe("ready");
+      expect(urls).toEqual([USAGE, USAGE]);
+    } finally { finish.release(); await old; }
   });
 
   test("main reset usage does not erase an existing reauth quarantine", async () => {

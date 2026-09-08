@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { saveConfigPreservingClaudeCode } from "../config";
-import { isCodexAccountGenerationLive, readCodexAccountRecord } from "./account-store";
+import { isCodexAccountGenerationLive, readCodexAccountRecord, type CodexRefreshProvenance } from "./account-store";
 import { codexAccountLogLabel } from "./account-label";
 import { NATIVE_RESERVE_MODEL } from "./catalog/native-models";
 import { isCodexAccountPaused } from "./account-pause";
@@ -684,19 +684,36 @@ export function claimManualResetCooldowns(
   return claims;
 }
 
+export type ManualResetRefreshLineage = Readonly<{
+  fromGeneration: number;
+  toGeneration: number;
+  provenance: CodexRefreshProvenance;
+}>;
+
+type ManualResetQuotaProof = CodexQuotaRecoveryProbeProof & {
+  refreshLineage?: ManualResetRefreshLineage;
+};
+
 /** Main proof is checked by the already-owned auth operation, never by a Pool record. */
 export function settleManualResetCooldown(
   config: OcxConfig,
   claim: ManualResetCooldownClaim,
   recovered: boolean,
-  proof: CodexQuotaRecoveryProbeProof = {},
+  proof: ManualResetQuotaProof = {},
   now = Date.now(),
 ): boolean {
   if (!recovered) return settleCooldownRecoveryLease(claim.probe, false, now);
   const eligible = manualResetAccountEligible(config, claim.probe.accountId);
-  return claim.kind === "pool"
-    ? settleCodexQuotaRecoveryProbe(claim.probe, eligible, proof, now)
-    : settleCooldownRecoveryLease(claim.probe, eligible, now);
+  if (claim.kind === "main") return settleCooldownRecoveryLease(claim.probe, eligible, now);
+  const lineage = proof.refreshLineage;
+  // Equal wall-clock replacement stamps do not establish ancestry. Manual +1
+  // recovery additionally needs the actual forced-refresh result for this edge.
+  const ownedGeneration = proof.credentialGeneration === claim.probe.credentialGeneration
+    || (proof.credentialGeneration === claim.probe.credentialGeneration + 1
+      && lineage?.fromGeneration === claim.probe.credentialGeneration
+      && lineage.toGeneration === proof.credentialGeneration
+      && (lineage.provenance === "self-refresh" || lineage.provenance === "joined-lineage"));
+  return settleCodexQuotaRecoveryProbe(claim.probe, eligible && ownedGeneration, proof, now);
 }
 
 /** Settle one background recovery claim without mutating account-wide outcome state. */

@@ -437,7 +437,10 @@ redemption; clients retrying an existing action should keep its ID.
 After a confirmed manual `reset`, OpenCodex checks fresh usage for that same account
 and can reconcile its pre-existing shared reset-derived cooldown immediately. Usage
 started before the reset, incomplete or exhausted usage, a changed account, and a newer
-quota failure do not qualify. Explicit `Retry-After`, Spark/Reserve cooldowns, pause
+quota failure do not qualify. Older main-account usage responses cannot replace a newer
+published observation. If usage needs credential refresh, recovery requires that refresh's
+confirmed lineage; an externally replaced credential does not qualify merely because it
+belongs to the same account. Explicit `Retry-After`, Spark/Reserve cooldowns, pause
 settings, pins and the selected account are preserved. `already_redeemed` and durable
 replay do not prove a new reset and do not gain this recovery behavior.
 
