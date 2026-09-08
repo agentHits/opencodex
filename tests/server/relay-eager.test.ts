@@ -1643,7 +1643,8 @@ describe("relaySseEagerBounded — error paths", () => {
     const out = await readAll(relayed);
     await settle();
 
-    expect(out).toContain("event: response.failed");
+    expect(out.match(/event: response\.failed/g)?.length).toBe(1);
+    expect(out).not.toContain("response.incomplete");
     expect(out).toContain("provider stream failed");
     expect(syntheticCalls).toEqual([["failed", "upstream_error"]]);
     expect(rec090.dones).toBe(1);
