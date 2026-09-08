@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stopProxyGracefully } from "../../src/lib/process-control";
 import { performStopTeardown } from "../../src/server/stop-teardown";
 import type { CodexNativeRestoreResult } from "../../src/codex/inject";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { repoPath } from "../helpers/repo-root";
 
 /**
  * Behavioural cover for the deferred shared teardown (#3008).
@@ -454,5 +456,93 @@ describe("pending teardown receipts", () => {
     // A path-shaped "nonce" must not be able to reach outside the receipt namespace.
     expect(mod.deferralMatchesReceipt("../config")).toBe(false);
     expect(mod.deferralMatchesReceipt("")).toBe(false);
+  });
+});
+
+describe("self-unloading manager refusal (#4023)", () => {
+  test("a darwin proxy running AS the launchd job reports a self-unload risk", async () => {
+    // `stopServiceIfInstalledDetailed()` calls `launchctl unload` on the plist that owns
+    // THIS process, so the manager stop can terminate the request handler before the
+    // shared teardown two statements later restores native Codex. The Windows guard that
+    // prevents exactly this returned early for every non-Windows platform.
+    const { installedServiceRespawnRisk } = await import("../../src/service");
+    expect(installedServiceRespawnRisk(() => ({ status: "absent" }) as never, "darwin", {
+      env: { OCX_SERVICE: "1", OCX_SERVICE_MANAGED: "1" },
+      exists: () => true,
+    })).toBe("self-unload");
+  });
+
+  test("linux systemd is exempted identically and gets the same answer", async () => {
+    const { installedServiceRespawnRisk } = await import("../../src/service");
+    expect(installedServiceRespawnRisk(() => ({ status: "absent" }) as never, "linux", {
+      env: { OCX_SERVICE: "1", OCX_SERVICE_MANAGED: "1" },
+      exists: () => true,
+    })).toBe("self-unload");
+  });
+
+  test("a manually started proxy is unaffected, even with a service installed", async () => {
+    // Only the plist and unit write OCX_SERVICE_MANAGED. Without it this process is not
+    // the managed job, so no unload can reach it and the inline stop stays available.
+    const { installedServiceRespawnRisk } = await import("../../src/service");
+    expect(installedServiceRespawnRisk(() => ({ status: "absent" }) as never, "darwin", {
+      env: {},
+      exists: () => true,
+    })).toBe("none");
+  });
+
+  test("the managed job with no service definition on disk is not at risk", async () => {
+    const { installedServiceRespawnRisk } = await import("../../src/service");
+    expect(installedServiceRespawnRisk(() => ({ status: "absent" }) as never, "darwin", {
+      env: { OCX_SERVICE: "1", OCX_SERVICE_MANAGED: "1" },
+      exists: () => false,
+    })).toBe("none");
+  });
+
+  test("Windows classification is untouched by the new branch", async () => {
+    const { installedServiceRespawnRisk } = await import("../../src/service");
+    expect(installedServiceRespawnRisk(() => ({ status: "present" }) as never, "win32", {
+      env: { OCX_SERVICE: "1" },
+      exists: () => true,
+    })).toBe("respawnable");
+    expect(installedServiceRespawnRisk(() => ({ status: "unknown" }) as never, "win32")).toBe("unknown");
+    expect(installedServiceRespawnRisk(() => ({ status: "absent" }) as never, "win32")).toBe("none");
+  });
+
+  
+  test("a proxy spawned by an ensure path is not the managed job", async () => {
+    // Both `ocx claude` and `ocx opencode` set OCX_SERVICE=1 on their detached child to
+    // borrow its routing-preservation meaning (src/cli/claude.ts, src/cli/opencode.ts),
+    // so that variable cannot identify the managed job. A user with the service installed
+    // but stopped, running one of those commands, must keep a working dashboard Stop.
+    const { installedServiceRespawnRisk } = await import("../../src/service");
+    expect(installedServiceRespawnRisk(() => ({ status: "absent" }) as never, "darwin", {
+      env: { OCX_SERVICE: "1" },
+      exists: () => true,
+    })).toBe("none");
+    expect(installedServiceRespawnRisk(() => ({ status: "absent" }) as never, "linux", {
+      env: { OCX_SERVICE: "1" },
+      exists: () => true,
+    })).toBe("none");
+  });
+
+
+test("the route refuses a self-unload before the manager is touched", () => {
+    const source = readFileSync(repoPath("src", "server", "management-api.ts"), "utf8");
+    const from = source.indexOf('"/api/stop"');
+    const handler = source.slice(from, source.indexOf("/api/codex-auth/", from));
+    expect(handler).toContain('code: "self_unload_service"');
+    // Same invariant the Windows guard carries: refuse BEFORE acting, and say so.
+    expect(handler.indexOf('code: "self_unload_service"'))
+      .toBeLessThan(handler.indexOf("stopServiceIfInstalledDetailed()"));
+    const branch = handler.slice(handler.indexOf('code: "self_unload_service"'), handler.indexOf('code: "self_unload_service"') + 600);
+    expect(branch).toContain("Nothing was changed.");
+    expect(branch).toContain("ocx stop");
+  });
+
+  test("a receipt-backed ocx stop keeps its deferral path", () => {
+    // `ocx stop` claims a receipt, defers the teardown, and performs it itself once the
+    // proxy is proven down — so it must not be refused by the new branch.
+    const source = readFileSync(repoPath("src", "server", "management-api.ts"), "utf8");
+    expect(source).toContain('const respawnRisk = holdsReceipt ? "none" : installedServiceRespawnRisk();');
   });
 });
