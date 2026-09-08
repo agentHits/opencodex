@@ -879,6 +879,26 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(restored).toContain('model = "gpt-5.5"');
   });
 
+  test("client compaction opt-in (#3978): writes an authenticated provider table and returns to Design B", () => {
+    writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
+
+    const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
+    expect(enabled.status).toBe(0);
+    expect(String(JSON.parse(enabled.stdout).message)).toContain("client-side compaction mode");
+    const providerTable = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(providerTable).toContain('model_provider = "opencodex"');
+    expect(providerTable).toContain("[model_providers.opencodex]");
+    expect(providerTable).toContain("requires_openai_auth = true");
+    expect(providerTable).not.toContain("requires_openai_auth = false");
+    expect(providerTable).not.toContain("openai_base_url");
+
+    expect(runInject(codexHome, ocxHome).status).toBe(0);
+    const designB = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(designB).toContain(DESIGN_B_BLOCK);
+    expect(designB).not.toContain("[model_providers.opencodex]");
+    expect(designB).not.toContain('model_provider = "opencodex"');
+  });
+
   test("authless Desktop opt-in never weakens non-loopback admission", () => {
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
 

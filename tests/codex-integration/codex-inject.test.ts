@@ -70,6 +70,49 @@ describe("Codex config injection", () => {
     });
   });
 
+  describe("Codex client compaction opt-in (#3978)", () => {
+    test.each([undefined, false])("disabled preference %s keeps authenticated loopback on Design B", (codexClientCompaction) => {
+      const target = standaloneCodexRoutingTarget(10100, { codexClientCompaction });
+      expect(target.clientCompaction).toBeUndefined();
+      expect(buildProfileFile(target, null)).toBe(buildProfileFile(10100, null));
+    });
+
+    test("loopback opt-in selects the dedicated provider without disabling ChatGPT auth", () => {
+      const target = standaloneCodexRoutingTarget(10100, { codexClientCompaction: true });
+      expect(target).toMatchObject({
+        requiresAdmissionToken: false,
+        clientCompaction: true,
+      });
+      expect(target.desktopAuthless).toBeUndefined();
+
+      const profile = buildProfileFile(target, "/tmp/opencodex-catalog.json");
+      expect(profile).toContain('model_provider = "opencodex"');
+      expect(profile).toContain("requires_openai_auth = true");
+      expect(profile).not.toContain("openai_base_url");
+    });
+
+    test("authless remains the stronger provider-table policy when both preferences are enabled", () => {
+      const target = standaloneCodexRoutingTarget(10100, {
+        codexClientCompaction: true,
+        codexDesktopAuthless: true,
+      });
+      const profile = buildProfileFile(target, null);
+      expect(profile).toContain('model_provider = "opencodex"');
+      expect(profile).toContain("requires_openai_auth = false");
+    });
+
+    test("non-loopback admission remains token-protected", () => {
+      const target = standaloneCodexRoutingTarget(10100, {
+        hostname: "192.168.1.20",
+        codexClientCompaction: true,
+      });
+      expect(target.requiresAdmissionToken).toBe(true);
+      const profile = buildProfileFile(target, null);
+      expect(profile).toContain('env_key = "OPENCODEX_API_AUTH_TOKEN"');
+      expect(profile).toContain("requires_openai_auth = true");
+    });
+  });
+
   test("explicit HTTPS target emits exact provider destination and admission env", () => {
     const target = {
       baseUrl: "https://hub.example.test/v1",

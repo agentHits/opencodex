@@ -245,6 +245,46 @@ The cache remains bounded; this does not extend retention or recover history the
 longer has. HTTP clients must handle the error explicitly and resend their full context without
 `previous_response_id`. Retrying only the same ID cannot recover missing state.
 
+### Client-side compaction (opt-in)
+
+Authenticated loopback routing normally keeps Codex on its built-in `openai` provider identity.
+That preserves native thread identity, but it also makes Codex request native remote compaction.
+When a routed provider cannot return a native compaction blob, OpenCodeX stores the summary in its
+own `ocx1:` envelope. Native ChatGPT cannot verify that envelope if OpenCodeX is later removed from
+the request path.
+
+Enable client-side compaction to keep V2 sub-agent routing while preventing new `ocx1:` history:
+
+```bash
+ocx system settings --client-compaction on   # or "codexClientCompaction": true in config.json
+ocx sync                                     # rewrites ~/.codex/config.toml; restart Desktop
+```
+
+The setting defaults to off. When enabled, OpenCodeX selects its existing dedicated provider form
+with `requires_openai_auth = true`:
+
+```toml
+model_provider = "opencodex"
+
+[model_providers.opencodex]
+name = "OpenCodex Proxy"
+base_url = "http://127.0.0.1:10100/v1"
+wire_api = "responses"
+requires_openai_auth = true
+```
+
+Codex then owns compaction and stores a portable plaintext summary rather than a new OpenCodeX
+envelope. The compacting request still routes through OpenCodeX and can consume quota on the
+selected provider. Provider-level V2 policy is independent: plaintext delivery, encrypted task
+passthrough through `allowEncryptedV2AgentTasks`, and configured recovery or fallback behavior do
+not change.
+
+This preference affects future compactions only. It does not rewrite existing `ocx1:` history;
+use the explicit history recovery workflow for an affected thread. New threads use the
+`opencodex` provider identity while the mode is active, so the existing resume-history compatibility
+and restore behavior applies. Turning the setting off and syncing restores the default Design B
+root override.
+
 ### Authless Codex Desktop (opt-in)
 
 In **Dashboard → Overview**, **Open Codex without signing in** controls this existing

@@ -409,6 +409,21 @@ test("Desktop login switch defaults off, preserves explicit opt-in, and disables
   expect(host.textContent).toContain(en["codexAuth.catalogRefreshPending"]);
 });
 
+test("client compaction switch defaults off, preserves explicit opt-in, and invokes its handler", async () => {
+  const { d } = harness();
+  let clicks = 0;
+  d.toggleCodexClientCompaction = async () => { clicks += 1; };
+  d.settings = { codexAutoStart: true, port: 10100, hostname: "127.0.0.1" };
+  await mount(d);
+  const toggle = () => host.querySelector<HTMLButtonElement>(`button[aria-label="${en["dash.codexClientCompaction"]}"]`)!;
+  expect(toggle().getAttribute("aria-pressed")).toBe("false");
+  d.settings.codexClientCompaction = true;
+  await mount(d);
+  expect(toggle().getAttribute("aria-pressed")).toBe("true");
+  await act(async () => { toggle().click(); });
+  expect(clicks).toBe(1);
+});
+
 
 test.each([undefined, false, true])("Desktop login preference %s persists before full sync; sync failure keeps the saved preference", async (initial) => {
   const originalFetch = globalThis.fetch;

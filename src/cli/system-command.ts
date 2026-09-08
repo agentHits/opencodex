@@ -14,7 +14,7 @@ import {
 const USAGE = `Usage:
   ocx system [status] [--json]
   ocx system settings [--auto-start <on|off>] [--stream-mode <auto|legacy-tee|eager-relay>]
-      [--desktop-authless <on|off>] [--json]
+      [--desktop-authless <on|off>] [--client-compaction <on|off>] [--json]
   ocx system startup <health|install-service|install-shim> [--json]
   ocx system diagnostics [--json]
   ocx system sync [--json]
@@ -44,8 +44,10 @@ async function settings(argv: string[], deps: RuntimeApiDeps): Promise<void> {
   const autoStart = takeBooleanOption(args, "--auto-start");
   const streamMode = takeOption(args, "--stream-mode");
   const desktopAuthless = takeBooleanOption(args, "--desktop-authless");
+  const clientCompaction = takeBooleanOption(args, "--client-compaction");
   rejectArgs(args, USAGE);
-  if (autoStart === undefined && streamMode === undefined && desktopAuthless === undefined) {
+  if (autoStart === undefined && streamMode === undefined
+    && desktopAuthless === undefined && clientCompaction === undefined) {
     const result = await runtimeRequest("/api/settings", {}, deps);
     printData(result, wantsJson, summaryLines(result));
     return;
@@ -54,6 +56,7 @@ async function settings(argv: string[], deps: RuntimeApiDeps): Promise<void> {
     ...(autoStart !== undefined ? { codexAutoStart: autoStart } : {}),
     ...(streamMode !== undefined ? { streamMode } : {}),
     ...(desktopAuthless !== undefined ? { codexDesktopAuthless: desktopAuthless } : {}),
+    ...(clientCompaction !== undefined ? { codexClientCompaction: clientCompaction } : {}),
   };
   const result = await runtimeRequest("/api/settings", { method: "PUT", body: JSON.stringify(body) }, deps);
   printData(result, wantsJson, ["System settings updated."]);

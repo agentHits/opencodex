@@ -564,6 +564,8 @@ export const fr: Record<TKey, string> = {
   "dash.multiAgent": "Sous-agent",
   "dash.codexDesktopAuthless": "Ouvrir Codex sans se connecter",
   "dash.codexDesktopAuthlessHint": "Désactivé par défaut. Ignore la connexion Desktop séparée pour les connexions locales admissibles. Les identifiants du fournisseur restent nécessaires. Redémarrez Codex après toute modification. Certaines fonctions Desktop liées au compte peuvent être indisponibles.",
+  "dash.codexClientCompaction": "Utiliser la compaction côté client",
+  "dash.codexClientCompactionHint": "Désactivé par défaut. Enregistre des résumés portables en texte clair au lieu de nouvelles données OpenCodeX ocx1. Le routage des sous-agents V2 ne change pas. L'historique ocx1 existant doit toujours être restauré. Redémarrez Codex après modification.",
   "models.v2Conflict": "[agents] max_threads est défini — codex refusera de démarrer ; supprimez-le de config.toml",
   "models.v2Applied": "Mode sous-agent mis à jour — s’applique aux nouvelles sessions (redémarrez l’application Codex pour actualiser le sélecteur)",
   "models.v2ThreadsLabel": "Nombre maximal de fils",

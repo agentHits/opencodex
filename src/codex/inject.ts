@@ -175,6 +175,8 @@ export interface CodexRoutingTarget {
    * and is never weakened by this flag.
    */
   desktopAuthless?: boolean;
+  /** Select the dedicated provider identity so Codex owns compaction locally. */
+  clientCompaction?: boolean;
 }
 
 function validateCodexRoutingTarget(target: CodexRoutingTarget): CodexRoutingTarget {
@@ -198,14 +200,19 @@ function validateCodexRoutingTarget(target: CodexRoutingTarget): CodexRoutingTar
   return { ...target, baseUrl: `${parsed.origin}/v1` };
 }
 
-/** Provider-table form is used for non-loopback admission and for the authless Desktop opt-in. */
+/** Provider-table form is used when auth, admission, or compaction policy needs a dedicated provider. */
 function usesProviderTable(target: CodexRoutingTarget): boolean {
-  return target.requiresAdmissionToken || target.desktopAuthless === true;
+  return target.requiresAdmissionToken
+    || target.desktopAuthless === true
+    || target.clientCompaction === true;
 }
 
 export function standaloneCodexRoutingTarget(
   port: number,
-  config?: Pick<OcxConfig, "hostname" | "unauthenticatedLoopbackListener" | "codexDesktopAuthless">,
+  config?: Pick<
+    OcxConfig,
+    "hostname" | "unauthenticatedLoopbackListener" | "codexDesktopAuthless" | "codexClientCompaction"
+  >,
 ): CodexRoutingTarget {
   const loopback = config?.unauthenticatedLoopbackListener;
   const effectivePort = loopback?.enabled ? loopback.port : port;
@@ -217,6 +224,9 @@ export function standaloneCodexRoutingTarget(
     tokenEnv: "OPENCODEX_API_AUTH_TOKEN",
     ...(config?.codexDesktopAuthless === true && !requiresAdmissionToken
       ? { desktopAuthless: true }
+      : {}),
+    ...(config?.codexClientCompaction === true && !requiresAdmissionToken
+      ? { clientCompaction: true }
       : {}),
   };
 }
@@ -834,7 +844,7 @@ function buildProfileFileForTarget(
   const host = new URL(origin).host;
   // Design B (loopback): the reference/fallback file documents the root override form.
   // Non-loopback keeps the legacy provider-table shape (built-in provider cannot carry
-  // the x-opencodex-api-key env header); the authless Desktop opt-in shares that shape.
+  // the x-opencodex-api-key env header); explicit Desktop policies share that shape.
   if (!usesProviderTable(target)) {
     const lines = [
       "# OpenCodex proxy fallback config (Design B)",
@@ -1015,7 +1025,7 @@ export async function injectCodexConfig(
     ? setRootModelCatalogPath(content, catalogPath)
     : stripOpencodexCatalogPath(content);
 
-  // Provider-table form: non-loopback admission (legacy) or the authless Desktop opt-in (#1107).
+  // Provider-table form: non-loopback admission or an explicit Desktop policy.
   const legacyMode = usesProviderTable(routingTarget);
   let keptUserBaseUrl = false;
   let keptUserRealtimeWsBaseUrl = false;
@@ -1403,6 +1413,8 @@ export async function injectCodexConfig(
   }
   const headline = routingTarget.desktopAuthless === true
     ? `Injected opencodex as default provider into Codex config (authless Desktop mode: requires_openai_auth = false).\n`
+    : routingTarget.clientCompaction === true
+      ? `Injected opencodex as default provider into Codex config (client-side compaction mode; ChatGPT auth remains required).\n`
     : legacyMode
       ? `Injected opencodex as default provider into Codex config.\n`
       : `Pointed Codex's built-in openai provider at the opencodex proxy (openai_base_url + realtime sideband override).\n`;

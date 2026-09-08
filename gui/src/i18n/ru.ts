@@ -2509,6 +2509,8 @@ export const ru: Record<TKey, string> = {
   "dash.visionAdvancedPopover": "Дополнительные настройки изображений",
   "dash.codexDesktopAuthless": "Открывать Codex без входа",
   "dash.codexDesktopAuthlessHint": "По умолчанию выключено. Пропускает отдельный вход в Desktop для допустимых локальных подключений. Учётные данные провайдера по-прежнему нужны. После изменения перезапустите Codex. Функции Desktop, связанные с аккаунтом, могут быть недоступны.",
+  "dash.codexClientCompaction": "Использовать сжатие на стороне клиента",
+  "dash.codexClientCompactionHint": "По умолчанию выключено. Сохраняет переносимые текстовые сводки вместо нового состояния OpenCodeX ocx1. Маршрутизация подагентов V2 не меняется. Существующую историю ocx1 всё равно нужно восстановить. После изменения перезапустите Codex.",
   "models.newPolicyGlobal": "Добавлять новые модели выключенными", "models.newPolicyProvider": "Политика новых моделей",
   "models.newPolicy_inherit": "Наследовать", "models.newPolicy_off": "Выкл.", "models.newPolicy_on": "Вкл.", "models.newBadge": "НОВАЯ", "models.newCount": "Новых: {count}, выкл.",
   "models.aliases": "Псевдонимы",
