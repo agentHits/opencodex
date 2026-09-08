@@ -80,7 +80,7 @@ does not guarantee lower microphone, WebRTC, or end-to-end voice latency through
 
 Native ChatGPT-family requests routed through opencodex via the canonical ChatGPT-login `openai`
 forward provider (covering both Pool and Direct modes) use the public ChatGPT endpoint. The
-native Codex app channel is not available through the proxy pool, and provider routing or account
+native Codex app channel is not available through OpenCodex routing in either Pool or Direct mode, and provider routing or account
 selection does not bypass the upstream ChatGPT channel. The upstream may spend time queueing a
 request before the first output even when the local proxy and network path are healthy. This
 behavior is specific to ChatGPT-login routing and does not apply to `openai-apikey` or custom

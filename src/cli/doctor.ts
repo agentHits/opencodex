@@ -1005,10 +1005,22 @@ export function chatgptPublicEndpointHint(
   providers: Record<string, unknown> | undefined,
 ): string | null {
   const openai = providers?.openai;
-  if (!openai || typeof openai !== "object" || (openai as { adapter?: unknown }).adapter !== "openai-responses") {
+  if (!openai || typeof openai !== "object") {
     return null;
   }
-  return "ChatGPT-family requests use the public ChatGPT endpoint through this proxy, so upstream queue delay before the first output can be higher than DeepSeek/Kimi. The native Codex app channel is unavailable through the proxy pool; use a latency-sensitive provider or run Codex natively when that channel matters. service_tier=priority is a request preference; inspect response tier in logs to see what the backend granted.";
+  const typed = openai as { adapter?: unknown; authMode?: unknown; baseUrl?: unknown };
+  if (typed.adapter !== "openai-responses") {
+    return null;
+  }
+  const authMode = typed.authMode ?? "forward";
+  if (authMode !== "forward") {
+    return null;
+  }
+  const baseUrl = typeof typed.baseUrl === "string" ? typed.baseUrl : "";
+  if (baseUrl && !baseUrl.includes("chatgpt.com")) {
+    return null;
+  }
+  return "ChatGPT-family requests use the public ChatGPT endpoint through this proxy, so upstream queue delay before the first output can be higher than DeepSeek/Kimi. The native Codex app channel is unavailable through OpenCodex routing (in both Pool and Direct modes); use a latency-sensitive provider or run Codex natively when that channel matters. service_tier=priority is a request preference; inspect response tier in logs to see what the backend granted.";
 }
 
 export async function runDoctor(args: string[] = []): Promise<void> {

@@ -647,8 +647,11 @@ describe("service memory section (#314 WP4)", () => {
     expect(hint).toContain("public ChatGPT endpoint");
     expect(hint).toContain("native Codex app channel");
     expect(hint).toContain("DeepSeek/Kimi");
+    expect(hint).toContain("both Pool and Direct modes");
     expect(hint).not.toContain("11s");
     expect(chatgptPublicEndpointHint({})).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "key" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://api.openai.com/v1" } })).toBeNull();
   });
 
   test("proxyDownRestartHint prefers 'ocx service start' when a service is installed", () => {
