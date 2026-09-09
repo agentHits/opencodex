@@ -46,8 +46,9 @@ export function extractAccountId(idToken?: string, accessToken?: string): string
  * https://api.openai.com/auth namespace claim. A generic organizations claim is NOT domain
  * evidence. JWT claims are decoded locally as routing markers, never as authenticity proof.
  *
- * absent  — no JWT, or a JWT carrying neither marker key: the token may be a foreign
- *           credential and legacy foreign handling applies.
+ * absent  — no JWT, a payload that is not a JSON object, or an object carrying neither
+ *           marker key: the token may be a foreign credential and legacy foreign handling
+ *           applies. This function is total; it never throws on an attacker-shaped token.
  * invalid — a marker key is present but yields no usable account id (non-string, blank,
  *           namespace that is not an object, namespace without the claim) or the two
  *           markers disagree. Presence is decided by the KEY, not by its shape, so a token
@@ -68,19 +69,23 @@ function usableAccountId(value: unknown): string | undefined {
 }
 
 export function inspectChatGptDomainClaim(token: string): ChatGptDomainClaim {
-  const payload = decodeJwtPayload(token);
-  if (!payload) return { kind: "absent" };
-  // Presence is the KEY being there. A reserved namespace that is null, a primitive, an
-  // array, or an object without the claim is a present-but-broken marker, so it stays
-  // invalid instead of being treated as a foreign token.
-  const topPresent = "chatgpt_account_id" in payload;
-  const nsPresent = CHATGPT_AUTH_NAMESPACE in payload;
+  const payload: unknown = decodeJwtPayload(token);
+  // decodeJwtPayload returns whatever the payload segment parses to, which may be a
+  // primitive or an array. Those carry no marker and must not reach the key lookups,
+  // where `in`/hasOwn would throw and take the whole request down.
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { kind: "absent" };
+  const claims = payload as Record<string, unknown>;
+  // Presence is the KEY being there, as an own key. A reserved namespace that is null, a
+  // primitive, an array, or an object without the claim is a present-but-broken marker, so
+  // it stays invalid instead of being treated as a foreign token.
+  const topPresent = Object.hasOwn(claims, "chatgpt_account_id");
+  const nsPresent = Object.hasOwn(claims, CHATGPT_AUTH_NAMESPACE);
   if (!topPresent && !nsPresent) return { kind: "absent" };
-  const topId = topPresent ? usableAccountId(payload.chatgpt_account_id) : undefined;
+  const topId = topPresent ? usableAccountId(claims.chatgpt_account_id) : undefined;
   if (topPresent && !topId) return { kind: "invalid" };
   let nsId: string | undefined;
   if (nsPresent) {
-    const ns = payload[CHATGPT_AUTH_NAMESPACE];
+    const ns = claims[CHATGPT_AUTH_NAMESPACE];
     const nsObj = ns !== null && typeof ns === "object" && !Array.isArray(ns)
       ? ns as Record<string, unknown> : undefined;
     nsId = nsObj ? usableAccountId(nsObj.chatgpt_account_id) : undefined;

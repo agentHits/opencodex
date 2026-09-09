@@ -2085,9 +2085,10 @@ async function resolveResponsesCodexAuth(
       }
     }
     // The caller's own Direct credential may cross an internal route change only to the
-    // canonical OpenAI transport, under the same predicate plain Direct forwarding uses:
-    // a clean non-proxy bearer, account from the explicit header or the JWT claim.
-    // Sidecar enrichment grants no primary authority.
+    // canonical OpenAI transport, under a predicate deliberately STRICTER than plain
+    // unchanged-route Direct forwarding: a clean non-proxy bearer whose ChatGPT-domain
+    // marker is valid, with any explicit account header matching that marker. Unchanged
+    // routes keep their legacy rules; sidecar enrichment grants no primary authority.
     if (options.callerDirectAuth && isCanonicalOpenAiForwardProvider(route.provider)) {
       const directHeaders = new Headers({
         authorization: options.callerDirectAuth.authorization,

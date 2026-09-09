@@ -543,26 +543,29 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
     }
   });
 
-  test.each(["Responses", "Chat"])("%s keeps a foreign org-claim JWT as the Cursor credential", async surface => {
-    // A generic organizations claim is not ChatGPT-domain evidence: the legacy keyless
-    // Cursor contract keeps forwarding such a bearer (the account header, a ChatGPT-only
-    // header, is still dropped).
+  test.each(["Responses", "Chat"])("%s keeps an unmarked JWT as the Cursor credential", async surface => {
+    // Neither a generic organizations claim nor a payload that is not a JSON object is
+    // ChatGPT-domain evidence: the legacy keyless Cursor contract keeps forwarding such a
+    // bearer (the account header, a ChatGPT-only header, is still dropped). The primitive
+    // payload also proves the domain inspector stays total instead of throwing.
     const orgJwt = fakeChatGptJwt({ organizations: [{ id: "org-foreign" }] });
-    for (const extra of [
-      { authorization: `Bearer ${orgJwt}` },
-      { authorization: `Bearer ${orgJwt}`, "chatgpt-account-id": "org-foreign" },
-    ]) {
+    const primitivePayloadJwt = `eyJhbGciOiJub25lIn0.${Buffer.from("true").toString("base64url")}.fakesig`;
+    for (const [bearer, extra] of [
+      [orgJwt, {}],
+      [orgJwt, { "chatgpt-account-id": "org-foreign" }],
+      [primitivePayloadJwt, {}],
+    ] as Array<[string, Record<string, string>]>) {
       await withCursorCaptureServer(async (baseUrl, capturedAuth) => {
         saveConfig(cursorForwardConfig(baseUrl));
         writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: {} }));
         const server = await startOwnedServer();
         try {
-          const headers = { "x-opencodex-api-key": ADMISSION_SECRET, ...extra };
+          const headers = { "x-opencodex-api-key": ADMISSION_SECRET, authorization: `Bearer ${bearer}`, ...extra };
           const response = surface === "Chat"
             ? await postChatCompletions(server.url, "cursorcustom/auto", headers)
             : await postResponses(server.url, "cursorcustom/auto", headers);
           await response.text();
-          expect(capturedAuth).toEqual([`Bearer ${orgJwt}`]);
+          expect(capturedAuth).toEqual([`Bearer ${bearer}`]);
         } finally {
           await server.stop(true);
         }
@@ -620,6 +623,29 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
     });
   });
 
+  // A present reserved namespace carries the marker whatever its shape, so every broken
+  // shape is untrustworthy rather than foreign, and is denied restore.
+  const brokenNamespaces: Record<string, unknown> = {
+    "namespace-empty-object": {},
+    "namespace-primitive": "not-an-object",
+    "namespace-null": null,
+    "namespace-array": [],
+    "namespace-without-claim": { user_id: "u_1" },
+  };
+
+  const callerBearers: Record<string, string> = {
+    "opaque-with-account": "opaque-caller-direct-token",
+    // The namespaced marker alone is a valid ChatGPT-domain claim.
+    "ns-claim-only": fakeChatGptJwt({ "https://api.openai.com/auth": { chatgpt_account_id: "caller-openai" } }),
+    // A generic organizations claim is not ChatGPT-domain evidence.
+    "org-only-jwt": fakeChatGptJwt({ organizations: [{ id: "org-foreign" }] }),
+    "conflicting-claims": fakeChatGptJwt({ chatgpt_account_id: "caller-openai", "https://api.openai.com/auth": { chatgpt_account_id: "other-claim" } }),
+    "blank-account-id": fakeChatGptJwt({ chatgpt_account_id: "   " }),
+    "numeric-account-id": fakeChatGptJwt({ chatgpt_account_id: 123 }),
+    ...Object.fromEntries(Object.entries(brokenNamespaces)
+      .map(([name, shape]) => [name, fakeChatGptJwt({ "https://api.openai.com/auth": shape })])),
+  };
+
   test("a bearer-admitted Responses combo still substitutes stored main on its final Direct target", async () => {
     const config = mixedConfig();
     config.combos = {
@@ -643,7 +669,7 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
     }
   });
 
-  test.each(["jwt-only", "jwt-with-account", "opaque-with-account", "jwt-mismatched-account", "org-only-jwt", "conflicting-claims", "broken-namespace", "blank-account-id"])(
+  test.each(["jwt-only", "jwt-with-account", "ns-claim-only", "opaque-with-account", "jwt-mismatched-account", "org-only-jwt", "conflicting-claims", "namespace-empty-object", "namespace-primitive", "namespace-null", "namespace-array", "namespace-without-claim", "blank-account-id", "numeric-account-id"])(
     "a dedicated-admission Responses combo scopes caller auth (%s) to its final Direct target",
     async form => {
       const config = mixedConfig();
@@ -652,20 +678,8 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
       };
       saveConfig(config);
       writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: {} }));
-      const callerBearer = form === "opaque-with-account"
-        ? "opaque-caller-direct-token"
-        // A generic organizations claim is not ChatGPT-domain evidence.
-        : form === "org-only-jwt"
-          ? fakeChatGptJwt({ organizations: [{ id: "org-foreign" }] })
-          : form === "conflicting-claims"
-            ? fakeChatGptJwt({ chatgpt_account_id: "caller-openai", "https://api.openai.com/auth": { chatgpt_account_id: "other-claim" } })
-            // A present reserved namespace with no usable id is marked but untrustworthy.
-            : form === "broken-namespace"
-              ? fakeChatGptJwt({ "https://api.openai.com/auth": {} })
-              : form === "blank-account-id"
-                ? fakeChatGptJwt({ chatgpt_account_id: "   " })
-                : fakeChatGptJwt({ chatgpt_account_id: "caller-openai" });
-      const accountHeader = form === "jwt-only" ? undefined
+      const callerBearer = callerBearers[form] ?? fakeChatGptJwt({ chatgpt_account_id: "caller-openai" });
+      const accountHeader = form === "jwt-only" || form === "ns-claim-only" ? undefined
         : form === "jwt-mismatched-account" ? "other-account"
         : form === "org-only-jwt" ? "org-foreign"
         : "caller-openai";
@@ -678,7 +692,7 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
           ...(accountHeader ? { "chatgpt-account-id": accountHeader } : {}),
         });
         const body = await response.json() as { status?: string };
-        if (form === "jwt-only" || form === "jwt-with-account") {
+        if (form === "jwt-only" || form === "jwt-with-account" || form === "ns-claim-only") {
           expect(response.status).toBe(200);
           expect(body).toMatchObject({ status: "completed" });
           expect(nativeAuth).toEqual([`Bearer ${callerBearer}`]);
