@@ -38,12 +38,45 @@ export interface ModelRow {
   displayNameOverride?: string;
   displayNameSource?: "operator" | "provider" | "fallback";
   manualPricing?: boolean;
+  /**
+   * Provider-published cost class from model discovery (#3666). Absent means unknown — either
+   * the provider publishes no per-token rates, or the row was cached by a build that predates
+   * the field. Absent is never treated as free.
+   */
+  pricingStatus?: "free" | "paid";
   inputModalities?: string[];
   contextWindow?: number;
   contextCap?: number;
   contextCapped?: boolean;
   /** Stored custom-row override (not the inherited ladder); only present on custom rows. */
   reasoningEfforts?: string[];
+}
+
+/** The pricing shape both Free-only consumers read; keeps the helpers usable from either page. */
+export type PricedRow = { pricingStatus?: "free" | "paid" };
+
+/**
+ * Whether a Free-only control should be offered for this set of rows at all (#3666).
+ *
+ * A provider that publishes no per-token prices — Ollama, a static catalog, anything whose
+ * /models rows carry no usable rate pair — leaves every row unclassified, so a Free switch
+ * there could only ever empty the list. That reads as a broken filter rather than as "this
+ * provider does not say", so the control is hidden instead.
+ */
+export function modelPricingKnown(rows: readonly PricedRow[]): boolean {
+  return rows.some(row => row.pricingStatus !== undefined);
+}
+
+/**
+ * Apply the Free-only narrowing (#3666).
+ *
+ * Absent `pricingStatus` is never free: the discovery classifier omits the field exactly when
+ * the provider's rates were missing, one-sided, non-numeric, or negative, and a cached row from
+ * an older build has no field either. Both consumers call this BEFORE their own search, sort,
+ * and page slice, or free models stay stranded behind Show more on a long provider list.
+ */
+export function filterFreeModelRows<T extends PricedRow>(rows: readonly T[], freeOnly: boolean): T[] {
+  return freeOnly ? rows.filter(row => row.pricingStatus === "free") : [...rows];
 }
 
 function containsDisplayNameControlCharacter(value: string): boolean {

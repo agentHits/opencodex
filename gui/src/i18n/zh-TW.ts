@@ -527,6 +527,8 @@ export const zhTW: Record<TKey, string> = {
   "models.loading": "載入中…",
   "models.search": "搜尋模型…",
   "models.showMore": "再顯示 {n} 個",
+  "models.freeOnly": "僅免費",
+  "models.noFreeMatch": "這裡沒有免費模型。關閉「僅免費」即可看到其餘模型。",
   "models.allowlistLabel": "僅所選",
   "models.allowlistHint": "僅勾選的模型進入目錄（留空 = 全部）。適用於暴露成千上萬模型的供應商。",
   "models.selectedCount": "已選 {n} 個",

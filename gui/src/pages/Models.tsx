@@ -67,6 +67,8 @@ import {
   THREAD_OPTIONS,
   writeCollapsedProviders,
   discoveryFailureLabel,
+  filterFreeModelRows,
+  modelPricingKnown,
   REASONING_EFFORT_LEVELS,
   type ModelRow,
   type ProviderContextCapsResponse,
@@ -242,6 +244,10 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
   const [disabled, setDisabled] = useState<Set<string>>(() => new Set(cached?.disabled ?? []));
   const [selectedModels, setSelectedModels] = useState<ProviderModelMap | null>(() => cached?.selectedModels ?? null);
   const [search, setSearch] = useState<Record<string, string>>({});
+  // Per-provider Free-only narrowing (#3666). Session UX, not persisted config: it answers
+  // "what can I run for nothing right now", which is a question about this sitting, and the
+  // provider list it applies to changes underneath a stored value.
+  const [freeOnly, setFreeOnly] = useState<Record<string, boolean>>({});
   const [limit, setLimit] = useState<Record<string, number>>({});
   const [contextCaps, setContextCaps] = useState<Record<string, number>>(() => cached?.contextCaps ?? {});
   const [contextCapValues, setContextCapValues] = useState<Record<string, number>>(() => cached?.contextCapValues ?? {});
@@ -1409,7 +1415,17 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
     const capOptionSet = group.nativeProviderGroup ? NATIVE_CAP_OPTION_SET : CAP_OPTION_SET;
     const discoveryFailure = liveModels && discovery?.status === "failed" ? discovery : undefined;
     const q = (search[provider] ?? "").trim().toLowerCase();
-    const filtered = q ? rows.filter(m => m.id.toLowerCase().includes(q)) : rows;
+    const freeOnlyOn = freeOnly[provider] === true;
+    // The control is offered only where the provider actually published per-token prices.
+    // A provider whose rows are all unclassified — Ollama, a static catalog, anything with no
+    // pricing in /models — would otherwise get a switch whose only possible effect is to empty
+    // the list, which reads as a bug rather than as "this provider does not say".
+    const pricingKnown = modelPricingKnown(rows);
+    // Free-only narrows BEFORE search, the enabled-first sort, and the PAGE slice below.
+    // Filtering after the slice would leave free models stranded behind Show more on a
+    // 200-row OpenRouter list, which is the exact case the issue reports.
+    const priced = filterFreeModelRows(rows, freeOnlyOn);
+    const filtered = q ? priced.filter(m => m.id.toLowerCase().includes(q)) : priced;
     // Display-only: enabled models float to the top of each provider group so they
     // stay findable in long lists. The sort is stable, so the server order is kept
     // inside each partition, and this does not affect the picker order above
@@ -1649,6 +1665,21 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
             )}
             {rows.length === 0 && (
               <EmptyProviderHint liveModels={liveModels} discovery={discovery} showFailureBadge={false} />
+            )}
+            {pricingKnown && (
+              <div className="row models-provider-hint">
+                <Switch
+                  on={freeOnlyOn}
+                  onClick={() => setFreeOnly(prev => ({ ...prev, [provider]: !freeOnlyOn }))}
+                  label={t("models.freeOnly")}
+                  showLabel
+                />
+              </div>
+            )}
+            {/* Reads `priced`, not `filtered`: with a search term that matches nothing, the
+                honest message is the search one, not "this provider has no free models". */}
+            {freeOnlyOn && priced.length === 0 && rows.length > 0 && (
+              <p className="muted text-label" role="status">{t("models.noFreeMatch")}</p>
             )}
             {rows.length > PAGE / 2 && (
               <input

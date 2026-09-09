@@ -658,6 +658,8 @@ export const zh: Record<TKey, string> = {
   "models.loading": "加载中…",
   "models.search": "搜索模型…",
   "models.showMore": "再显示 {n} 个",
+  "models.freeOnly": "仅免费",
+  "models.noFreeMatch": "这里没有免费模型。关闭“仅免费”即可看到其余模型。",
   "models.allowlistLabel": "仅所选",
   "models.allowlistHint": "仅勾选的模型进入目录（留空 = 全部）。适用于暴露成千上万模型的提供商。",
   "models.selectedCount": "已选 {n} 个",
