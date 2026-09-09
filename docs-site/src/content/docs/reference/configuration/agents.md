@@ -141,9 +141,10 @@ availability snapshot is cached for `subagentModelFallbackPollMs`. Encrypted chi
 the chain to canonical native ChatGPT targets plus direct key-auth Responses routes explicitly
 trusted with `allowEncryptedV2AgentTasks: true`; if none can consume the encrypted payload, the
 request fails instead of routing unreadable ciphertext elsewhere. Combo routing first tries an
-available canonical native target; when none is selectable and `agentTaskRecovery` is enabled,
-an encrypted `NEW_TASK` is recovered once before routed combo dispatch. Combo recovery runs only
-on spawned child turns; the direct routed path also recovers on a mid-thread model switch.
+available canonical native target; when none is selectable or their attempts are exhausted, and
+`agentTaskRecovery` is enabled, an encrypted `NEW_TASK` is recovered once before routed combo
+dispatch. Combo recovery runs only on spawned child turns; the direct routed path also recovers
+on a mid-thread model switch.
 
 ```json
 {

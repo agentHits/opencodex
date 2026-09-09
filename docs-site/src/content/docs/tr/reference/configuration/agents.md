@@ -123,7 +123,8 @@ görevlerinde zincir, kurallı yerel ChatGPT hedefleriyle ve
 kimlik doğrulamalı Responses rotalarıyla sınırlıdır. Hiçbiri şifrelenmiş yükü
 işleyemezse istek, okunamayan şifreli metni başka bir yere yönlendirmek yerine
 başarısız olur. Kombo önce kullanılabilir kurallı yerel hedefi dener; seçilebilir
-yerel hedef kalmazsa ve `agentTaskRecovery` etkinse, şifrelenmiş `NEW_TASK` yönlendirilen
+yerel hedef kalmazsa ya da yerel denemeler tükenirse ve `agentTaskRecovery` etkinse,
+şifrelenmiş `NEW_TASK` yönlendirilen
 kombo gönderiminden önce bir kez kurtarılır. Kombo kurtarma yalnızca spawn edilen çocuk
 turlarında çalışır; doğrudan yönlendirilen yol, konuşma ortasındaki bir model değişimini de
 kurtarır.
