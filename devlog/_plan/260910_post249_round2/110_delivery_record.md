@@ -19,13 +19,58 @@ Append-only. One row per deliverable, filled when it actually lands on `dev`.
 | roadmap | — | #4155 | `3b9fab90e` | green | `a7509fe00` | — |
 | A1 | #4129 | #4157 | `421aea87a` | green | `4498fb910` | yes |
 | A2 | #4148 | #4161 | `799330bcf` | green | `5b8f1fcfa` | yes |
-| A3 | #4141 | — | | | | held on #4152 |
-| B1 | #3666 | #4156 | `3ff57ce49` | blocked | | |
-| B2 | #4075 | #4158 | `3dc7bd19b` | blocked | | |
-| B3 | #3859 | #4160 | | green | | parent blocked |
+| A3 | #4141 | — | | | | in progress, #4152 landed |
+| B1 | #3666 | #4156 | `3ff57ce49` | held | | |
+| B2 | #4075 | #4158 | `3dc7bd19b` | held | | |
+| B3 | #3859 | #4160 | `c8a734cd0` | green | `8a5cfd366` | yes |
 | B4 | #1711 | — | | | | awaiting decision |
 | B5 | #4038 | — | | | | awaiting decision |
-| — | #4147 | #4153 | `abf35fa94` | green | | |
+| — | #4147 | #4153 | `abf35fa94` | green | `2ce5f381f` | yes |
+
+### #4147 landed as the contributor's own commit
+
+#4153 merged unmodified, so authorship stays with @richardfeiliu-a11y and reaches
+his contribution graph. Nothing was reimplemented or carried, which is why no
+`Co-authored-by` trailer was needed.
+
+Two things are worth carrying forward from it. First, the review took one pass
+because the contributor read a live `~/.zcode/v2/config.json` and the shipped
+parser in `ZCode.app` instead of choosing between the two contradictory schemas in
+the issue text — and this tree independently agrees with what he found, since
+`src/integrations/ownership-policy.ts` already treats `models.*.reasoning` as
+`enabled`/`variants`. Second, a fork pull request does not start repository CI on
+its own: Cross-platform CI and React Doctor sat at `action_required` until
+approved, which is why the check list looked thin for a while and would have been
+easy to mistake for a passing PR.
+
+### #3859 was unstacked rather than left to wait
+
+#4160 was published on top of #4075 and #3666, both of which are held by the
+screenshot gate. It depends on neither, so it was rebased straight onto `dev`,
+retargeted, and merged on its own.
+
+That force-push produced the round's third cancelled run. An earlier
+Cross-platform CI run at the same SHA was cancelled by the concurrency group, and
+its aggregate `ci` job reported failure as a consequence. The verdict is run
+`34417147997`, which actually concluded. This is the third time this round that a
+cancelled run looked like a failure or a pass; the rule that only a real
+conclusion counts has earned its place.
+
+### #4141 is unblocked
+
+PR #4152 landed as `9ba04b64d`. Lane A was told to adopt the `runLaunchctl` seam
+that PR established rather than invent a second one, to re-verify every anchor in
+`040_4141_launchctl_bootout.md` first because `src/service.ts` moved underneath
+it, and to prove the behaviour with stderr fixtures — running `launchctl` remains
+forbidden while a live proxy is up.
+
+### Open finding on #4156
+
+The Lane B audit (`_research/_audit_wp3.md`) passed all three diffs but found one
+real defect: `gui/src/pages/Models.tsx:1405` and `:1475` still count the group
+header and `activeCount` from the unfiltered rows, so with the free-only filter on
+the header claims more models than the list shows. The empty state at `:1681` does
+it correctly. Assigned to Lane B.
 
 A1 and A2 were audited again **after** they landed, against `origin/dev` rather
 than against the lane's own report. Both match the fix the plan chose, both
