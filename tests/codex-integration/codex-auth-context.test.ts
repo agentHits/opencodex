@@ -1355,6 +1355,55 @@ describe("Codex auth context", () => {
     }
   });
 
+  test("cooldown caller-main fallback follows the stable user id, not the recorded email", async () => {
+    const now = 1_800_000_000_000;
+    const originalNow = Date.now;
+    const cfg = { ...config(), autoSwitchThreshold: 0 };
+    // config() registers pool-a with email pool@example.test on workspace account pool_acc.
+    const jwt = (claims: Record<string, unknown>, email?: string) => `header.${Buffer.from(JSON.stringify({
+      exp: Math.floor(now / 1000) + 86_400,
+      ...(email ? { email } : {}),
+      "https://api.openai.com/auth": { chatgpt_account_id: "pool_acc", ...claims },
+    })).toString("base64url")}.signature`;
+    const storeCooled = (accessToken: string) => saveCodexAccountCredential("pool-a", {
+      accessToken, refreshToken: "pool_refresh",
+      expiresAt: now + 24 * 60 * 60_000, chatgptAccountId: "pool_acc",
+    });
+    storeCooled(jwt({ chatgpt_user_id: "user-cooled" }, "pool@example.test"));
+    try {
+      Date.now = () => now;
+      recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
+        now, modelId: "gpt-5.6-terra", resetAt: now + 600_000, fixedAccount: true,
+      });
+      const cooldown = getCodexQuotaHealthSnapshot("pool-a", "shared");
+      expect(cooldown).not.toBeNull();
+      Date.now = () => now + 1_000;
+      const options = { requestScopedMainCredential: true, modelId: "gpt-5.6-terra" };
+      const resolve = (headers: Headers) => resolveCodexAuthContext(headers, cfg, "pool", options);
+
+      // Distinct members of one workspace account, with no email claim anywhere to separate them.
+      await expect(resolve(new Headers({
+        authorization: `Bearer ${jwt({ chatgpt_user_id: "user-teammate" })}`,
+      }))).resolves.toMatchObject({ kind: "main", accountId: null });
+      // The same user stays inside its own cooldown after an email change and a token rotation.
+      await expect(resolve(new Headers({
+        authorization: `Bearer ${jwt({ chatgpt_user_id: "user-cooled" }, "renamed@example.test")}`,
+      }))).rejects.toBeInstanceOf(CodexAccountCooldownError);
+
+      // A stored credential whose own user-id claims disagree identifies nobody, so even a caller
+      // the email rule would have waved through as a teammate fails closed.
+      storeCooled(jwt({ chatgpt_user_id: "user-cooled", user_id: "user-other" }, "pool@example.test"));
+      await expect(resolve(new Headers({
+        authorization: `Bearer ${jwt({ chatgpt_user_id: "user-teammate" }, "teammate@example.test")}`,
+      }))).rejects.toBeInstanceOf(CodexAccountCooldownError);
+
+      expect(cfg.activeCodexAccountId).toBe("pool-a");
+      expect(getCodexQuotaHealthSnapshot("pool-a", "shared")).toEqual(cooldown);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("selects pool auth independently of the routed provider", async () => {
     saveCodexAccountCredential("pool-a", {
       accessToken: "pool_token",
