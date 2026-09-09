@@ -440,7 +440,8 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
         adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward", codexAccountMode: "direct",
       };
-      config.visionSidecar = { enabled: true, backend: "openai", model: "gpt-5.4-mini" };
+      // Keep this auth fixture independent of the legacy sidecar model migration.
+      config.visionSidecar = { enabled: true, backend: "openai", model: "gpt-5.6-luna" };
       saveConfig(config);
       const stored = fakeChatGptJwt({ chatgpt_account_id: "stored_main_acc", exp: Math.floor(Date.now() / 1000) + 3600 });
       writeFileSync(join(codexHome, "auth.json"), JSON.stringify({
