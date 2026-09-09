@@ -33,12 +33,18 @@ safe coordination path. Do not include exploit details, secrets, or live targets
 
 ### Public or private
 
-The test is whether a public diff already reveals the weakness. If the fix has shipped, or the
-defect is plainly visible in code that is already published, an ordinary public issue or pull
-request is the right route and normal review applies. If it has not, the report is
-pre-disclosure material and belongs in the private advisory form, whatever its severity looks
-like to you. When you are unsure, file privately; maintainers can move a report to public review,
-and the reverse is not possible.
+Being findable in the source is not disclosure. opencodex is source-available, so nearly every
+defect here is in principle "visible in the code" — that is not the test, and it is not a reason
+to open a public issue.
+
+The test is whether the weakness is already public: the fix has shipped, or the defect is
+already described in a published advisory, issue, or pull request. When that is true, ordinary
+public review applies and a normal issue or pull request is the right route. When it is not, the
+report is pre-disclosure material and belongs in the private advisory form, whatever its
+severity looks like to you.
+
+If you are unsure, file privately. Maintainers can move a report to public review once it is
+safe to do so; the reverse is not possible.
 
 ## Following Up on a Report You Already Filed
 
