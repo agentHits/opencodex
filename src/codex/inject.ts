@@ -1046,6 +1046,9 @@ export async function injectCodexConfig(
   //
   // Authless is excluded on purpose: its whole point is a provider that carries
   // requires_openai_auth = false, and admission-token forms cannot use the root key at all.
+  // Those two forms therefore keep their existing behaviour, forward-tagging resume history with
+  // originals backed up, and that includes the case where a user enables authless and client
+  // compaction together. Only the compaction-only form skips the history unit.
   const keepRootOverrideAlongsideTable = providerTableMode
     && routingTarget.clientCompaction === true
     && routingTarget.desktopAuthless !== true

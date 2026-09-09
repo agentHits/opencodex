@@ -281,15 +281,22 @@ selected provider. V2 sub-agent requests keep their existing provider selection 
 accounting. Client-side compaction does not change plaintext delivery, encrypted task passthrough
 through `allowEncryptedV2AgentTasks`, or configured recovery and fallback behavior.
 
-This preference affects future compactions only. It rewrites no existing `ocx1:` payload and
-re-tags no existing resume-history metadata, so use the explicit history recovery workflow for a
-thread that needs one.
+This preference affects future compactions only, and it rewrites no existing `ocx1:` payload in
+any configuration, so use the explicit history recovery workflow for a thread that needs one.
 
-Existing threads keep working because the injection keeps the root `openai_base_url` override
-alongside the provider table. New threads default to `opencodex` and get client-side compaction,
-while a thread already tagged `openai` still resolves to Codex's built-in provider — which the
-retained override still points at this proxy. Without it that thread would resume against OpenAI
-directly, taking configured routing with it.
+Whether resume-history metadata is re-tagged depends on which form the injection takes. On its
+own, on an authenticated loopback bind, client-side compaction re-tags nothing: it keeps the root
+override instead, as described below. Enabled together with `codexDesktopAuthless`, or on a
+non-loopback bind, the stronger form wins and those forms behave exactly as they do today,
+including their existing forward-tagging of resume history with originals backed up for restore.
+Turning the stronger setting off migrates those threads back.
+
+On the compaction-only form, existing threads keep working because the injection keeps the root
+`openai_base_url` override alongside the provider table. New threads default to `opencodex` and
+get client-side compaction, while a thread already tagged `openai` still resolves to Codex's
+built-in provider — which the retained override still points at this proxy. Without it that
+thread would resume against OpenAI directly, taking configured routing with it. The authless and
+non-loopback forms cannot use the root key, which is why they keep re-tagging instead.
 
 That guarantee covers the override OpenCodeX manages. A root `openai_base_url` you wrote
 yourself is never replaced, and in that case the built-in provider keeps the destination you
