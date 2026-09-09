@@ -1231,8 +1231,13 @@ export async function injectCodexConfig(
     atomicWriteFile(CODEX_CONFIG_PATH, content);
     atomicWriteFile(CODEX_PROFILE_PATH, profileContent);
     markJournalInjectedState(content, profileContent, {
-      // A root override is ours only in loopback Design B when no user-owned value won.
-      injectedOpenaiBaseUrl: providerTableMode || keptUserBaseUrl
+      // A root override is ours whenever we wrote one and no user-owned value won. That is
+      // loopback Design B, and now also the client-compaction form, which keeps the same
+      // marker-owned root line beside its provider table. Journaling it matters because the
+      // marker comment is not durable: the Codex app can reserialize config.toml and drop
+      // comments, and restore then has only the journaled value to tell our line from a user's
+      // (#1798). The other table forms never write the key, so they still record null.
+      injectedOpenaiBaseUrl: (providerTableMode && !keepRootOverrideAlongsideTable) || keptUserBaseUrl
         ? null
         : rootTomlString(content, "openai_base_url"),
       // The sideband override is ours only when we wrote it this pass (never in legacy mode,

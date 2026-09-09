@@ -923,6 +923,57 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(config).toContain("[model_providers.opencodex]");
   });
 
+  test("the retained root override is journaled so a comment-dropping rewrite can still restore", () => {
+    writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
+    expect(runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true })).status).toBe(0);
+
+    // The marker comment is not durable: the app can reserialize config.toml and drop comments,
+    // after which only the journaled value distinguishes our line from a user's (#1798).
+    const journal = JSON.parse(readFileSync(join(codexHome, "opencodex-journal.json"), "utf8"));
+    expect(journal.injectedOpenaiBaseUrl).toBe("http://127.0.0.1:10100/v1");
+
+    const rewritten = readFileSync(join(codexHome, "config.toml"), "utf8")
+      .split("\n").filter(line => !line.startsWith("#")).join("\n");
+    writeFileSync(join(codexHome, "config.toml"), rewritten, "utf8");
+    expect(runRestore(codexHome, ocxHome).status).toBe(0);
+    const restored = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(restored).not.toContain("openai_base_url");
+    expect(restored).not.toContain("[model_providers.opencodex]");
+  });
+
+  test("authless together with client compaction keeps the authless form, root key and all", () => {
+    writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
+    const sessionsDir = join(codexHome, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const rolloutPath = join(sessionsDir, "rollout-authless.jsonl");
+    writeFileSync(rolloutPath, `${JSON.stringify({
+      type: "session_meta",
+      payload: { id: "thread-authless", model_provider: "openai" },
+    })}\n`, "utf8");
+    const db = new Database(join(codexHome, "state_5.sqlite"));
+    db.run(`CREATE TABLE threads (
+      id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, model_provider TEXT NOT NULL,
+      source TEXT, first_user_message TEXT, has_user_event INTEGER
+    )`);
+    db.run("INSERT INTO threads VALUES ('thread-authless', ?, 'openai', 'cli', 'hello', 1)", rolloutPath);
+    db.close();
+
+    const enabled = runInject(codexHome, ocxHome, JSON.stringify({
+      codexClientCompaction: true,
+      codexDesktopAuthless: true,
+    }));
+    expect(enabled.status).toBe(0);
+
+    // Authless is the stronger form and cannot carry the root key, so it keeps its existing
+    // shape: no root override, and resume history is forward-tagged with originals backed up.
+    const config = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(config).toContain("requires_openai_auth = false");
+    expect(config).not.toContain("openai_base_url");
+    const verifier = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
+    expect(verifier.query("SELECT model_provider FROM threads WHERE id = 'thread-authless'").get())
+      .toEqual({ model_provider: "opencodex" });
+    verifier.close();
+  });
   test("client compaction opt-in leaves pre-existing ocx1 resume history byte-for-byte unchanged", () => {
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
     const sessionsDir = join(codexHome, "sessions");
