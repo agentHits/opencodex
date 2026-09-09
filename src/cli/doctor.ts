@@ -1020,9 +1020,12 @@ export function chatgptPublicEndpointHint(
   // from the registry entry for the built-in `openai` id: a row that omits `authMode` still
   // forwards, and a row carrying some other `baseUrl` has it discarded in favour of the
   // canonical ChatGPT endpoint. Both keep using the public endpoint, so both want this hint;
-  // reading the raw row would have suppressed the first and misjudged the second. Resolution
-  // can reject a malformed or disallowed destination by throwing, and doctor is read-only
-  // diagnostics, so an unclassifiable row simply gets no hint.
+  // reading the raw row would have suppressed the first and misjudged the second.
+  //
+  // `routedProviderConfig` throws for an unresolved URL only when the registry entry allows a
+  // baseUrl override, which this entry does not, so no input reaches that path today. The guard
+  // is here because doctor is read-only diagnostics: a later registry change must not turn a
+  // diagnostic into a crash.
   let routed: OcxProviderConfig;
   try {
     routed = routedProviderConfig("openai", configured);

@@ -671,9 +671,11 @@ describe("service memory section (#314 WP4)", () => {
     expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex/" } })).not.toBeNull();
     // A disabled row never routes, so it is not the route in use.
     expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex", disabled: true } })).toBeNull();
-    // A destination that cannot be resolved at all yields no hint rather than throwing out
-    // of read-only diagnostics.
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "   " } })).toBeNull();
+    // A blank baseUrl is discarded like any other override on this id, so it resolves to the
+    // canonical endpoint and still gets the hint. Resolution has no reachable throw here:
+    // src/router.ts only rejects an unresolved URL when the registry entry allows a baseUrl
+    // override, and the `openai` entry does not.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "   " } })).not.toBeNull();
   });
 
   test("proxyDownRestartHint prefers 'ocx service start' when a service is installed", () => {
