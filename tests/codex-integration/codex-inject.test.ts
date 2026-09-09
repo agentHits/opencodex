@@ -89,6 +89,10 @@ describe("Codex config injection", () => {
       expect(profile).toContain('model_provider = "opencodex"');
       expect(profile).toContain("requires_openai_auth = true");
       expect(profile).not.toContain("openai_base_url");
+      // The dedicated provider-table form cannot carry the realtime voice
+      // sideband (it needs the admission-token header): opting in must not
+      // inject experimental_realtime_ws_base_url.
+      expect(profile).not.toContain("experimental_realtime_ws_base_url");
     });
 
     test("authless remains the stronger provider-table policy when both preferences are enabled", () => {

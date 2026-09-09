@@ -287,6 +287,10 @@ thread. New threads use the `opencodex` provider identity while the mode is acti
 setting off and syncing restores the default Design B root override unless
 `codexDesktopAuthless` or non-loopback admission still requires the provider-table form.
 
+While the mode is active, the realtime voice sideband override
+(`experimental_realtime_ws_base_url`) is not injected — the dedicated provider-table form cannot
+carry it — so Codex Desktop voice uses its native endpoint rather than the proxy.
+
 ### Authless Codex Desktop (opt-in)
 
 In **Dashboard → Overview**, **Open Codex without signing in** controls this existing

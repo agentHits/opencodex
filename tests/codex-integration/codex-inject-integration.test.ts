@@ -932,6 +932,31 @@ describe("injectCodexConfig integration (Design B)", () => {
     verifier.close();
   });
 
+  test("client compaction opt-in does not retag typical Design B (openai) threads", () => {
+    writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
+    const sessionsDir = join(codexHome, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const rolloutPath = join(sessionsDir, "rollout-designb.jsonl");
+    writeFileSync(rolloutPath, "", "utf8");
+    const db = new Database(join(codexHome, "state_5.sqlite"));
+    db.run(`CREATE TABLE threads (
+      id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, model_provider TEXT NOT NULL,
+      source TEXT, first_user_message TEXT, has_user_event INTEGER
+    )`);
+    db.run("INSERT INTO threads VALUES ('thread-designb', ?, 'openai', 'cli', 'hello', 1)", rolloutPath);
+    db.close();
+
+    const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
+    expect(enabled.status).toBe(0);
+
+    // Future-only contract: existing Design B threads keep their native openai
+    // provider identity; the opt-in never re-tags stored history.
+    const verifier = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
+    expect(verifier.query("SELECT model_provider FROM threads WHERE id = 'thread-designb'").get())
+      .toEqual({ model_provider: "openai" });
+    verifier.close();
+  });
+
   test("authless Desktop opt-in never weakens non-loopback admission", () => {
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
 
