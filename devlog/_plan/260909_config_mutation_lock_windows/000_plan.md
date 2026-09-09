@@ -123,7 +123,7 @@ After:
   let childKilled = false;
   try {
     try {
-      await waitForPath(readyPath);
+      await waitForOwnedChildReady(child, readyPath);
     } catch (error) {
       childKilled = true;
       child.kill();
@@ -162,11 +162,14 @@ Replace the stale 5 s-era explanation with the verified provenance:
 ## Regression evidence plan
 
 - The failure mode is exercised by construction: if readiness ever exceeds the
-  budget again, the thrown error is the enriched `waitForPath` message (with
-  child stderr), asserted by reading the code path — a dedicated test for the
-  masking fix would require a child that never becomes ready, i.e. a deliberate
-  30 s negative test; that cost is not justified for a CI fixture, and the
-  unmasking is straight-line control flow reviewed in the diff.
+  budget again, the thrown error is the enriched `waitForOwnedChildReady`
+  message (with child stderr), asserted by reading the code path. A child that
+  *dies* before writing the marker is caught immediately by the `child.exited`
+  race rather than at the deadline; only a child that stays alive and never
+  becomes ready costs the full platform budget, and a dedicated test for that
+  would be a deliberate 45 s negative test on Windows CI — a cost not justified
+  for a CI fixture, where the unmasking is straight-line control flow reviewed
+  in the diff.
 - Positive path: `ci.yml` PR lane plus a `workflow_dispatch` `lane=all` run
   on the exact PR head; the Windows shard executing
   `tests\config\config-mutation-lock.test.ts` must pass, and the run must
