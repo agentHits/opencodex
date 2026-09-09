@@ -557,6 +557,15 @@ is preserved: sibling constraints such as `minLength`, `enum`, or `format`, the 
 other `patternProperties` entries, and any property a caller happened to name `pattern`. A regex
 that Python can compile, including one using lookaheads, is passed through unchanged.
 
+A `patternProperties` key is only omitted where doing so cannot narrow the object. Dropping a
+matcher moves the keys it covered to `additionalProperties`, so on an open object those keys stay
+admissible and the tool merely loses a constraint. On a closed object — `additionalProperties:
+false`, `additionalProperties` set to a schema, or `unevaluatedProperties: false` — the same drop
+would forbid or re-constrain those keys, and a dictionary tool whose only matcher was regex-keyed
+would admit nothing once `minProperties` is 1. Such an object is sent exactly as written: a
+destination that compiles ECMA regexes still accepts it, and one that cannot reports the regex
+itself rather than receiving a schema no argument can satisfy.
+
 This is normalization on the selected adapter path, not a provider-wide guarantee. Provider
 configuration and authentication are untouched, and a provider on a different adapter is
 unaffected.

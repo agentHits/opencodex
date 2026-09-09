@@ -390,6 +390,74 @@ describe("unicode property-escape pattern stripping", () => {
     expect(stripped.properties.nested.patternProperties["^ok$"].type).toBe("string");
   });
 
+  test("a closed object keeps its regex matcher, because dropping it would narrow the object", () => {
+    // `additionalProperties: false` means the matcher decides which keys exist at all. Dropping
+    // it would forbid every key it covered, and with `minProperties: 1` the object could then
+    // admit nothing — a dictionary tool turned into an empty-object-only tool. Leaving it alone
+    // keeps the schema valid on a destination that compiles ECMA regexes, and lets one that
+    // cannot report the regex itself.
+    const before = {
+      type: "object",
+      patternProperties: { "^\\p{L}+$": { type: "string" } },
+      additionalProperties: false,
+      minProperties: 1,
+    };
+    expect(stripUnicodePropertyPatterns(before)).toBe(before);
+  });
+
+  test("`additionalProperties` as a schema also blocks the drop", () => {
+    // The covered keys would have to satisfy that schema instead of their own value schema,
+    // which is a different constraint rather than a relaxed one.
+    const before = {
+      type: "object",
+      patternProperties: { "^\\p{L}+$": { type: "string" } },
+      additionalProperties: { type: "number" },
+    };
+    expect(stripUnicodePropertyPatterns(before)).toBe(before);
+  });
+
+  test("`unevaluatedProperties: false` closes the object the same way", () => {
+    const before = {
+      type: "object",
+      patternProperties: { "^\\p{L}+$": { type: "string" } },
+      unevaluatedProperties: false,
+    };
+    expect(stripUnicodePropertyPatterns(before)).toBe(before);
+  });
+
+  test("an explicitly open object still drops the uncompilable matcher", () => {
+    // `additionalProperties: true` leaves the covered keys admissible, so the drop only removes
+    // validation and the object stays satisfiable.
+    const stripped = stripUnicodePropertyPatterns({
+      type: "object",
+      patternProperties: { "^\\p{L}+$": { type: "string" }, "^x-": { type: "string" } },
+      additionalProperties: true,
+    }) as Record<string, Record<string, unknown>>;
+
+    expect(Object.keys(stripped.patternProperties)).toEqual(["^x-"]);
+    expect(stripped.additionalProperties).toBe(true);
+  });
+
+  test("closing is decided per object, so an open sibling still drops", () => {
+    const stripped = stripUnicodePropertyPatterns({
+      type: "object",
+      properties: {
+        closed: {
+          type: "object",
+          patternProperties: { "^\\p{L}+$": { type: "string" } },
+          additionalProperties: false,
+        },
+        open: {
+          type: "object",
+          patternProperties: { "^\\p{L}+$": { type: "string" }, "^ok$": { type: "string" } },
+        },
+      },
+    }) as Record<string, Record<string, Record<string, Record<string, unknown>>>>;
+
+    expect(Object.keys(stripped.properties.closed.patternProperties)).toEqual(["^\\p{L}+$"]);
+    expect(Object.keys(stripped.properties.open.patternProperties)).toEqual(["^ok$"]);
+  });
+
   test("a deeply nested schema is stripped without exhausting the stack", () => {
     // Same reasoning as the encrypted-marker walk: schema depth is caller-controlled.
     const depth = 50_000;
@@ -448,6 +516,58 @@ describe("unicode property-escape pattern stripping", () => {
     expect(wire.properties.field.description).toBe("Artifact field");
     expect(wire.properties.collection.pattern).toBe(compilableSibling);
     expect(wire.required).toEqual(["field"]);
+  });
+
+  test("chat wire: a closed dictionary tool passes through, never becoming an empty-object tool", () => {
+    // This seam normalizes for every destination, including ones that compile ECMA regexes.
+    // Dropping the matcher would leave `additionalProperties: false` forbidding the keys it
+    // covered, and `minProperties: 1` would then admit nothing at all.
+    const parameters = {
+      type: "object",
+      description: "Arbitrary letter-keyed labels",
+      patternProperties: { "^\\p{L}+$": { type: "string" } },
+      additionalProperties: false,
+      minProperties: 1,
+    };
+    const request = createOpenAIChatAdapter(provider()).buildRequest({
+      ...parsed(),
+      context: {
+        messages: [{ role: "user", content: "label it", timestamp: 0 }],
+        tools: [{ name: "Label", namespace: "collaboration", description: "Label things", parameters }],
+      },
+    });
+
+    const body = JSON.parse(request.body) as { tools: Array<{ function: { parameters: unknown } }> };
+    // Byte-identical to what the caller supplied: matcher, closure and lower bound all intact.
+    expect(body.tools[0].function.parameters).toEqual(parameters);
+  });
+
+  test("chat wire: an open dictionary tool still drops the uncompilable matcher", () => {
+    const request = createOpenAIChatAdapter(provider()).buildRequest({
+      ...parsed(),
+      context: {
+        messages: [{ role: "user", content: "label it", timestamp: 0 }],
+        tools: [{
+          name: "Label",
+          namespace: "collaboration",
+          description: "Label things",
+          parameters: {
+            type: "object",
+            patternProperties: { "^\\p{L}+$": { type: "string" }, "^x-": { type: "string" } },
+            minProperties: 1,
+          },
+        }],
+      },
+    });
+
+    const body = JSON.parse(request.body) as {
+      tools: Array<{ function: { parameters: { patternProperties: Record<string, unknown>; minProperties: number } } }>;
+    };
+    const wire = body.tools[0].function.parameters;
+    // Open object: the covered keys stay admissible through the default `additionalProperties`,
+    // so the tool is still satisfiable after the drop.
+    expect(Object.keys(wire.patternProperties)).toEqual(["^x-"]);
+    expect(wire.minProperties).toBe(1);
   });
 });
 

@@ -1502,6 +1502,36 @@ describe("OpenAI Responses passthrough sanitization", () => {
     expect(properties.collection.pattern).toBe(collection);
   });
 
+  test("leaves a closed regex-keyed object alone on the codex forward path", () => {
+    // Dropping this matcher would leave `additionalProperties: false` forbidding every key it
+    // covered, and `minProperties: 1` would make the object admit nothing — a dictionary tool
+    // silently reduced to an empty-object-only tool. The schema goes out as written instead, so
+    // a destination that compiles ECMA regexes still works and one that cannot names the regex.
+    const parameters = {
+      type: "object",
+      patternProperties: { "^\\p{L}+$": { type: "string" } },
+      additionalProperties: false,
+      minProperties: 1,
+    };
+    const request = createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "test-model",
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: {
+        model: "test-model",
+        input: [],
+        tools: [{ type: "function", name: "Label", parameters }],
+      },
+    }, { headers: new Headers() });
+    const body = JSON.parse(request.body) as {
+      tools: Array<{ name: string; parameters: unknown }>;
+    };
+
+    expect(body.tools).toHaveLength(1);
+    expect(body.tools[0]?.parameters).toEqual(parameters);
+  });
+
   test("model reasoning-summary opt-out strips unsupported delivery fields (#323)", () => {
     const adapter = createResponsesPassthroughAdapter({
       adapter: "openai-responses",

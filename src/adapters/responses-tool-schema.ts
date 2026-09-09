@@ -20,6 +20,25 @@ const SCHEMA_LITERAL_VALUE_KEYS = new Set(["const", "default", "enum", "examples
 const PATTERN_KEYED_BAG_KEY = "patternProperties";
 
 /**
+ * Whether dropping a `patternProperties` entry from this object only ever widens what it admits.
+ *
+ * Removing a matcher moves the keys it covered to whatever `additionalProperties` says. When the
+ * object is open — the keyword absent, or `true` — those keys become unconstrained, so every
+ * argument the original accepted is still accepted and the drop is a pure loss of validation.
+ *
+ * When the object is closed the same drop narrows it instead. With `additionalProperties: false`
+ * the covered keys become forbidden outright, and an object whose only matcher was regex-keyed
+ * then admits nothing at all once `minProperties` is 1 — a dictionary tool silently becomes an
+ * empty-object-only tool. A schema for `additionalProperties` is refused for the same reason:
+ * the covered keys would have to satisfy it instead of their own value schema.
+ * `unevaluatedProperties` closes an object the same way, so it is treated the same.
+ */
+function patternPropertyDropOnlyWidens(node: Record<string, unknown>): boolean {
+  const open = (value: unknown): boolean => value === undefined || value === true;
+  return open(node.additionalProperties) && open(node.unevaluatedProperties);
+}
+
+/**
  * Codex multi-agent v2 stamps a Responses-only `encrypted: true` marker on collaboration tool
  * schemas (openai/codex 5f4d06ef; issue #85). It is an annotation for the ChatGPT backend only,
  * so translated provider schemas must drop it without removing properties or definitions
@@ -117,13 +136,22 @@ function usesUnicodePropertyEscape(pattern: string): boolean {
  * Returns `node` itself when nothing was dropped, so callers can use identity to tell whether
  * the schema changed. Walks an explicit stack for the same reason as the stripper above.
  *
- * Two shapes carry an uncompilable regex, and both are dropped: a `pattern` value, and a
- * `patternProperties` key. The key case matters because the destination compiles those keys
- * too, so preserving one would fail the schema exactly as a `pattern` value would.
+ * Two shapes carry an uncompilable regex: a `pattern` value, and a `patternProperties` key. The
+ * key case matters because the destination compiles those keys too, so preserving one would fail
+ * the schema exactly as a `pattern` value would.
+ *
+ * The two are not equally safe to drop, so "keeps the tool's shape" holds only where the drop
+ * widens. A `pattern` value is a constraint on a value that is admitted either way. A
+ * `patternProperties` key decides which keys exist at all, so removing it from a closed object
+ * narrows the object instead of relaxing it, and a dictionary tool whose only matcher was
+ * regex-keyed would become an empty-object-only tool. Those objects are therefore left exactly
+ * as the caller wrote them: a destination that compiles ECMA regexes still accepts them, and one
+ * that does not reports the uncompilable regex itself, which is the honest outcome. See
+ * {@link patternPropertyDropOnlyWidens}.
  */
 export function stripUnicodePropertyPatterns(node: unknown, inNameBag = false): unknown {
   type Assign = (value: unknown) => void;
-  interface Frame { node: unknown; inNameBag: boolean; patternKeyed?: boolean; assign: Assign }
+  interface Frame { node: unknown; inNameBag: boolean; dropUncompilableKeys?: boolean; assign: Assign }
 
   let result: unknown;
   let dropped = 0;
@@ -153,9 +181,10 @@ export function stripUnicodePropertyPatterns(node: unknown, inNameBag = false): 
 
     for (const [key, value] of Object.entries(current as Record<string, unknown>)) {
       if (frame.inNameBag) {
-        if (frame.patternKeyed && usesUnicodePropertyEscape(key)) {
+        if (frame.dropUncompilableKeys && usesUnicodePropertyEscape(key)) {
           // The key is the matcher here, so an uncompilable key takes its schema with it.
           // Keeping the entry would fail the whole schema exactly as a pattern value does.
+          // Only reached when the enclosing object is open, so this cannot narrow it.
           dropped++;
           continue;
         }
@@ -176,7 +205,8 @@ export function stripUnicodePropertyPatterns(node: unknown, inNameBag = false): 
       stack.push({
         node: value,
         inNameBag: SCHEMA_NAME_BAG_KEYS.has(key),
-        patternKeyed: key === PATTERN_KEYED_BAG_KEY,
+        dropUncompilableKeys: key === PATTERN_KEYED_BAG_KEY
+          && patternPropertyDropOnlyWidens(current as Record<string, unknown>),
         assign: v => { out[key] = v; },
       });
     }

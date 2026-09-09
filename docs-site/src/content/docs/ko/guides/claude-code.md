@@ -438,6 +438,14 @@ role, `tool_use_id` 없는 `tool_result`, id/name 없는 `tool_use`, name 없는
 `patternProperties` 항목, 호출자가 마침 `pattern`이라고 이름 붙인 속성 모두 보존해요. 파이썬이 컴파일할
 수 있는 정규식은 lookahead를 쓰더라도 그대로 전달해요.
 
+`patternProperties` 키는 빼도 객체가 좁아지지 않을 때만 빼요. 매처를 빼면 그 매처가 담당하던 키가
+`additionalProperties` 쪽으로 넘어가요. 열린 객체에서는 그 키가 그대로 허용되니 제약 하나만 사라져요.
+반대로 닫힌 객체 — `additionalProperties: false`, `additionalProperties`가 스키마인 경우,
+`unevaluatedProperties: false` — 에서는 같은 조작이 그 키를 금지하거나 다른 제약으로 바꿔 버려요. 매처가
+하나뿐인 사전형 도구라면 `minProperties`가 1일 때 아무 객체도 통과하지 못하게 돼요. 그런 객체는 작성된
+그대로 보내요. ECMA 정규식을 컴파일하는 백엔드는 계속 정상 동작하고, 컴파일하지 못하는 백엔드는 어떤
+인자로도 만족할 수 없는 스키마를 받는 대신 문제의 정규식을 그대로 알려 줘요.
+
 이건 선택된 어댑터 경로에서 일어나는 정규화이지 프로바이더 전체에 대한 보장이 아니에요. 프로바이더 설정과
 인증은 건드리지 않고, 다른 어댑터를 쓰는 프로바이더는 영향을 받지 않아요.
 
