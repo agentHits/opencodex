@@ -1675,7 +1675,15 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
                  >
                    <div className="row models-model-row">
                      <Switch on={!off} onClick={() => void applyVisibility("models", provider, [{ id: m.id, native: m.native === true }], off)} disabled={busy || m.initialSelectionPending} label={m.native ? m.id : m.namespaced} />
-                     {m.initialSelectionPending && <span className="models-chip muted" role="status">{t("models.initialSelectionPending")}</span>}
+                    {m.initialSelectionPending && <span className="models-chip muted" role="status">{t("models.initialSelectionPending")}</span>}
+                    {/* #1711: listed and selectable, but every usable target is out of credit.
+                        Not a visibility change and not the operator's disable flag — the row is
+                        still offered, which is what the issue asks for. */}
+                    {m.quotaInactiveReason === "no_credit" && (
+                      <span className="models-chip muted" role="status" title={t("models.inactiveNoCreditHint")}>
+                        {t("models.inactiveNoCredit")}
+                      </span>
+                    )}
                      {aliases.models[provider]?.[m.id] && <strong className="mono text-control">{aliases.models[provider][m.id].alias}</strong>}
                      <span className="models-model-identity">
                        <code className="mono text-control" style={{ color: off ? "var(--faint)" : "var(--text)", textDecoration: off ? "line-through" : "none" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>

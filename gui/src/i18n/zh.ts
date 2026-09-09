@@ -655,6 +655,8 @@ export const zh: Record<TKey, string> = {
   "models.discoveryFailedProvider": "提供方报告了模型发现错误。",
   "models.discoveryFailedGeneric": "模型发现失败。",
   "models.openProviderSettings": "打开提供方设置",
+  "models.inactiveNoCredit": "无额度",
+  "models.inactiveNoCreditHint": "该条目背后的提供方当前都没有额度，请求会失败。条目仍会列出，额度重置或充值后即可继续使用。",
   "models.loading": "加载中…",
   "models.search": "搜索模型…",
   "models.showMore": "再显示 {n} 个",

@@ -144,6 +144,17 @@ export interface CatalogModel {
   codexToolMode?: "code_mode_only" | "shell";
   /** Normalized upstream capability names retained for management/API consumers (#485 follow-up). */
   capabilities?: string[];
+  /**
+   * This row is listed but cannot currently serve a request (#1711). Today the only value is
+   * "no_credit", set when every usable target has positive quota-exhaustion evidence.
+   *
+   * It is NOT visibility. The row stays `visibility: "list"` on purpose: the issue explicitly
+   * rejects hiding, and Codex Desktop only understands "list" and "hide" anyway, so hiding would
+   * be the one outcome the reporter asked not to have. An OpenCodex-aware consumer greys the
+   * entry; the native picker ignores the field, which is the honest limit of what a custom
+   * catalog field can do.
+   */
+  quotaInactiveReason?: "no_credit";
   /** OpenCodex-only catalog ownership marker; Codex ignores the serialized extension field. */
   catalogKind?: typeof CODEX_CUSTOM_MODEL_CATALOG_KIND | typeof CODEX_PROVIDER_MODEL_CATALOG_KIND;
 }

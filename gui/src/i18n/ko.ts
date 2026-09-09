@@ -658,6 +658,8 @@ export const ko: Record<TKey, string> = {
   "models.discoveryFailedProvider": "프로바이더가 모델 검색 오류를 보고했습니다.",
   "models.discoveryFailedGeneric": "모델 검색에 실패했습니다.",
   "models.openProviderSettings": "프로바이더 설정 열기",
+  "models.inactiveNoCredit": "크레딧 없음",
+  "models.inactiveNoCreditHint": "이 항목이 쓰는 프로바이더가 모두 크레딧이 없어서 지금 요청하면 실패해요. 목록에는 그대로 남고, 크레딧이 초기화되거나 충전되면 다시 쓸 수 있어요.",
   "models.loading": "불러오는 중…",
   "models.search": "모델 검색…",
   "models.showMore": "{n}개 더 보기",

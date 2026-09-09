@@ -676,6 +676,8 @@ export const en = {
   "models.discoveryFailedProvider": "The provider reported a model discovery error.",
   "models.discoveryFailedGeneric": "Model discovery failed.",
   "models.openProviderSettings": "Open provider settings",
+  "models.inactiveNoCredit": "No credit",
+  "models.inactiveNoCreditHint": "Every provider behind this entry is out of credit right now, so a request would fail. It stays listed and becomes usable again when credit resets or is topped up.",
   "models.loading": "Loading…",
   "models.search": "Search models…",
   "models.showMore": "Show {n} more",

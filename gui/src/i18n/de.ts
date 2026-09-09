@@ -647,6 +647,8 @@ export const de: Record<TKey, string> = {
   "models.discoveryFailedProvider": "Der Anbieter meldete einen Fehler bei der Modellerkennung.",
   "models.discoveryFailedGeneric": "Die Modellerkennung ist fehlgeschlagen.",
   "models.openProviderSettings": "Anbietereinstellungen öffnen",
+  "models.inactiveNoCredit": "Kein Guthaben",
+  "models.inactiveNoCreditHint": "Alle Anbieter hinter diesem Eintrag haben gerade kein Guthaben, eine Anfrage würde also fehlschlagen. Der Eintrag bleibt gelistet und ist wieder nutzbar, sobald das Guthaben zurückgesetzt oder aufgeladen wird.",
   "models.loading": "Lädt…",
   "models.search": "Modelle suchen…",
   "models.showMore": "{n} weitere anzeigen",

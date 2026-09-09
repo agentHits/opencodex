@@ -660,6 +660,8 @@ export const ru: Record<TKey, string> = {
   "models.discoveryFailedProvider": "Провайдер сообщил об ошибке обнаружения моделей.",
   "models.discoveryFailedGeneric": "Не удалось обнаружить модели.",
   "models.openProviderSettings": "Открыть настройки провайдера",
+  "models.inactiveNoCredit": "Нет кредитов",
+  "models.inactiveNoCreditHint": "У всех провайдеров этой записи сейчас закончились кредиты, поэтому запрос завершится ошибкой. Запись остаётся в списке и снова заработает после сброса или пополнения кредитов.",
   "models.loading": "Загрузка…",
   "models.search": "Поиск моделей…",
   "models.showMore": "Показать ещё {n}",

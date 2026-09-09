@@ -524,6 +524,8 @@ export const zhTW: Record<TKey, string> = {
   "models.discoveryFailedProvider": "供應商報告了模型發現錯誤。",
   "models.discoveryFailedGeneric": "模型發現失敗。",
   "models.openProviderSettings": "開啟供應商設定",
+  "models.inactiveNoCredit": "無額度",
+  "models.inactiveNoCreditHint": "此項目背後的供應商目前都沒有額度，送出請求會失敗。項目仍會列出，額度重置或儲值後即可繼續使用。",
   "models.loading": "載入中…",
   "models.search": "搜尋模型…",
   "models.showMore": "再顯示 {n} 個",
