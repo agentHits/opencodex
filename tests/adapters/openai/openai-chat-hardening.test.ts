@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { buildOpenAIChatPassthroughRequest, createOpenAIChatAdapter as createOpenAIChatAdapterProduction } from "../../../src/adapters/openai-chat";
-import { stripResponsesOnlyEncryptedMarker } from "../../../src/adapters/responses-tool-schema";
+import { stripResponsesOnlyEncryptedMarker, stripUnicodePropertyPatterns } from "../../../src/adapters/responses-tool-schema";
 import { getDebugLogEntries, resetDebugLogBufferForTests } from "../../../src/lib/debug-log-buffer";
 import { resetDebugSettingsForTests } from "../../../src/lib/debug-settings";
 import { routeModel } from "../../../src/router";
@@ -283,6 +283,86 @@ describe("openai-chat request hardening", () => {
       expect(walk.type).toBe("object");
     }
     expect((walk.leaf as Record<string, unknown>).encrypted).toBeUndefined();
+  });
+});
+
+describe("unicode property-escape pattern stripping", () => {
+  // Claude Code 2.1.265 ships this on the `field` parameter of its built-in Artifact tool.
+  const artifactFieldPattern = '^(?!__.*__$)[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}"\\\\./[\\]]{1,200}$';
+
+  test("drops a pattern Python `re` cannot compile and keeps one it can", () => {
+    const stripped = stripUnicodePropertyPatterns({
+      type: "object",
+      properties: {
+        field: { type: "string", pattern: artifactFieldPattern, description: "keep me" },
+        // Python `re` supports lookaheads, so this one is compilable and must survive.
+        collection: { type: "string", pattern: "^(?!\\.\\.?(?:/|$))[A-Za-z0-9_\\-.~:@+]{1,200}$" },
+        plain: { type: "string", pattern: "^[a-z0-9_-]{1,64}$" },
+      },
+    }) as Record<string, Record<string, Record<string, unknown>>>;
+
+    expect(stripped.properties.field.pattern).toBeUndefined();
+    expect(stripped.properties.field.type).toBe("string");
+    expect(stripped.properties.field.description).toBe("keep me");
+    expect(stripped.properties.collection.pattern).toBe("^(?!\\.\\.?(?:/|$))[A-Za-z0-9_\\-.~:@+]{1,200}$");
+    expect(stripped.properties.plain.pattern).toBe("^[a-z0-9_-]{1,64}$");
+  });
+
+  test("an escaped backslash before `p{` is a literal, not a property escape", () => {
+    // `\\p{2}` is a literal backslash followed by a quantified `p`; Python compiles it, so a
+    // substring scan for `\p{` would throw away a working pattern.
+    const before = { type: "string", pattern: "^\\\\p{2}$" };
+    expect(stripUnicodePropertyPatterns(before)).toBe(before);
+  });
+
+  test("`\\P{…}` is dropped as well as `\\p{…}`", () => {
+    const stripped = stripUnicodePropertyPatterns({ type: "string", pattern: "^\\P{L}+$" }) as Record<string, unknown>;
+    expect(stripped.pattern).toBeUndefined();
+    expect(stripped.type).toBe("string");
+  });
+
+  test("a property or literal payload named `pattern` is data, not a keyword", () => {
+    const before = {
+      type: "object",
+      properties: {
+        // A caller-chosen property name that happens to be `pattern`: its schema survives whole.
+        pattern: { type: "string", pattern: "^[a-z]+$" },
+      },
+      $defs: { pattern: { type: "string" } },
+      patternProperties: { "^x-": { type: "string" } },
+      const: { pattern: artifactFieldPattern },
+      default: { pattern: artifactFieldPattern },
+      enum: [{ pattern: artifactFieldPattern }],
+      examples: [{ pattern: artifactFieldPattern }],
+    };
+    expect(stripUnicodePropertyPatterns(before)).toBe(before);
+  });
+
+  test("returns the input itself when nothing is dropped", () => {
+    const before = { type: "object", properties: { a: { type: "string" } } };
+    expect(stripUnicodePropertyPatterns(before)).toBe(before);
+  });
+
+  test("a deeply nested schema is stripped without exhausting the stack", () => {
+    // Same reasoning as the encrypted-marker walk: schema depth is caller-controlled.
+    const depth = 50_000;
+    const root: Record<string, unknown> = { type: "object", pattern: artifactFieldPattern };
+    let cursor = root;
+    for (let i = 0; i < depth; i++) {
+      const child: Record<string, unknown> = { type: "object", pattern: artifactFieldPattern };
+      cursor.properties = { pattern: child };
+      cursor = child;
+    }
+
+    const stripped = stripUnicodePropertyPatterns(root) as Record<string, unknown>;
+    expect(stripped.pattern).toBeUndefined();
+    let walk = stripped;
+    for (let i = 0; i < depth; i++) {
+      // Each level keeps the property literally named `pattern` and drops the keyword.
+      walk = (walk.properties as Record<string, Record<string, unknown>>).pattern;
+      expect(walk.pattern).toBeUndefined();
+      expect(walk.type).toBe("object");
+    }
   });
 });
 
