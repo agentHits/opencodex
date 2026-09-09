@@ -1118,6 +1118,15 @@ const configSchema = z.object({
     .min(0)
     .optional()
     .catch(undefined),
+  // Opt-in inbound body ceiling (#3573). An invalid hand edit degrades to the 256 MiB default
+  // rather than failing the parse, matching the outbound guard above: a malformed number must
+  // not change what the proxy admits. The hard ceiling is NOT enforced here — because of that
+  // `.catch`, and because a config object can be built without this schema at all — but in
+  // `resolveInboundBodyLimitBytes()`, which every reader goes through.
+  maxInboundBodyBytes: z.number().int()
+    .min(0)
+    .optional()
+    .catch(undefined),
   appOwnedMemoryBudgetMb: z.number().int()
     .min(MIN_APP_OWNED_MEMORY_BUDGET_MB)
     .max(MAX_APP_OWNED_MEMORY_BUDGET_MB)
