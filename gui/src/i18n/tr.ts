@@ -663,6 +663,7 @@ export const tr: Record<TKey, string> = {
   "models.discoveryFailedProvider": "Sağlayıcı bir model keşfi hatası bildirdi.",
   "models.discoveryFailedGeneric": "Model keşfi başarısız oldu.",
   "models.openProviderSettings": "Sağlayıcı ayarlarını aç",
+  "models.discoveryFailedDependency": "Bu sağlayıcı için model keşfi açık. Başarısız olmaya devam ettiği sürece, elle eklenen veya statik modelleri kullanmak için sağlayıcı ayarlarından „{control}“ seçeneğini kapatın.",
   "models.loading": "Yükleniyor…",
   "models.search": "Modellerde ara…",
   "models.showMore": "{n} tane daha göster",

@@ -524,6 +524,7 @@ export const zhTW: Record<TKey, string> = {
   "models.discoveryFailedProvider": "供應商報告了模型發現錯誤。",
   "models.discoveryFailedGeneric": "模型發現失敗。",
   "models.openProviderSettings": "開啟供應商設定",
+  "models.discoveryFailedDependency": "此供應商已開啟模型探索。若持續失敗，可在供應商設定中關閉「{control}」，改用手動新增的模型或靜態模型。",
   "models.loading": "載入中…",
   "models.search": "搜尋模型…",
   "models.showMore": "再顯示 {n} 個",

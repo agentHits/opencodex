@@ -658,6 +658,7 @@ export const ko: Record<TKey, string> = {
   "models.discoveryFailedProvider": "프로바이더가 모델 검색 오류를 보고했습니다.",
   "models.discoveryFailedGeneric": "모델 검색에 실패했습니다.",
   "models.openProviderSettings": "프로바이더 설정 열기",
+  "models.discoveryFailedDependency": "이 프로바이더는 모델 검색이 켜져 있어요. 계속 실패한다면 프로바이더 설정에서 ‘{control}’을 꺼야 직접 추가한 모델이나 정적 모델을 쓸 수 있어요.",
   "models.loading": "불러오는 중…",
   "models.search": "모델 검색…",
   "models.showMore": "{n}개 더 보기",
