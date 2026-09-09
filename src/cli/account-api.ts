@@ -18,7 +18,11 @@ export interface AccountRow {
   id: string;
   label?: string;
   email?: string;
-  plan?: string;
+  /**
+   * Subscription tier. `null` means this version looked and the provider did not report one;
+   * an absent key means the row's surface does not carry a tier at all (#3777).
+   */
+  plan?: string | null;
   masked?: string;
   active: boolean;
   needsReauth?: boolean;
@@ -322,6 +326,8 @@ interface OAuthAccountDto {
   email?: string;
   active?: boolean;
   needsReauth?: boolean;
+  /** Always sent by the management route; explicitly `null` when the tier is unknown. */
+  plan?: string | null;
   quota?: CodexQuotaDto | null;
   quotaUnavailable?: boolean;
 }
@@ -352,6 +358,9 @@ async function fetchOAuthRows(
     email: a.email,
     active: a.active ?? a.id === activeId,
     needsReauth: a.needsReauth,
+    // Forward the server's answer verbatim, including `null`. Collapsing null to "absent" here
+    // would destroy the one distinction this field exists to make.
+    plan: a.plan ?? null,
     ...(a.quota !== undefined ? { quota: a.quota } : {}),
     ...(a.quotaUnavailable !== undefined ? { quotaUnavailable: a.quotaUnavailable } : {}),
   }));
