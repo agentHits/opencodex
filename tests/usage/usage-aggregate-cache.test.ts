@@ -23,6 +23,12 @@ import { resetUsageReadCacheForTests, type PersistedUsageEntry } from "../../src
 import * as usageLedgerScannerModule from "../../src/usage/ledger-scanner";
 import { refreshUserCostOverlays } from "../../src/usage/user-cost-overlays";
 import { buildRouteDecisionTrace } from "../../src/routing/trace";
+import { createAnthropicAdapter } from "../../src/adapters/anthropic";
+import { buildResponseJSON } from "../../src/bridge";
+import { formatUsageReport } from "../../src/cli/usage-report";
+import { addFinalRequestLog, clearRequestLogsForTests, type RequestLogContext } from "../../src/server/request-log";
+import type { AdapterEvent } from "../../src/types";
+import { withTestTranslatorBudget } from "../helpers/translator-budget";
 
 const NOW = Date.parse("2026-09-01T10:00:00.000Z");
 
@@ -62,6 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearRequestLogsForTests();
   resetUsageAggregateCacheForTests();
   resetUsageReadCacheForTests();
   resetAppOwnedMemoryForTests();
@@ -72,6 +79,27 @@ afterEach(() => {
 });
 
 describe("retained usage aggregate cache", () => {
+  test("malformed Anthropic usage stays unmetered through the real ledger and human report", async () => {
+    const adapter = withTestTranslatorBudget(createAnthropicAdapter({
+      adapter: "anthropic", baseUrl: "https://api.anthropic.com", apiKey: "test-key",
+    }));
+    const response = Response.json({
+      content: [{ type: "text", text: "ok" }], stop_reason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: "\x1b[2J" },
+    });
+    const events = await adapter.parseResponse!(response) as AdapterEvent[];
+    const logCtx: RequestLogContext = { provider: "anthropic", model: "claude-test" };
+    buildResponseJSON(events, "anthropic/claude-test", { onUsage: usage => { logCtx.usage = usage; } });
+    addFinalRequestLog("malformed-usage", Date.now(), logCtx, 200, { closeReason: "non_stream" });
+    const persisted = JSON.parse(readFileSync(join(testDir, "usage.jsonl"), "utf8").trim());
+    const report = (await getUsageAggregate()).accumulator.summarize("all", Date.now());
+    expect(report.summary.requests).toBe(1);
+    expect(formatUsageReport(report).every(line => !/[\x00-\x1f\x7f-\x9f]/.test(line))).toBe(true);
+    expect(persisted.usageStatus).toBe("unreported");
+    expect(persisted.usage).toBeUndefined();
+    expect(report.summary.unmeteredRequests).toBe(1);
+  });
+
   test("custom cache keys isolate both endpoints and never poison preset aggregates", async () => {
     const path = join(testDir, "usage.jsonl");
     const rows = [NOW - 2_000, NOW - 1_000, NOW].map((timestamp, index) => ({ ...entry(String(index)), timestamp }));
