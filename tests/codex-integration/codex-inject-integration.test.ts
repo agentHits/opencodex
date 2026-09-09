@@ -890,13 +890,17 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(providerTable).toContain("[model_providers.opencodex]");
     expect(providerTable).toContain("requires_openai_auth = true");
     expect(providerTable).not.toContain("requires_openai_auth = false");
-    expect(providerTable).not.toContain("openai_base_url");
+    // The root override is retained next to the table, which is what keeps threads still tagged
+    // `openai` resolving to this proxy instead of to api.openai.com.
+    expect(providerTable).toContain('openai_base_url = "http://127.0.0.1:10100/v1"');
 
     expect(runInject(codexHome, ocxHome).status).toBe(0);
     const designB = readFileSync(join(codexHome, "config.toml"), "utf8");
     expect(designB).toContain(DESIGN_B_BLOCK);
     expect(designB).not.toContain("[model_providers.opencodex]");
     expect(designB).not.toContain('model_provider = "opencodex"');
+    // Disabling leaves exactly one root override, not the table form's copy plus a new one.
+    expect(designB.match(/openai_base_url/g)?.length).toBe(1);
   });
 
   test("client compaction opt-in leaves pre-existing ocx1 resume history byte-for-byte unchanged", () => {
@@ -924,7 +928,7 @@ describe("injectCodexConfig integration (Design B)", () => {
 
     const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
     expect(enabled.status).toBe(0);
-    expect(String(JSON.parse(enabled.stdout).message)).toContain("originals backed up for restore");
+    expect(String(JSON.parse(enabled.stdout).message)).toContain("left unchanged");
     expect(readFileSync(rolloutPath, "utf8")).toBe(rollout);
     const verifier = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
     expect(verifier.query("SELECT model_provider FROM threads WHERE id = 'thread-ocx1'").get())
@@ -932,7 +936,7 @@ describe("injectCodexConfig integration (Design B)", () => {
     verifier.close();
   });
 
-  test("client compaction opt-in keeps existing Design B threads routed through the proxy", () => {
+  test("client compaction opt-in keeps existing Design B threads routed without touching history", () => {
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
     const sessionsDir = join(codexHome, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
@@ -953,13 +957,19 @@ describe("injectCodexConfig integration (Design B)", () => {
     const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
     expect(enabled.status).toBe(0);
 
-    // The opt-in removes the root openai_base_url override and makes `opencodex` the default
-    // provider, so a thread left tagged `openai` would resume against OpenAI directly, outside
-    // this proxy and outside the configured routing. Forward-tagging is what keeps it routed;
-    // the backup taken here is what migrates it back when the opt-in is turned off.
+    // The thread stays tagged `openai` and its rollout is untouched. It keeps reaching the proxy
+    // because the injection retains the root override next to the provider table, so codex's
+    // built-in `openai` entry still resolves to this proxy. Re-tagging would have been the other
+    // way to keep it routed, but the length-preserving first-line repair cannot grow "openai"
+    // into "opencodex", and codex re-appends that stale first line on its next metadata write.
+    const config = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(config).toContain('model_provider = "opencodex"');
+    expect(config).toContain("[model_providers.opencodex]");
+    expect(config).toContain("openai_base_url");
+    expect(readFileSync(rolloutPath, "utf8")).toBe(rollout);
     const verifier = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
     expect(verifier.query("SELECT model_provider FROM threads WHERE id = 'thread-designb'").get())
-      .toEqual({ model_provider: "opencodex" });
+      .toEqual({ model_provider: "openai" });
     verifier.close();
   });
 

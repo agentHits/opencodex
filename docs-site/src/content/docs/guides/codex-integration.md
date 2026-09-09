@@ -281,14 +281,18 @@ selected provider. V2 sub-agent requests keep their existing provider selection 
 accounting. Client-side compaction does not change plaintext delivery, encrypted task passthrough
 through `allowEncryptedV2AgentTasks`, or configured recovery and fallback behavior.
 
-This preference affects future compactions only: it never rewrites an existing `ocx1:` payload, so
-use the explicit history recovery workflow for a thread that needs one. It does re-tag existing
-resume-history metadata to the `opencodex` provider, and it has to. With the root
-`openai_base_url` override gone and `opencodex` as the default provider, a thread left tagged
-`openai` would resume against OpenAI directly rather than through this proxy, taking configured
-routing with it. The originals are backed up, so turning the setting off and syncing migrates
-those threads back and restores the default Design B root override — unless `codexDesktopAuthless`
-or non-loopback admission still requires the provider-table form.
+This preference affects future compactions only. It rewrites no existing `ocx1:` payload and
+re-tags no existing resume-history metadata, so use the explicit history recovery workflow for a
+thread that needs one.
+
+Existing threads keep working because the injection keeps the root `openai_base_url` override
+alongside the provider table. New threads default to `opencodex` and get client-side compaction,
+while a thread already tagged `openai` still resolves to Codex's built-in provider — which the
+retained override still points at this proxy. Without it that thread would resume against OpenAI
+directly, taking configured routing with it. A root override you wrote yourself is never
+replaced. Turning the setting off and syncing removes the table and returns to the plain Design B
+override, unless `codexDesktopAuthless` or non-loopback admission still requires the
+provider-table form; those two forms cannot use the root key and are unchanged.
 
 While the mode is active, the realtime voice sideband override
 (`experimental_realtime_ws_base_url`) is not injected — the dedicated provider-table form cannot

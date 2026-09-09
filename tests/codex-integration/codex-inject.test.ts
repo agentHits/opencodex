@@ -88,6 +88,9 @@ describe("Codex config injection", () => {
       const profile = buildProfileFile(target, "/tmp/opencodex-catalog.json");
       expect(profile).toContain('model_provider = "opencodex"');
       expect(profile).toContain("requires_openai_auth = true");
+      // The reference profile documents the provider table only. The root override that keeps
+      // existing `openai`-tagged threads on the proxy is a config.toml global, not a profile
+      // key, so the injected config carries it and this file does not.
       expect(profile).not.toContain("openai_base_url");
       // The dedicated provider-table form cannot carry the realtime voice
       // sideband (it needs the admission-token header): opting in must not

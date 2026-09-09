@@ -1027,6 +1027,26 @@ export async function injectCodexConfig(
 
   // Provider-table form: non-loopback admission or an explicit Desktop policy.
   const providerTableMode = usesProviderTable(routingTarget);
+  // Client compaction is the one table form that must not orphan existing threads. It changes
+  // the DEFAULT provider to `opencodex`, but a thread already tagged `openai` keeps resolving
+  // to Codex's built-in entry, and without the root override that entry is api.openai.com —
+  // the thread would resume outside this proxy and outside configured routing. Keeping the
+  // marker-owned root override alongside the table fixes that at the source: codex builds its
+  // provider map as merge_configured_model_providers(built_in_model_providers(openai_base_url),
+  // model_providers), so the override lands on the built-in `openai` entry when the map is
+  // built, independent of which id is the default, and the merge leaves that entry alone for
+  // every id except the two Amazon Bedrock ones. Both entries then point at this proxy.
+  //
+  // Re-tagging history was the alternative and it cannot be made durable: the length-preserving
+  // first-line repair cannot grow "openai" into "opencodex" without pre-existing padding, and
+  // codex re-appends that stale first line whenever it writes git or memory-mode metadata.
+  //
+  // Authless is excluded on purpose: its whole point is a provider that carries
+  // requires_openai_auth = false, and admission-token forms cannot use the root key at all.
+  const keepRootOverrideAlongsideTable = providerTableMode
+    && routingTarget.clientCompaction === true
+    && routingTarget.desktopAuthless !== true
+    && routingTarget.requiresAdmissionToken !== true;
   let keptUserBaseUrl = false;
   let keptUserRealtimeWsBaseUrl = false;
   if (providerTableMode) {
@@ -1041,6 +1061,14 @@ export async function injectCodexConfig(
       content.trimEnd() +
       "\n" +
       buildProviderTableBlockForTarget(routingTarget, websocketsEnabled(config ?? {}));
+    // 3) Keep existing `openai`-tagged threads reaching the proxy (see above). Ownership rules
+    // are the Design B ones: a user's own root line is never replaced.
+    if (keepRootOverrideAlongsideTable) {
+      content = stripInjectedOpenaiBaseUrl(content);
+      const rootFallback = setRootOpenaiBaseUrlForTarget(content, routingTarget);
+      content = rootFallback.content;
+      keptUserBaseUrl = rootFallback.keptUserBaseUrl;
+    }
   } else {
     // Design B (loopback): a single root override; codex keeps its native `openai` provider id
     // so thread history is never remapped. Any legacy form was already stripped above.
@@ -1340,14 +1368,11 @@ export async function injectCodexConfig(
   }
   // Legacy mode still forward-tags history so re-tagged threads stay listable. Design B needs
   // the opposite: a one-time migration of previously re-tagged threads BACK to openai (restore
-  // machinery; cheap no-op when there is nothing to migrate). The client-compaction opt-in uses
-  // a provider table too, so it forward-tags for the same reason the other table forms do: with
-  // `model_provider = "opencodex"` and no root `openai_base_url` override, a thread still tagged
-  // `openai` resolves to Codex's built-in provider and resumes straight against OpenAI, outside
-  // this proxy and outside the configured routing. Leaving those threads untagged would silently
-  // send namespaced routed models to the wrong destination. Forward-tagging is future-only in the
-  // sense that matters: it rewrites provider metadata, never an existing `ocx1:` payload, and the
-  // backup taken here is what migrates the threads back when the opt-in is turned off.
+  // machinery; cheap no-op when there is nothing to migrate). The client-compaction opt-in keeps
+  // the root override alongside its table precisely so it does NOT have to touch history: an
+  // existing `openai`-tagged thread still reaches this proxy through the built-in entry. So it
+  // skips this unit, and future-only means what it says — no provider metadata is rewritten and
+  // no `ocx1:` payload is touched.
   // History runs in a Worker under H, not on this thread.
   //
   // The three surfaces it touches — the SQLite rows, the backup manifest, and the
@@ -1360,7 +1385,7 @@ export async function injectCodexConfig(
     expectedDesiredEnabled: true,
     operation: deriveCodexHistoryOperation({
       direction: "apply",
-      resumeHistory: config?.syncResumeHistory !== false,
+      resumeHistory: config?.syncResumeHistory !== false && !keepRootOverrideAlongsideTable,
       legacyMode: providerTableMode,
     }),
   });
@@ -1392,7 +1417,9 @@ export async function injectCodexConfig(
   const ejected = (history as { ejectedRows?: number }).ejectedRows ?? 0;
   const migratedRows = (history.rows ?? 0) + ejected;
   const historyMessage =
-    config?.syncResumeHistory === false
+    keepRootOverrideAlongsideTable
+      ? `  Codex resume history: left unchanged; existing threads keep reaching the proxy through the retained openai_base_url override.\n`
+      : config?.syncResumeHistory === false
       ? `  Codex resume history: left unchanged (syncResumeHistory=false).\n`
       : history.failed
         ? formatApplyHistoryFailure(historyOutcome, providerTableMode)
