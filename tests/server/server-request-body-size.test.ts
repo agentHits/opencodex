@@ -54,21 +54,48 @@ describe("server maxRequestBodySize (Issue #1601)", () => {
 });
 
 describe("configurable listener body size (Issue #3573)", () => {
-  test("the Bun listener follows maxInboundBodyBytes instead of the fixed default", async () => {
-    // Bun refuses an oversized body BEFORE fetch() runs, so a listener pinned to the 256 MiB
-    // default would silently cap the opt-in. Proving the listener moved is cheaper downward:
-    // a 2 MiB configured limit rejects a 3 MiB body, which the old fixed listener admitted
-    // (it reached the handler and answered 400 for unparseable JSON).
-    saveConfig({ ...getDefaultConfig(), maxInboundBodyBytes: 2 * 1024 * 1024 });
+  const BODY_BYTES = 2 * 1024 * 1024;
+
+  // Bun refuses an oversized body BEFORE fetch() runs, so a listener pinned to the 256 MiB
+  // default would silently cap the opt-in no matter what the handlers do with it. Proving the
+  // listener moved is cheaper downward than upward: the same 2 MiB body is admitted under the
+  // default and refused under a 1 MiB configured limit.
+  async function postFixedBody(port: number): Promise<{ refused: boolean; status: number | null }> {
+    // Bun answers 413 and stops reading while the client is still uploading, so the write side
+    // can surface the refusal as a transport error instead of a response. Both shapes mean the
+    // listener refused the body; neither can be produced by admitting it.
+    const res = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: Buffer.alloc(BODY_BYTES, 0x20),
+    }).catch(() => null);
+    if (!res) return { refused: true, status: null };
+    const status = res.status;
+    await res.text().catch(() => "");
+    return { refused: status === 413, status };
+  }
+
+  test("a body under the configured limit still reaches the handler", async () => {
+    saveConfig({ ...getDefaultConfig(), maxInboundBodyBytes: 8 * 1024 * 1024 });
     const server = startServer(0);
     try {
-      const res = await fetch(`http://127.0.0.1:${server.port}/v1/responses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: Buffer.alloc(3 * 1024 * 1024, 0x20),
-      });
-      expect(res.status).toBe(413);
-      await res.text();
+      const result = await postFixedBody(server.port);
+      // Unparseable JSON, so the handler answers 4xx — the point is that it answered at all.
+      expect(result.refused).toBe(false);
+      expect(result.status).not.toBeNull();
+    } finally {
+      void server.stop(true);
+    }
+  });
+
+  test("the listener refuses above maxInboundBodyBytes instead of the fixed default", async () => {
+    // The old listener was pinned to MAX_DECOMPRESSED_BODY_BYTES, so this body reached the
+    // handler regardless of config. It must now be refused before the handler runs.
+    saveConfig({ ...getDefaultConfig(), maxInboundBodyBytes: 1024 * 1024 });
+    expect(1024 * 1024).toBeLessThan(BODY_BYTES);
+    const server = startServer(0);
+    try {
+      expect((await postFixedBody(server.port)).refused).toBe(true);
     } finally {
       void server.stop(true);
     }
