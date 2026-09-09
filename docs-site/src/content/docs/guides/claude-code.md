@@ -550,16 +550,21 @@ A JSON Schema `pattern` written for JavaScript may use Unicode property escapes 
 so a single such pattern on one built-in tool fails every request in the session, not just calls
 to that tool.
 
-To keep those sessions working, the OpenAI chat and Responses adapters omit only the `pattern`
-keywords that use Unicode property escapes when translating tool schemas. Everything else on the
-tool is preserved: sibling constraints such as `minLength`, `enum`, or `format`, the `required`
-list, and any property a caller happened to name `pattern`. A pattern that Python can compile,
-including one using lookaheads, is passed through unchanged.
+To keep those sessions working, the `openai-chat` and `openai-responses` adapter paths omit the
+regexes that use Unicode property escapes when translating tool schemas: a `pattern` value, and a
+`patternProperties` key, which the destination compiles the same way. Everything else on the tool
+is preserved: sibling constraints such as `minLength`, `enum`, or `format`, the `required` list,
+other `patternProperties` entries, and any property a caller happened to name `pattern`. A regex
+that Python can compile, including one using lookaheads, is passed through unchanged.
 
-This is adapter-level compatibility normalization, not a claim that every custom OpenAI-compatible
-backend rejects these patterns. What it costs is worth knowing: an omitted `pattern` is not
-preserved anywhere and is not enforced upstream, so a tool implementation should validate its own
-inputs rather than relying on the schema to reject a malformed argument.
+This is normalization on the selected adapter path, not a provider-wide guarantee. Provider
+configuration and authentication are untouched, and a provider on a different adapter is
+unaffected.
+
+It is a compatibility measure, not a claim that every custom OpenAI-compatible backend rejects
+these patterns. What it costs is worth knowing: an omitted regex is not preserved anywhere and is
+not enforced upstream, so a tool implementation should validate its own inputs rather than relying
+on the schema to reject a malformed argument.
 
 ## Outbound translation (Responses → Messages SSE)
 
