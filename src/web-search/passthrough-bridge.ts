@@ -154,7 +154,7 @@ export function planPassthroughWebSearchBridge(
 }
 
 /** One intercepted search call, carried from the upstream stream into the next request body. */
-interface InterceptedSearchCall {
+export interface InterceptedSearchCall {
   callId: string;
   itemId?: string;
   argumentsText: string;

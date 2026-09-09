@@ -5767,15 +5767,6 @@ async function handleResponsesInner(
         route.provider,
         route.modelId,
       );
-      let passthroughSseBody = terminalRepairPolicy
-        ? relayResponsesSseWithTerminalRepair(
-          upstreamResponse.body,
-          upstream,
-          terminalRepairPolicy,
-          translatorBudget,
-          options.responsesTerminalRepairScheduler,
-        )
-        : upstreamResponse.body;
       // #3761: opt-in hosted-web-search bridge. Codex always declares the hosted web_search tool,
       // and this branch relays that declaration on the assumption the destination executes it.
       // A KEY-auth gateway that does not (Ollama Cloud GLM) answers with a function_call named
@@ -5788,10 +5779,12 @@ async function handleResponsesInner(
         isPassthrough: true,
         stream: parsed.stream === true,
       });
-      if (webSearchBridgePlan) {
-        passthroughSseBody = createPassthroughWebSearchBridgeStream({
+      // The bridge wraps the RAW upstream body, so terminal repair below still owns the single
+      // client-facing terminal — the bridge drops the terminal of every intercepted leg.
+      const upstreamSseBody = webSearchBridgePlan
+        ? createPassthroughWebSearchBridgeStream({
           plan: webSearchBridgePlan,
-          firstLeg: passthroughSseBody,
+          firstLeg: upstreamResponse.body,
           requestBody: request.body,
           // Continuation legs replay the same built request with the executed search appended.
           // The first leg already passed the recovery ladder, the outbound size ceiling, and the
@@ -5811,8 +5804,17 @@ async function handleResponsesInner(
           ),
           execute: createOllamaBridgeExecutor(webSearchBridgePlan, route.provider.apiKey ?? ""),
           signal: upstream.signal,
-        });
-      }
+        })
+        : upstreamResponse.body;
+      const passthroughSseBody = terminalRepairPolicy
+        ? relayResponsesSseWithTerminalRepair(
+          upstreamSseBody,
+          upstream,
+          terminalRepairPolicy,
+          translatorBudget,
+          options.responsesTerminalRepairScheduler,
+        )
+        : upstreamSseBody;
       const repairConfig = route.provider.responsesItemIdRepair;
       // Grok Build renders deltas live but reconstructs its durable assistant
       // turn from the completed response snapshot. Native Responses streams
