@@ -289,7 +289,11 @@ own, on an authenticated loopback bind, client-side compaction re-tags nothing: 
 override instead, as described below. Enabled together with `codexDesktopAuthless`, or on a
 non-loopback bind, the stronger form wins and those forms behave exactly as they do today,
 including their existing forward-tagging of resume history with originals backed up for restore.
-Turning the stronger setting off migrates those threads back.
+
+Going back from one of those forms to plain Design B migrates the re-tagged threads back. Turning
+off `codexDesktopAuthless` while leaving client-side compaction on does not: that lands on the
+compaction-only form, which skips the history unit, so threads already tagged `opencodex` keep
+that tag. They still reach this proxy, through the provider table rather than the root override.
 
 On the compaction-only form, existing threads keep working because the injection keeps the root
 `openai_base_url` override alongside the provider table. New threads default to `opencodex` and

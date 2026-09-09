@@ -921,6 +921,9 @@ describe("injectCodexConfig integration (Design B)", () => {
     // The opt-in itself still applies: new threads default to the proxy provider.
     expect(config).toContain('model_provider = "opencodex"');
     expect(config).toContain("[model_providers.opencodex]");
+    // The user's line must never be journaled as ours, or a later restore would strip it.
+    const journal = JSON.parse(readFileSync(join(codexHome, "opencodex-journal.json"), "utf8"));
+    expect(journal.injectedOpenaiBaseUrl).toBeNull();
   });
 
   test("the retained root override is journaled so a comment-dropping rewrite can still restore", () => {
