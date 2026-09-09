@@ -542,6 +542,25 @@ Replay preserves non-hidden signed blocks (including empty thinking) and opaque 
 role; `tool_result` without `tool_use_id`; `tool_use` without id/name; named `tool_choice` without
 name.
 
+### Unicode-property patterns in tool schemas
+
+A JSON Schema `pattern` written for JavaScript may use Unicode property escapes such as
+`\p{Cc}` or `\P{L}`. OpenAI-family backends validate `pattern` by compiling it with Python's
+`re`, which does not support those escapes, and a schema they cannot compile is refused whole —
+so a single such pattern on one built-in tool fails every request in the session, not just calls
+to that tool.
+
+To keep those sessions working, the OpenAI chat and Responses adapters omit only the `pattern`
+keywords that use Unicode property escapes when translating tool schemas. Everything else on the
+tool is preserved: sibling constraints such as `minLength`, `enum`, or `format`, the `required`
+list, and any property a caller happened to name `pattern`. A pattern that Python can compile,
+including one using lookaheads, is passed through unchanged.
+
+This is adapter-level compatibility normalization, not a claim that every custom OpenAI-compatible
+backend rejects these patterns. What it costs is worth knowing: an omitted `pattern` is not
+preserved anywhere and is not enforced upstream, so a tool implementation should validate its own
+inputs rather than relying on the schema to reject a malformed argument.
+
 ## Outbound translation (Responses → Messages SSE)
 
 | Responses event | Messages SSE |
