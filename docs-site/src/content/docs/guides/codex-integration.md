@@ -78,21 +78,25 @@ does not guarantee lower microphone, WebRTC, or end-to-end voice latency through
 
 ### ChatGPT-family channel and latency
 
-Native ChatGPT-family requests routed through opencodex via the canonical ChatGPT-login `openai`
-forward provider (covering both Pool and Direct modes) use the public ChatGPT endpoint. Provider
-routing or account selection does not bypass the upstream ChatGPT channel. The upstream may spend
-time queueing a request before the first output even when the local proxy and network path are
-healthy.
+Requests routed through opencodex via the canonical ChatGPT-login `openai` provider — adapter
+`openai-responses`, `authMode: "forward"`, and the `https://chatgpt.com/backend-api/codex`
+endpoint, covering both Pool and Direct modes — use the public ChatGPT endpoint. Provider routing
+or account selection does not bypass the upstream ChatGPT channel. The upstream may spend time
+queueing a request before the first output even when the local proxy and network path are healthy.
 
-Eligible streaming turns dial the ChatGPT websocket transport — the same `responses_websockets`
-lane Codex CLI defaults to — and fall back to SSE over HTTP when a turn is not eligible: an
-unsupported Bun runtime, an oversized `response.create` frame, or a proxy route that cannot carry
-the socket. Local provider pacing can also hold a request before it is dispatched at all. So a slow
-first output has several possible contributors, and upstream queueing is only one of them. `ocx
-doctor` classifies configuration and measures none of these: compare actual transport, pacing,
-network, and provider observations before concluding. This routing behavior is specific to
-ChatGPT-login routing and does not apply to `openai-apikey` or custom providers, which connect
-directly to their respective API endpoints without public ChatGPT channel queueing.
+Only some turns take the ChatGPT websocket transport — the same `responses_websockets` lane Codex
+CLI defaults to. A turn is eligible when the Bun runtime supports the bounded relay, the request
+is a `POST` to the canonical Responses URL or a configured WebSocket route, and its JSON body sets
+`stream` to `true` at the root. Everything else stays on SSE over HTTP, and an eligible turn still
+falls back to it when the request cannot be prepared, the `response.create` frame exceeds its size
+limit, or the proxy route cannot carry the socket.
+
+Local provider pacing can also hold a request before it is dispatched at all. So a slow first
+output has several possible contributors, and upstream queueing is only one of them. `ocx doctor`
+classifies configuration and measures none of these: compare actual transport, pacing, network,
+and provider observations before concluding. This routing behavior is specific to ChatGPT-login
+forwarding and does not apply to `openai-apikey` or custom providers, which connect directly to
+their respective API endpoints without public ChatGPT channel queueing.
 
 `service_tier: priority` is a request preference. On the ChatGPT backend the echoed
 `service_tier` cannot confirm or deny the granted tier: turns scheduled as priority can still

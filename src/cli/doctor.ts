@@ -47,6 +47,7 @@ import {
 } from "../codex/user-identity";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers-destination";
 import type { OcxProviderConfig } from "../types/provider";
+import { routedProviderConfig } from "../router";
 import { collectProjectCodexConfigWarnings, formatProjectCodexConfigWarningsForDoctor } from "../codex/project-config-warnings";
 import {
   collectLegacyCodexConfigKeyDiagnostics,
@@ -1010,10 +1011,25 @@ export function chatgptPublicEndpointHint(
   if (!openai || typeof openai !== "object") {
     return null;
   }
-  // Same classification the router uses: adapter + forward auth + the exact
-  // canonical ChatGPT-login URL. A hostname lookalike must not get this
-  // guidance, and a missing authMode is the runtime "key" default, not forward.
-  if (!isCanonicalOpenAiForwardProvider(openai as OcxProviderConfig)) {
+  // A disabled row never routes, so it must not be described as the route in use.
+  const configured = openai as OcxProviderConfig;
+  if (configured.disabled === true) {
+    return null;
+  }
+  // Classify the destination the router resolves, not the raw config text. Two things follow
+  // from the registry entry for the built-in `openai` id: a row that omits `authMode` still
+  // forwards, and a row carrying some other `baseUrl` has it discarded in favour of the
+  // canonical ChatGPT endpoint. Both keep using the public endpoint, so both want this hint;
+  // reading the raw row would have suppressed the first and misjudged the second. Resolution
+  // can reject a malformed or disallowed destination by throwing, and doctor is read-only
+  // diagnostics, so an unclassifiable row simply gets no hint.
+  let routed: OcxProviderConfig;
+  try {
+    routed = routedProviderConfig("openai", configured);
+  } catch {
+    return null;
+  }
+  if (!isCanonicalOpenAiForwardProvider(routed)) {
     return null;
   }
   return "ChatGPT-family requests use the public ChatGPT endpoint through this proxy, in both Pool and Direct modes. Eligible streaming turns dial the ChatGPT websocket transport (the same responses_websockets lane Codex CLI defaults to) and fall back to SSE over HTTP when a turn is not eligible - an unsupported Bun runtime, an oversized create frame, or a proxy route that cannot carry the socket - and local provider pacing can hold a request before it is dispatched at all. This hint classifies configuration only and measures nothing, so upstream queueing is one possible contributor to a slow first output: compare actual transport, pacing, network, and provider observations before concluding. service_tier=priority is a request preference: this backend can echo service_tier \"default\" even on turns it scheduled as priority (#2558), so the echoed response tier in request logs stays an observation with confirmation \"assumed\" and cannot confirm or deny the granted tier.";

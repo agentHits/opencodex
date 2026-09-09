@@ -656,18 +656,24 @@ describe("service memory section (#314 WP4)", () => {
     expect(hint).toContain("fall back");
     expect(hint).toContain("one possible contributor");
     expect(chatgptPublicEndpointHint({})).toBeNull();
-    // A missing authMode is the runtime "key" default, not the forward login.
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "key", baseUrl: "https://chatgpt.com/backend-api/codex" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://api.openai.com/v1" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com.example/v1" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://gateway.example/chatgpt.com/v1" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "not-a-valid-url" } })).toBeNull();
-    // Only the exact canonical URL qualifies: no parent path, no subdomain.
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://subdomain.chatgpt.com/v1" } })).toBeNull();
+    // Resolution, not raw text. The registry entry for the built-in `openai` id has
+    // authKind "forward", so a row that omits `authMode` still forwards to ChatGPT and still
+    // needs the hint. Reading the raw row suppressed it.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex" } })).not.toBeNull();
+    // Same reason the other way round: the entry is not key-auth-overridable, so writing
+    // `authMode: "key"` on this id does not change where requests go.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "key", baseUrl: "https://chatgpt.com/backend-api/codex" } })).not.toBeNull();
+    // The entry sets no baseUrl override, so a differing URL is discarded and the request
+    // still goes to the canonical endpoint. Describing that route is correct, and a lookalike
+    // host never becomes the destination.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com.example/v1" } })).not.toBeNull();
     // Trailing slashes still normalize to the canonical URL.
     expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex/" } })).not.toBeNull();
+    // A disabled row never routes, so it is not the route in use.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex", disabled: true } })).toBeNull();
+    // A destination that cannot be resolved at all yields no hint rather than throwing out
+    // of read-only diagnostics.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "   " } })).toBeNull();
   });
 
   test("proxyDownRestartHint prefers 'ocx service start' when a service is installed", () => {
