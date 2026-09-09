@@ -1305,6 +1305,61 @@ describe("codex-auth API", () => {
     expect(data.accounts.find(a => a.id === "pool-mask")?.email).toBe("p***n@example.test");
   });
 
+  /**
+   * #3859 — a self-hosted operator managing many Codex accounts could not tell them apart,
+   * because every projection masked unconditionally. The opt-out is config-scoped and defaults
+   * to masked; these two cases pin both ends of that switch on the surface the operator uses.
+   */
+  test("GET /api/codex-auth/accounts reveals pool and main emails when the operator opts out", async () => {
+    const config = makeConfig({
+      codexAccounts: [{ id: "pool-reveal", email: "person@example.test", isMain: false }],
+      privacy: { maskEmails: false },
+    });
+    saveCodexAccountCredential("pool-reveal", {
+      accessToken: "access-reveal",
+      refreshToken: "refresh-reveal",
+      expiresAt: Date.now() + 5 * 60_000,
+      chatgptAccountId: "acct-reveal",
+    });
+    updateAccountQuota("pool-reveal", 10);
+
+    const req = new Request("http://localhost/api/codex-auth/accounts", { method: "GET" });
+    const resp = await handleCodexAuthAPI(req, new URL(req.url), config);
+    const data = await resp!.json() as { accounts: Array<{ id: string; email: string }> };
+
+    expect(data.accounts.find(a => a.id === "pool-reveal")?.email).toBe("person@example.test");
+    // The flag moves the projection, never the credential store: no token may ride along.
+    expect(JSON.stringify(data)).not.toContain("access-reveal");
+    expect(JSON.stringify(data)).not.toContain("refresh-reveal");
+  });
+
+  test("GET /api/codex-auth/accounts keeps masking for an explicit true and a malformed value", async () => {
+    for (const privacy of [
+      { maskEmails: true },
+      {},
+      { maskEmails: "false" } as unknown as { maskEmails?: boolean },
+    ]) {
+      const config = makeConfig({
+        codexAccounts: [{ id: "pool-still-masked", email: "person@example.test", isMain: false }],
+        privacy,
+      });
+      saveCodexAccountCredential("pool-still-masked", {
+        accessToken: "access-still-masked",
+        refreshToken: "refresh-still-masked",
+        expiresAt: Date.now() + 5 * 60_000,
+        chatgptAccountId: "acct-still-masked",
+      });
+      updateAccountQuota("pool-still-masked", 10);
+
+      const req = new Request("http://localhost/api/codex-auth/accounts", { method: "GET" });
+      const resp = await handleCodexAuthAPI(req, new URL(req.url), config);
+      const data = await resp!.json() as { accounts: Array<{ id: string; email: string }> };
+
+      expect(data.accounts.find(a => a.id === "pool-still-masked")?.email).toBe("p***n@example.test");
+      expect(JSON.stringify(data)).not.toContain("person@example.test");
+    }
+  });
+
   test("GET /api/codex-auth/accounts omits a malformed persisted plan", async () => {
     const config = makeConfig({
       codexAccounts: [
@@ -5767,10 +5822,16 @@ describe("codex-auth API", () => {
     expect(source).toContain("withCodexAccountLogLabel({ id: accountId, email, plan, isMain: false }, accounts)");
   });
 
-  test("GET /api/codex-auth/login-status masks transient flow-state emails at response boundaries", async () => {
+  test("GET /api/codex-auth/login-status projects transient flow-state emails at response boundaries", async () => {
     const source = await Bun.file("src/codex/auth-api.ts").text();
-    expect(source).toContain("st ? { ...st, email: maskEmail(st.email) ?? undefined } : { status: \"expired\" }");
-    expect(source).toContain("return jsonResponse({ ...st, email: maskEmail(st.email) ?? undefined });");
+    // #3859 turned the unconditional mask into a policy projection. The guarantee is unchanged:
+    // BOTH boundaries redact through the shared helper, and the route resolves the policy from
+    // config rather than defaulting to reveal.
+    expect(source).toContain("st ? { ...st, email: projectEmail(st.email, maskFlowEmails) ?? undefined } : { status: \"expired\" }");
+    expect(source).toContain("return jsonResponse({ ...st, email: projectEmail(st.email, maskFlowEmails) ?? undefined });");
+    expect(source).toContain("const maskFlowEmails = emailMaskingEnabled(config);");
+    // No boundary may spread flow state carrying its raw address.
+    expect(source).not.toMatch(/\{ \.\.\.st, email: st\.email/);
   });
 
   test("GET /api/codex-auth/accounts reuses cached pool quota without fetching usage", async () => {

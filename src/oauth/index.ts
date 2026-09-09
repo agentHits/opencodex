@@ -4,7 +4,7 @@ import { parseCallbackInput } from "./callback-server";
 import type { OcxConfig, OcxProviderConfig, RefreshPolicy } from "../types";
 import { ConfigMutationLockError, loadConfig, mutatePersistedConfig, saveConfig } from "../config";
 import { resolveProviderApiKey } from "../providers/key-store";
-import { maskEmail } from "../lib/privacy";
+import { projectEmail } from "../lib/privacy";
 import { KiroTokenRefreshError, environmentKiroRoutingMetadata, loginKiro, refreshKiroToken, settleKiroLoginTransaction } from "./kiro";
 import {
   OAuthMutationBusyError,
@@ -1805,14 +1805,22 @@ export interface OAuthAccountSummary {
   plan: string | null;
 }
 
-export function getLoginStatus(provider: string): { loggedIn: boolean; email?: string; source?: OAuthCredentials["source"]; error?: string; done: boolean; activeAccountId?: string; accounts?: OAuthAccountSummary[] } {
+/**
+ * Token-safe login state for one provider.
+ *
+ * `maskEmails` is an explicit boolean rather than a config read (#3859). This module must not
+ * acquire a dependency on config I/O to answer a redaction question: the caller already holds
+ * the config at its request boundary and resolves the policy there with `emailMaskingEnabled`.
+ * The default masks, so every existing caller keeps today's behaviour.
+ */
+export function getLoginStatus(provider: string, maskEmails = true): { loggedIn: boolean; email?: string; source?: OAuthCredentials["source"]; error?: string; done: boolean; activeAccountId?: string; accounts?: OAuthAccountSummary[] } {
   const cred = getCredential(provider);
   const st = loginState.get(provider);
   const set = getAccountSet(provider);
   const accounts: OAuthAccountSummary[] | undefined = set?.accounts.map(a => ({
     id: a.id,
     ...(a.alias ? { alias: a.alias } : {}),
-    email: maskEmail(a.credential.email) ?? undefined,
+    email: projectEmail(a.credential.email, maskEmails) ?? undefined,
     active: a.id === set.activeAccountId,
     ...(a.needsReauth ? { needsReauth: true } : {}),
     expiresAt: a.credential.expires,
@@ -1832,7 +1840,7 @@ export function getLoginStatus(provider: string): { loggedIn: boolean; email?: s
     .find(a => a.id === set.activeAccountId)?.needsReauth === true;
   return {
     loggedIn: !!cred && !activeNeedsReauth,
-    email: maskEmail(cred?.email) ?? undefined,
+    email: projectEmail(cred?.email, maskEmails) ?? undefined,
     source: cred?.source,
     error: st?.error,
     done: st?.done ?? false,
@@ -1840,10 +1848,13 @@ export function getLoginStatus(provider: string): { loggedIn: boolean; email?: s
   };
 }
 
-/** Token-safe per-provider login state for the CLI `ocx status` logins section (no tokens, masked email). */
-export function oauthLoginSummary(): Array<{ provider: string; loggedIn: boolean; email?: string }> {
+/**
+ * Token-safe per-provider login state for the CLI `ocx status` logins section. Never tokens; the
+ * email follows the operator's `privacy.maskEmails` policy, masked by default (#3859).
+ */
+export function oauthLoginSummary(maskEmails = true): Array<{ provider: string; loggedIn: boolean; email?: string }> {
   return listOAuthProviders().map(provider => {
-    const status = getLoginStatus(provider);
+    const status = getLoginStatus(provider, maskEmails);
     return { provider, loggedIn: status.loggedIn, ...(status.email ? { email: status.email } : {}) };
   });
 }

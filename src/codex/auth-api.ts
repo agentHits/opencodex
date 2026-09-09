@@ -115,7 +115,7 @@ export { clearMainAccountInfoCache } from "./main-account-cache";
 import type { CodexQuotaRefreshOutcome } from "./quota-refresh-outcome";
 import { getMainAccountHardLockStatus, type MainAccountHardLockStatus } from "./main-account-hard-lock";
 import { observeMainReserveRevocation } from "./reserve-availability";
-import { maskEmail } from "../lib/privacy";
+import { emailMaskingEnabled, projectEmail } from "../lib/privacy";
 import { codexWarmupFailureReason, warmCodexAccount } from "./warmup";
 export { maskEmail } from "../lib/privacy";
 import type { CodexAccount, CodexAccountCredentials, OcxConfig } from "../types";
@@ -370,6 +370,7 @@ function poolAccountDto(
   hasCredential: boolean,
   paused: boolean,
   priority: number,
+  maskEmails: boolean,
 ): CodexAuthAccountDto {
   const plan = codexPlanValue(account.plan);
   const quota = quotaForPlan(quotaResult.quota, plan);
@@ -377,7 +378,7 @@ function poolAccountDto(
   const health = projectCodexAccountHealth({ accountId: account.id, needsReauth });
   return {
     id: account.id,
-    email: maskEmail(account.email) ?? account.email,
+    email: projectEmail(account.email, maskEmails) ?? account.email,
     ...(account.alias !== undefined ? { alias: account.alias } : {}),
     ...(plan !== undefined ? { plan } : {}),
     logLabel: codexAccountLogLabel(account),
@@ -1929,6 +1930,8 @@ export async function listCodexAuthAccountsSnapshot(
 ): Promise<CodexAuthAccountsSnapshot> {
   const runtimeConfig = getRuntimeConfig(config);
   const poolAccounts = (runtimeConfig.codexAccounts ?? []).filter(isSelectableCodexPoolAccount);
+  // One redaction decision for the whole snapshot, read once from the operator's config (#3859).
+  const maskEmails = emailMaskingEnabled(runtimeConfig);
   const mainResult = await fetchMainAccountInfoAttempt(forceRefresh, 1);
   const refreshedPool = await mapWithConcurrency(poolAccounts, POOL_QUOTA_REFRESH_CONCURRENCY, async account => {
     const cred = getCodexAccountCredential(account.id);
@@ -1973,6 +1976,7 @@ export async function listCodexAuthAccountsSnapshot(
         false,
         isCodexAccountPaused(runtimeConfig, accountId),
         getCodexAccountPriority(runtimeConfig, accountId),
+        maskEmails,
       )];
     }
     const resultGeneration = quotaResult.credentialGeneration ?? quotaResult.freshCredentialGeneration;
@@ -1992,6 +1996,7 @@ export async function listCodexAuthAccountsSnapshot(
       true,
       isCodexAccountPaused(runtimeConfig, accountId),
       getCodexAccountPriority(runtimeConfig, accountId),
+      maskEmails,
     )];
   });
   const fetchedMainGeneration = mainResult.identityGeneration ?? captureMainAccountIdentityGeneration();
@@ -2008,7 +2013,7 @@ export async function listCodexAuthAccountsSnapshot(
   });
   const main: CodexAuthAccountDto = {
     id: MAIN_CODEX_ACCOUNT_ID,
-    email: maskEmail(mainInfo.email) ?? "Codex App login",
+    email: projectEmail(mainInfo.email, maskEmails) ?? "Codex App login",
     plan: mainInfo.plan,
     ...(mainSnapshotLive && mainResult.quotaRefresh && mainResult.quotaRefreshGeneration !== undefined
       && isMainAccountIdentityGenerationLive(mainResult.quotaRefreshGeneration)
@@ -3026,6 +3031,9 @@ export async function handleCodexAuthAPI(
   if (url.pathname === "/api/codex-auth/login-status" && req.method === "GET") {
     const flowId = url.searchParams.get("flowId");
     const accountId = url.searchParams.get("accountId")?.trim();
+    // Transient flow state carries the address of the account being added, so it follows the
+    // same operator policy as the stored accounts it is about to become.
+    const maskFlowEmails = emailMaskingEnabled(config);
     // Reauth always has a pre-existing credential; never treat "credential exists" as success
     // when the flow map entry is gone (would false-complete on lost/expired flow state).
     const reauthStatus = url.searchParams.get("reauth") === "1";
@@ -3042,11 +3050,11 @@ export async function handleCodexAuthAPI(
           ...(readCodexAccountRecord(accountId)?.codexValidationPending ? { validationPending: true } : {}),
         });
       }
-      return jsonResponse(st ? { ...st, email: maskEmail(st.email) ?? undefined } : { status: "expired" });
+      return jsonResponse(st ? { ...st, email: projectEmail(st.email, maskFlowEmails) ?? undefined } : { status: "expired" });
     }
     // Legacy fallback: return latest pending flow
     for (const [, st] of codexAuthLoginState) {
-      if (st.status === "pending") return jsonResponse({ ...st, email: maskEmail(st.email) ?? undefined });
+      if (st.status === "pending") return jsonResponse({ ...st, email: projectEmail(st.email, maskFlowEmails) ?? undefined });
     }
     return jsonResponse({ status: "idle" });
   }
