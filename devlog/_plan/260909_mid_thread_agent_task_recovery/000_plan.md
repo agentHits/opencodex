@@ -134,6 +134,15 @@ header, against a routed provider. Both must fail with `unreadable_encrypted_age
 both must now carry `recovery_reason`, because `recovery_reason` is attached only when recovery
 actually ran. Before this change the non-spawn arm has no `recovery_reason` field.
 
+## Docs
+
+`docs-site` framed this feature as spawn-only ("a native ChatGPT parent spawning a routed v2
+child"). The reference page and the sub-agent surface guide now name both qualifying request
+shapes, and the combo paragraph states explicitly that combo recovery is still spawn-only. The
+same one-clause precision is applied to the seven translated locales so they do not contradict
+the English source, matching what #3754 did for the combo-recovery change. The `docs-site` build
+was not run under the same standing instruction; the edits are prose-only inside existing pages.
+
 ## Terminal outcome
 
-Recorded at D in `010_outcome.md`.
+Tracked on lidge-jun/opencodex#4135. This unit moves to `devlog/_fin/` once the PR is on `dev`.
