@@ -1429,7 +1429,9 @@ export async function injectCodexConfig(
   const migratedRows = (history.rows ?? 0) + ejected;
   const historyMessage =
     keepRootOverrideAlongsideTable
-      ? `  Codex resume history: left unchanged; existing threads keep reaching the proxy through the retained openai_base_url override.\n`
+      ? (keptUserBaseUrl
+        ? `  Codex resume history: left unchanged; threads already tagged openai follow your own root openai_base_url, not the proxy.\n`
+        : `  Codex resume history: left unchanged; existing threads keep reaching the proxy through the retained openai_base_url override.\n`)
       : config?.syncResumeHistory === false
       ? `  Codex resume history: left unchanged (syncResumeHistory=false).\n`
       : history.failed
@@ -1439,8 +1441,28 @@ export async function injectCodexConfig(
           : migratedRows > 0
             ? `  Codex resume history: restored original provider metadata for ${migratedRows} manifest-backed thread(s) (one-time).\n`
             : `  Codex resume history: no backed-up metadata pending; untracked routed history left unchanged.\n`;
-  // A user-owned root openai_base_url means we did NOT install routing — say so honestly
+  // A user-owned root openai_base_url means we did NOT install root routing — say so honestly
   // instead of claiming the proxy route is active (catalog/fast_mode were still written).
+  //
+  // The client-compaction form writes a provider table as well, so "nothing was injected" would
+  // misdescribe the file it just produced: new threads do use the injected table. Report that
+  // mixed result on its own terms, and never tell the operator to delete a setting of theirs.
+  if (keptUserBaseUrl && keepRootOverrideAlongsideTable) {
+    return {
+      success: true,
+      ...(nativeSubagentDefaultsWarning ? { nativeSubagentDefaultsWarning } : {}),
+      message:
+        `Injected opencodex as default provider into Codex config (client-side compaction mode; ChatGPT auth remains required).\n` +
+        `  Your root openai_base_url was left exactly as you set it, so opencodex did not add its own.\n` +
+        catalogMessage +
+        historyMessage +
+        managedDefaultsMessage +
+        `  New threads use the injected opencodex provider and route through the proxy.\n` +
+        `  Threads already tagged openai resolve through Codex's built-in provider, which your root openai_base_url points at.\n` +
+        `  Remove that line and rerun 'ocx start' only if you want those threads on the proxy too.\n` +
+        `  Fallback: codex --profile opencodex (same behavior)`,
+    };
+  }
   if (keptUserBaseUrl) {
     return {
       success: true,

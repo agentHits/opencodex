@@ -924,6 +924,34 @@ describe("injectCodexConfig integration (Design B)", () => {
     // The user's line must never be journaled as ours, or a later restore would strip it.
     const journal = JSON.parse(readFileSync(join(codexHome, "opencodex-journal.json"), "utf8"));
     expect(journal.injectedOpenaiBaseUrl).toBeNull();
+
+    // The reported result has to match the file that was just written. The old root-only
+    // warning claimed nothing was injected and told the operator to delete a valid setting,
+    // while the history line claimed those threads still reached the proxy. Both were wrong
+    // for this mixed configuration.
+    const message = String(JSON.parse(enabled.stdout).message);
+    expect(message).toContain("Injected opencodex as default provider");
+    expect(message).not.toContain("Codex routing NOT injected");
+    expect(message).not.toContain("remove your openai_base_url line");
+    expect(message).toContain("left exactly as you set it");
+    expect(message).toContain("follow your own root openai_base_url, not the proxy");
+  });
+
+  test("the managed override keeps reporting proxy routing for existing threads", () => {
+    // Control for the case above: with no user-owned line, opencodex writes the root override
+    // itself, so the proxy claim is accurate and the root-only warning must not appear.
+    writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
+
+    const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
+    expect(enabled.status).toBe(0);
+
+    const config = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(config).toContain('openai_base_url = "http://127.0.0.1:10100/v1"');
+
+    const message = String(JSON.parse(enabled.stdout).message);
+    expect(message).toContain("keep reaching the proxy through the retained openai_base_url override");
+    expect(message).not.toContain("Codex routing NOT injected");
+    expect(message).not.toContain("not the proxy");
   });
 
   test("the retained root override is journaled so a comment-dropping rewrite can still restore", () => {
