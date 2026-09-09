@@ -215,9 +215,13 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
       if (!needsRefresh && !needsWarmup) continue;
       const key = `codex:${id}`;
       if (inBackoff(key, nowMs)) { result.skippedBackoff.push(key); continue; }
+      // The generation this sweep is acting on. A successful refresh commits a new one, and a
+      // failure that follows belongs to THAT credential, so the fence has to move with it.
+      let observedGeneration = record.generation;
       tasks.push(async () => {
         try {
           const token = await getValidCodexToken(id);
+          observedGeneration = token.generation;
           if (needsRefresh) result.refreshed.push(key);
           if (needsWarmup) {
             await warmCodexAccount({
@@ -235,11 +239,26 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
             result.skippedBackoff.push(key);
             return;
           }
-          const permanent = err instanceof TokenRefreshError && (err.reason === "revoked" || err.reason === "expired");
-          if (needsWarmup && !(err instanceof TokenRefreshError)) {
-            markCodexAccountValidationFailed(id, codexWarmupFailureReason(err));
+          const terminal = err instanceof TokenRefreshError && (err.reason === "revoked" || err.reason === "expired")
+            ? err
+            : undefined;
+          if (terminal) {
+            // A revoked or expired refresh grant is the strongest terminal evidence there is, and
+            // it used to be the one class that never reached the record: the persisted-verdict
+            // branch below requires `needsWarmup`, which is false in the default configuration,
+            // and additionally excluded every TokenRefreshError. The verdict landed only in the
+            // in-memory backoff map, which no health surface reads and no restart survives, so the
+            // account kept its login-time "ok" while every request with it 401'd (#4120).
+            markCodexAccountValidationFailed(id, `refresh_${terminal.reason}`, {
+              expectedGeneration: observedGeneration,
+              terminal: true,
+            });
+          } else if (needsWarmup && !(err instanceof TokenRefreshError)) {
+            markCodexAccountValidationFailed(id, codexWarmupFailureReason(err), {
+              expectedGeneration: observedGeneration,
+            });
           }
-          recordFailure(key, nowMs, opts.backoffBaseSeconds, opts.backoffMaxSeconds, permanent, writerGeneration);
+          recordFailure(key, nowMs, opts.backoffBaseSeconds, opts.backoffMaxSeconds, terminal !== undefined, writerGeneration);
           result.failed.push(key);
         }
       });

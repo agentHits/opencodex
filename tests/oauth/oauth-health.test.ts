@@ -8,6 +8,7 @@ import {
   collectOAuthHealthEntries,
   collectOAuthHealthEntriesForCli,
   projectOAuthAccountHealth,
+  projectCodexAccountHealth,
 } from "../../src/oauth/health";
 import { getAccountSet, markAccountNeedsReauth, saveCredential } from "../../src/oauth/store";
 import {
@@ -104,6 +105,71 @@ describe("projectOAuthAccountHealth", () => {
       cooldownReason: "rate_limit",
       now: until,
     })).toEqual({ status: "healthy" });
+  });
+});
+
+describe("projectCodexAccountHealth", () => {
+  /**
+   * The suite's beforeEach only creates the home root. Every other case in this file reads the
+   * Codex store, and a read of a missing file is a clean empty store; these cases WRITE it, and
+   * the credential mutation lock opens a SQLite file inside the config dir.
+   */
+  function withPoolStoreDir(): void {
+    mkdirSync(join(tmp, "ocx"), { recursive: true });
+  }
+
+  test("a terminal validation verdict is projected as reauth_required", async () => {
+    withPoolStoreDir();
+    const { markCodexAccountValidationFailed, readCodexAccountRecord, saveCodexAccountCredential } =
+      await import("../../src/codex/account-store");
+    saveCodexAccountCredential("pool-revoked", {
+      accessToken: "a", refreshToken: "r", expiresAt: Date.now() + 3_600_000, chatgptAccountId: "cg",
+    });
+
+    // Before the verdict is recorded this is exactly the reported bug: a credential upstream has
+    // revoked still projects healthy (#4120).
+    expect(projectCodexAccountHealth({ accountId: "pool-revoked", needsReauth: false }))
+      .toEqual({ status: "healthy" });
+
+    markCodexAccountValidationFailed("pool-revoked", "refresh_revoked", {
+      expectedGeneration: readCodexAccountRecord("pool-revoked")!.generation,
+      terminal: true,
+    });
+
+    expect(projectCodexAccountHealth({ accountId: "pool-revoked", needsReauth: false }))
+      .toEqual({ status: "reauth_required", reason: "refresh_failed" });
+  });
+
+  test("a non-terminal validation failure does not claim the credential is dead", async () => {
+    withPoolStoreDir();
+    const { markCodexAccountValidationFailed, saveCodexAccountCredential } =
+      await import("../../src/codex/account-store");
+    saveCodexAccountCredential("pool-warmup", {
+      accessToken: "a", refreshToken: "r", expiresAt: Date.now() + 3_600_000, chatgptAccountId: "cg",
+    });
+    markCodexAccountValidationFailed("pool-warmup", "http_status:500");
+
+    expect(projectCodexAccountHealth({ accountId: "pool-warmup", needsReauth: false }))
+      .toEqual({ status: "healthy" });
+  });
+
+  test("the CLI collector reports the terminal verdict too", async () => {
+    withPoolStoreDir();
+    const { markCodexAccountValidationFailed, readCodexAccountRecord, saveCodexAccountCredential } =
+      await import("../../src/codex/account-store");
+    saveCodexAccountCredential("pool-cli", {
+      accessToken: "a", refreshToken: "r", expiresAt: Date.now() + 3_600_000, chatgptAccountId: "cg",
+    });
+    markCodexAccountValidationFailed("pool-cli", "refresh_expired", {
+      expectedGeneration: readCodexAccountRecord("pool-cli")!.generation,
+      terminal: true,
+    });
+
+    // collectLocalCodexEntries used to inline its own copy of the projector, which is how
+    // `ocx status`/`ocx doctor` would have kept calling this account healthy.
+    const entry = collectOAuthHealthEntries().find(e => e.provider === "codex" && e.accountId === "pool-cli");
+    expect(entry?.health).toEqual({ status: "reauth_required", reason: "refresh_failed" });
+    expect(entry?.action).toBe(CODEX_REAUTH_ACTION);
   });
 });
 
