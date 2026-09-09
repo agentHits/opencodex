@@ -98,21 +98,23 @@ function getTokenIdentity(accessToken: string, idToken: string | undefined): { a
 export class XaiTokenRequestError extends Error { constructor(public readonly status?:number,public readonly oauthError?:string,message="xAI token request failed",options?:{cause?:unknown}){super(message,options);this.name="XaiTokenRequestError";} }
 export interface XaiTokenRetryDeps { sleep?:(ms:number)=>Promise<void>; random?:()=>number }
 const IMF_FIXDATE_RE = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), (\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/i;
+const RFC850_DATE_RE = /^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), (\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2}) (\d{2}):(\d{2}):(\d{2}) GMT$/i;
+const ASCTIME_DATE_RE = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) ( \d|\d{2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/i;
 const HTTP_MONTH_INDEX: Record<string, number> = {
   jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
   jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
 };
 
-function parseHttpDateMs(value: string): number | undefined {
-  const match = IMF_FIXDATE_RE.exec(value);
-  if (!match) return undefined;
-  const month = HTTP_MONTH_INDEX[match[2]!.toLowerCase()];
+function parseUtcDateParts(
+  year: number,
+  monthName: string,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+): number | undefined {
+  const month = HTTP_MONTH_INDEX[monthName.toLowerCase()];
   if (month === undefined) return undefined;
-  const year = Number(match[3]);
-  const day = Number(match[1]);
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
-  const second = Number(match[6]);
   const timestamp = Date.UTC(year, month, day, hour, minute, second);
   const parsed = new Date(timestamp);
   return parsed.getUTCFullYear() === year
@@ -125,6 +127,48 @@ function parseHttpDateMs(value: string): number | undefined {
     : undefined;
 }
 
+function parseHttpDateMs(value: string, now: number): number | undefined {
+  const match = IMF_FIXDATE_RE.exec(value);
+  if (match) {
+    return parseUtcDateParts(
+      Number(match[3]), match[2]!, Number(match[1]),
+      Number(match[4]), Number(match[5]), Number(match[6]),
+    );
+  }
+  const rfc850 = RFC850_DATE_RE.exec(value);
+  if (rfc850) {
+    // Two-digit years more than 50 years in the future are in the past (RFC 9110).
+    const currentYear = new Date(now).getUTCFullYear();
+    let year = Math.floor(currentYear / 100) * 100 + Number(rfc850[3]);
+    const candidateTimeOfYear = Date.UTC(
+      2000, HTTP_MONTH_INDEX[rfc850[2]!.toLowerCase()]!, Number(rfc850[1]),
+      Number(rfc850[4]), Number(rfc850[5]), Number(rfc850[6]),
+    );
+    const current = new Date(now);
+    const currentTimeOfYear = Date.UTC(
+      2000, current.getUTCMonth(), current.getUTCDate(),
+      current.getUTCHours(), current.getUTCMinutes(), current.getUTCSeconds(),
+      current.getUTCMilliseconds(),
+    );
+    const yearDelta = year - currentYear;
+    if (yearDelta < -50 || (yearDelta === -50 && candidateTimeOfYear < currentTimeOfYear)) {
+      year += 100;
+    } else if (yearDelta > 50 || (yearDelta === 50 && candidateTimeOfYear > currentTimeOfYear)) {
+      year -= 100;
+    }
+    return parseUtcDateParts(
+      year, rfc850[2]!, Number(rfc850[1]),
+      Number(rfc850[4]), Number(rfc850[5]), Number(rfc850[6]),
+    );
+  }
+  const asctime = ASCTIME_DATE_RE.exec(value);
+  if (!asctime) return undefined;
+  return parseUtcDateParts(
+    Number(asctime[6]), asctime[1]!, Number(asctime[2]),
+    Number(asctime[3]), Number(asctime[4]), Number(asctime[5]),
+  );
+}
+
 function parseRetryAfterMs(retryAfter: string | null): number | undefined {
   const text = retryAfter?.trim();
   if (!text) return undefined;
@@ -132,9 +176,10 @@ function parseRetryAfterMs(retryAfter: string | null): number | undefined {
     const ms = Math.ceil(Number(text) * 1000);
     return ms > 0 ? ms : undefined;
   }
-  const timestamp = parseHttpDateMs(text);
+  const now = Date.now();
+  const timestamp = parseHttpDateMs(text, now);
   if (timestamp === undefined) return undefined;
-  const delay = timestamp - Date.now();
+  const delay = timestamp - now;
   return delay > 0 ? delay : undefined;
 }
 

@@ -153,9 +153,13 @@ behave exactly as the donor. NOT the issue's `Number()`/`Date.parse` sketch:
 bare `Number()` over-accepts (`"1e3"`, `"0x10"`, `"+2"`) and
 `Date.parse` is implementation-defined off IMF-fixdate. The donor is not
 imported because that would couple `src/oauth/` to `src/combos/`; a
-`src/lib/` unification is a possible follow-up, out of scope here. IMF-fixdate
-is the one HTTP-date format RFC 9110 requires recipients to parse; RFC 850 and
-asctime are deliberately not parsed. Fractional seconds are a repo-local interop
+`src/lib/` unification is a possible follow-up, out of scope here. HTTP-date
+support covers ALL THREE RFC 9110 formats at full donor fidelity (round-3 fold
+of a CodeRabbit Major): IMF-fixdate, RFC 850 (including the two-digit-year
+50-year rule), and asctime — RFC 9110 §5.6.7 requires a recipient parsing an
+HTTP-date to accept all three formats; only senders are confined to
+IMF-fixdate. An earlier draft of this plan claimed recipients need only parse
+IMF-fixdate and was wrong. Fractional seconds are a repo-local interop
 extension already honored at `failover.ts:124`. Zero, negative, past-dated,
 and unparseable values fall back to jitter.
 
@@ -261,6 +265,13 @@ helpers directly.
    expect one sleep `> 2000` and `<= 30000` — above the jitter cap, so a
    missing or broken `parseHttpDateMs` (which would sleep ~100 ms of jitter)
    fails this test. Proves #4046 (HTTP-date).
+6b. `RFC 850 HTTP-date Retry-After is honored` — future date formatted
+   `Wednesday, 09-Sep-26 ... GMT` (two-digit year, 50-year rule); same
+   `> 2000 && <= 30000` assertion with pinned random. Proves the RFC 850
+   recipient form (round-3 fold).
+6c. `asctime HTTP-date Retry-After is honored` — future date formatted
+   `Wed Sep  9 ... 2026` (space-padded day); same assertion. Proves the
+   asctime recipient form (round-3 fold).
 7. `unparseable Retry-After falls back to jitter` — `retry-after: soon`,
    `random: () => 0.5`; expect `[100]`.
 8. `past HTTP-date falls back to jitter` — `Sun, 06 Nov 1994 08:49:37 GMT`,
@@ -331,3 +342,10 @@ cluster.
   pre-sleep and in-wait coverage, test 15. Managing-task invariant folded: a
   server delay beyond the local budget must be terminal, never a silent early
   retry — the retry-budget rule replaces the issue sketch's clamp.
+- Round 3 (PR #4087 review bots on the published diff): Codex P1 — the 020
+  phase-2 doc restated an unreleased endpoint-validation weakness and its
+  remediation in tracked devlog; folded by stripping 020 to a minimal stub with
+  all assessment/plan detail in gitignored scratch only. CodeRabbit Major —
+  RFC 9110 §5.6.7 requires recipients to accept all three HTTP-date formats;
+  folded by copying the donor parser at full fidelity (IMF-fixdate + RFC 850
+  50-year rule + asctime) and adding tests 6b/6c.
