@@ -19,6 +19,7 @@ import type { OcxConfig } from "../../src/types";
 import { ownedServiceHomeInspection } from "../helpers/owned-service-home-inspection";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
+import { resetVisionDescriptionCache } from "../../src/vision";
 
 /**
  * Issue #2132: bearer admission must not require a stored ChatGPT credential.
@@ -151,6 +152,7 @@ async function withCursorCaptureServer<T>(
 }
 
 beforeEach(() => {
+  resetVisionDescriptionCache();
   clearComboTargetCooldowns();
   resetSubagentModelFallbackStateForTests();
   delete process.env.OPENCODEX_CURSOR_TEST_TOKEN;
@@ -186,6 +188,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetVisionDescriptionCache();
   closeRequestHistoryIndex();
   clearComboTargetCooldowns();
   resetSubagentModelFallbackStateForTests();
@@ -426,6 +429,60 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
       } finally {
         await server.stop(true);
       }
+    });
+  });
+
+  test.each(["owned", "fenced"])("Chat Cursor keeps stored vision auth off its primary wire (%s)", async ownership => {
+    await withCursorCaptureServer(async (baseUrl, capturedAuth) => {
+      const config = cursorForwardConfig(baseUrl);
+      config.providers.cursorcustom!.noVisionModels = ["auto"];
+      config.providers.openai = {
+        adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex",
+        authMode: "forward", codexAccountMode: "direct",
+      };
+      config.visionSidecar = { enabled: true, backend: "openai", model: "gpt-5.4-mini" };
+      saveConfig(config);
+      const stored = fakeChatGptJwt({ chatgpt_account_id: "stored_main_acc", exp: Math.floor(Date.now() / 1000) + 3600 });
+      writeFileSync(join(codexHome, "auth.json"), JSON.stringify({
+        tokens: { access_token: stored, account_id: "stored_main_acc" },
+      }));
+      const sidecar: Array<{ authorization: string | null; account: string | null; claimed: boolean }> = [];
+      globalThis.fetch = (async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.hostname === "chatgpt.com") {
+          const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
+          sidecar.push({ authorization: headers.get("authorization"), account: headers.get("chatgpt-account-id"),
+            claimed: getNativeMainProfileRequestCount() > 0 });
+          return new Response(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "A red square." })}\n\ndata: [DONE]\n\n`, {
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+      const server = ownership === "owned" ? await startOwnedServer() : startServer(0, {
+        inspectNativeCodexOwnership: () => ({ ownership: "foreign", reason: "fixture owned by another service" }),
+      });
+      try {
+        if (ownership === "fenced") expect(await waitForNativeMainStartupGate()).toMatchObject({ status: "blocked" });
+        const response = await originalFetch(new URL("/v1/chat/completions", server.url), {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-opencodex-api-key": ADMISSION_SECRET,
+            authorization: "Bearer cursor-upstream-token" },
+          body: JSON.stringify({ model: "cursorcustom/auto", stream: false, messages: [{ role: "user", content: [
+            { type: "text", text: "Describe this image" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8taW1hZ2UtYnl0ZXM=" } },
+          ] }] }),
+        });
+        await response.text();
+        // The capture-only Cursor fixture ends without a completion frame.
+        expect(response.status).toBe(502);
+        expect(sidecar).toEqual(ownership === "owned"
+          ? [{ authorization: `Bearer ${stored}`, account: "stored_main_acc", claimed: true }] : []);
+        expect(capturedAuth).toEqual(["Bearer cursor-upstream-token"]);
+      } finally {
+        await server.stop(true);
+      }
+      expect(getNativeMainProfileRequestCount()).toBe(0);
     });
   });
 

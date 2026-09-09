@@ -258,9 +258,9 @@ async function handleChatCompletionsWithBudget(
     const value = req.headers.get(name);
     if (value) headers.set(name, value);
   }
-  // Never enrich a caller-auth transport with a credential from another domain.
-  // Later shadow/thread rewrites strip credentials at the actual Responses boundary.
-  if (!callerAuthorizationRoute) {
+  // A noncanonical caller-auth route can use stored main auth only through a sidecar snapshot.
+  // Later shadow/thread rewrites strip primary credentials at the actual Responses boundary.
+  if (!callerAuthorizationRoute || (settledRoute && !isCanonicalOpenAiForwardProvider(settledRoute.provider))) {
     // This enrichment is optional for routed/non-main providers. If native main
     // is fenced, omit it and let auth-context reject only a final physical-main
     // selection while healthy pool/provider routes continue.
@@ -271,7 +271,7 @@ async function handleChatCompletionsWithBudget(
         if (token) {
           const mainHeaders = new Headers({ authorization: `Bearer ${token.accessToken}`, "chatgpt-account-id": token.chatgptAccountId });
           openAiSidecarAuth ??= captureExplicitOpenAiCallerAuth(mainHeaders, config);
-          if (!routeMayChangeCredentialDomain) {
+          if (!callerAuthorizationRoute && !routeMayChangeCredentialDomain) {
             headers.set("authorization", `Bearer ${token.accessToken}`);
             headers.set("chatgpt-account-id", token.chatgptAccountId);
           }
