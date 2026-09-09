@@ -435,6 +435,22 @@ headers. That is separate from the keyless desktop quota OpenCode advertises
 synthetic `Retry-After`; an upstream `Retry-After` still takes precedence. Same-key
 wait-and-retry remains opt-in via [`retryOn429`](/reference/configuration/).
 
+**The keyless `opencode-free` tier is currently closed to third-party clients.** Zen refuses
+any request that arrives without an `x-opencode-session` header, answering with error type
+`MissingSessionID` and the message "OpenCode's free tier can only be used in OpenCode". Presence
+of the header is the entire gate, so a proxy could pass it by inventing a value — opencodex does
+not. Minting a session identifier and a versioned `opencode/<version>` User-Agent is a claim to
+*be* the OpenCode client, and OpenCode publishes no third-party integration contract for this
+keyless tier; an HTTP 200 obtained that way is a bypassed admission check rather than
+permission. opencodex therefore reports the restriction instead of working around it: a request
+to `opencode-free` returns an error explaining the upstream gate and pointing here.
+
+The supported route to the same models is the keyed **`opencode-zen`** provider with an OpenCode
+Zen API key from [opencode.ai/auth](https://opencode.ai/auth). If OpenCode later publishes a
+supported third-party path for the keyless tier, opencodex can follow it; until then the preset
+stays as documentation of the restriction. Upstream terms:
+[opencode.ai/docs/zen](https://opencode.ai/docs/zen/).
+
 Most use the `openai-chat` adapter with a bearer key; a few that expose only an Anthropic-compatible
 endpoint (e.g. **Xiaomi MiMo**) use the `anthropic` adapter (`x-api-key`).
 Volcengine Agent Plan uses its native Responses endpoint through `openai-responses`.
