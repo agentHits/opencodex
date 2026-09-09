@@ -167,6 +167,7 @@ JSON mode: `payload`.
 
 - `--provider` and `--model` both match a failover attempt, so a request is findable by what actually served it, not only by what was asked for.
 - Rows print `conv=<id>` when the entry carries one, so a conversation filter can be told apart from an empty result.
+- Rows print `acct=<label>` when the account is known, so an `--account` filter can be told apart from an empty result.
 - `--follow` deduplicates by row id and cannot be combined with `--json`.
 
 ### `ocx storage report`
