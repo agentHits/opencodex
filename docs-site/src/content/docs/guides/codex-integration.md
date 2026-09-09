@@ -281,11 +281,14 @@ selected provider. V2 sub-agent requests keep their existing provider selection 
 accounting. Client-side compaction does not change plaintext delivery, encrypted task passthrough
 through `allowEncryptedV2AgentTasks`, or configured recovery and fallback behavior.
 
-This preference affects future compactions only. It does not rewrite existing `ocx1:` history or
-re-tag existing resume-history metadata; use the explicit history recovery workflow for an affected
-thread. New threads use the `opencodex` provider identity while the mode is active. Turning the
-setting off and syncing restores the default Design B root override unless
-`codexDesktopAuthless` or non-loopback admission still requires the provider-table form.
+This preference affects future compactions only: it never rewrites an existing `ocx1:` payload, so
+use the explicit history recovery workflow for a thread that needs one. It does re-tag existing
+resume-history metadata to the `opencodex` provider, and it has to. With the root
+`openai_base_url` override gone and `opencodex` as the default provider, a thread left tagged
+`openai` would resume against OpenAI directly rather than through this proxy, taking configured
+routing with it. The originals are backed up, so turning the setting off and syncing migrates
+those threads back and restores the default Design B root override — unless `codexDesktopAuthless`
+or non-loopback admission still requires the provider-table form.
 
 While the mode is active, the realtime voice sideband override
 (`experimental_realtime_ws_base_url`) is not injected — the dedicated provider-table form cannot

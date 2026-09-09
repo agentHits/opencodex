@@ -924,7 +924,7 @@ describe("injectCodexConfig integration (Design B)", () => {
 
     const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
     expect(enabled.status).toBe(0);
-    expect(String(JSON.parse(enabled.stdout).message)).toContain("affects future compactions only");
+    expect(String(JSON.parse(enabled.stdout).message)).toContain("originals backed up for restore");
     expect(readFileSync(rolloutPath, "utf8")).toBe(rollout);
     const verifier = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
     expect(verifier.query("SELECT model_provider FROM threads WHERE id = 'thread-ocx1'").get())
@@ -932,12 +932,16 @@ describe("injectCodexConfig integration (Design B)", () => {
     verifier.close();
   });
 
-  test("client compaction opt-in does not retag typical Design B (openai) threads", () => {
+  test("client compaction opt-in keeps existing Design B threads routed through the proxy", () => {
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
     const sessionsDir = join(codexHome, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     const rolloutPath = join(sessionsDir, "rollout-designb.jsonl");
-    writeFileSync(rolloutPath, "", "utf8");
+    const rollout = `${JSON.stringify({
+      type: "session_meta",
+      payload: { id: "thread-designb", model_provider: "openai" },
+    })}\n`;
+    writeFileSync(rolloutPath, rollout, "utf8");
     const db = new Database(join(codexHome, "state_5.sqlite"));
     db.run(`CREATE TABLE threads (
       id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, model_provider TEXT NOT NULL,
@@ -949,11 +953,13 @@ describe("injectCodexConfig integration (Design B)", () => {
     const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
     expect(enabled.status).toBe(0);
 
-    // Future-only contract: existing Design B threads keep their native openai
-    // provider identity; the opt-in never re-tags stored history.
+    // The opt-in removes the root openai_base_url override and makes `opencodex` the default
+    // provider, so a thread left tagged `openai` would resume against OpenAI directly, outside
+    // this proxy and outside the configured routing. Forward-tagging is what keeps it routed;
+    // the backup taken here is what migrates it back when the opt-in is turned off.
     const verifier = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
     expect(verifier.query("SELECT model_provider FROM threads WHERE id = 'thread-designb'").get())
-      .toEqual({ model_provider: "openai" });
+      .toEqual({ model_provider: "opencodex" });
     verifier.close();
   });
 

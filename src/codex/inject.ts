@@ -1026,11 +1026,7 @@ export async function injectCodexConfig(
     : stripOpencodexCatalogPath(content);
 
   // Provider-table form: non-loopback admission or an explicit Desktop policy.
-  // Client compaction changes only the provider identity for future requests; unlike the
-  // legacy/authless forms, it must not re-tag or restore existing resume history.
   const providerTableMode = usesProviderTable(routingTarget);
-  const preserveExistingHistory = routingTarget.clientCompaction === true
-    && routingTarget.desktopAuthless !== true;
   let keptUserBaseUrl = false;
   let keptUserRealtimeWsBaseUrl = false;
   if (providerTableMode) {
@@ -1344,8 +1340,14 @@ export async function injectCodexConfig(
   }
   // Legacy mode still forward-tags history so re-tagged threads stay listable. Design B needs
   // the opposite: a one-time migration of previously re-tagged threads BACK to openai (restore
-  // machinery; cheap no-op when there is nothing to migrate). The client-compaction opt-in is
-  // future-only, so it explicitly skips this history unit even though it uses a provider table.
+  // machinery; cheap no-op when there is nothing to migrate). The client-compaction opt-in uses
+  // a provider table too, so it forward-tags for the same reason the other table forms do: with
+  // `model_provider = "opencodex"` and no root `openai_base_url` override, a thread still tagged
+  // `openai` resolves to Codex's built-in provider and resumes straight against OpenAI, outside
+  // this proxy and outside the configured routing. Leaving those threads untagged would silently
+  // send namespaced routed models to the wrong destination. Forward-tagging is future-only in the
+  // sense that matters: it rewrites provider metadata, never an existing `ocx1:` payload, and the
+  // backup taken here is what migrates the threads back when the opt-in is turned off.
   // History runs in a Worker under H, not on this thread.
   //
   // The three surfaces it touches — the SQLite rows, the backup manifest, and the
@@ -1358,7 +1360,7 @@ export async function injectCodexConfig(
     expectedDesiredEnabled: true,
     operation: deriveCodexHistoryOperation({
       direction: "apply",
-      resumeHistory: config?.syncResumeHistory !== false && !preserveExistingHistory,
+      resumeHistory: config?.syncResumeHistory !== false,
       legacyMode: providerTableMode,
     }),
   });
@@ -1390,9 +1392,7 @@ export async function injectCodexConfig(
   const ejected = (history as { ejectedRows?: number }).ejectedRows ?? 0;
   const migratedRows = (history.rows ?? 0) + ejected;
   const historyMessage =
-    preserveExistingHistory
-      ? `  Codex resume history: left unchanged (client-side compaction affects future compactions only).\n`
-      : config?.syncResumeHistory === false
+    config?.syncResumeHistory === false
       ? `  Codex resume history: left unchanged (syncResumeHistory=false).\n`
       : history.failed
         ? formatApplyHistoryFailure(historyOutcome, providerTableMode)
