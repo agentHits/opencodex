@@ -13,6 +13,13 @@ const SCHEMA_NAME_BAG_KEYS = new Set([
 const SCHEMA_LITERAL_VALUE_KEYS = new Set(["const", "default", "enum", "examples"]);
 
 /**
+ * `patternProperties` is the one name bag whose keys are not just names: each key is itself a
+ * regex the destination compiles. So the Unicode-property problem applies to the key as well as
+ * to a `pattern` value, and a bag copied verbatim would still fail the whole schema.
+ */
+const PATTERN_KEYED_BAG_KEY = "patternProperties";
+
+/**
  * Codex multi-agent v2 stamps a Responses-only `encrypted: true` marker on collaboration tool
  * schemas (openai/codex 5f4d06ef; issue #85). It is an annotation for the ChatGPT backend only,
  * so translated provider schemas must drop it without removing properties or definitions
@@ -109,10 +116,14 @@ function usesUnicodePropertyEscape(pattern: string): boolean {
  *
  * Returns `node` itself when nothing was dropped, so callers can use identity to tell whether
  * the schema changed. Walks an explicit stack for the same reason as the stripper above.
+ *
+ * Two shapes carry an uncompilable regex, and both are dropped: a `pattern` value, and a
+ * `patternProperties` key. The key case matters because the destination compiles those keys
+ * too, so preserving one would fail the schema exactly as a `pattern` value would.
  */
 export function stripUnicodePropertyPatterns(node: unknown, inNameBag = false): unknown {
   type Assign = (value: unknown) => void;
-  interface Frame { node: unknown; inNameBag: boolean; assign: Assign }
+  interface Frame { node: unknown; inNameBag: boolean; patternKeyed?: boolean; assign: Assign }
 
   let result: unknown;
   let dropped = 0;
@@ -142,6 +153,12 @@ export function stripUnicodePropertyPatterns(node: unknown, inNameBag = false): 
 
     for (const [key, value] of Object.entries(current as Record<string, unknown>)) {
       if (frame.inNameBag) {
+        if (frame.patternKeyed && usesUnicodePropertyEscape(key)) {
+          // The key is the matcher here, so an uncompilable key takes its schema with it.
+          // Keeping the entry would fail the whole schema exactly as a pattern value does.
+          dropped++;
+          continue;
+        }
         // Inside a name bag every key is a caller-chosen name, so `pattern` here is a property
         // name; its value is still a schema and is walked as one.
         stack.push({ node: value, inNameBag: false, assign: v => { out[key] = v; } });
@@ -156,7 +173,12 @@ export function stripUnicodePropertyPatterns(node: unknown, inNameBag = false): 
         out[key] = value;
         continue;
       }
-      stack.push({ node: value, inNameBag: SCHEMA_NAME_BAG_KEYS.has(key), assign: v => { out[key] = v; } });
+      stack.push({
+        node: value,
+        inNameBag: SCHEMA_NAME_BAG_KEYS.has(key),
+        patternKeyed: key === PATTERN_KEYED_BAG_KEY,
+        assign: v => { out[key] = v; },
+      });
     }
   }
 

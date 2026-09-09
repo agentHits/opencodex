@@ -343,6 +343,50 @@ describe("unicode property-escape pattern stripping", () => {
     expect(stripUnicodePropertyPatterns(before)).toBe(before);
   });
 
+  test("a patternProperties key is a regex too, so an uncompilable one is dropped with its schema", () => {
+    // The destination compiles these keys exactly as it compiles a `pattern` value, so copying
+    // the key verbatim would still fail the whole schema and lose every request.
+    const stripped = stripUnicodePropertyPatterns({
+      type: "object",
+      patternProperties: {
+        "^\\p{L}+$": { type: "string" },
+        "^\\P{N}+$": { type: "string" },
+        // Python `re` compiles these, so they survive with their schemas intact.
+        "^x-": { type: "string", description: "keep me" },
+        "^(?!__).+$": { type: "number" },
+      },
+    }) as Record<string, Record<string, Record<string, unknown>>>;
+
+    expect(Object.keys(stripped.patternProperties)).toEqual(["^x-", "^(?!__).+$"]);
+    expect(stripped.patternProperties["^x-"].description).toBe("keep me");
+    expect(stripped.patternProperties["^(?!__).+$"].type).toBe("number");
+  });
+
+  test("an ordinary name bag keeps a property literally named like a property escape", () => {
+    // Only `patternProperties` keys are matchers. Elsewhere the key is just a name, so a
+    // property called `\\p{L}` is data and must survive.
+    const before = {
+      type: "object",
+      properties: { "\\p{L}": { type: "string" } },
+      $defs: { "\\p{L}": { type: "string" } },
+    };
+    expect(stripUnicodePropertyPatterns(before)).toBe(before);
+  });
+
+  test("a nested patternProperties inside properties is still key-checked", () => {
+    const stripped = stripUnicodePropertyPatterns({
+      type: "object",
+      properties: {
+        nested: {
+          type: "object",
+          patternProperties: { "^\\p{Lu}$": { type: "string" }, "^ok$": { type: "string" } },
+        },
+      },
+    }) as Record<string, Record<string, Record<string, Record<string, unknown>>>>;
+
+    expect(Object.keys(stripped.properties.nested.patternProperties)).toEqual(["^ok$"]);
+  });
+
   test("a deeply nested schema is stripped without exhausting the stack", () => {
     // Same reasoning as the encrypted-marker walk: schema depth is caller-controlled.
     const depth = 50_000;
