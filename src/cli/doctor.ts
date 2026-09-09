@@ -45,6 +45,8 @@ import {
   probeCodexCoordinatorNamespace,
   resolveEffectiveUserIdentity,
 } from "../codex/user-identity";
+import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers-destination";
+import type { OcxProviderConfig } from "../types/provider";
 import { collectProjectCodexConfigWarnings, formatProjectCodexConfigWarningsForDoctor } from "../codex/project-config-warnings";
 import {
   collectLegacyCodexConfigKeyDiagnostics,
@@ -1008,27 +1010,13 @@ export function chatgptPublicEndpointHint(
   if (!openai || typeof openai !== "object") {
     return null;
   }
-  const typed = openai as { adapter?: unknown; authMode?: unknown; baseUrl?: unknown };
-  if (typed.adapter !== "openai-responses") {
+  // Same classification the router uses: adapter + forward auth + the exact
+  // canonical ChatGPT-login URL. A hostname lookalike must not get this
+  // guidance, and a missing authMode is the runtime "key" default, not forward.
+  if (!isCanonicalOpenAiForwardProvider(openai as OcxProviderConfig)) {
     return null;
   }
-  const authMode = typed.authMode ?? "forward";
-  if (authMode !== "forward") {
-    return null;
-  }
-  const baseUrl = typeof typed.baseUrl === "string" ? typed.baseUrl : "";
-  if (baseUrl) {
-    let hostname: string;
-    try {
-      hostname = new URL(baseUrl).hostname.toLowerCase();
-    } catch {
-      return null;
-    }
-    if (hostname !== "chatgpt.com" && !hostname.endsWith(".chatgpt.com")) {
-      return null;
-    }
-  }
-  return "ChatGPT-family requests use the public ChatGPT endpoint through this proxy, so upstream queue delay before the first output can be higher than DeepSeek/Kimi. The native Codex app channel is unavailable through OpenCodex routing (in both Pool and Direct modes); use a latency-sensitive provider or run Codex natively when that channel matters. service_tier=priority is a request preference; inspect response tier in logs to see what the backend granted.";
+  return "ChatGPT-family requests use the public ChatGPT endpoint through this proxy, so upstream queue delay before the first output can be higher than providers without that public queue. Streaming turns already ride the ChatGPT websocket transport (the same responses_websockets lane Codex CLI defaults to); the remaining gap is the public-endpoint queue itself, in both Pool and Direct modes. service_tier=priority is a request preference: this backend can echo service_tier \"default\" even on turns it scheduled as priority (#2558), so the echoed response tier in request logs stays an observation with confirmation \"assumed\" and cannot confirm or deny the granted tier. For latency-sensitive work, choose a provider with a shorter observed queue or run Codex natively.";
 }
 
 export async function runDoctor(args: string[] = []): Promise<void> {

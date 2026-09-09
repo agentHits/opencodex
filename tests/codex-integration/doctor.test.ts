@@ -643,20 +643,26 @@ describe("service memory section (#314 WP4)", () => {
   });
 
   test("ChatGPT public endpoint hint explains channel latency without claiming a fixed delay", () => {
-    const hint = chatgptPublicEndpointHint({ openai: { adapter: "openai-responses" } });
+    const canonical = { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex" };
+    const hint = chatgptPublicEndpointHint({ openai: canonical });
     expect(hint).toContain("public ChatGPT endpoint");
-    expect(hint).toContain("native Codex app channel");
-    expect(hint).toContain("DeepSeek/Kimi");
+    expect(hint).toContain("assumed");
+    expect(hint).toContain("websocket");
     expect(hint).toContain("both Pool and Direct modes");
     expect(hint).not.toContain("11s");
     expect(chatgptPublicEndpointHint({})).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "key" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://api.openai.com/v1" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com.example/v1" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://gateway.example/chatgpt.com/v1" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "not-a-valid-url" } })).toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api" } })).not.toBeNull();
-    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://subdomain.chatgpt.com/v1" } })).not.toBeNull();
+    // A missing authMode is the runtime "key" default, not the forward login.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "key", baseUrl: "https://chatgpt.com/backend-api/codex" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://api.openai.com/v1" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com.example/v1" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://gateway.example/chatgpt.com/v1" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "not-a-valid-url" } })).toBeNull();
+    // Only the exact canonical URL qualifies: no parent path, no subdomain.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://subdomain.chatgpt.com/v1" } })).toBeNull();
+    // Trailing slashes still normalize to the canonical URL.
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex/" } })).not.toBeNull();
   });
 
   test("proxyDownRestartHint prefers 'ocx service start' when a service is installed", () => {
@@ -976,12 +982,12 @@ describe("doctor reports an unclean prior proxy exit", () => {
     expect(logged.join("\n")).not.toContain("may have exited unexpectedly");
   });
 
-  test("runDoctor outputs ChatGPT public endpoint hint when openai adapter is configured", async () => {
+  test("runDoctor outputs ChatGPT public endpoint hint when the canonical openai provider is configured", async () => {
     const { writeFileSync } = await import("fs");
     const { join } = await import("path");
     writeFileSync(
       join(tempHome, "config.json"),
-      JSON.stringify({ port: 9, codexAutoStart: false, providers: { openai: { adapter: "openai-responses" } } }),
+      JSON.stringify({ port: 9, codexAutoStart: false, providers: { openai: { adapter: "openai-responses", authMode: "forward", baseUrl: "https://chatgpt.com/backend-api/codex" } } }),
       "utf8",
     );
 
@@ -989,6 +995,6 @@ describe("doctor reports an unclean prior proxy exit", () => {
 
     const output = logged.join("\n");
     expect(output).toContain("public ChatGPT endpoint");
-    expect(output).toContain("native Codex app channel");
+    expect(output).toContain("assumed");
   });
 });

@@ -79,18 +79,20 @@ does not guarantee lower microphone, WebRTC, or end-to-end voice latency through
 ### ChatGPT-family channel and latency
 
 Native ChatGPT-family requests routed through opencodex via the canonical ChatGPT-login `openai`
-forward provider (covering both Pool and Direct modes) use the public ChatGPT endpoint. The
-native Codex app channel is not available through OpenCodex routing in either Pool or Direct mode, and provider routing or account
-selection does not bypass the upstream ChatGPT channel. The upstream may spend time queueing a
-request before the first output even when the local proxy and network path are healthy. This
-behavior is specific to ChatGPT-login routing and does not apply to `openai-apikey` or custom
-providers, which connect directly to their respective API endpoints without public ChatGPT channel
-queueing.
+forward provider (covering both Pool and Direct modes) use the public ChatGPT endpoint. Provider
+routing or account selection does not bypass the upstream ChatGPT channel. The upstream may spend
+time queueing a request before the first output even when the local proxy and network path are
+healthy. Streaming turns already ride the ChatGPT websocket transport — the same
+`responses_websockets` lane Codex CLI defaults to — so the remaining gap is the public-endpoint
+queue itself, not the transport. This behavior is specific to ChatGPT-login routing and does not
+apply to `openai-apikey` or custom providers, which connect directly to their respective API
+endpoints without public ChatGPT channel queueing.
 
-`service_tier: priority` is a request preference. It does not prove that the upstream granted that
-tier. Check the response tier shown in request logs when you need to distinguish the requested
-preference from the backend's decision. For latency-sensitive work, choose a provider with a
-shorter observed queue or run Codex natively when the app channel is required.
+`service_tier: priority` is a request preference. On the ChatGPT backend the echoed
+`service_tier` cannot confirm or deny the granted tier: turns scheduled as priority can still
+echo `default`, so request logs show the response tier as an observation with confirmation
+`assumed`. For latency-sensitive work, choose a provider with a shorter observed queue or run
+Codex natively when the native app channel is required.
 
 The proxy listens on port `10100` by default and serves `POST /v1/responses`,
 `POST /v1/responses/compact`, `POST /v1/images/generations`, `POST /v1/images/edits`,
