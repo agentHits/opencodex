@@ -73,6 +73,7 @@ import {
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
   OPENAI_PROVIDER_TIER_VERSION,
   pinnedWireAdapter,
+  PROVIDER_WEB_SEARCH_BRIDGE_BACKENDS,
   UPSTREAM_HTTP_VERSION_VALUES,
   type OcxClaudeCodeConfig,
   type OcxConfig,
@@ -497,6 +498,47 @@ export function requestPacingConfigError(value: unknown): string | null {
   return "requestPacing must contain enabled and a valid requestsPerMinute/minIntervalMs provider rule or model overrides";
 }
 
+/**
+ * Bounds for the opt-in passthrough web-search bridge (`providers.<name>.webSearchBridge`,
+ * #3761). Strict for the same reason `retryOn429` is: a misspelled key here would silently
+ * leave the bridge disarmed while the operator believes they enabled it. `endpoint` is only
+ * shape-checked here; `planPassthroughWebSearchBridge` re-validates the origin before any key
+ * is sent to it, because config validation is not an authorization boundary.
+ */
+const providerWebSearchBridgeSchema = z.object({
+  enabled: z.boolean().optional(),
+  backend: z.enum(PROVIDER_WEB_SEARCH_BRIDGE_BACKENDS).optional(),
+  maxSearches: z.number().int().min(1).max(10).optional(),
+  timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+  endpoint: z.string().min(1).optional(),
+}).strict();
+
+export function providerWebSearchBridgeConfigError(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "webSearchBridge must be a plain object";
+  }
+  const parsed = providerWebSearchBridgeSchema.safeParse(value);
+  if (!parsed.success) {
+    return "webSearchBridge accepts only enabled (boolean), backend "
+      + `(${PROVIDER_WEB_SEARCH_BRIDGE_BACKENDS.join("|")}), maxSearches (1..10), `
+      + "timeoutMs (1000..600000), and endpoint (absolute http(s) URL)";
+  }
+  const endpoint = parsed.data.endpoint;
+  if (endpoint !== undefined) {
+    let url: URL;
+    try {
+      url = new URL(endpoint);
+    } catch {
+      return "webSearchBridge.endpoint must be an absolute http(s) URL";
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return "webSearchBridge.endpoint must be an absolute http(s) URL";
+    }
+  }
+  return null;
+}
+
 const fastWireSchema = z.object({
   kind: z.string(),
   canonicalToWire: z.record(z.string().trim(), z.string().trim()),
@@ -600,6 +642,10 @@ const providerConfigSchema = z.object({
     repairInvalidIds: z.boolean().optional(),
   }).strict().optional(),
   responsesSnapshotRepair: z.boolean().optional(),
+  // Invalid blocks degrade to "absent" rather than failing the whole config load: an unusable
+  // bridge block must never send an operator through invalid-config recovery for an opt-in
+  // feature that is off by default. The management write boundary still rejects it loudly.
+  webSearchBridge: providerWebSearchBridgeSchema.optional().catch(undefined),
   xaiResponsesXSearch: z.boolean().optional(),
   xaiResponsesDefaultVersion: z.number().int().positive().optional().catch(undefined),
 }).passthrough();

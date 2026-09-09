@@ -1,0 +1,664 @@
+/**
+ * Hosted-web-search bridge for the KEY-auth Responses passthrough (#3761).
+ *
+ * The Codex App always declares the hosted "{type:'web_search'}" tool. On the passthrough the
+ * proxy reads that declaration as "the destination executes search itself" and relays it
+ * unchanged, which is correct for the ChatGPT backend and for xAI. It is wrong for an
+ * OpenAI-shaped KEY gateway that does not run the hosted tool: Ollama Cloud GLM answers with a
+ * plain "{type:'function_call', name:'web_search'}", nothing on either side executes it, and the
+ * undeclared-tool guard ends the turn because a hosted declaration never authorizes a client
+ * function name.
+ *
+ * This module is the opt-in repair, armed only by "providers.<name>.webSearchBridge.enabled".
+ * It intercepts that one call out of the upstream stream, runs the configured search backend
+ * itself, feeds the call and its result back to the SAME upstream in a fresh POST, and shows
+ * Codex the hosted "web_search_call" cell it already understands. The offending function_call
+ * never reaches the client, and "web_search" is never added to the guard's allowed names --
+ * doing that would authorize a call nobody can execute rather than removing it.
+ *
+ * Deliberate boundaries of this first slice:
+ *   - Streaming SSE turns only. A non-streaming turn stays on the existing path.
+ *   - A leg that mixes the search call with any OTHER client tool call fails closed with an
+ *     explicit error. Answering both would need the raw mixed-tool continuation contract the
+ *     2.47 track deferred (devlog/_plan/260907_track2_protocol/040_hosted_search_disposition.md),
+ *     and silently half-doing it would drop the client's own tool call.
+ *   - Continuation legs use a direct send rather than the core recovery ladder: the first leg
+ *     still goes through it, and a KEY-auth destination has no OAuth refresh path to replay.
+ *
+ * The stream this module produces is ordinary Responses SSE and is handed back to the core relay,
+ * so the undeclared-tool guard, the provider payload rewrites, terminal-outcome recording, and the
+ * continuation cache all still apply to it. That is what keeps the guard's authority intact over
+ * every OTHER call an upstream emits: the bridge removes only the web_search call it executes.
+ *   - The client stream is renumbered (sequence_number and output_index) because events are both
+ *     dropped and injected; a plain relay cannot preserve upstream numbering through that.
+ */
+import { nextSseBlock, sseDataPayload } from "../server/sse-payload-rewrite";
+import { toolChoiceToolPredicate } from "../types";
+import type { OcxParsedRequest, OcxProviderConfig, ProviderWebSearchBridgeBackend } from "../types";
+import type { SidecarOutcome } from "./executor";
+import { buildWebSearchTool, WEB_SEARCH_TOOL_NAME } from "./synthetic-tool";
+import { safeWebSearchSources } from "./sources";
+import { runOllamaWebSearch } from "./ollama-executor";
+
+/** Canonical Ollama Cloud origin. The only origin the "ollama" backend derives on its own. */
+export const OLLAMA_CLOUD_ORIGIN = "https://ollama.com";
+const OLLAMA_WEB_SEARCH_PATH = "/api/web_search";
+
+const DEFAULT_BRIDGE_MAX_SEARCHES = 3;
+const DEFAULT_BRIDGE_TIMEOUT_MS = 60_000;
+/** Queries honored from one call's "queries" array; the rest are ignored rather than billed. */
+const MAX_QUERIES_PER_CALL = 3;
+/** Hard ceiling on retained client-visible items before the terminal snapshot rewrite is skipped. */
+const MAX_RETAINED_OUTPUT_ITEMS = 500;
+/** Refuse to buffer an unbounded partial SSE event from a misbehaving upstream. */
+const MAX_SSE_BUFFER_CHARS = 8 * 1024 * 1024;
+
+export const WEB_SEARCH_BRIDGE_MIXED_TOOLS_ERROR_CODE = "web_search_bridge_mixed_tools";
+export const WEB_SEARCH_BRIDGE_ERROR_CODE = "web_search_bridge_failed";
+
+/** Item types whose calls the CLIENT has to execute; any of them alongside a search is mixed. */
+const CLIENT_EXECUTED_ITEM_TYPES = new Set([
+  "function_call",
+  "custom_tool_call",
+  "local_shell_call",
+  "tool_search_call",
+  "computer_call",
+]);
+
+export interface PassthroughWebSearchBridgePlan {
+  /** Resolved executor id. Only "ollama" has a shipped executor today. */
+  backend: ProviderWebSearchBridgeBackend;
+  /** Absolute search-API URL the executor posts to. */
+  endpoint: string;
+  /** Searches actually executed per turn before further calls are refused. */
+  maxSearches: number;
+  /** Per-search deadline in milliseconds. */
+  timeoutMs: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function originOf(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the search endpoint for the "ollama" backend.
+ *
+ * An explicit "endpoint" is the operator's own authorization: they are naming the destination
+ * that receives this provider's API key. Without one, the origin must be canonical Ollama Cloud
+ * -- a renamed row pointing at an arbitrary host must not silently receive the key just because
+ * its adapter happens to be openai-responses.
+ */
+export function resolveOllamaWebSearchEndpoint(
+  provider: OcxProviderConfig,
+): string | undefined {
+  const configured = provider.webSearchBridge?.endpoint;
+  if (configured !== undefined) {
+    return originOf(configured) === undefined ? undefined : configured;
+  }
+  return originOf(provider.baseUrl) === OLLAMA_CLOUD_ORIGIN
+    ? OLLAMA_CLOUD_ORIGIN + OLLAMA_WEB_SEARCH_PATH
+    : undefined;
+}
+
+/**
+ * Decide whether this passthrough turn may run the web-search bridge.
+ *
+ * Fails closed on every axis. In particular it never arms for "authMode: 'forward'": that is the
+ * ChatGPT backend speaking Codex's own protocol with the caller's own credential, and it executes
+ * hosted search upstream. A provider that runs hosted search itself (xAI) also stays on the
+ * existing relay, because arming here would replace a real provider-side search with ours.
+ *
+ * This is a NEW planner rather than a relaxation of "isPassthrough" in planWebSearch: the sidecar
+ * rewrites normalized messages, while this path must preserve the raw Responses conversation.
+ */
+export function planPassthroughWebSearchBridge(
+  parsed: OcxParsedRequest,
+  provider: OcxProviderConfig,
+  options: { isPassthrough: boolean; stream: boolean },
+): PassthroughWebSearchBridgePlan | undefined {
+  if (!options.isPassthrough || !options.stream) return undefined;
+  if (!parsed._webSearch) return undefined;
+  // Never spend a forwarded ChatGPT credential on a proxy-run search, and never pre-empt a
+  // provider that executes the hosted tool itself.
+  if (provider.authMode !== "key") return undefined;
+  const bridge = provider.webSearchBridge;
+  if (!bridge || bridge.enabled !== true) return undefined;
+  // A tool_choice that excludes web search excludes the bridge too; the model may not search.
+  if (!toolChoiceToolPredicate(parsed.options.toolChoice)(buildWebSearchTool())) return undefined;
+  // Explicit-only, and inert for every backend whose executor has not shipped.
+  if (bridge.backend !== "ollama") return undefined;
+  const endpoint = resolveOllamaWebSearchEndpoint(provider);
+  if (!endpoint) return undefined;
+  const maxSearches = Number.isInteger(bridge.maxSearches)
+    && bridge.maxSearches! >= 1
+    && bridge.maxSearches! <= 10
+    ? bridge.maxSearches!
+    : DEFAULT_BRIDGE_MAX_SEARCHES;
+  const timeoutMs = Number.isInteger(bridge.timeoutMs)
+    && bridge.timeoutMs! >= 1_000
+    && bridge.timeoutMs! <= 600_000
+    ? bridge.timeoutMs!
+    : DEFAULT_BRIDGE_TIMEOUT_MS;
+  return { backend: "ollama", endpoint, maxSearches, timeoutMs };
+}
+
+/** One intercepted search call, carried from the upstream stream into the next request body. */
+interface InterceptedSearchCall {
+  callId: string;
+  itemId?: string;
+  argumentsText: string;
+}
+
+export type PassthroughWebSearchBridgeExecutor = (
+  queries: string[],
+  signal?: AbortSignal,
+) => Promise<SidecarOutcome>;
+
+export interface PassthroughWebSearchBridgeStreamOptions {
+  plan: PassthroughWebSearchBridgePlan;
+  /** The already-open first upstream leg, obtained through the normal core send path. */
+  firstLeg: ReadableStream<Uint8Array>;
+  /** The exact outbound body that produced the first leg; continuation legs extend it. */
+  requestBody: string;
+  /** Sends one continuation leg and resolves with its response. */
+  send: (body: string) => Promise<Response>;
+  execute: PassthroughWebSearchBridgeExecutor;
+  signal?: AbortSignal;
+}
+
+function parseQueries(argumentsText: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argumentsText);
+  } catch {
+    // A non-JSON argument blob is still a search intent; treat the raw text as the query.
+    const trimmed = argumentsText.trim();
+    return trimmed.length > 0 ? [trimmed.slice(0, 1_000)] : [];
+  }
+  if (!isRecord(parsed)) return [];
+  const queries: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || queries.includes(trimmed)) return;
+    if (queries.length < MAX_QUERIES_PER_CALL) queries.push(trimmed.slice(0, 1_000));
+  };
+  push(parsed.query);
+  if (Array.isArray(parsed.queries)) for (const entry of parsed.queries) push(entry);
+  return queries;
+}
+
+function isWebSearchCallItem(item: unknown): boolean {
+  if (!isRecord(item)) return false;
+  if (item.type !== "function_call" && item.type !== "custom_tool_call") return false;
+  // A namespaced "ns__web_search" is a different tool identity that the client declared and
+  // executes itself; intercepting it would steal a call the client owns.
+  if (typeof item.namespace === "string") return false;
+  return item.name === WEB_SEARCH_TOOL_NAME;
+}
+
+function isClientExecutedItem(item: unknown): boolean {
+  return isRecord(item) && typeof item.type === "string" && CLIENT_EXECUTED_ITEM_TYPES.has(item.type);
+}
+
+/** Yield complete SSE event blocks with their original delimiters. */
+async function* readSseBlocks(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<{ block: string; delimiter: string }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const drain = function* (): Generator<{ block: string; delimiter: string }> {
+    let next: ReturnType<typeof nextSseBlock>;
+    while ((next = nextSseBlock(buffer))) {
+      buffer = next.rest;
+      yield { block: next.block, delimiter: next.delimiter };
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        yield* drain();
+        if (buffer.length > 0) {
+          yield { block: buffer, delimiter: buffer.includes("\r\n") ? "\r\n\r\n" : "\n\n" };
+        }
+        return;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new Error("upstream SSE event exceeded the web-search bridge buffer bound");
+      }
+      yield* drain();
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
+interface LegDecision {
+  kind: "end" | "continue" | "fail";
+  searches: InterceptedSearchCall[];
+  message?: string;
+  code?: string;
+}
+
+/**
+ * Stateful client-stream builder for one bridged turn.
+ *
+ * Owns the two numbering spaces the client sees. Upstream indices are per-leg and include items
+ * this bridge removes, so every forwarded event is remapped onto one monotonic client sequence.
+ */
+class BridgeStreamState {
+  /** Client-facing sequence_number, rewritten on every emitted payload. */
+  private sequence = 0;
+  /** Next unused client output_index. */
+  private outputIndex = 0;
+  /** Client-visible finished items, used to rebuild the terminal snapshot after an injection. */
+  private readonly retainedItems: unknown[] = [];
+  private retainedItemsComplete = true;
+  private injected = false;
+
+  /** Per-leg upstream output_index -> client output_index. */
+  private indexMap = new Map<number, number>();
+  private suppressedIndexes = new Set<number>();
+  private searches: InterceptedSearchCall[] = [];
+  private sawOtherClientCall = false;
+  private terminalBlock: { block: string; delimiter: string; payload: Record<string, unknown> } | undefined;
+
+  beginLeg(): void {
+    this.indexMap = new Map();
+    this.suppressedIndexes = new Set();
+    this.searches = [];
+    this.sawOtherClientCall = false;
+    this.terminalBlock = undefined;
+  }
+
+  private clientIndexFor(upstreamIndex: number): number {
+    const existing = this.indexMap.get(upstreamIndex);
+    if (existing !== undefined) return existing;
+    const assigned = this.outputIndex++;
+    this.indexMap.set(upstreamIndex, assigned);
+    return assigned;
+  }
+
+  private retain(item: unknown): void {
+    if (!this.retainedItemsComplete) return;
+    if (this.retainedItems.length >= MAX_RETAINED_OUTPUT_ITEMS) {
+      this.retainedItemsComplete = false;
+      return;
+    }
+    this.retainedItems.push(item);
+  }
+
+  frame(type: string, data: Record<string, unknown>): string {
+    return "event: " + type + "\n"
+      + "data: " + JSON.stringify({ type, sequence_number: this.sequence++, ...data });
+  }
+
+  failureFrames(code: string, message: string): string[] {
+    const failure = { type: "upstream_error", code, message };
+    return [
+      this.frame("response.failed", {
+        response: { status: "failed", error: failure, last_error: failure },
+      }),
+      "data: [DONE]",
+    ];
+  }
+
+  /** Emit the hosted cell Codex renders while the proxy runs the search. */
+  searchBeginFrames(itemId: string): { frames: string[]; outputIndex: number } {
+    const outputIndex = this.outputIndex++;
+    this.injected = true;
+    return {
+      outputIndex,
+      frames: [this.frame("response.output_item.added", {
+        output_index: outputIndex,
+        item: { type: "web_search_call", id: itemId, status: "in_progress" },
+      })],
+    };
+  }
+
+  searchEndFrames(
+    itemId: string,
+    outputIndex: number,
+    queries: string[],
+    outcome: SidecarOutcome,
+  ): string[] {
+    const sources = safeWebSearchSources(outcome.sources);
+    const first = queries[0] ?? "";
+    const item = {
+      type: "web_search_call",
+      id: itemId,
+      status: outcome.error ? "failed" : "completed",
+      action: { type: "search", query: first, queries: queries.length > 0 ? queries : [first] },
+      ...(sources.length > 0 ? { sources } : {}),
+    };
+    this.retain(item);
+    return [this.frame("response.output_item.done", { output_index: outputIndex, item })];
+  }
+
+  /**
+   * Translate one upstream block into the blocks the client should receive.
+   *
+   * Returns an empty array for a suppressed event. The terminal is held rather than emitted:
+   * whether it is the end of the turn is only decided once the whole leg has been read.
+   */
+  consume(block: string, delimiter: string, isFirstLeg: boolean): string[] {
+    const data = sseDataPayload(block);
+    if (data === null) return [block];
+    if (data === "[DONE]") return [];
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      return [block];
+    }
+    if (!isRecord(payload) || typeof payload.type !== "string") return [block];
+
+    // A continuation leg opens its own response lifecycle; the client already has one.
+    if ((payload.type === "response.created" || payload.type === "response.in_progress") && !isFirstLeg) {
+      return [];
+    }
+    if (payload.type === "response.completed"
+      || payload.type === "response.incomplete"
+      || payload.type === "response.failed") {
+      this.terminalBlock = { block, delimiter, payload };
+      return [];
+    }
+
+    const upstreamIndex = typeof payload.output_index === "number" ? payload.output_index : undefined;
+
+    if (payload.type === "response.output_item.added" && upstreamIndex !== undefined) {
+      if (isWebSearchCallItem(payload.item)) {
+        const item = payload.item as Record<string, unknown>;
+        this.suppressedIndexes.add(upstreamIndex);
+        this.searches.push({
+          callId: typeof item.call_id === "string" ? item.call_id : "",
+          itemId: typeof item.id === "string" ? item.id : undefined,
+          argumentsText: typeof item.arguments === "string" ? item.arguments : "",
+        });
+        return [];
+      }
+      if (isClientExecutedItem(payload.item)) this.sawOtherClientCall = true;
+    }
+
+    if (upstreamIndex !== undefined && this.suppressedIndexes.has(upstreamIndex)) {
+      // Argument deltas and the matching done frame belong to a call the client never sees;
+      // the done frame still carries the authoritative complete arguments.
+      if (payload.type === "response.output_item.done" && isRecord(payload.item)) {
+        const args = payload.item.arguments;
+        const pending = this.searches[this.searches.length - 1];
+        if (pending && typeof args === "string" && args.length > 0) pending.argumentsText = args;
+      }
+      if (payload.type === "response.function_call_arguments.done" && typeof payload.arguments === "string") {
+        const pending = this.searches[this.searches.length - 1];
+        if (pending && payload.arguments.length > 0) pending.argumentsText = payload.arguments;
+      }
+      return [];
+    }
+
+    const rewritten: Record<string, unknown> = { ...payload, sequence_number: this.sequence++ };
+    if (upstreamIndex !== undefined) rewritten.output_index = this.clientIndexFor(upstreamIndex);
+    if (payload.type === "response.output_item.done") this.retain(payload.item);
+    return ["event: " + payload.type + "\ndata: " + JSON.stringify(rewritten)];
+  }
+
+  /** Decide what the leg's terminal means once the whole leg has been read. */
+  decide(remainingLegs: number): LegDecision {
+    if (this.searches.length === 0) return { kind: "end", searches: [] };
+    if (this.sawOtherClientCall) {
+      return {
+        kind: "fail",
+        searches: this.searches,
+        code: WEB_SEARCH_BRIDGE_MIXED_TOOLS_ERROR_CODE,
+        message: "routed provider requested web_search alongside another client tool in one turn; "
+          + "the web-search bridge cannot answer both without dropping the client's call",
+      };
+    }
+    const terminalType = this.terminalBlock?.payload.type;
+    if (terminalType === "response.failed" || terminalType === "response.incomplete") {
+      return { kind: "end", searches: [] };
+    }
+    if (remainingLegs <= 0) {
+      return {
+        kind: "fail",
+        searches: this.searches,
+        code: WEB_SEARCH_BRIDGE_ERROR_CODE,
+        message: "web-search bridge exhausted its continuation budget for this turn",
+      };
+    }
+    return { kind: "continue", searches: this.searches };
+  }
+
+  /**
+   * Flush the held terminal. When searches were injected the snapshot is rebuilt from the items
+   * the client actually received, so "response.output" matches the streamed turn instead of
+   * showing only the final leg.
+   */
+  terminalFrames(): string[] {
+    const held = this.terminalBlock;
+    if (!held) return ["data: [DONE]"];
+    const payload: Record<string, unknown> = { ...held.payload, sequence_number: this.sequence++ };
+    if (this.injected && this.retainedItemsComplete && isRecord(payload.response)) {
+      payload.response = { ...payload.response, output: [...this.retainedItems] };
+    }
+    return [
+      "event: " + String(payload.type) + "\ndata: " + JSON.stringify(payload),
+      "data: [DONE]",
+    ];
+  }
+}
+
+/** Append one executed search turn to the raw Responses body for the next leg. */
+export function appendBridgeSearchTurn(
+  requestBody: string,
+  turns: readonly { call: InterceptedSearchCall; output: string }[],
+): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(requestBody);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.input)) return undefined;
+  const input = [...parsed.input];
+  for (const turn of turns) {
+    input.push({
+      type: "function_call",
+      ...(turn.call.itemId ? { id: turn.call.itemId } : {}),
+      call_id: turn.call.callId,
+      name: WEB_SEARCH_TOOL_NAME,
+      arguments: turn.call.argumentsText || "{}",
+    });
+    input.push({
+      type: "function_call_output",
+      call_id: turn.call.callId,
+      output: turn.output,
+    });
+  }
+  return JSON.stringify({ ...parsed, input, stream: true });
+}
+
+/**
+ * Bind the shipped executor for a plan. Each query in one call is a separate upstream search;
+ * their digests are merged so the model receives a single tool result for the call it made.
+ */
+export function createOllamaBridgeExecutor(
+  plan: PassthroughWebSearchBridgePlan,
+  apiKey: string,
+): PassthroughWebSearchBridgeExecutor {
+  return async (queries, signal) => {
+    const texts: string[] = [];
+    const sources: SidecarOutcome["sources"] = [];
+    const errors: string[] = [];
+    for (const query of queries) {
+      const outcome = await runOllamaWebSearch(query, apiKey, plan.endpoint, plan.timeoutMs, signal);
+      if (outcome.error) {
+        errors.push(outcome.error);
+        continue;
+      }
+      texts.push(queries.length > 1 ? `Results for "${query}":\n${outcome.text}` : outcome.text);
+      for (const source of outcome.sources) {
+        if (!sources.some(existing => existing.url === source.url)) sources.push(source);
+      }
+    }
+    if (texts.length === 0) {
+      return { text: "", sources: [], error: errors[0] ?? "web search produced no results" };
+    }
+    return { text: texts.join("\n\n"), sources };
+  };
+}
+
+/**
+ * Run one bridged turn as a client-facing SSE stream.
+ *
+ * The first leg is already open -- it came through the core send path with its full recovery,
+ * circuit, and body-size handling. Every later leg is a direct re-POST of the same outbound body
+ * extended with the executed search, which is exactly what a KEY-auth Responses continuation is.
+ */
+async function* bridgeStreamBlocks(
+  options: PassthroughWebSearchBridgeStreamOptions,
+): AsyncGenerator<string> {
+  const state = new BridgeStreamState();
+  let requestBody = options.requestBody;
+  let leg: ReadableStream<Uint8Array> = options.firstLeg;
+  let isFirstLeg = true;
+  let searchesExecuted = 0;
+  // One continuation leg per allowed search, plus one final leg for the answer itself.
+  let legsRemaining = options.plan.maxSearches + 1;
+
+  const emit = function* (blocks: readonly string[]): Generator<string> {
+    for (const block of blocks) yield block + "\n\n";
+  };
+
+  for (;;) {
+    state.beginLeg();
+    try {
+      for await (const { block, delimiter } of readSseBlocks(leg)) {
+        yield* emit(state.consume(block, delimiter, isFirstLeg));
+        if (options.signal?.aborted) return;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      yield* emit(state.failureFrames(
+        WEB_SEARCH_BRIDGE_ERROR_CODE,
+        "web-search bridge upstream read failed: " + message,
+      ));
+      return;
+    }
+    isFirstLeg = false;
+
+    const decision = state.decide(legsRemaining);
+    if (decision.kind === "fail") {
+      yield* emit(state.failureFrames(decision.code!, decision.message!));
+      return;
+    }
+    if (decision.kind === "end") {
+      yield* emit(state.terminalFrames());
+      return;
+    }
+
+    const turns: { call: InterceptedSearchCall; output: string }[] = [];
+    for (const call of decision.searches) {
+      const queries = parseQueries(call.argumentsText);
+      const itemId = "ws_" + crypto.randomUUID();
+      const begun = state.searchBeginFrames(itemId);
+      yield* emit(begun.frames);
+      let outcome: SidecarOutcome;
+      if (searchesExecuted >= options.plan.maxSearches) {
+        outcome = {
+          text: "",
+          sources: [],
+          error: "no further web searches are available for this turn",
+        };
+      } else if (queries.length === 0) {
+        outcome = { text: "", sources: [], error: "web_search was called without a usable query" };
+      } else {
+        searchesExecuted += 1;
+        outcome = await options.execute(queries, options.signal);
+      }
+      yield* emit(state.searchEndFrames(itemId, begun.outputIndex, queries, outcome));
+      turns.push({
+        call,
+        // The model needs a readable result either way; an executor error is reported as the
+        // tool result rather than as a turn failure, so it can still answer without the search.
+        output: outcome.error ? "Web search failed: " + outcome.error : outcome.text,
+      });
+    }
+
+    const nextBody = appendBridgeSearchTurn(requestBody, turns);
+    if (nextBody === undefined) {
+      yield* emit(state.failureFrames(
+        WEB_SEARCH_BRIDGE_ERROR_CODE,
+        "web-search bridge could not extend the outbound request body",
+      ));
+      return;
+    }
+    requestBody = nextBody;
+    legsRemaining -= 1;
+
+    let next: Response;
+    try {
+      next = await options.send(requestBody);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      yield* emit(state.failureFrames(
+        WEB_SEARCH_BRIDGE_ERROR_CODE,
+        "web-search bridge continuation send failed: " + message,
+      ));
+      return;
+    }
+    if (!next.ok || !next.body) {
+      next.body?.cancel().catch(() => {});
+      yield* emit(state.failureFrames(
+        WEB_SEARCH_BRIDGE_ERROR_CODE,
+        "web-search bridge continuation returned HTTP " + next.status,
+      ));
+      return;
+    }
+    leg = next.body;
+  }
+}
+
+/**
+ * Build the client-facing SSE body for a bridged turn.
+ *
+ * Pull-driven so a slow client applies backpressure to the upstream leg instead of letting the
+ * proxy buffer the whole turn.
+ */
+export function createPassthroughWebSearchBridgeStream(
+  options: PassthroughWebSearchBridgeStreamOptions,
+): ReadableStream<Uint8Array> {
+  const iterator = bridgeStreamBlocks(options)[Symbol.asyncIterator]();
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await iterator.next();
+        if (next.done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(encoder.encode(next.value));
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      void iterator.return?.(reason);
+    },
+  });
+}
