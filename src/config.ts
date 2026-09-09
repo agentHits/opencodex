@@ -1146,6 +1146,9 @@ const configSchema = z.object({
   // candidates are rejected explicitly by remoteGuiConfigError below.
   hub: hubConfigSchema.optional().catch(undefined),
   remoteGui: remoteGuiConfigSchema.optional().catch(undefined),
+  // A malformed privacy block must never be read as "unmask": .catch(undefined) drops it and
+  // emailMaskingEnabled then falls back to masked, which is also what an absent block means.
+  privacy: z.object({ maskEmails: z.boolean().optional() }).strict().optional().catch(undefined),
   // A malformed present client block must remain diagnosable from raw config and
   // fail closed through src/client/state.ts; unrelated provider state still loads.
   client: clientConnectionSchema.optional().catch(undefined),
