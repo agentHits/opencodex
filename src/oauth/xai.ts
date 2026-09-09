@@ -14,6 +14,7 @@ const XAI_OAUTH_REFRESH_SKEW_MS = 2 * 60 * 1000;
 const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_AFTER_MAX_DELAY_MS = 60_000;
 const JITTER_DELAY_CAP_MS = 2_000;
+const XAI_TRUSTED_AUTH_HOSTS = new Set(["auth.x.ai", "accounts.x.ai"]);
 
 export const XAI_LOCAL_CLI_DETACH_WARNING =
   "[oauth:xai] Grok CLI credential was stale; refreshed into OpenCodex ownership. Grok CLI may require login again.";
@@ -48,10 +49,21 @@ function requestSignal(signal: AbortSignal | undefined): AbortSignal {
 }
 
 function validateXaiEndpoint(rawUrl: string): string {
-  const parsed = new URL(rawUrl);
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("xAI OAuth discovery returned an unparseable endpoint URL");
+  }
   const host = parsed.hostname.toLowerCase();
-  if (parsed.protocol !== "https:" || (host !== "x.ai" && !host.endsWith(".x.ai"))) {
-    throw new Error(`xAI OAuth discovery returned an unexpected endpoint: ${rawUrl}`);
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username !== ""
+    || parsed.password !== ""
+    || parsed.port !== ""
+    || !XAI_TRUSTED_AUTH_HOSTS.has(host)
+  ) {
+    throw new Error(`xAI OAuth discovery returned an unexpected endpoint (host: ${host || "none"})`);
   }
   return parsed.toString();
 }

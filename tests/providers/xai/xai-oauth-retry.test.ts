@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { postXaiToken, XaiTokenRequestError } from "../../../src/oauth/xai";
+import { discoverXaiOAuthEndpoints, postXaiToken, XaiTokenRequestError } from "../../../src/oauth/xai";
 const original=globalThis.fetch; afterEach(()=>{globalThis.fetch=original;});
 function queue(items:Array<Response|Error>){let n=0;globalThis.fetch=(async()=>{const x=items[n++]!;if(x instanceof Error)throw x;return x;}) as typeof fetch;return()=>n;}
 const body={grant_type:"refresh_token",client_id:"client",refresh_token:"secret"}; const ok=()=>new Response(JSON.stringify({access_token:"a",refresh_token:"r",expires_in:3600}));
@@ -37,4 +37,16 @@ describe("xAI abort handling",()=>{
  test("Bun-shaped timeout abort is terminal",async()=>{const c=new AbortController();let calls=0;globalThis.fetch=(async()=>{calls++;throw new DOMException("The operation was aborted","AbortError");}) as typeof fetch;const d:number[]=[];await expect(postXaiToken("https://auth.x.ai/token",body,c.signal,{sleep:async x=>{d.push(x)}})).rejects.toMatchObject({name:"AbortError"});expect(calls).toBe(1);expect(d).toEqual([]);});
  test("caller aborted before a 429 backoff does not sleep",async()=>{const c=new AbortController();let calls=0;globalThis.fetch=(async()=>{calls++;c.abort();return new Response("",{status:429,headers:{"retry-after":"60"}});}) as typeof fetch;const d:number[]=[];await expect(postXaiToken("https://auth.x.ai/token",body,c.signal,{sleep:async x=>{d.push(x)}})).rejects.toMatchObject({status:429});expect(calls).toBe(1);expect(d).toEqual([]);});
  test("caller abort during a Retry-After wait rejects promptly",async()=>{const c=new AbortController();const reason=new Error("cancel during wait");globalThis.fetch=(async()=>new Response("",{status:429,headers:{"retry-after":"60"}})) as typeof fetch;const d:number[]=[];const pending=postXaiToken("https://auth.x.ai/token",body,c.signal,{sleep:async x=>{d.push(x);await new Promise(()=>{});}});while(!d.length)await Bun.sleep(1);c.abort(reason);await expect(pending).rejects.toBe(reason);expect(d).toEqual([60000]);});
+});
+
+describe("xAI endpoint validation",()=>{
+ const discover=(authorization_endpoint:string,token_endpoint:string)=>{globalThis.fetch=(async()=>Response.json({authorization_endpoint,token_endpoint})) as typeof fetch;return discoverXaiOAuthEndpoints();};
+ test("accepts the live discovery shape",async()=>{const d=await discover("https://auth.x.ai/oauth2/authorize","https://auth.x.ai/oauth2/token");expect(d).toEqual({authorizationEndpoint:"https://auth.x.ai/oauth2/authorize",tokenEndpoint:"https://auth.x.ai/oauth2/token"});});
+ test("accepts the allow-listed accounts host",async()=>{const d=await discover("https://accounts.x.ai/oauth2/authorize","https://accounts.x.ai/oauth2/token");expect(d.tokenEndpoint).toBe("https://accounts.x.ai/oauth2/token");});
+ test("rejects plain http",async()=>{await expect(discover("http://auth.x.ai/oauth2/authorize","http://auth.x.ai/oauth2/token")).rejects.toThrow(/unexpected endpoint/);});
+ test("rejects the apex host",async()=>{await expect(discover("https://x.ai/oauth2/authorize","https://x.ai/oauth2/token")).rejects.toThrow(/unexpected endpoint/);});
+ test("rejects unlisted subdomains",async()=>{await expect(discover("https://evil.x.ai/token","https://api.x.ai/token")).rejects.toThrow(/unexpected endpoint/);});
+ test("rejects embedded userinfo without echoing it",async()=>{const u="https://u:p@"+"auth.x.ai/oauth2/token";await expect(discover(u,u)).rejects.toThrowError(/unexpected endpoint/);try{await discover(u,u);expect.unreachable();}catch(error){const m=(error as Error).message;expect(m).not.toContain("u:p");expect(m).not.toContain("p@auth");}});
+ test("rejects an explicit port",async()=>{await expect(discover("https://auth.x.ai:8443/oauth2/authorize","https://auth.x.ai:8443/oauth2/token")).rejects.toThrow(/unexpected endpoint/);});
+ test("malformed discovery URL is a generic Error, not a TypeError",async()=>{await expect(discover("not a url","::")).rejects.toThrowError(/unparseable endpoint URL/);try{await discover("not a url","::");expect.unreachable();}catch(error){expect(error).toBeInstanceOf(Error);expect(error).not.toBeInstanceOf(TypeError);expect(error).not.toBeInstanceOf(XaiTokenRequestError);}});
 });
