@@ -1872,8 +1872,13 @@ async function fetchProviderModelsWithAuth(
       markProviderDiscoveryOk(name, live.length);
       return observed(withConfiguredRetention(forCache, { warnDrops: true }), "authoritative");
     }
-    const extracted = effectiveGoogleMode(name, prov) === "ai-studio"
+    const googleAiStudio = effectiveGoogleMode(name, prov) === "ai-studio"
       ? extractGoogleAiStudioModelItems(bounded.value, discovery.maxModels)
+      : undefined;
+    // Native /v1beta/models wins; a google row served by an OpenAI-compatible
+    // gateway keeps the generic data[] / top-level-array contract.
+    const extracted = googleAiStudio?.ok
+      ? googleAiStudio
       : extractProviderModelItems(bounded.value, discovery);
     if (!extracted.ok) {
       const { models, fallback, shouldLog } = failedDiscoveryFallback({ reason: "invalid_response" });

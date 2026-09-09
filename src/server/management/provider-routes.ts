@@ -1435,10 +1435,13 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         ? bounded.value as Record<string, unknown>
         : undefined;
       const isAiStudio = effectiveGoogleMode(name, prov) === "ai-studio";
+      const googleAiStudio = !ccaModels && isAiStudio
+        ? extractGoogleAiStudioModelItems(bounded.value, discovery.maxModels)
+        : undefined;
       const extracted = ccaModels
         ? undefined
-        : isAiStudio
-        ? extractGoogleAiStudioModelItems(bounded.value, discovery.maxModels)
+        : googleAiStudio?.ok
+        ? googleAiStudio
         : Array.isArray(bounded.value) || Array.isArray(record?.data)
         ? extractProviderModelItems(bounded.value, discovery)
         : extractModelEnvelopeRows(bounded.value, discovery.maxModels, ["models"]);

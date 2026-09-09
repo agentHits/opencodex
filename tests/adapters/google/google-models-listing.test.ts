@@ -380,6 +380,10 @@ describe("google models listing via catalog", () => {
           { name: "models/bad\0name", supportedGenerationMethods: ["generateContent"] },
           { name: "models/ padded ", supportedGenerationMethods: ["generateContent"] },
           { name: "models/gemini-valid", inputTokenLimit: 524288, outputTokenLimit: 8192, supportedGenerationMethods: ["generateContent"] },
+          // Same normalized id as the row above: must be deduped, not published twice.
+          { name: "models/gemini-valid", inputTokenLimit: 1024, supportedGenerationMethods: ["generateContent"] },
+          // No `models/` prefix: the name is used verbatim.
+          { name: "gemini-unprefixed", supportedGenerationMethods: ["generateContent"] },
           { name: "models/invalid-methods", supportedGenerationMethods: "not-an-array" },
           { name: "models/embed-only", supportedGenerationMethods: ["embedContent"] },
         ],
@@ -395,7 +399,8 @@ describe("google models listing via catalog", () => {
       }));
 
       const live = models.filter(m => m.provider === "google");
-      expect(live.map(m => m.id)).toEqual(["gemini-valid"]);
+      expect(live.map(m => m.id).sort()).toEqual(["gemini-unprefixed", "gemini-valid"]);
+      expect(live.filter(m => m.id === "gemini-valid")).toHaveLength(1);
       expect(live.find(m => m.id === "gemini-valid")).toMatchObject({
         contextWindow: 524_288,
         maxInputTokens: 524_288,
@@ -405,6 +410,28 @@ describe("google models listing via catalog", () => {
     } finally {
       warning.mockRestore();
     }
+  });
+
+  test("falls back to generic parser when a custom google-adapter provider returns data[] envelope", async () => {
+    clearModelCache("custom-google");
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({
+        data: [
+          { id: "custom-gemini", owned_by: "custom", context_length: 128000 },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    const models = await gatherRoutedModels(configWith("custom-google", {
+      adapter: "google",
+      authMode: "key",
+      apiKey: "gk-custom",
+      baseUrl: "https://custom-gateway.example/v1",
+    }));
+
+    const live = models.filter(m => m.provider === "custom-google");
+    expect(live.map(m => m.id)).toEqual(["custom-gemini"]);
+    expect(live[0]?.contextWindow).toBe(128_000);
   });
 });
 
