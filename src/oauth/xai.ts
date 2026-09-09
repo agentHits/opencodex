@@ -174,7 +174,7 @@ async function sleepAbortable(
     signal.removeEventListener("abort", onAbort);
   }
 }
-async function readTokenError(response:Response):Promise<XaiTokenRequestError>{let oauthError:string|undefined,detail="";try{const body=await response.json() as {error?:unknown;error_description?:unknown};if(typeof body.error==="string")oauthError=body.error;if(typeof body.error_description==="string")detail=body.error_description;}catch{}const suffix=detail?`: ${detail}`:oauthError?`: ${oauthError}`:"";return new XaiTokenRequestError(response.status,oauthError,`xAI token request failed: ${response.status}${suffix}`);}
+async function readTokenError(response:Response):Promise<XaiTokenRequestError>{let oauthError:string|undefined,detail="";try{const body=await response.json() as {error?:unknown;error_description?:unknown};if(typeof body.error==="string")oauthError=body.error;if(typeof body.error_description==="string")detail=body.error_description;}catch{/* non-JSON error body: fall through to the generic message */}const suffix=detail?`: ${detail}`:oauthError?`: ${oauthError}`:"";return new XaiTokenRequestError(response.status,oauthError,`xAI token request failed: ${response.status}${suffix}`);}
 export async function postXaiToken(
   tokenEndpoint: string,
   body: Record<string, string>,
