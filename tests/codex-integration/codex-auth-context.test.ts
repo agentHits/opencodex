@@ -1301,6 +1301,60 @@ describe("Codex auth context", () => {
     }
   });
 
+  test("cooldown caller-main fallback never resurrects the cooled subscription", async () => {
+    const now = 1_800_000_000_000;
+    const originalNow = Date.now;
+    const cfg = { ...config(), autoSwitchThreshold: 0 };
+    // config() registers pool-a with email pool@example.test and workspace account pool_acc.
+    const callerJwt = (email?: string) => `header.${Buffer.from(JSON.stringify({
+      exp: Math.floor(now / 1000) + 86_400,
+      ...(email ? { email } : {}),
+      "https://api.openai.com/auth": { chatgpt_account_id: "pool_acc" },
+    })).toString("base64url")}.signature`;
+    saveCodexAccountCredential("pool-a", {
+      accessToken: "pool_token", refreshToken: "pool_refresh",
+      expiresAt: now + 24 * 60 * 60_000, chatgptAccountId: "pool_acc",
+    });
+    try {
+      Date.now = () => now;
+      recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
+        now, modelId: "gpt-5.6-terra", resetAt: now + 600_000, fixedAccount: true,
+      });
+      const cooldown = getCodexQuotaHealthSnapshot("pool-a", "shared");
+      expect(cooldown).not.toBeNull();
+      Date.now = () => now + 1_000;
+      const options = { requestScopedMainCredential: true, modelId: "gpt-5.6-terra" };
+      const resolve = (headers: Headers) => resolveCodexAuthContext(headers, cfg, "pool", options);
+
+      // The cooled account's exact materialized credential cannot use the fallback.
+      await expect(resolve(new Headers({
+        authorization: "Bearer pool_token", "chatgpt-account-id": "pool_acc",
+      }))).rejects.toBeInstanceOf(CodexAccountCooldownError);
+      // A rotated token of the same account (same workspace id and email) is still that subscription.
+      await expect(resolve(new Headers({
+        authorization: `Bearer ${callerJwt("pool@example.test")}`,
+      }))).rejects.toBeInstanceOf(CodexAccountCooldownError);
+      // A distinct team member on the shared workspace account id may serve the request.
+      await expect(resolve(new Headers({
+        authorization: `Bearer ${callerJwt("teammate@example.test")}`,
+      }))).resolves.toMatchObject({ kind: "main", accountId: null });
+      // An unreadable caller identity fails closed.
+      await expect(resolve(new Headers({
+        authorization: "Bearer opaque-caller-token",
+      }))).rejects.toBeInstanceOf(CodexAccountCooldownError);
+      // The workspace account id without a readable email cannot be distinguished: fail closed.
+      await expect(resolve(new Headers({
+        authorization: `Bearer ${callerJwt()}`,
+      }))).rejects.toBeInstanceOf(CodexAccountCooldownError);
+
+      // Nothing mutated the cooldown or the Pool selection.
+      expect(cfg.activeCodexAccountId).toBe("pool-a");
+      expect(getCodexQuotaHealthSnapshot("pool-a", "shared")).toEqual(cooldown);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("selects pool auth independently of the routed provider", async () => {
     saveCodexAccountCredential("pool-a", {
       accessToken: "pool_token",

@@ -1,9 +1,10 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   CodexCredentialGenerationConflictError,
   CodexCredentialRefreshLockTimeoutError,
   CodexCredentialRefreshBusyError,
   CodexCredentialRefreshStaleError,
+  getCodexAccountCredential,
   getValidCodexToken,
   isCodexAccountGenerationLive,
 } from "./account-store";
@@ -49,7 +50,7 @@ import type { CodexAccountMode, OcxConfig, OcxProviderConfig } from "../types";
 import { FORWARD_HEADERS } from "../adapters/openai-responses";
 import { captureConfigGeneration } from "../lib/state-store-sweeper";
 import { retainedUtf8Bytes } from "../lib/admission";
-import { extractAccountId } from "../oauth/chatgpt";
+import { extractAccountId, extractEmail } from "../oauth/chatgpt";
 import { getMainAccountHardLockStatus, isMainAccountHardLocked } from "./main-account-hard-lock";
 import {
   captureMainAccountIdentityGeneration,
@@ -453,6 +454,41 @@ function callerMatchesObservedMain(headers: Headers): boolean {
   const effectiveAccountId = headers.get("chatgpt-account-id")
     ?? extractAccountId(undefined, bearer);
   return matchesMainQuotaCredential(bearer, effectiveAccountId);
+}
+
+/** Constant-time digest comparison so bearer bytes never drive branch timing. */
+function sameCredentialMaterial(a: string, b: string): boolean {
+  return timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
+}
+
+/**
+ * The early-cooldown caller-main fallback must not resurrect the subscription that is cooling
+ * down. Fail closed on ambiguity: an unreadable caller identity cannot be distinguished from the
+ * cooled account. A distinct workspace account id is always safe; an exact materialized
+ * bearer + account tuple, or a matching (account id, email) pair for a rotated token, marks the
+ * same subscription; a different email on a shared workspace account id is a distinct team
+ * member. Coexisting personal/business registrations with the same email and account id
+ * over-deny during the cooldown — the safe direction.
+ */
+function callerIsCooledPoolAccount(headers: Headers, config: OcxConfig, accountId: string): boolean {
+  const bearer = headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
+  if (!bearer) return true;
+  const callerAccountId = headers.get("chatgpt-account-id") ?? extractAccountId(undefined, bearer);
+  if (callerAccountId === undefined) return true;
+  if (accountId === MAIN_CODEX_ACCOUNT_ID) {
+    // No physical-main read to identify the caller: the observed-main equality tag suffices.
+    return callerMatchesObservedMain(headers);
+  }
+  const stored = getCodexAccountCredential(accountId);
+  const entry = config.codexAccounts?.find(account => account.id === accountId);
+  const cooledAccountId = stored?.chatgptAccountId || entry?.chatgptAccountId;
+  if (!cooledAccountId) return true;
+  if (cooledAccountId !== callerAccountId) return false;
+  if (stored?.accessToken && sameCredentialMaterial(bearer, stored.accessToken)) return true;
+  const callerEmail = extractEmail(undefined, bearer)?.trim().toLowerCase() || undefined;
+  const cooledEmail = entry?.email?.trim().toLowerCase() || undefined;
+  if (callerEmail !== undefined && cooledEmail !== undefined) return callerEmail === cooledEmail;
+  return true;
 }
 
 function captureObservedMainWriter(): MainQuotaWriter | undefined {
@@ -898,7 +934,8 @@ export async function resolveCodexAuthContext(
       // alternate is eligible. A validated caller may still serve this request,
       // just as it can after an upstream rejection, without changing Pool state.
       if (requestScopedMainCredential && fixedAccountId === undefined
-        && options.excludeAccountId !== MAIN_CODEX_ACCOUNT_ID) {
+        && options.excludeAccountId !== MAIN_CODEX_ACCOUNT_ID
+        && !callerIsCooledPoolAccount(headers, config, accountId)) {
         return await resolveCallerOwnedMainContext();
       }
       throw new CodexAccountCooldownError(accountId, cooldownUntil, cooldown?.cooldownSource, cooldown?.quotaScope);
