@@ -803,6 +803,24 @@ Codex, OAuth, and API-key pools without opening the dashboard. See the
 [CLI reference](/reference/cli/#ocx-account-subcommand) for commands, JSON output, and
 new-session behavior.
 
+#### Subscription tier in account listings
+
+`ocx account list <provider> --json` and `GET /api/oauth/accounts` report a `plan` field on every
+OAuth account, using the same name and placement as the OpenAI/Codex provider so a consumer can
+read one shape across providers.
+
+The field is always present. It is `null` when the tier is unknown, which is deliberate: an
+**absent** key means the proxy predates this field, while `null` means this version looked and the
+provider did not report a tier. Collapsing the two would let a consumer quietly assume a tier.
+
+For Anthropic the value is `null` today. Its usage endpoint returns quota buckets only — the
+five-hour and seven-day windows, the model-scoped weekly windows, and a `limits` array — and no
+subscription or tier field; the OAuth token response carries only the account id and email. There
+is nothing to map, so nothing is mapped. The tier is also not derivable from the quota it does
+return, because percentages are normalized per account: a Max ×5 seat at 50% is indistinguishable
+from a Max ×20 seat at 50%. If you need weighted pool capacity across mixed Anthropic tiers, keep
+that mapping outside OpenCodex until upstream reports the tier itself.
+
 ### GPT-5.6 preview paths
 
 GPT-5.6 Sol/Terra/Luna are seeded in provider fallback lists so `ocx sync` can keep the models
