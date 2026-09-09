@@ -364,6 +364,44 @@ describe("unicode property-escape pattern stripping", () => {
       expect(walk.type).toBe("object");
     }
   });
+
+  test("the chat wire drops the uncompilable pattern and keeps the compilable sibling", () => {
+    // The tests above call the helper directly, so they stay green even if the
+    // chat serializer stops calling it. This one goes through buildRequest and
+    // asserts the bytes a provider would receive, which is the seam that was
+    // actually broken: toolsToChatFormat in src/adapters/openai-chat.ts.
+    const compilableSibling = "^(?!\\.\\.?(?:/|$))[A-Za-z0-9_\\-.~:@+]{1,200}$";
+    const request = createOpenAIChatAdapter(provider()).buildRequest({
+      ...parsed(),
+      context: {
+        messages: [{ role: "user", content: "make an artifact", timestamp: 0 }],
+        tools: [{
+          name: "Artifact",
+          namespace: "collaboration",
+          description: "Create an artifact",
+          parameters: {
+            type: "object",
+            properties: {
+              field: { type: "string", pattern: artifactFieldPattern, description: "Artifact field" },
+              collection: { type: "string", pattern: compilableSibling },
+            },
+            required: ["field"],
+          },
+        }],
+      },
+    });
+
+    const body = JSON.parse(request.body) as {
+      tools: Array<{ function: { parameters: { properties: Record<string, Record<string, unknown>>; required: string[] } } }>;
+    };
+    const wire = body.tools[0].function.parameters;
+
+    expect(wire.properties.field.pattern).toBeUndefined();
+    expect(wire.properties.field.type).toBe("string");
+    expect(wire.properties.field.description).toBe("Artifact field");
+    expect(wire.properties.collection.pattern).toBe(compilableSibling);
+    expect(wire.required).toEqual(["field"]);
+  });
 });
 
 describe("openai-chat non-stream response hardening", () => {

@@ -98,11 +98,14 @@ function usesUnicodePropertyEscape(pattern: string): boolean {
  *   '^(?!__.*__$)[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}"\\./[\]]{1,200}$' is not a 'regex'.
  *
  * A client that ships such a pattern on a built-in tool therefore loses every request, not just
- * the calls to that tool — Claude Code 2.1.265 does exactly this on its `Artifact` tool. Since
- * `pattern` is advisory for the model, and neither this proxy nor the upstream enforces it on
- * the arguments a tool is actually called with, dropping just the patterns the destination
- * cannot compile keeps the tool's shape while letting the request through. That is the same
- * trade the Kiro adapter makes for the validation keywords Bedrock rejects.
+ * the calls to that tool — Claude Code 2.1.265 does exactly this on its `Artifact` tool.
+ * Dropping only the patterns the destination cannot compile keeps the tool's shape while letting
+ * the request through, the same trade the Kiro adapter makes for the validation keywords Bedrock
+ * rejects. What is given up is bounded: an upstream that enforces `pattern` does so under strict
+ * Structured Outputs, and a pattern this function drops is one that upstream could not have
+ * compiled in the first place — it refuses the whole schema before any argument is generated. So
+ * the choice is a dropped constraint versus no request at all, not a silently weakened one that
+ * would otherwise have been enforced.
  *
  * Returns `node` itself when nothing was dropped, so callers can use identity to tell whether
  * the schema changed. Walks an explicit stack for the same reason as the stripper above.
