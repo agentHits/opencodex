@@ -31,6 +31,32 @@ Include affected versions, reproduction steps, impact, and any required configur
 If the form is ever unreachable for you, open a minimal public issue that asks maintainers for a
 safe coordination path. Do not include exploit details, secrets, or live targets in that issue.
 
+### Public or private
+
+The test is whether a public diff already reveals the weakness. If the fix has shipped, or the
+defect is plainly visible in code that is already published, an ordinary public issue or pull
+request is the right route and normal review applies. If it has not, the report is
+pre-disclosure material and belongs in the private advisory form, whatever its severity looks
+like to you. When you are unsure, file privately; maintainers can move a report to public review,
+and the reverse is not possible.
+
+## Following Up on a Report You Already Filed
+
+Keep follow-up inside the private report. The advisory thread you opened stays open for
+comments, and that is where new evidence, corrected impact, and questions about status belong.
+There is no second private route: GitHub private vulnerability reporting is the only technical
+channel this project offers, and there is no security email to escalate to.
+
+If the private thread itself is stalled or unreachable, a public issue may carry **coordination
+only** — a request for a safe follow-up path, or a note that a filed report is still awaiting a
+response. Keep it free of the vulnerability: no reproduction steps, no exploit reasoning, no
+logs or attachments, no narrowing of affected versions, and no advisory identifiers or links.
+You do not need to say which report you mean; maintainers can match it privately, and naming it
+in public is itself a signal.
+
+A maintainer may answer such an issue in public. Read that answer narrowly — it confirms the
+route, not the content of anything you reported.
+
 ## Response Expectations
 
 Maintainers will review reports on a best-effort basis. Triage usually starts with:
@@ -39,6 +65,19 @@ Maintainers will review reports on a best-effort basis. Triage usually starts wi
 - reproducing the issue locally,
 - evaluating impact and safe remediation scope,
 - coordinating disclosure timing if a fix is needed.
+
+Receipt is not triage. An acknowledgment — including a maintainer confirming they can reach the
+private reporting queue — means the message arrived. It does not mean the report has been
+reproduced, assessed for impact, assigned an owner, or accepted. The private thread is the only
+place the technical outcome is recorded.
+
+Public review of a published patch does not close the corresponding private report, and it does
+not settle disclosure for anything else you filed. Landing a fix resolves the handling route for
+that fix; the private report closes when maintainers close it.
+
+There is no response deadline. Review is best-effort, as stated above, and this project does not
+publish a first-response target — please do not read one into an acknowledgment or into the
+triage steps listed here.
 
 ## Operational Notes
 
