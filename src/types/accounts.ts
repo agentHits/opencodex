@@ -34,6 +34,8 @@ export interface CodexAccountCredentialRecord {
   lastCodexValidatedAt?: number;
   lastCodexValidationStatus?: "ok" | "failed";
   lastCodexValidationError?: string;
+  /** OAuth succeeded while quota was exhausted; never route until deferred validation succeeds. */
+  codexValidationPending?: boolean;
   /**
    * Set when the recorded failure is TERMINAL: the OAuth grant itself was revoked or has
    * expired, so no retry can recover it and only a re-login will. It distinguishes a dead

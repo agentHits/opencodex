@@ -433,6 +433,23 @@ JSON mode: `payload`.
 - `store` verifies every keychain write by read-back before config.json is rewritten with keychain: references; an unavailable keychain refuses with 503 and leaves the file untouched.
 - Headless services usually have no unlocked keychain session; prefer ${ENV_VAR} references there.
 
+### `ocx account refresh`
+
+Refresh account quotas without model validation; pending Codex accounts require dashboard consent.
+
+| Method | Route |
+|---|---|
+| POST | `/api/codex-auth/accounts/refresh` |
+| GET | `/api/provider-quotas` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit the refresh result as JSON. |
+
+JSON mode: `payload`.
+
+- CLI/admin-token refreshes only observe usage. After quota recovery, a human must click Refresh quotas in the dashboard to authorize model validation. Do not mint a GUI session to work around this consent boundary.
+
 ### `ocx account pause`
 
 Stop routing new requests to one account in the Codex pool.
@@ -689,6 +706,6 @@ JSON mode: `payload`.
 
 ## Counts
 
-- declared capabilities: 37
-- of those, state-changing: 16
+- declared capabilities: 38
+- of those, state-changing: 17
 - head-resolved invocations: 2

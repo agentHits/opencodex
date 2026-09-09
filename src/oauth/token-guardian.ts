@@ -211,6 +211,7 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
       if (!cred) continue;
       const needsRefresh = cred.expiresAt <= nowMs + horizonMs;
       const needsWarmup = opts.codexWarmupEnabled
+        && !record.codexValidationPending
         && (record.lastCodexValidatedAt === undefined || nowMs - record.lastCodexValidatedAt > opts.codexWarmupMaxAgeSeconds * 1000);
       if (!needsRefresh && !needsWarmup) continue;
       const key = `codex:${id}`;
@@ -219,17 +220,21 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
       // failure that follows belongs to THAT credential, so the fence has to move with it.
       let observedGeneration = record.generation;
       tasks.push(async () => {
+        let warmupGeneration: number | undefined;
         try {
           const token = await getValidCodexToken(id);
           observedGeneration = token.generation;
           if (needsRefresh) result.refreshed.push(key);
-          if (needsWarmup) {
+          const current = readCodexAccountRecord(id);
+          if (needsWarmup && current?.credential && current.deletedAt == null
+            && !current.codexValidationPending && current.generation === token.generation) {
+            warmupGeneration = token.generation;
             await warmCodexAccount({
               accessToken: token.accessToken,
               chatgptAccountId: token.chatgptAccountId,
               model: opts.codexWarmupModel,
             });
-            markCodexAccountValidated(id, Date.now());
+            markCodexAccountValidated(id, Date.now(), token.generation);
             result.warmed.push(key);
           }
           backoff.delete(key);
@@ -253,9 +258,11 @@ export async function guardianSweep(nowMs: number = Date.now()): Promise<Guardia
               expectedGeneration: observedGeneration,
               terminal: true,
             });
-          } else if (needsWarmup && !(err instanceof TokenRefreshError)) {
+          } else if (warmupGeneration !== undefined && !(err instanceof TokenRefreshError)) {
+            // warmupGeneration is set only once the warmup actually started against a record
+            // still at the token's generation, so it is a tighter fence than the pre-sweep read.
             markCodexAccountValidationFailed(id, codexWarmupFailureReason(err), {
-              expectedGeneration: observedGeneration,
+              expectedGeneration: warmupGeneration,
             });
           }
           recordFailure(key, nowMs, opts.backoffBaseSeconds, opts.backoffMaxSeconds, terminal !== undefined, writerGeneration);

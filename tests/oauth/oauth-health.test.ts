@@ -10,6 +10,7 @@ import {
   projectOAuthAccountHealth,
   projectCodexAccountHealth,
 } from "../../src/oauth/health";
+import { saveCodexAccountCredential } from "../../src/codex/account-store";
 import { getAccountSet, markAccountNeedsReauth, saveCredential } from "../../src/oauth/store";
 import {
   clearAccountNeedsReauth,
@@ -59,6 +60,18 @@ afterEach(() => {
 });
 
 describe("projectOAuthAccountHealth", () => {
+  test("pending Codex pool validation warns while reauthentication and native main keep their own health", () => {
+    saveCodexAccountCredential("pending-health", {
+      accessToken: "pending-access", refreshToken: "pending-refresh", expiresAt: Date.now() + 3600_000,
+      chatgptAccountId: "pending-health",
+    }, { validationPending: true });
+    expect(projectCodexAccountHealth({ accountId: "pending-health", needsReauth: false }))
+      .toEqual({ status: "warning", reason: "validation_pending" });
+    expect(projectCodexAccountHealth({ accountId: "pending-health", needsReauth: true }))
+      .toEqual({ status: "reauth_required", reason: "refresh_failed" });
+    expect(projectCodexAccountHealth({ accountId: MAIN_CODEX_ACCOUNT_ID, needsReauth: false }))
+      .toEqual({ status: "healthy" });
+  });
   test("reauth beats cooldown", () => {
     expect(projectOAuthAccountHealth({
       needsReauth: true,
@@ -174,6 +187,18 @@ describe("projectCodexAccountHealth", () => {
 });
 
 describe("collectOAuthHealthEntries", () => {
+  test("local Codex diagnostics expose pending validation with its recovery action", () => {
+    saveCodexAccountCredential("pending-local", {
+      accessToken: "pending-access", refreshToken: "pending-refresh", expiresAt: Date.now() + 3600_000,
+      chatgptAccountId: "pending-local",
+    }, { validationPending: true });
+    expect(collectOAuthHealthEntries().find(entry => entry.provider === "codex" && entry.accountId === "pending-local"))
+      .toEqual({
+        provider: "codex", accountId: "pending-local",
+        health: { status: "warning", reason: "validation_pending" },
+        action: "wait for quota recovery, then click Refresh quotas in the dashboard Codex account pool to finish validation",
+      });
+  });
   test("projects needsReauth account with reauth action", async () => {
     await saveCredential("kimi", {
       access: "kimi-access",

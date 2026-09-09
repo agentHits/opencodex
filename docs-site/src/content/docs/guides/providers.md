@@ -37,6 +37,9 @@ Desktop mode and current credential-bound upstream permission; a catalog entry a
 authorize a request. See [Luna Reserve alongside routed models](/reference/cli/providers-accounts/#luna-reserve-alongside-routed-models)
 for setup, restart order, authorization requirements, and unsupported helpers.
 
+For adding an account with exhausted quota and finishing its deferred validation, see
+[Codex account warmup](/guides/codex-integration/#codex-account-warmup).
+
 ### Providers overview pool capacity
 
 For Codex login in Pool mode, the Providers overview shows a configured-weight estimate of the

@@ -59,6 +59,7 @@ function isCredentialRecord(value: unknown): value is CodexAccountCredentialReco
     && (value.lastCodexValidatedAt === undefined || typeof value.lastCodexValidatedAt === "number")
     && (value.lastCodexValidationStatus === undefined || value.lastCodexValidationStatus === "ok" || value.lastCodexValidationStatus === "failed")
     && (value.lastCodexValidationError === undefined || typeof value.lastCodexValidationError === "string")
+    && (value.codexValidationPending === undefined || typeof value.codexValidationPending === "boolean")
     && (value.lastCodexValidationTerminal === undefined || typeof value.lastCodexValidationTerminal === "boolean");
 }
 
@@ -130,9 +131,10 @@ function persistCredentialMutation(store: CodexAccountStore): void {
  */
 function preservedValidationMetadata(record: CodexAccountCredentialRecord | undefined): Pick<
   CodexAccountCredentialRecord,
-  "lastCodexValidatedAt" | "lastCodexValidationStatus" | "lastCodexValidationError"
+  "lastCodexValidatedAt" | "lastCodexValidationStatus" | "lastCodexValidationError" | "codexValidationPending"
 > {
   return {
+    ...(record?.codexValidationPending === true ? { codexValidationPending: true } : {}),
     ...(record?.lastCodexValidatedAt !== undefined ? { lastCodexValidatedAt: record.lastCodexValidatedAt } : {}),
     ...(record?.lastCodexValidationStatus !== undefined ? { lastCodexValidationStatus: record.lastCodexValidationStatus } : {}),
     ...(record?.lastCodexValidationError !== undefined ? { lastCodexValidationError: record.lastCodexValidationError } : {}),
@@ -145,8 +147,12 @@ export function getCodexAccountCredential(id: string): CodexAccountCredentials |
   return record.credential ?? null;
 }
 
-export function saveCodexAccountCredential(id: string, cred: CodexAccountCredentials): void {
-  withCredentialMutationLockSync(() => {
+export function saveCodexAccountCredential(
+  id: string,
+  cred: CodexAccountCredentials,
+  options: { validationPending?: boolean } = {},
+): number {
+  return withCredentialMutationLockSync(() => {
     const store = loadCodexAccountRecordStore();
     const current = store[id];
     const refreshGrantFingerprint = current?.credential?.refreshToken === cred.refreshToken
@@ -158,26 +164,39 @@ export function saveCodexAccountCredential(id: string, cred: CodexAccountCredent
       refreshGrantFingerprint,
       replacedAt: current ? Date.now() : undefined,
       ...preservedValidationMetadata(current),
+      ...(options.validationPending ? {
+        codexValidationPending: true,
+        lastCodexValidatedAt: undefined,
+        lastCodexValidationStatus: undefined,
+        lastCodexValidationError: undefined,
+      } : {}),
     };
     persistCredentialMutation(store);
+    return store[id].generation;
   });
 }
 
-export function markCodexAccountValidated(id: string, atMs: number = Date.now()): void {
+export function markCodexAccountValidated(id: string, atMs: number = Date.now(), generation?: number): void {
   withCredentialMutationLockSync(() => {
     const store = loadCodexAccountRecordStore();
     const current = store[id];
     if (!current || current.deletedAt != null || !current.credential) return;
+    if (current.codexValidationPending && generation === undefined) return;
+    if (generation !== undefined && current.generation !== generation) return;
     store[id] = {
       ...current,
       lastCodexValidatedAt: atMs,
       lastCodexValidationStatus: "ok",
       lastCodexValidationError: undefined,
+      codexValidationPending: undefined,
       // A completed validation is the direct refutation of a terminal verdict, and this
       // spread would otherwise carry the old marker forward.
       lastCodexValidationTerminal: undefined,
     };
-    persist(store);
+    // Becoming routable invalidates credential-derived caches; a timestamp-only
+    // update on an already validated account preserves the existing epoch policy.
+    if (current.codexValidationPending) persistCredentialMutation(store);
+    else persist(store);
   });
 }
 
@@ -206,6 +225,9 @@ export function markCodexAccountValidationFailed(
     const store = loadCodexAccountRecordStore();
     const current = store[id];
     if (!current || current.deletedAt != null || !current.credential) return false;
+    // Deferred validation is settled only by a caller that names the generation it observed.
+    // An unfenced write must never resolve a pending account, whichever verdict it carries.
+    if (current.codexValidationPending && options.expectedGeneration === undefined) return false;
     if (options.expectedGeneration !== undefined && current.generation !== options.expectedGeneration) {
       return false;
     }

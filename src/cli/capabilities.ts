@@ -220,6 +220,18 @@ export const CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: ["account", "refresh"],
+    summary: "Refresh account quotas without model validation; pending Codex accounts require dashboard consent.",
+    routes: [
+      { method: "POST", path: "/api/codex-auth/accounts/refresh" },
+      { method: "GET", path: "/api/provider-quotas" },
+    ],
+    flags: [{ name: "--json", value: "boolean", summary: "Emit the refresh result as JSON." }],
+    mutates: true,
+    json: "payload",
+    details: ["CLI/admin-token refreshes only observe usage. After quota recovery, a human must click Refresh quotas in the dashboard to authorize model validation. Do not mint a GUI session to work around this consent boundary."],
+  },
+  {
     command: ["usage"],
     summary: "Token and estimated-cost report over a time range.",
     routes: [{ method: "GET", path: "/api/usage" }],

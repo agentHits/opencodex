@@ -60,6 +60,26 @@ describe("codex-account-store CRUD", () => {
   beforeEach(() => { installScratchHome(); });
   afterEach(async () => { await removeScratchHome(); });
 
+  test("pending validation survives credential refresh and cannot be cleared by a stale probe", async () => {
+    const store = await import("../../src/codex/account-store");
+    const { codexCredentialMutationEpoch } = await import("../../src/codex/credential-mutation-epoch");
+    const cred = { accessToken: "access-pending", refreshToken: "refresh-pending", expiresAt: Date.now() + 3600_000, chatgptAccountId: "acct-pending" };
+    store.saveCodexAccountCredential("pending", cred, { validationPending: true });
+    const generation = store.readCodexAccountRecord("pending")!.generation;
+    store.markCodexAccountValidated("pending");
+    expect(store.readCodexAccountRecord("pending")?.codexValidationPending).toBe(true);
+    expect(store.saveCodexAccountCredentialIfGeneration("pending", generation, { ...cred, accessToken: "refreshed-access" })).toBe(true);
+    expect(store.readCodexAccountRecord("pending")?.codexValidationPending).toBe(true);
+    store.markCodexAccountValidated("pending", Date.now(), generation);
+    expect(store.readCodexAccountRecord("pending")?.codexValidationPending).toBe(true);
+    expect(store.readCodexAccountRecord("pending")?.lastCodexValidatedAt).toBeUndefined();
+    const beforeValidation = codexCredentialMutationEpoch();
+    store.markCodexAccountValidated("pending", Date.now(), generation + 1);
+    expect(codexCredentialMutationEpoch()).toBe(beforeValidation + 1);
+    expect(store.readCodexAccountRecord("pending")?.codexValidationPending).toBeUndefined();
+    expect(store.readCodexAccountRecord("pending")?.lastCodexValidationStatus).toBe("ok");
+  });
+
   test("save and load credential round-trip", async () => {
     const { saveCodexAccountCredential, getCodexAccountCredential } = await import("../../src/codex/account-store");
     const cred = { accessToken: "tk_a", refreshToken: "rf_a", expiresAt: Date.now() + 3600_000, chatgptAccountId: "acc_a" };
