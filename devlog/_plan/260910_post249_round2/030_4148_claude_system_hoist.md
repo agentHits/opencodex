@@ -14,9 +14,12 @@ stale: Responses accepts chronological `role: "developer"` items.
 
 `src/claude/inbound.ts:322-336` pushes **every** `role: "system"` message onto
 `systemParts`, including ones that arrive after user/assistant turns, and
-`:348` assigns the join to `body.instructions`. `src/responses/parser.ts:204-206`
-consumes `instructions` first, so each injected reminder mutates the prompt head
-and invalidates the KV prefix. The Desktop `prompt_cache_key` fallback hashes the
+`:348` assigns the join to `body.instructions`. `src/responses/parser.ts:144-145`
+pushes `data.instructions` onto `systemPrompt` before anything else, so each
+injected reminder mutates the prompt head and invalidates the KV prefix. (An
+earlier draft cited `parser.ts:204-206`; that span is the `context_compaction`
+encrypted-content path, not the instructions read.) The Desktop
+`prompt_cache_key` fallback hashes the
 same `systemParts` (`inbound.ts:373-394`), so the cache key rotates too.
 
 ## Chosen fix
@@ -37,10 +40,13 @@ and the canonical Responses forward folds text-only system items back into
 `instructions` (`src/adapters/openai-responses.ts:1472-1512`). `developer` is
 first-class (`schema.ts:40-44`, `parser.ts:253-258`) and keeps timeline order.
 
-**Scope decision: all in-messages system messages become developer items**, not
-just the ones after the first user turn. A leading-only hoist keeps `:313` green
-but still mutates `instructions` whenever the client injects a fresh leading
-system message each turn, which is the reported failure.
+**Scope decision — taken here, and it is a policy choice rather than a mechanical
+one.** All in-messages system messages become developer items, not just the ones
+after the first user turn. `_research/4148.md` marks this exact fork as POLICY.
+The leading-only alternative keeps `:313` green but still mutates `instructions`
+whenever the client injects a fresh leading system message each turn, which is the
+reported failure, so it does not close the issue. Say which choice was taken in
+the PR body so a reviewer can object to it.
 
 ## Out of scope, stated in the PR body
 
@@ -76,5 +82,5 @@ drift from privileged system text, but prefix-stable, which is the point.
 
 ## PR
 
-`fix(claude): keep mid-conversation system messages in the timeline` — base
-`lane-a/1-4129`. Closes #4148.
+`fix(claude): keep mid-conversation system messages in the timeline` — branch
+`lane-a/2-4148`, PR base `lane-a/1-4129`. Closes #4148.

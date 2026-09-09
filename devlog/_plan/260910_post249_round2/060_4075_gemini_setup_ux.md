@@ -64,5 +64,9 @@ must stay element-wrapped, so a bare `{t(...)}` breaks it and a `<span>` does no
 
 ## PR
 
-`fix(gui): explain the discovery dependency when model sync fails` — top of the
-Lane B stack. Closes #4075.
+`fix(gui): explain the discovery dependency when model sync fails` — branch
+`lane-b/2-4075`, PR base `lane-b/1-3666`. Closes #4075.
+
+The word `gui` in that title triggers the screenshot requirement in
+`enforce-target`. Either attach a screenshot of the changed Models group or
+retitle to `fix(models): …` and describe the surface without the token.

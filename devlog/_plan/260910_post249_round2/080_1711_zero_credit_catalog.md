@@ -52,9 +52,10 @@ disable. Do not reuse `ManagementModelRow.disabled`, which means operator
 `disabledModels`.
 
 Follow the **runtime** predicate, not the GUI one. `comboQuotaState`
-(`gui/src/combo-workspace-data.ts:369-411`) is harsher than `resolve.ts:73-91`: it
-treats `remaining <= 0` as exhausted without `percent >= 100` and ignores an
-elapsed `resetAt`.
+(`gui/src/combo-workspace-data.ts:437-456`) reads `quotaStateFromReport`
+(`:369-411`), which is harsher than `resolve.ts:73-91`: it treats `remaining <= 0`
+as exhausted without requiring `percent >= 100` (`:407`) and ignores an elapsed
+`resetAt`.
 
 Field naming: the issue's example is `disabled_reason`; the in-tree extension style
 is `opencodex_*` (see `SPAWN_PRIORITY_FIELD`, `sync.ts:96-100`). Codex ignores
@@ -77,5 +78,5 @@ to `codex-integration`), registered in `layout.json` `explicit` and
 
 ## PR
 
-`feat(catalog): mark quota-exhausted models and combos inactive` — base
-`lane-a/2-4148`. Closes #1711.
+`feat(catalog): mark quota-exhausted models and combos inactive` — branch
+`lane-b/4-1711`, PR base `lane-b/3-3859`. Closes #1711.

@@ -87,5 +87,5 @@ bundle are per 1M. Classify on numeric zero, never on a unit conversion.
 
 ## PR
 
-`feat(catalog): classify discovered model pricing and filter free models` — base
-`lane-b/1-...`. Closes #3666.
+`feat(catalog): classify discovered model pricing and filter free models` — branch
+`lane-b/1-3666`, PR base `dev`, bottom of the Lane B stack. Closes #3666.

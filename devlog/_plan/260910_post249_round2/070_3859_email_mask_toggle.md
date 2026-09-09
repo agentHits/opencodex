@@ -78,5 +78,5 @@ omitted or `true` still returns the masked form. Mirror it for the Codex pool DT
 
 ## PR
 
-`feat(privacy): let an operator opt out of email masking` — base `lane-b/2-3666`.
-Closes #3859.
+`feat(privacy): let an operator opt out of email masking` — branch
+`lane-b/3-3859`, PR base `lane-b/2-4075`. Closes #3859.

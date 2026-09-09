@@ -69,4 +69,5 @@ the #4040 objection.
 ## PR
 
 `feat(logs): show an estimated decode rate alongside end-to-end throughput` —
-bottom of the Lane B stack. Closes #4038.
+branch `lane-b/5-4038`, PR base `lane-b/4-1711`, top of the Lane B stack.
+Closes #4038.

@@ -11,8 +11,9 @@ Real, and it is **two** cooperating bugs rather than one.
 The combo gate runs on the un-rewritten body. `comboIdFromRawBody` reads only
 `body.model` (`src/combos/request.ts:20`), and at `src/server/responses/core.ts:3306`
 the incoming helper slug is still `gpt-5.6-luna`, which is not a combo id. The
-`while (pick)` / `advanceComboAfterFailure` loop at `core.ts:2600`, `:2798`, `:3056`
-is therefore never entered, and 429/5xx hops only exist inside it
+`while (pick)` loop at `core.ts:2798` — inside `handleComboResponses`, declared at
+`core.ts:2600` — is therefore never entered, `advanceComboAfterFailure` at
+`core.ts:3056` never runs, and 429/5xx hops only exist inside that loop
 (`src/combos/failover.ts:468`).
 
 The shadow rewrite happens later, after parse, at `core.ts:3480-3512`, and
@@ -78,5 +79,5 @@ Extend `tests/responses/responses-shadow-intercept.test.ts` (already in
 
 ## PR
 
-`fix(responses): let a combo shadow-call target enter the failover loop` — base `dev`,
-bottom of the Lane A stack. Closes #4129.
+`fix(responses): let a combo shadow-call target enter the failover loop` — branch
+`lane-a/1-4129`, PR base `dev`, bottom of the Lane A stack. Closes #4129.

@@ -21,6 +21,19 @@ the case that cannot repair itself.
 as success when `launchdJobMatchesPlist` says the live job matches (`:2344-2354`).
 Repair does not go through `startLaunchd`.
 
+## The choice being made — and it is a policy choice
+
+`_research/4141.md` marks "auto-`bootout` versus today's hint-only throw" as
+POLICY, and it is right to: `bootout` **kills the live gui job**. That is exactly
+the repair the issue asks for, and it is also the reason the current code only
+prints the command instead of running it. Taking it is a product decision, so it
+goes in the PR body as a decision, not as a bug fix that speaks for itself.
+
+Two things keep the blast radius honest. It runs only inside `installLaunchd`,
+which is already the "put the job back" path, never inside `ocx service start`.
+And it fires only after `load -w` has already failed, so a healthy job that loads
+cleanly is never touched.
+
 ## Chosen fix — `installLaunchd` only
 
 1. Replace the discarded `runLaunchctl(["unload", plist])` with
@@ -74,5 +87,5 @@ seam:
 
 ## PR
 
-`fix(service): recover a stale launchd job with bootout before load` — top of the
-Lane A stack. Closes #4141.
+`fix(service): recover a stale launchd job with bootout before load` — branch
+`lane-a/3-4141`, PR base `lane-a/2-4148`, top of the Lane A stack. Closes #4141.
