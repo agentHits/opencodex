@@ -903,6 +903,26 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(designB.match(/openai_base_url/g)?.length).toBe(1);
   });
 
+  test("client compaction never replaces a user-owned root override", () => {
+    // The retention is marker-owned like every other injected root line. When the user owns
+    // that line, nothing is injected and their destination stands. The guarantee that an
+    // `openai`-tagged thread reaches this proxy therefore holds for the managed override only;
+    // a user pointing the built-in provider elsewhere keeps pointing it there.
+    const userOwned = 'openai_base_url = "https://user.example/v1"\nmodel = "gpt-5.5"\n';
+    writeFileSync(join(codexHome, "config.toml"), userOwned, "utf8");
+
+    const enabled = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
+    expect(enabled.status).toBe(0);
+
+    const config = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(config).toContain('openai_base_url = "https://user.example/v1"');
+    expect(config).not.toContain('openai_base_url = "http://127.0.0.1:10100/v1"');
+    expect(config.match(/openai_base_url/g)?.length).toBe(1);
+    // The opt-in itself still applies: new threads default to the proxy provider.
+    expect(config).toContain('model_provider = "opencodex"');
+    expect(config).toContain("[model_providers.opencodex]");
+  });
+
   test("client compaction opt-in leaves pre-existing ocx1 resume history byte-for-byte unchanged", () => {
     writeFileSync(join(codexHome, "config.toml"), 'model = "gpt-5.5"\n', "utf8");
     const sessionsDir = join(codexHome, "sessions");

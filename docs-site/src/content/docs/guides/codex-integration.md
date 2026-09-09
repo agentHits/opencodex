@@ -289,10 +289,14 @@ Existing threads keep working because the injection keeps the root `openai_base_
 alongside the provider table. New threads default to `opencodex` and get client-side compaction,
 while a thread already tagged `openai` still resolves to Codex's built-in provider — which the
 retained override still points at this proxy. Without it that thread would resume against OpenAI
-directly, taking configured routing with it. A root override you wrote yourself is never
-replaced. Turning the setting off and syncing removes the table and returns to the plain Design B
-override, unless `codexDesktopAuthless` or non-loopback admission still requires the
-provider-table form; those two forms cannot use the root key and are unchanged.
+directly, taking configured routing with it.
+
+That guarantee covers the override OpenCodeX manages. A root `openai_base_url` you wrote
+yourself is never replaced, and in that case the built-in provider keeps the destination you
+chose, so an `openai`-tagged thread follows your configuration rather than this proxy. Turning
+the setting off and syncing removes the table and returns to the plain Design B override, unless
+`codexDesktopAuthless` or non-loopback admission still requires the provider-table form; those
+two forms cannot use the root key and are unchanged.
 
 While the mode is active, the realtime voice sideband override
 (`experimental_realtime_ws_base_url`) is not injected — the dedicated provider-table form cannot

@@ -1035,7 +1035,10 @@ export async function injectCodexConfig(
   // provider map as merge_configured_model_providers(built_in_model_providers(openai_base_url),
   // model_providers), so the override lands on the built-in `openai` entry when the map is
   // built, independent of which id is the default, and the merge leaves that entry alone for
-  // every id except the two Amazon Bedrock ones. Both entries then point at this proxy.
+  // every id except the two Amazon Bedrock ones. With the managed override in place both
+  // entries point at this proxy. That is a guarantee about the line we own: when the user owns
+  // the root line we inject nothing, and the built-in entry keeps whatever destination they
+  // chose, so an `openai`-tagged thread follows their configuration rather than this proxy.
   //
   // Re-tagging history was the alternative and it cannot be made durable: the length-preserving
   // first-line repair cannot grow "openai" into "opencodex" without pre-existing padding, and
