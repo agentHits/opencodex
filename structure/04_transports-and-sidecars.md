@@ -526,7 +526,7 @@ Control frames remain bounded, and provider credential/cookie headers are not
 forwarded. Once a WS create may have been sent, a missing prelude, overflow or
 disconnect settles as an errored SSE body rather than a retryable fetch failure,
 so HTTP fallback cannot duplicate that inference. A standalone no-response
-exchange has a 30-second prelude deadline in addition to the upgrade deadline.
+exchange has a 90-second prelude deadline in addition to the upgrade deadline.
 These are transport-fidelity guarantees, not a provider-billing guarantee.
 
 Eligible complete-input creates can retain a canonical upstream socket within
