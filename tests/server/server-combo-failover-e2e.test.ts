@@ -1905,11 +1905,13 @@ describe("server combo failover 030 activation matrix", () => {
     expect(recallComboForLane(config, sessionLaneIdFromRequest(new Headers({ session_id: "web-search-recall" })), "m2")).toBe("free");
   });
 
-  test.each(["valid", "chat-valid", "mismatched-account", "proxy-secret", "joined-proxy-secret", "explicit-null"])("Combo sidecar auth stays off primary wires: %s", async authKind => {
+  test.each(["valid", "chat-valid", "mismatched-account", "proxy-secret", "joined-proxy-secret", "explicit-null", "org-only-jwt"])("Combo sidecar auth stays off primary wires: %s", async authKind => {
     const valid = authKind === "valid" || authKind === "chat-valid";
     const nativeToken = fakeChatGptJwt({ chatgpt_account_id: "acct-scoped-sidecar" });
+    // A generic organizations claim is not OpenAI-domain evidence for a sidecar snapshot.
     const token = authKind === "proxy-secret" ? `ocx_data_${nativeToken}`
-      : authKind === "joined-proxy-secret" ? `${nativeToken}, Bearer ocx_data_embedded` : nativeToken;
+      : authKind === "joined-proxy-secret" ? `${nativeToken}, Bearer ocx_data_embedded`
+      : authKind === "org-only-jwt" ? fakeChatGptJwt({ organizations: [{ id: "org-foreign" }] }) : nativeToken;
     const sidecarHits: Array<{ authorization: string | null; account: string | null }> = [];
     const primaryHits: Array<{ model?: string; authorization: string | null; account: string | null; webTool: boolean }> = [];
     let requestedSearch = false;
@@ -1950,7 +1952,8 @@ describe("server combo failover 030 activation matrix", () => {
     config.webSearchSidecar = { enabled: true, backend: "openai" };
     const headers = {
       authorization: `Bearer ${token}`,
-      "chatgpt-account-id": authKind === "mismatched-account" ? "other-account" : "acct-scoped-sidecar",
+      "chatgpt-account-id": authKind === "mismatched-account" ? "other-account"
+        : authKind === "org-only-jwt" ? "org-foreign" : "acct-scoped-sidecar",
     };
     const response = authKind === "chat-valid"
       ? await (await import("../../src/server/chat-completions")).handleChatCompletions(new Request("http://localhost/v1/chat/completions", {

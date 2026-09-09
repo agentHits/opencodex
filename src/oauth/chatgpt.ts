@@ -40,6 +40,43 @@ export function extractAccountId(idToken?: string, accessToken?: string): string
   return undefined;
 }
 
+/**
+ * Three-way answer to "is this token marked as belonging to the ChatGPT account domain".
+ * Only ChatGPT-specific claims count as markers: a top-level chatgpt_account_id or the
+ * https://api.openai.com/auth namespace claim. A generic organizations claim is NOT domain
+ * evidence. JWT claims are decoded locally as routing markers, never as authenticity proof.
+ *
+ * absent  — no JWT, or a JWT carrying no ChatGPT-specific claim: the token may be a
+ *           foreign credential and legacy foreign handling applies.
+ * invalid — a ChatGPT-specific claim is present but malformed (non-string) or two markers
+ *           conflict: the token is ChatGPT-marked but untrustworthy; it must not become
+ *           foreign-allowed merely because no valid id came out.
+ * valid   — exactly one consistent ChatGPT account id.
+ */
+export type ChatGptDomainClaim =
+  | { kind: "absent" }
+  | { kind: "invalid" }
+  | { kind: "valid"; accountId: string };
+
+export function inspectChatGptDomainClaim(token: string): ChatGptDomainClaim {
+  const payload = decodeJwtPayload(token);
+  if (!payload) return { kind: "absent" };
+  const top = payload.chatgpt_account_id;
+  const ns = payload["https://api.openai.com/auth"];
+  const nsObj = ns && typeof ns === "object" ? ns as Record<string, unknown> : undefined;
+  const topPresent = top !== undefined;
+  const nsPresent = nsObj !== undefined && "chatgpt_account_id" in nsObj;
+  if (!topPresent && !nsPresent) return { kind: "absent" };
+  const topId = typeof top === "string" && top ? top : undefined;
+  const nsId = nsObj && typeof nsObj.chatgpt_account_id === "string" && nsObj.chatgpt_account_id
+    ? nsObj.chatgpt_account_id as string : undefined;
+  if (topPresent && !topId) return { kind: "invalid" };
+  if (nsPresent && !nsId) return { kind: "invalid" };
+  if (topId && nsId && topId !== nsId) return { kind: "invalid" };
+  const accountId = topId ?? nsId;
+  return accountId ? { kind: "valid", accountId } : { kind: "invalid" };
+}
+
 export function extractEmail(idToken?: string, accessToken?: string): string | undefined {
   for (const token of [idToken, accessToken]) {
     if (!token) continue;

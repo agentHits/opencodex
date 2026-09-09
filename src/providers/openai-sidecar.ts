@@ -10,7 +10,7 @@ import {
   type CodexAuthPolicyConfig,
 } from "../codex/auth-context";
 import { recordCodexUpstreamOutcome, type CodexUpstreamOutcome } from "../codex/routing";
-import { extractAccountId } from "../oauth/chatgpt";
+import { inspectChatGptDomainClaim } from "../oauth/chatgpt";
 import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential, type DataPlaneAdmission } from "../server/auth-cors";
 import type { CodexAccountMode, OcxConfig, OcxProviderConfig } from "../types";
 import {
@@ -81,11 +81,14 @@ export function listOpenAiForwardSidecarCandidates(config: OcxConfig): OpenAiFor
 export type ExplicitOpenAiCallerAuth = Readonly<{ authorization: string; chatgptAccountId: string }>;
 
 function explicitSidecarAuth(incomingHeaders: Headers): ExplicitOpenAiCallerAuth | null {
-  // Combined Authorization values must not smuggle a second credential into a snapshot.
+  // Combined Authorization values must not smuggle a second credential into a snapshot,
+  // and only a well-formed ChatGPT-specific account marker is domain evidence — a generic
+  // organizations claim is not.
   const bearer = /^Bearer[\t ]+([^\s,]+)$/i.exec(incomingHeaders.get("authorization")?.trim() ?? "")?.[1];
   if (!bearer) return null;
-  const derivedAccountId = extractAccountId(undefined, bearer);
-  if (!derivedAccountId) return null;
+  const claim = inspectChatGptDomainClaim(bearer);
+  if (claim.kind !== "valid") return null;
+  const derivedAccountId = claim.accountId;
   const requestedAccountId = incomingHeaders.get("chatgpt-account-id")?.trim();
   // JWT payloads are decoded locally but not signature-verified. Requiring the caller's
   // explicit account header, and checking it against the token claim, makes forwarding an

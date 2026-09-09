@@ -1,5 +1,5 @@
 import type { OcxConfig, OcxProviderConfig } from "../types";
-import { extractAccountId } from "../oauth/chatgpt";
+import { inspectChatGptDomainClaim } from "../oauth/chatgpt";
 import { isProxyAdmissionSecret } from "../server/auth-cors";
 import { isCanonicalOpenAiForwardProvider } from "./openai-tiers";
 
@@ -15,21 +15,22 @@ export function providerConsumesCallerAuthorization(provider: OcxProviderConfig)
 /**
  * Capture the caller's Direct credential for a canonical-route restore after an internal
  * rewrite. This restore is intentionally STRICTER than plain unchanged-route Direct
- * forwarding: only a bearer that provably belongs to the ChatGPT domain qualifies — a clean
- * single non-proxy JWT carrying a ChatGPT account claim, with any explicit account header
- * matching that claim. An opaque bearer is not captured even with a self-asserted account
- * header: after a shadow/thread rewrite that header cannot distinguish a caller-owned main
- * credential from a foreign source-route token, so that case stays fail-closed. JWT claims
- * are decoded locally as routing evidence; they are not cryptographic signature
- * verification, and unchanged-route Direct forwarding is governed by its own legacy rules.
+ * forwarding: only a bearer with a VALID ChatGPT-domain claim qualifies (a clean single
+ * non-proxy JWT whose ChatGPT-specific account marker is well-formed and unambiguous, with
+ * any explicit account header matching it). An opaque bearer, a foreign JWT carrying only a
+ * generic organizations claim, and a ChatGPT-marked but malformed/conflicting token are all
+ * rejected: after a shadow/thread rewrite a self-asserted header cannot distinguish a
+ * caller-owned main credential from a foreign source-route token, so those cases stay
+ * fail-closed. Claims are decoded locally as routing markers, not authenticity proof, and
+ * unchanged-route Direct forwarding is governed by its own legacy rules.
  */
 export function captureCallerDirectAuth(incomingHeaders: Headers, config: OcxConfig): CallerDirectAuth | null {
   const raw = incomingHeaders.get("authorization")?.trim();
   const bearer = /^Bearer[\t ]+([^\s,]+)$/i.exec(raw ?? "")?.[1];
   if (!bearer || isProxyAdmissionSecret(bearer, config)) return null;
-  const claim = extractAccountId(undefined, bearer);
-  if (!claim) return null;
+  const claim = inspectChatGptDomainClaim(bearer);
+  if (claim.kind !== "valid") return null;
   const headerAccount = incomingHeaders.get("chatgpt-account-id")?.trim();
-  if (headerAccount && headerAccount !== claim) return null;
-  return { authorization: `Bearer ${bearer}`, chatgptAccountId: claim };
+  if (headerAccount && headerAccount !== claim.accountId) return null;
+  return { authorization: `Bearer ${bearer}`, chatgptAccountId: claim.accountId };
 }

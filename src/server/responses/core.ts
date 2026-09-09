@@ -216,7 +216,7 @@ import {
 import type { DataPlaneAdmission } from "../auth-cors";
 import { createTranslatorBudget, isTranslatorBudgetExceededError, type TranslatorBudget } from "../../lib/translator-budget";
 import { captureExplicitOpenAiCallerAuth, listOpenAiForwardSidecarCandidates, resolveFirstUsableOpenAiSidecar, type ExplicitOpenAiCallerAuth, type ResolvedOpenAiForwardSidecar } from "../../providers/openai-sidecar";
-import { extractAccountId } from "../../oauth/chatgpt";
+import { inspectChatGptDomainClaim } from "../../oauth/chatgpt";
 import { captureCallerDirectAuth, providerConsumesCallerAuthorization, type CallerDirectAuth } from "../../providers/caller-authorization";
 import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
 import { CODEX_RESERVE_HELPER_UNSUPPORTED_MESSAGE, isCodexReserveHelperUnsupported } from "../../codex/loopback-target";
@@ -2065,15 +2065,17 @@ async function resolveResponsesCodexAuth(
     }
     // A caller-auth transport that is not canonical OpenAI (keyless Cursor) consumes the
     // caller's Authorization as its own upstream token. Keep that contract only for a clean
-    // single bearer carrying no ChatGPT account claim. A bearer that provably belongs to the
-    // ChatGPT domain, a combined/malformed value, or the captured explicit OpenAI pair is
-    // never a Cursor token, and chatgpt-account-id has no meaning outside the ChatGPT domain.
+    // single bearer with NO ChatGPT-domain marker. A bearer marked for the ChatGPT domain —
+    // whether its marker is valid or malformed/conflicting — a combined/malformed value, or
+    // the captured explicit OpenAI pair is never a Cursor token; a foreign JWT carrying only
+    // a generic organizations claim is not ChatGPT-marked and keeps the legacy contract.
+    // chatgpt-account-id has no meaning outside the ChatGPT domain.
     if (!isCanonicalOpenAiForwardProvider(route.provider)
       && providerConsumesCallerAuthorization(route.provider)) {
       const rawAuth = authInputHeaders.get("authorization")?.trim();
       const singleBearer = /^Bearer[\t ]+([^\s,]+)$/i.exec(rawAuth ?? "")?.[1];
-      const chatGptClaim = singleBearer ? extractAccountId(undefined, singleBearer) : undefined;
-      const dropBearer = options.nativeCallerAuth != null || chatGptClaim !== undefined
+      const domainClaim = singleBearer ? inspectChatGptDomainClaim(singleBearer) : { kind: "absent" as const };
+      const dropBearer = options.nativeCallerAuth != null || domainClaim.kind !== "absent"
         || (rawAuth !== undefined && singleBearer === undefined);
       if (dropBearer || authInputHeaders.has("chatgpt-account-id")) {
         const scoped = new Headers(authInputHeaders);

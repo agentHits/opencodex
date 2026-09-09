@@ -505,6 +505,10 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
       { authorization: `Bearer ${chatGptJwt}`, "chatgpt-account-id": "other-account" },
       // A combined value is not a single Cursor token.
       { authorization: `Bearer ${chatGptJwt}, Bearer other` },
+      // Conflicting ChatGPT markers are ChatGPT-marked but untrustworthy, not foreign-allowed.
+      { authorization: `Bearer ${fakeChatGptJwt({ chatgpt_account_id: "caller-openai", "https://api.openai.com/auth": { chatgpt_account_id: "other-claim" } })}` },
+      // A malformed ChatGPT marker is still ChatGPT-marked.
+      { authorization: `Bearer ${fakeChatGptJwt({ chatgpt_account_id: 123 })}` },
     ];
     for (const extra of cases) {
       await withCursorCaptureServer(async (baseUrl, capturedAuth) => {
@@ -523,6 +527,33 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
             await response.text();
           }
           expect(capturedAuth).toEqual([]);
+        } finally {
+          await server.stop(true);
+        }
+      });
+    }
+  });
+
+  test.each(["Responses", "Chat"])("%s keeps a foreign org-claim JWT as the Cursor credential", async surface => {
+    // A generic organizations claim is not ChatGPT-domain evidence: the legacy keyless
+    // Cursor contract keeps forwarding such a bearer (the account header, a ChatGPT-only
+    // header, is still dropped).
+    const orgJwt = fakeChatGptJwt({ organizations: [{ id: "org-foreign" }] });
+    for (const extra of [
+      { authorization: `Bearer ${orgJwt}` },
+      { authorization: `Bearer ${orgJwt}`, "chatgpt-account-id": "org-foreign" },
+    ]) {
+      await withCursorCaptureServer(async (baseUrl, capturedAuth) => {
+        saveConfig(cursorForwardConfig(baseUrl));
+        writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: {} }));
+        const server = await startOwnedServer();
+        try {
+          const headers = { "x-opencodex-api-key": ADMISSION_SECRET, ...extra };
+          const response = surface === "Chat"
+            ? await postChatCompletions(server.url, "cursorcustom/auto", headers)
+            : await postResponses(server.url, "cursorcustom/auto", headers);
+          await response.text();
+          expect(capturedAuth).toEqual([`Bearer ${orgJwt}`]);
         } finally {
           await server.stop(true);
         }
@@ -603,7 +634,7 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
     }
   });
 
-  test.each(["jwt-only", "jwt-with-account", "opaque-with-account", "jwt-mismatched-account"])(
+  test.each(["jwt-only", "jwt-with-account", "opaque-with-account", "jwt-mismatched-account", "org-only-jwt", "conflicting-claims"])(
     "a dedicated-admission Responses combo scopes caller auth (%s) to its final Direct target",
     async form => {
       const config = mixedConfig();
@@ -614,14 +645,23 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
       writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: {} }));
       const callerBearer = form === "opaque-with-account"
         ? "opaque-caller-direct-token"
-        : fakeChatGptJwt({ chatgpt_account_id: "caller-openai" });
+        // A generic organizations claim is not ChatGPT-domain evidence.
+        : form === "org-only-jwt"
+          ? fakeChatGptJwt({ organizations: [{ id: "org-foreign" }] })
+          : form === "conflicting-claims"
+            ? fakeChatGptJwt({ chatgpt_account_id: "caller-openai", "https://api.openai.com/auth": { chatgpt_account_id: "other-claim" } })
+            : fakeChatGptJwt({ chatgpt_account_id: "caller-openai" });
+      const accountHeader = form === "jwt-only" ? undefined
+        : form === "jwt-mismatched-account" ? "other-account"
+        : form === "org-only-jwt" ? "org-foreign"
+        : "caller-openai";
 
       const server = await startOwnedServer();
       try {
         const response = await postResponses(server.url, "combo/native", {
           "x-opencodex-api-key": ADMISSION_SECRET,
           authorization: `Bearer ${callerBearer}`,
-          ...(form !== "jwt-only" ? { "chatgpt-account-id": form === "jwt-mismatched-account" ? "other-account" : "caller-openai" } : {}),
+          ...(accountHeader ? { "chatgpt-account-id": accountHeader } : {}),
         });
         const body = await response.json() as { status?: string };
         if (form === "jwt-only" || form === "jwt-with-account") {
