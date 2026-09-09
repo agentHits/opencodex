@@ -94,9 +94,17 @@ limit, or the proxy route cannot carry the socket.
 Local provider pacing can also hold a request before it is dispatched at all. So a slow first
 output has several possible contributors, and upstream queueing is only one of them. `ocx doctor`
 classifies configuration and measures none of these: compare actual transport, pacing, network,
-and provider observations before concluding. This routing behavior is specific to ChatGPT-login
-forwarding and does not apply to `openai-apikey` or custom providers, which connect directly to
-their respective API endpoints without public ChatGPT channel queueing.
+and provider observations before concluding.
+
+What decides whether a request takes that public channel is the destination it resolves to, not
+the name of the provider entry. A provider that resolves somewhere else — `openai-apikey`, or a
+custom entry pointing at its own API — reaches that endpoint directly and sees no ChatGPT queueing.
+A custom-named entry that resolves to `https://chatgpt.com/backend-api/codex` with forward auth
+takes the same public channel as the built-in row, because the classification reads the adapter,
+auth mode and destination rather than the entry's name.
+
+The `ocx doctor` hint is narrower than the endpoint behavior it describes: it inspects only the
+built-in `openai` row, so its absence tells you nothing about where any other provider resolves.
 
 `service_tier: priority` is a request preference. On the ChatGPT backend the echoed
 `service_tier` cannot confirm or deny the granted tier: turns scheduled as priority can still
