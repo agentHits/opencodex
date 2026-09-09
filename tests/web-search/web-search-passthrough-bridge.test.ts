@@ -370,12 +370,103 @@ describe("the bridged client stream", () => {
 
     const body = await new Response(stream).text();
     expect(sends).toBe(0);
+    // The client tool call is withheld and dropped: releasing it under a failed turn would let
+    // Codex start running exec for a turn that never completes.
+    expect(body).not.toContain("\"name\":\"exec\"");
     const failed = clientEvents(body).find(event => event.type === "response.failed");
     expect(failed).toBeDefined();
     const error = (failed!.response as { error: Record<string, unknown> }).error;
     expect(error.code).toBe(WEB_SEARCH_BRIDGE_MIXED_TOOLS_ERROR_CODE);
     expect(String(error.message)).toContain("another client tool");
+    // The opened hosted cell is closed as failed rather than left spinning.
+    const cell = clientEvents(body).find(event =>
+      event.type === "response.output_item.done"
+      && (event.item as Record<string, unknown>).type === "web_search_call");
+    expect((cell!.item as Record<string, unknown>).status).toBe("failed");
   });
+
+  test("a search that is not the last item keeps its streamed position", async () => {
+    // The model searches first and keeps talking; the hosted cell must open where the call stood.
+    const leg = sseBody(
+      frame("response.output_item.added", { output_index: 0, item: { ...searchCall, arguments: "" } }),
+      frame("response.output_item.done", { output_index: 0, item: searchCall }),
+      frame("response.output_item.added", { output_index: 1, item: { ...preamble, content: [] } }),
+      frame("response.output_item.done", { output_index: 1, item: preamble }),
+      frame("response.completed", {
+        response: { id: "resp_1", status: "completed", output: [searchCall, preamble] },
+      }),
+    );
+    const stream = createPassthroughWebSearchBridgeStream({
+      plan,
+      firstLeg: streamFromText(leg),
+      requestBody: initialBody,
+      send: async () => new Response(streamFromText(answerLeg()), {
+        headers: { "content-type": "text/event-stream" },
+      }),
+      execute: async () => ({ text: "a result", sources: [] }),
+    });
+
+    const events = clientEvents(await new Response(stream).text());
+    const added = events.filter(event => event.type === "response.output_item.added");
+    expect(added.map(event => (event.item as Record<string, unknown>).type))
+      .toEqual(["web_search_call", "message", "message"]);
+    expect(added.map(event => event.output_index)).toEqual([0, 1, 2]);
+
+    // The terminal snapshot keeps the same order the client saw, not the order of completion.
+    const completed = events.find(event => event.type === "response.completed");
+    const output = (completed!.response as { output: Record<string, unknown>[] }).output;
+    expect(output.map(item => item.type)).toEqual(["web_search_call", "message", "message"]);
+  });
+
+  test("a continuation body over the outbound ceiling is refused instead of sent", async () => {
+    let sends = 0;
+    const stream = createPassthroughWebSearchBridgeStream({
+      plan,
+      firstLeg: streamFromText(searchLeg()),
+      requestBody: initialBody,
+      send: async () => {
+        sends += 1;
+        return new Response(null, { status: 500 });
+      },
+      execute: async () => ({ text: "a result", sources: [] }),
+      checkOutboundBody: () => "outbound body is too large",
+    });
+
+    const body = await new Response(stream).text();
+    expect(sends).toBe(0);
+    const failed = clientEvents(body).find(event => event.type === "response.failed");
+    const error = (failed!.response as { error: Record<string, unknown> }).error;
+    expect(error.code).toBe(WEB_SEARCH_BRIDGE_ERROR_CODE);
+    expect(String(error.message)).toContain("outbound body is too large");
+  });
+
+  test("a cancelled client stream bills no further search and sends no continuation", async () => {
+    let sends = 0;
+    let executes = 0;
+    const controller = new AbortController();
+    const stream = createPassthroughWebSearchBridgeStream({
+      plan,
+      firstLeg: streamFromText(searchLeg()),
+      requestBody: initialBody,
+      send: async () => {
+        sends += 1;
+        return new Response(streamFromText(answerLeg()), {
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+      execute: async () => {
+        executes += 1;
+        return { text: "a result", sources: [] };
+      },
+      signal: controller.signal,
+    });
+
+    controller.abort();
+    await new Response(stream).text();
+    expect(executes).toBe(0);
+    expect(sends).toBe(0);
+  });
+
 
   test("the search budget is bounded and the turn terminates rather than looping", async () => {
     const executed: string[][] = [];
@@ -564,4 +655,3 @@ describe("the reported turn, end to end through handleResponses", () => {
     expect(result.body).toContain("frobnicate");
   });
 });
-
