@@ -140,6 +140,35 @@ afterEach(() => {
   removeTreeWithRetry(home);
 });
 
+describe("startup policy binding read is bounded", () => {
+  // FIFO and symlink cases need POSIX semantics; Windows keeps the portable cases.
+  const boundedReadCases: string[] = ["valid", "oversize", "directory", "missing",
+    ...(process.platform === "win32" ? [] : ["fifo-retained", "fifo-hang-proof", "symlink"])];
+  test.each(boundedReadCases)("bounded startup read handles %s", scenario => {
+    const child = Bun.spawnSync([process.execPath, helperPath("bounded-auth-read-child.ts")], {
+      cwd: repoRoot(),
+      env: { ...process.env, OCX_BOUNDED_READ_CASE: scenario,
+        HOME: home, USERPROFILE: home, TMP: home, TEMP: home, TMPDIR: home,
+        XDG_RUNTIME_DIR: home, LOCALAPPDATA: join(home, "LocalAppData"),
+        OPENCODEX_HOME: home, CODEX_HOME: home },
+      timeout: SPAWN_BUDGET_MS - INTERNAL_DEADLINE_MS, stdout: "pipe", stderr: "pipe",
+    });
+    // A regressed unbounded FIFO read never reaches here: the spawn timeout kills the child.
+    expect({ exitCode: child.exitCode, stderr: child.stderr.toString() }).toMatchObject({ exitCode: 0 });
+    const line = child.stdout.toString().split(/\r?\n/).find(value => value.startsWith("BOUNDED_READ_RESULT="));
+    expect(line).toBeDefined();
+    const result = JSON.parse(line!.slice("BOUNDED_READ_RESULT=".length));
+    if (scenario === "valid") {
+      expect(result).toMatchObject({ bound: true, matched: true });
+    } else if (scenario === "fifo-retained") {
+      expect(result).toMatchObject({ firstBound: true, bound: false, retained: true });
+    } else {
+      expect(result.bound).toBe(false);
+    }
+    if (scenario === "symlink") expect(result.matched).toBe(false);
+  }, SPAWN_BUDGET_MS);
+});
+
 describe("main quota policy at native admission", () => {
   test.each(["owned-99", "owned-98", "foreign", "unknown", "recovery", "second-listener",
     "invalid-access-token", "invalid-account-id", "invalid-id-token", "mismatched-identity", "renewed-listener",

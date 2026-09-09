@@ -83,7 +83,9 @@ export function reconcileMainCodexAccountRuntimeState(): boolean {
  * Only a valid replacement observation or confirmed account transition supersedes that evidence.
  */
 export function initializeMainAccountPolicyBinding(authPath: string): boolean {
-  const result = readCodexTokensResult(authPath);
+  // Startup observes the pinned owned path inside the exclusive claim: bound the read so a
+  // replaced non-regular or oversized file cannot stall startup inside that claim.
+  const result = readCodexTokensResult(authPath, { bounded: true });
   if (result.status !== "ok") return false;
   const { tokens } = result;
   if (typeof tokens.access_token !== "string" || !tokens.access_token
