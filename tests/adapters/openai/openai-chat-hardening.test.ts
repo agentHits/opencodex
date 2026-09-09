@@ -357,7 +357,9 @@ describe("unicode property-escape pattern stripping", () => {
       },
     }) as Record<string, Record<string, Record<string, unknown>>>;
 
-    expect(Object.keys(stripped.patternProperties)).toEqual(["^x-", "^(?!__).+$"]);
+    // Key order is not part of the schema contract, so compare the set. The point is which
+    // matchers survive and that their schemas come through intact.
+    expect(Object.keys(stripped.patternProperties).sort()).toEqual(["^(?!__).+$", "^x-"].sort());
     expect(stripped.patternProperties["^x-"].description).toBe("keep me");
     expect(stripped.patternProperties["^(?!__).+$"].type).toBe("number");
   });
@@ -384,7 +386,8 @@ describe("unicode property-escape pattern stripping", () => {
       },
     }) as Record<string, Record<string, Record<string, Record<string, unknown>>>>;
 
-    expect(Object.keys(stripped.properties.nested.patternProperties)).toEqual(["^ok$"]);
+    expect(Object.keys(stripped.properties.nested.patternProperties).sort()).toEqual(["^ok$"]);
+    expect(stripped.properties.nested.patternProperties["^ok$"].type).toBe("string");
   });
 
   test("a deeply nested schema is stripped without exhausting the stack", () => {
