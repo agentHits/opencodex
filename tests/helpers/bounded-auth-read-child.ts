@@ -44,7 +44,10 @@ if (caseName === "valid") {
   result.matched = matchesMainQuotaCredential(bearer, accountId);
 } else if (caseName === "oversize") {
   const bigPath = join(root, "auth-big.json");
-  writeFileSync(bigPath, Buffer.alloc(5 * 1024 * 1024, 97));
+  // Valid JSON whose tokens would bind if read: only the size cap can keep this false.
+  writeFileSync(bigPath, JSON.stringify({ tokens: {
+    access_token: bearer, refresh_token: "bounded-read-refresh", account_id: accountId,
+  }, padding: "a".repeat(5 * 1024 * 1024) }));
   result.bound = initializeMainAccountPolicyBinding(bigPath);
 } else if (caseName === "directory") {
   const dirPath = join(root, "auth-dir");

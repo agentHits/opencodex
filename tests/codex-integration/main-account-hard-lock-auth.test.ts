@@ -173,13 +173,15 @@ describe("main quota policy at native admission", () => {
   test.each(["owned-99", "owned-98", "foreign", "unknown", "recovery", "second-listener",
     "invalid-access-token", "invalid-account-id", "invalid-id-token", "mismatched-identity", "renewed-listener",
     "stage-retry", "manual-recovery", "stale-sweep", "retained-unknown-binding",
-    "conflicting-token-identities", "owned-opaque-99"] as const)(
+    "conflicting-token-identities", "conflicting-claims", "owned-opaque-99"] as const)(
     "fresh startup restores durable main policy only after owned recovery (%s)", scenario => {
       const restoredId = scenario === "recovery" ? "hard-lock-recovered-main" : accountId;
       const restoredBearer = scenario === "owned-opaque-99" ? "opaque-owned-startup-bearer" : `header.${Buffer.from(JSON.stringify({ exp: tokenExpiry,
         ...(["renewed-listener", "manual-recovery", "stale-sweep"].includes(scenario) ? { startupTokenRevision: 1 } : {}),
+        ...(scenario === "conflicting-claims" ? { chatgpt_account_id: restoredId } : {}),
         "https://api.openai.com/auth": { chatgpt_account_id: scenario === "conflicting-token-identities"
-          ? "hard-lock-conflicting-access-account" : restoredId } })).toString("base64url")}.signature`;
+          ? "hard-lock-conflicting-access-account"
+          : scenario === "conflicting-claims" ? "hard-lock-conflicting-claim-account" : restoredId } })).toString("base64url")}.signature`;
       const quota = { weeklyPercent: scenario === "owned-98" ? 98 : 99, updatedAt: Date.now() - 7 * 60 * 60_000 };
       const identityKey = createHash("sha256").update("opencodex-main-quota-v1\0").update(restoredId).digest("hex");
       if (scenario.startsWith("invalid-") || scenario === "mismatched-identity") {
@@ -190,7 +192,7 @@ describe("main quota policy at native admission", () => {
           ...(scenario === "invalid-id-token" ? { id_token: 17 } : {}),
         } }));
       }
-      if (scenario === "conflicting-token-identities" || scenario === "owned-opaque-99") {
+      if (scenario === "conflicting-token-identities" || scenario === "conflicting-claims" || scenario === "owned-opaque-99") {
         writeFileSync(join(home, "auth.json"), JSON.stringify({ tokens: {
           access_token: restoredBearer, account_id: accountId,
           ...(scenario === "conflicting-token-identities" ? { id_token: bearer() } : {}),
@@ -224,7 +226,7 @@ describe("main quota policy at native admission", () => {
       expect(result.beforePrimaryUpstreamCalls).toBe(scenario === "retained-unknown-binding" ? 3 : 0);
       const unowned = scenario === "foreign" || scenario === "unknown";
       const unverified = scenario.startsWith("invalid-") || scenario === "mismatched-identity"
-        || scenario === "conflicting-token-identities";
+        || scenario === "conflicting-token-identities" || scenario === "conflicting-claims";
       if (unowned) {
         expect(result.firstAdmission.admitted).toBe(true);
         expect(result.after.tokenReads).toBe(0);

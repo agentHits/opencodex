@@ -13,7 +13,7 @@ import { clearAccountQuota } from "./quota";
 import { clearCodexUpstreamHealthForAccount, clearThreadAccountMapForAccount } from "./routing";
 import { invalidateCodexWebSocketsForAccount } from "./websocket-registry";
 import { clearMainAccountCredentialPresence, clearMainAccountInfoCache, observeMainQuotaCredential, observeMainQuotaIdentity } from "./main-account-cache";
-import { extractAccountId } from "../oauth/chatgpt";
+import { extractAccountIdClaims } from "../oauth/chatgpt";
 import { forgetCodexAccountPause } from "./account-pause";
 import { clearCodexAccountPin, forgetCodexAccountPriority } from "./account-priority";
 import { forgetCodexQuotaAutoRefreshAccount } from "./quota-auto-refresh-state";
@@ -92,9 +92,13 @@ export function initializeMainAccountPolicyBinding(authPath: string): boolean {
     || typeof tokens.account_id !== "string" || !tokens.account_id) return false;
   if (tokens.id_token != null && typeof tokens.id_token !== "string") return false;
   const accountId = tokens.account_id;
-  // An owned file may contain an opaque bearer, but every decoded identity must agree.
-  const idTokenAccountId = extractAccountId(tokens.id_token);
-  const accessTokenAccountId = extractAccountId(undefined, tokens.access_token);
+  // An owned file may contain an opaque bearer, but every decoded identity must agree —
+  // including the two account-id encodings within a single token.
+  const idTokenClaims = extractAccountIdClaims(tokens.id_token);
+  const accessTokenClaims = extractAccountIdClaims(tokens.access_token);
+  if (idTokenClaims.conflict || accessTokenClaims.conflict) return false;
+  const idTokenAccountId = idTokenClaims.accountId;
+  const accessTokenAccountId = accessTokenClaims.accountId;
   if ((idTokenAccountId !== undefined && idTokenAccountId !== accountId)
     || (accessTokenAccountId !== undefined && accessTokenAccountId !== accountId)) return false;
   const previousAccountId = observedMainChatgptAccountId;

@@ -6,7 +6,7 @@ interface Fixture {
   scenario: "owned-99" | "owned-98" | "foreign" | "unknown" | "recovery" | "second-listener"
     | "invalid-access-token" | "invalid-account-id" | "invalid-id-token" | "mismatched-identity" | "renewed-listener"
     | "stage-retry" | "manual-recovery" | "stale-sweep" | "retained-unknown-binding"
-    | "conflicting-token-identities" | "owned-opaque-99";
+    | "conflicting-token-identities" | "conflicting-claims" | "owned-opaque-99";
   accountId: string;
   bearer: string;
   originalAccountId: string;
