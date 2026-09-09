@@ -509,6 +509,15 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
       { authorization: `Bearer ${fakeChatGptJwt({ chatgpt_account_id: "caller-openai", "https://api.openai.com/auth": { chatgpt_account_id: "other-claim" } })}` },
       // A malformed ChatGPT marker is still ChatGPT-marked.
       { authorization: `Bearer ${fakeChatGptJwt({ chatgpt_account_id: 123 })}` },
+      // A blank account id is not a usable id.
+      { authorization: `Bearer ${fakeChatGptJwt({ chatgpt_account_id: "   " })}` },
+      // The reserved namespace is a marker by its presence, whatever shape it carries:
+      // a primitive, null, an array, or an object without the claim all stay ChatGPT-marked.
+      { authorization: `Bearer ${fakeChatGptJwt({ "https://api.openai.com/auth": "not-an-object" })}` },
+      { authorization: `Bearer ${fakeChatGptJwt({ "https://api.openai.com/auth": null })}` },
+      { authorization: `Bearer ${fakeChatGptJwt({ "https://api.openai.com/auth": [] })}` },
+      { authorization: `Bearer ${fakeChatGptJwt({ "https://api.openai.com/auth": {} })}` },
+      { authorization: `Bearer ${fakeChatGptJwt({ "https://api.openai.com/auth": { user_id: "u_1" } })}` },
     ];
     for (const extra of cases) {
       await withCursorCaptureServer(async (baseUrl, capturedAuth) => {
@@ -634,7 +643,7 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
     }
   });
 
-  test.each(["jwt-only", "jwt-with-account", "opaque-with-account", "jwt-mismatched-account", "org-only-jwt", "conflicting-claims"])(
+  test.each(["jwt-only", "jwt-with-account", "opaque-with-account", "jwt-mismatched-account", "org-only-jwt", "conflicting-claims", "broken-namespace", "blank-account-id"])(
     "a dedicated-admission Responses combo scopes caller auth (%s) to its final Direct target",
     async form => {
       const config = mixedConfig();
@@ -650,7 +659,12 @@ describe("bearer admission is not reused as a Cursor upstream credential", () =>
           ? fakeChatGptJwt({ organizations: [{ id: "org-foreign" }] })
           : form === "conflicting-claims"
             ? fakeChatGptJwt({ chatgpt_account_id: "caller-openai", "https://api.openai.com/auth": { chatgpt_account_id: "other-claim" } })
-            : fakeChatGptJwt({ chatgpt_account_id: "caller-openai" });
+            // A present reserved namespace with no usable id is marked but untrustworthy.
+            : form === "broken-namespace"
+              ? fakeChatGptJwt({ "https://api.openai.com/auth": {} })
+              : form === "blank-account-id"
+                ? fakeChatGptJwt({ chatgpt_account_id: "   " })
+                : fakeChatGptJwt({ chatgpt_account_id: "caller-openai" });
       const accountHeader = form === "jwt-only" ? undefined
         : form === "jwt-mismatched-account" ? "other-account"
         : form === "org-only-jwt" ? "org-foreign"

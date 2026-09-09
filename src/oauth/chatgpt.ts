@@ -46,32 +46,46 @@ export function extractAccountId(idToken?: string, accessToken?: string): string
  * https://api.openai.com/auth namespace claim. A generic organizations claim is NOT domain
  * evidence. JWT claims are decoded locally as routing markers, never as authenticity proof.
  *
- * absent  — no JWT, or a JWT carrying no ChatGPT-specific claim: the token may be a
- *           foreign credential and legacy foreign handling applies.
- * invalid — a ChatGPT-specific claim is present but malformed (non-string) or two markers
- *           conflict: the token is ChatGPT-marked but untrustworthy; it must not become
- *           foreign-allowed merely because no valid id came out.
- * valid   — exactly one consistent ChatGPT account id.
+ * absent  — no JWT, or a JWT carrying neither marker key: the token may be a foreign
+ *           credential and legacy foreign handling applies.
+ * invalid — a marker key is present but yields no usable account id (non-string, blank,
+ *           namespace that is not an object, namespace without the claim) or the two
+ *           markers disagree. Presence is decided by the KEY, not by its shape, so a token
+ *           that claims this domain can never fall through to foreign handling just
+ *           because its marker is malformed.
+ * valid   — one consistent, non-blank ChatGPT account id.
  */
 export type ChatGptDomainClaim =
   | { kind: "absent" }
   | { kind: "invalid" }
   | { kind: "valid"; accountId: string };
 
+const CHATGPT_AUTH_NAMESPACE = "https://api.openai.com/auth";
+
+/** A usable account id is a non-blank string; blank or non-string values are malformed. */
+function usableAccountId(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 export function inspectChatGptDomainClaim(token: string): ChatGptDomainClaim {
   const payload = decodeJwtPayload(token);
   if (!payload) return { kind: "absent" };
-  const top = payload.chatgpt_account_id;
-  const ns = payload["https://api.openai.com/auth"];
-  const nsObj = ns && typeof ns === "object" ? ns as Record<string, unknown> : undefined;
-  const topPresent = top !== undefined;
-  const nsPresent = nsObj !== undefined && "chatgpt_account_id" in nsObj;
+  // Presence is the KEY being there. A reserved namespace that is null, a primitive, an
+  // array, or an object without the claim is a present-but-broken marker, so it stays
+  // invalid instead of being treated as a foreign token.
+  const topPresent = "chatgpt_account_id" in payload;
+  const nsPresent = CHATGPT_AUTH_NAMESPACE in payload;
   if (!topPresent && !nsPresent) return { kind: "absent" };
-  const topId = typeof top === "string" && top ? top : undefined;
-  const nsId = nsObj && typeof nsObj.chatgpt_account_id === "string" && nsObj.chatgpt_account_id
-    ? nsObj.chatgpt_account_id as string : undefined;
+  const topId = topPresent ? usableAccountId(payload.chatgpt_account_id) : undefined;
   if (topPresent && !topId) return { kind: "invalid" };
-  if (nsPresent && !nsId) return { kind: "invalid" };
+  let nsId: string | undefined;
+  if (nsPresent) {
+    const ns = payload[CHATGPT_AUTH_NAMESPACE];
+    const nsObj = ns !== null && typeof ns === "object" && !Array.isArray(ns)
+      ? ns as Record<string, unknown> : undefined;
+    nsId = nsObj ? usableAccountId(nsObj.chatgpt_account_id) : undefined;
+    if (!nsId) return { kind: "invalid" };
+  }
   if (topId && nsId && topId !== nsId) return { kind: "invalid" };
   const accountId = topId ?? nsId;
   return accountId ? { kind: "valid", accountId } : { kind: "invalid" };
