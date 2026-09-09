@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { catalogHintsFromModelsApiItem, discoveredPricingStatus } from "../../src/codex/catalog/provider-fetch";
 import { deriveEntry } from "../../src/codex/catalog/sync";
+import { clearModelCache } from "../../src/codex/model-cache";
+import { listManagementModelRows } from "../../src/server/management/model-rows";
+import { withStubbedProviderFetch } from "../helpers/catalog-provider-fetch";
+import type { OcxConfig } from "../../src/types";
 
 /**
  * Regression coverage for #3666 — no way to filter free models in the Dashboard catalog.
@@ -89,5 +93,56 @@ describe("discovered model pricing classification (#3666)", () => {
       pricingStatus: "free",
     });
     expect(JSON.stringify(entry)).not.toContain("pricing");
+  });
+});
+
+/**
+ * The classifier above is only useful if the field survives the whole projection. It is set on a
+ * discovery hint, merged by `applyProviderConfigHints`, spread by `listManagementModelRows`, and
+ * read by the Dashboard and the CLI off `GET /api/models` — four hops, none of which names the
+ * field explicitly, so any one of them could drop it without a single unit test noticing.
+ */
+describe("pricingStatus on the /api/models wire (#3666)", () => {
+  const PROVIDER = "pricing-wire-test";
+
+  function fixture(): OcxConfig {
+    return withStubbedProviderFetch({
+      port: 10100,
+      modelCacheTtlMs: 0,
+      providers: {
+        [PROVIDER]: {
+          adapter: "openai-chat",
+          // A literal address: discovery pins the peer, so a hostname would need real DNS.
+          baseUrl: "https://93.184.216.34/v1",
+          apiKey: "sk-test",
+        },
+      },
+    } as OcxConfig);
+  }
+
+  test("a discovered free row carries the field to the management row list", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () => Response.json({
+      data: [
+        { id: "gemma-free", pricing: { prompt: "0.00000000", completion: "0" } },
+        { id: "sonnet-paid", pricing: { prompt: "0.000003", completion: "0.000015" } },
+        { id: "unpriced" },
+      ],
+    })) as typeof fetch;
+    try {
+      const rows = await listManagementModelRows(fixture(), { entitlementWaitMs: 0 });
+      const byId = (id: string) => rows.find(row => row.provider === PROVIDER && row.id === id);
+      expect(byId("gemma-free")?.pricingStatus).toBe("free");
+      expect(byId("sonnet-paid")?.pricingStatus).toBe("paid");
+      // Absent, not "unknown": the same omission contract the hint follows reaches the wire, so
+      // a client that treats a missing field as not-free is reading the intended signal.
+      expect(byId("unpriced")).toBeDefined();
+      expect(Object.hasOwn(byId("unpriced")!, "pricingStatus")).toBe(false);
+      // Orthogonal to the operator's own overlay marker, which no row here has.
+      expect(rows.every(row => !Object.hasOwn(row, "manualPricing"))).toBe(true);
+    } finally {
+      globalThis.fetch = previousFetch;
+      clearModelCache(PROVIDER);
+    }
   });
 });

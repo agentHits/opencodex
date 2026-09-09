@@ -254,11 +254,13 @@ function ProviderModelInventory({ item, apiBase, availableModels, selectedModels
       </div> : (!ready || busy) && <p className="muted" role="status">{t(!modelRowsReady || modelsLoading ? "pws.modelsLoading" : "pws.modelOwnershipLoading")}</p>}
       {mutation && (mutation.outcome === "unconfirmed" || mutation.refreshPending) && !modelsLoadFailed && ownershipError !== ownershipKey &&
         <button type="button" className="btn btn-ghost btn-sm" onClick={retry} disabled={requestPending}>{t("common.retry")}</button>}
-      <input ref={searchRef} type="search" className="input pws-model-search" placeholder={t("pws.modelSearchPlaceholder")}
-        value={query} onChange={event => setQuery(event.target.value)} aria-label={t("pws.modelSearchPlaceholder")} />
+      {/* Above the search box, matching the Models page group: the same filter must not sit on
+          opposite sides of the search input on the two surfaces that offer it. */}
       {pricingKnown && <div className="row">
         <Switch on={freeOnly} onClick={() => setFreeOnly(!freeOnly)} label={t("models.freeOnly")} showLabel />
       </div>}
+      <input ref={searchRef} type="search" className="input pws-model-search" placeholder={t("pws.modelSearchPlaceholder")}
+        value={query} onChange={event => setQuery(event.target.value)} aria-label={t("pws.modelSearchPlaceholder")} />
       {modelRows !== null && visible.length === 0 ? <p className="muted">{t("pws.noModels")}</p>
         : filtered.length === 0 && modelRows !== null
           ? <p className="muted" role="status">{t(freeOnly && priced.length === 0 ? "models.noFreeMatch" : "pws.noModelMatch")}</p>
