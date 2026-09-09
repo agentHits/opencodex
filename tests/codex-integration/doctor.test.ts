@@ -652,6 +652,11 @@ describe("service memory section (#314 WP4)", () => {
     expect(chatgptPublicEndpointHint({})).toBeNull();
     expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", authMode: "key" } })).toBeNull();
     expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://api.openai.com/v1" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com.example/v1" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://gateway.example/chatgpt.com/v1" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "not-a-valid-url" } })).toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api" } })).not.toBeNull();
+    expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://subdomain.chatgpt.com/v1" } })).not.toBeNull();
   });
 
   test("proxyDownRestartHint prefers 'ocx service start' when a service is installed", () => {

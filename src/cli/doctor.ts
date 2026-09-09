@@ -1017,8 +1017,16 @@ export function chatgptPublicEndpointHint(
     return null;
   }
   const baseUrl = typeof typed.baseUrl === "string" ? typed.baseUrl : "";
-  if (baseUrl && !baseUrl.includes("chatgpt.com")) {
-    return null;
+  if (baseUrl) {
+    let hostname: string;
+    try {
+      hostname = new URL(baseUrl).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+    if (hostname !== "chatgpt.com" && !hostname.endsWith(".chatgpt.com")) {
+      return null;
+    }
   }
   return "ChatGPT-family requests use the public ChatGPT endpoint through this proxy, so upstream queue delay before the first output can be higher than DeepSeek/Kimi. The native Codex app channel is unavailable through OpenCodex routing (in both Pool and Direct modes); use a latency-sensitive provider or run Codex natively when that channel matters. service_tier=priority is a request preference; inspect response tier in logs to see what the backend granted.";
 }
