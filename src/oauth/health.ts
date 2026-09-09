@@ -204,12 +204,34 @@ export function projectCodexAccountHealth(input: {
   needsReauth: boolean;
   now?: number;
 }): OAuthAccountHealth {
-  const record = input.accountId !== MAIN_CODEX_ACCOUNT_ID ? readCodexAccountRecord(input.accountId) : null;
+  // One read serves every verdict below. Each lookup re-reads and re-hardens the whole store
+  // file, and the main account lives in the native Codex auth file rather than the pool store,
+  // so a lookup for it could only ever miss.
+  const stored = input.accountId !== MAIN_CODEX_ACCOUNT_ID ? readCodexAccountRecord(input.accountId) : null;
+  const record = stored?.deletedAt == null ? stored : null;
+
   // A successful quota read is not evidence that model authorization recovered.
   // Preserve this guidance until validation succeeds or reauthentication replaces it.
-  const validationAuthFailed = record?.codexValidationPending && record.lastCodexValidationStatus === "failed"
+  const validationAuthFailed = record !== null
+    && record.codexValidationPending === true
+    && record.lastCodexValidationStatus === "failed"
     && (record.lastCodexValidationError === "http_status:401" || record.lastCodexValidationError === "http_status:403");
-  const needsReauth = input.needsReauth || Boolean(validationAuthFailed);
+
+  // A persisted terminal verdict outranks the in-memory reauth flag rather than duplicating it:
+  // the flag lives in this process and a revoked grant does not. Without it, an account whose
+  // grant was revoked upstream keeps its login-time `lastCodexValidationStatus: "ok"` and every
+  // surface reports it healthy until someone tries to use it (#4120). Only a re-login clears the
+  // marker, so `reauth_required` is the accurate projection — and it is deliberately checked
+  // ahead of any cooldown, because telling an operator to wait out a rate limit on a credential
+  // that will never work again is a false promise.
+  const terminalGrantFailure = record !== null
+    && record.lastCodexValidationTerminal === true
+    && record.lastCodexValidationStatus === "failed";
+
+  const needsReauth = input.needsReauth || validationAuthFailed || terminalGrantFailure;
+
+  // Deferred validation is only worth reporting while the credential itself is still viable. A
+  // revoked grant needs a re-login, not a "Refresh quotas" click, so reauth is resolved first.
   if (!needsReauth && record?.codexValidationPending) {
     return { status: "warning", reason: "validation_pending" };
   }
@@ -287,11 +309,11 @@ function collectLocalCodexEntries(now: number): OAuthHealthEntry[] {
     const hasPoolCredential = accountId !== MAIN_CODEX_ACCOUNT_ID && getCodexAccountCredential(accountId) !== null;
     if (!hasPoolCredential && !needsReauth && !snap) continue;
 
-    const health = projectCodexAccountHealth({
-      accountId,
-      needsReauth,
-      now,
-    });
+    // Call the projector rather than inlining a second copy of it. This collector serves the CLI
+    // (`ocx status`, `ocx doctor`) while the dashboard DTO goes through projectCodexAccountHealth,
+    // and the duplicated body is exactly how the CLI would have kept reporting a revoked account
+    // as healthy after the dashboard stopped.
+    const health = projectCodexAccountHealth({ accountId, needsReauth, now });
     pushEntry(entries, "codex", accountId, health);
   }
   return entries;

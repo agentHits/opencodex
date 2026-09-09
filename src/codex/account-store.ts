@@ -59,7 +59,8 @@ function isCredentialRecord(value: unknown): value is CodexAccountCredentialReco
     && (value.lastCodexValidatedAt === undefined || typeof value.lastCodexValidatedAt === "number")
     && (value.lastCodexValidationStatus === undefined || value.lastCodexValidationStatus === "ok" || value.lastCodexValidationStatus === "failed")
     && (value.lastCodexValidationError === undefined || typeof value.lastCodexValidationError === "string")
-    && (value.codexValidationPending === undefined || typeof value.codexValidationPending === "boolean");
+    && (value.codexValidationPending === undefined || typeof value.codexValidationPending === "boolean")
+    && (value.lastCodexValidationTerminal === undefined || typeof value.lastCodexValidationTerminal === "boolean");
 }
 
 export function refreshGrantFingerprintForToken(refreshToken: string): string {
@@ -119,6 +120,15 @@ function persistCredentialMutation(store: CodexAccountStore): void {
   advanceCodexCredentialMutationEpoch();
 }
 
+/**
+ * Validation metadata that survives a credential write.
+ *
+ * `lastCodexValidationTerminal` is deliberately NOT in this list. Every credential write —
+ * re-login, the CAS refresh commit, same-grant alias propagation — rebuilds the record from this
+ * pick list, so leaving the marker out is what makes a successful refresh or a re-authentication
+ * erase a terminal verdict. Both events disprove "the grant was revoked", and a verdict that
+ * could only ever be set would brand an account dead forever on one spurious `invalid_grant`.
+ */
 function preservedValidationMetadata(record: CodexAccountCredentialRecord | undefined): Pick<
   CodexAccountCredentialRecord,
   "lastCodexValidatedAt" | "lastCodexValidationStatus" | "lastCodexValidationError" | "codexValidationPending"
@@ -179,6 +189,9 @@ export function markCodexAccountValidated(id: string, atMs: number = Date.now(),
       lastCodexValidationStatus: "ok",
       lastCodexValidationError: undefined,
       codexValidationPending: undefined,
+      // A completed validation is the direct refutation of a terminal verdict, and this
+      // spread would otherwise carry the old marker forward.
+      lastCodexValidationTerminal: undefined,
     };
     // Becoming routable invalidates credential-derived caches; a timestamp-only
     // update on an already validated account preserves the existing epoch policy.
@@ -187,19 +200,48 @@ export function markCodexAccountValidated(id: string, atMs: number = Date.now(),
   });
 }
 
-export function markCodexAccountValidationFailed(id: string, reason: string, generation?: number): void {
-  withCredentialMutationLockSync(() => {
+export interface MarkCodexAccountValidationFailedOptions {
+  /**
+   * Write only while the stored record is still at this generation.
+   *
+   * A validation attempt is not atomic with the store: an operator can re-authenticate the
+   * account, or another writer can commit a refresh, while a probe is still in flight. Without
+   * this fence the late failure lands on whatever credential happens to be there and brands a
+   * freshly installed one dead. Declining to write is the safe direction — the failure cannot be
+   * attributed to a credential the caller never observed.
+   */
+  expectedGeneration?: number;
+  /** The grant itself is revoked or expired; only a re-login clears it. */
+  terminal?: boolean;
+}
+
+/** Returns whether the verdict was actually persisted (false when the fence declined it). */
+export function markCodexAccountValidationFailed(
+  id: string,
+  reason: string,
+  options: MarkCodexAccountValidationFailedOptions = {},
+): boolean {
+  return withCredentialMutationLockSync(() => {
     const store = loadCodexAccountRecordStore();
     const current = store[id];
-    if (!current || current.deletedAt != null || !current.credential) return;
-    if (current.codexValidationPending && generation === undefined) return;
-    if (generation !== undefined && current.generation !== generation) return;
+    if (!current || current.deletedAt != null || !current.credential) return false;
+    // Deferred validation is settled only by a caller that names the generation it observed.
+    // An unfenced write must never resolve a pending account, whichever verdict it carries.
+    if (current.codexValidationPending && options.expectedGeneration === undefined) return false;
+    if (options.expectedGeneration !== undefined && current.generation !== options.expectedGeneration) {
+      return false;
+    }
     store[id] = {
       ...current,
       lastCodexValidationStatus: "failed",
       lastCodexValidationError: reason,
+      // Only ever set here. A transient failure must not clear a terminal marker set earlier,
+      // and it must not invent one either, so the flag is written only when the caller proves
+      // the grant is dead.
+      ...(options.terminal ? { lastCodexValidationTerminal: true } : {}),
     };
     persist(store);
+    return true;
   });
 }
 

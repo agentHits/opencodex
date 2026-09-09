@@ -215,6 +215,8 @@ interface OpenBlock {
   callId?: string;
   /** Last fixed-size reasoning identity (item + summary/content index) seen by this block. */
   reasoningPartKey?: string;
+  /** Fixed-size item identity; missing IDs only match other missing IDs. */
+  reasoningItemKey?: string;
   thinkingBuf?: string;
   thinkingBufBytes?: number;
   reasoningSig?: string;
@@ -308,6 +310,20 @@ export function responsesSseToAnthropicSse(
           open.webSearchArgsEmitted = true;
         }
         if (open.kind === "thinking") {
+          // Delay the index and all thinking frames until closure so a matching
+          // done envelope can put its redacted blocks first. The existing buffer
+          // remains charged through signature emission, including queued frames.
+          open.index = blockIndex++;
+          emit("content_block_start", {
+            type: "content_block_start", index: open.index,
+            content_block: { type: "thinking", thinking: "", signature: "" },
+          });
+          if (open.thinkingBuf) {
+            emit("content_block_delta", {
+              type: "content_block_delta", index: open.index,
+              delta: { type: "thinking_delta", thinking: open.thinkingBuf },
+            });
+          }
           const signature = open.reasoningSig ?? encodeReasoningEnvelope({ txt: open.thinkingBuf ?? "" }, translatorBudget);
           emit("content_block_delta", {
             type: "content_block_delta", index: open.index,
@@ -323,12 +339,13 @@ export function responsesSseToAnthropicSse(
         ensureStarted();
         if (open && open.kind === kind) return;
         closeOpenBlock();
+        if (kind === "thinking") {
+          open = { kind, index: -1, thinkingBuf: "", thinkingBufBytes: 0 };
+          return;
+        }
         const index = blockIndex++;
-        const contentBlock: Rec = kind === "text"
-          ? { type: "text", text: "" }
-          : { type: "thinking", thinking: "", signature: "" };
-        emit("content_block_start", { type: "content_block_start", index, content_block: contentBlock });
-        open = { kind, index, thinkingBuf: "", thinkingBufBytes: 0 };
+        emit("content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } });
+        open = { kind, index };
       };
       const finish = (stopReason: string, usage: unknown) => {
         if (terminated) return;
@@ -405,11 +422,13 @@ export function responsesSseToAnthropicSse(
           case "response.reasoning_summary_text.delta":
           case "response.reasoning_text.delta": {
             if (typeof data.delta !== "string" || data.delta.length === 0) break;
+            const itemKey = boundedReasoningIdentity(data.item_id);
+            if (open?.kind === "thinking" && open.reasoningItemKey !== itemKey) closeOpenBlock();
             ensureBlock("thinking");
             const active = open;
             if (!active || active.kind !== "thinking") break;
             // The JSON path joins reasoning summary/content parts with "\n\n"
-            // (responsesJsonToAnthropicMessage); mirror that at part and item boundaries
+            // (responsesJsonToAnthropicMessage); mirror that at part boundaries
             // so multi-part summaries do not glue into one run-on paragraph. Frames
             // without part indices produce a constant key and never get a separator.
             const slot = eventName === "response.reasoning_summary_text.delta"
@@ -418,7 +437,7 @@ export function responsesSseToAnthropicSse(
             // Upstream string metadata can be arbitrarily large. Hash strings into fixed-size
             // components while retaining item and part equality, rather than dropping item_id and
             // accidentally joining distinct malformed reasoning items.
-            const partKey = `${boundedReasoningIdentity(data.item_id)}:${slot}`;
+            const partKey = `${itemKey}:${slot}`;
             const needsPartSeparator = active.reasoningPartKey !== undefined
               && active.reasoningPartKey !== partKey;
             const appended = `${needsPartSeparator ? "\n\n" : ""}${data.delta}`;
@@ -436,17 +455,8 @@ export function responsesSseToAnthropicSse(
               reservation.release();
               throw error;
             }
-            if (needsPartSeparator) {
-              emit("content_block_delta", {
-                type: "content_block_delta", index: active.index,
-                delta: { type: "thinking_delta", thinking: "\n\n" },
-              });
-            }
+            active.reasoningItemKey = itemKey;
             active.reasoningPartKey = partKey;
-            emit("content_block_delta", {
-              type: "content_block_delta", index: active.index,
-              delta: { type: "thinking_delta", thinking: data.delta },
-            });
             break;
           }
           case "response.output_item.added": {
@@ -563,19 +573,26 @@ export function responsesSseToAnthropicSse(
               const encrypted = typeof item.encrypted_content === "string" ? item.encrypted_content : "";
               const env = encrypted ? decodeReasoningEnvelope(encrypted, translatorBudget) : null;
               const red = env?.red ?? [];
-              if (env?.sig && open?.kind !== "thinking") ensureBlock("thinking");
-              if (open?.kind === "thinking") {
-                if (env?.sig) open.reasoningSig = env.sig;
+              const itemKey = boundedReasoningIdentity(item.id);
+              // A late/unrelated done cannot reorder or sign another item's text.
+              if (open?.kind === "thinking" && open.reasoningItemKey !== itemKey) {
                 closeOpenBlock();
               }
               if (red.length > 0) {
                 ensureStarted();
-                closeOpenBlock();
+                if (open?.kind !== "thinking") closeOpenBlock();
               }
               for (const data of red) {
                 const idx = blockIndex++;
                 emit("content_block_start", { type: "content_block_start", index: idx, content_block: { type: "redacted_thinking", data } });
                 emit("content_block_stop", { type: "content_block_stop", index: idx });
+              }
+              if (env?.sig && open?.kind !== "thinking") {
+                ensureBlock("thinking");
+              }
+              if (open?.kind === "thinking") {
+                if (env?.sig) open.reasoningSig = env.sig;
+                closeOpenBlock();
               }
             }
             break;
