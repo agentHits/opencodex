@@ -44,11 +44,6 @@ native Codex is restored, leaving your client config pointed at a proxy that is 
 dashboard returns `self_unload_service`, changes nothing, and asks you to run `ocx stop` —
 which stops the service from outside and completes the restore.
 
-Port recovery after stop or update respects a failed OCX process check even when the PID was
-recorded before shutdown. A rejected live holder is left running and prevents TCP-row cleanup.
-If it stays unverified, the bounded recovery wait can expire with the port still busy. Check the
-current port holder and retry the restart after the conflict is resolved.
-
 ### `ocx restart`
 
 When a proxy is running, ask that exact attested PID and port to restart in place, wait for its
@@ -59,6 +54,11 @@ If a live listener cannot be attested to a runtime PID (including a pre-update p
 closed without an `ensure` or stop/start fallback. After confirming ownership, use `ocx stop` then
 `ocx start` for a standalone proxy. For a service-managed proxy, use `ocx stop` followed by
 `ocx service start` so supervision is restored.
+
+Port recovery after stop or update respects a failed OCX process check even when the PID was
+recorded before shutdown. A rejected live holder is left running and prevents TCP-row cleanup.
+If it stays unverified, the bounded recovery wait can expire with the port still busy. Check the
+current port holder and retry the restart after the conflict is resolved.
 
 ### `ocx ensure`
 
