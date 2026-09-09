@@ -27,6 +27,9 @@ export type ReclaimListenPortOptions = WaitForPortOptions & {
   /**
    * Explicit PIDs the caller just stopped / hard-killed. An omitted or empty
    * list means no process may be killed — unless {@link killAllOcxOnPort} is set.
+   * The allowlist only narrows kill candidates: every candidate, allowlisted or
+   * not, still requires verifier acceptance (`verifyOcxFn(pid) === pid`) on each
+   * scan, and a rejected live holder is never killed or TCP-row dropped.
    */
   onlyKillPids?: number[];
   /**
