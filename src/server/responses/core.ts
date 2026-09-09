@@ -150,6 +150,11 @@ import {
 } from "../../oauth/generic-account-failover";
 import { resolveCopilotApiBaseUrl } from "../../oauth/github-copilot";
 import { buildWebSearchTool, planWebSearch, runWithWebSearch, shouldResolveOpenAiWebSearchSidecar } from "../../web-search";
+import {
+  createOllamaBridgeExecutor,
+  createPassthroughWebSearchBridgeStream,
+  planPassthroughWebSearchBridge,
+} from "../../web-search/passthrough-bridge";
 import { buildImageTool, buildVideoTool, planImageBridge, planVideoBridge, runWithImageBridge, clampImageMaxRounds, IMAGE_GEN_TOOL_NAME, VIDEO_GEN_TOOL_NAME } from "../../images";
 import { describeImagesInPlace, isModelTextOnly, planVisionSidecar, resolveOpenAiVisionModel, shouldResolveOpenAiVisionSidecar, stripImagesInPlace } from "../../vision";
 import { createAdapterEventQueue, preflightAdapterEvents, type AdapterEventQueue } from "../../adapters/run-turn-queue";
@@ -5786,15 +5791,60 @@ async function handleResponsesInner(
         route.provider,
         route.modelId,
       );
+      // #3761: opt-in hosted-web-search bridge. Codex always declares the hosted web_search tool,
+      // and this branch relays that declaration on the assumption the destination executes it.
+      // A KEY-auth gateway that does not (Ollama Cloud GLM) answers with a function_call named
+      // web_search that nothing runs, and the undeclared-tool guard below ends the turn. When the
+      // provider opts in, the bridge intercepts that one call, runs the search, continues the
+      // conversation upstream, and hands back ordinary Responses SSE — so every rewrite below,
+      // including the guard itself, still inspects the client-facing stream. Default OFF: without
+      // the opt-in this is one planner call and the relay is byte-identical to before.
+      const webSearchBridgePlan = planPassthroughWebSearchBridge(parsed, route.provider, {
+        isPassthrough: true,
+        stream: parsed.stream === true,
+      });
+      // The bridge wraps the RAW upstream body, so terminal repair below still owns the single
+      // client-facing terminal — the bridge drops the terminal of every intercepted leg.
+      const upstreamSseBody = webSearchBridgePlan
+        ? createPassthroughWebSearchBridgeStream({
+          plan: webSearchBridgePlan,
+          firstLeg: upstreamResponse.body,
+          requestBody: request.body,
+          // Continuation legs replay the same built request with the executed search appended.
+          // The first leg already passed the recovery ladder, the outbound size ceiling, and the
+          // host circuit; a KEY-auth destination has no OAuth refresh to replay on a later leg.
+          send: (continuationBody: string) => fetchWithHeaderTimeout(
+            request.url,
+            { method: request.method, headers: request.headers, body: continuationBody },
+            upstream.signal,
+            connectMs,
+            true,
+            providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              dispatchOverride: oauthDispatch(request),
+              providerName: route.providerName,
+              modelId: route.modelId,
+            }),
+            false,
+          ),
+          execute: createOllamaBridgeExecutor(webSearchBridgePlan, route.provider.apiKey ?? ""),
+          // Appending a search result can push the continuation past the ceiling the first leg
+          // was admitted under, so the same limit is re-applied before every later send.
+          checkOutboundBody: (continuationBody: string) => {
+            const result = checkOutboundBodySize(continuationBody, config.maxUpstreamBodyBytes);
+            return result.admitted ? undefined : describeOutboundBodyRefusal(result);
+          },
+          signal: upstream.signal,
+        })
+        : upstreamResponse.body;
       const passthroughSseBody = terminalRepairPolicy
         ? relayResponsesSseWithTerminalRepair(
-          upstreamResponse.body,
+          upstreamSseBody,
           upstream,
           terminalRepairPolicy,
           translatorBudget,
           options.responsesTerminalRepairScheduler,
         )
-        : upstreamResponse.body;
+        : upstreamSseBody;
       const repairConfig = route.provider.responsesItemIdRepair;
       // Grok Build renders deltas live but reconstructs its durable assistant
       // turn from the completed response snapshot. Native Responses streams
