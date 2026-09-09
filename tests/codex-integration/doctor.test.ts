@@ -650,6 +650,11 @@ describe("service memory section (#314 WP4)", () => {
     expect(hint).toContain("websocket");
     expect(hint).toContain("both Pool and Direct modes");
     expect(hint).not.toContain("11s");
+    // The helper classifies configuration; it measures no latency. The copy has
+    // to stay hedged because eligible turns can still fall back to SSE and
+    // local pacing can delay dispatch before any upstream work starts.
+    expect(hint).toContain("fall back");
+    expect(hint).toContain("one possible contributor");
     expect(chatgptPublicEndpointHint({})).toBeNull();
     // A missing authMode is the runtime "key" default, not the forward login.
     expect(chatgptPublicEndpointHint({ openai: { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex" } })).toBeNull();

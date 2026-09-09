@@ -82,17 +82,23 @@ Native ChatGPT-family requests routed through opencodex via the canonical ChatGP
 forward provider (covering both Pool and Direct modes) use the public ChatGPT endpoint. Provider
 routing or account selection does not bypass the upstream ChatGPT channel. The upstream may spend
 time queueing a request before the first output even when the local proxy and network path are
-healthy. Streaming turns already ride the ChatGPT websocket transport — the same
-`responses_websockets` lane Codex CLI defaults to — so the remaining gap is the public-endpoint
-queue itself, not the transport. This behavior is specific to ChatGPT-login routing and does not
-apply to `openai-apikey` or custom providers, which connect directly to their respective API
-endpoints without public ChatGPT channel queueing.
+healthy.
+
+Eligible streaming turns dial the ChatGPT websocket transport — the same `responses_websockets`
+lane Codex CLI defaults to — and fall back to SSE over HTTP when a turn is not eligible: an
+unsupported Bun runtime, an oversized `response.create` frame, or a proxy route that cannot carry
+the socket. Local provider pacing can also hold a request before it is dispatched at all. So a slow
+first output has several possible contributors, and upstream queueing is only one of them. `ocx
+doctor` classifies configuration and measures none of these: compare actual transport, pacing,
+network, and provider observations before concluding. This routing behavior is specific to
+ChatGPT-login routing and does not apply to `openai-apikey` or custom providers, which connect
+directly to their respective API endpoints without public ChatGPT channel queueing.
 
 `service_tier: priority` is a request preference. On the ChatGPT backend the echoed
 `service_tier` cannot confirm or deny the granted tier: turns scheduled as priority can still
 echo `default`, so request logs show the response tier as an observation with confirmation
-`assumed`. For latency-sensitive work, choose a provider with a shorter observed queue or run
-Codex natively when the native app channel is required.
+`assumed`. For latency-sensitive work, compare observed first-output times across the providers you
+actually use rather than assuming any particular channel is faster.
 
 The proxy listens on port `10100` by default and serves `POST /v1/responses`,
 `POST /v1/responses/compact`, `POST /v1/images/generations`, `POST /v1/images/edits`,
