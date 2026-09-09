@@ -102,7 +102,7 @@ import {
 } from "../../lib/errors";
 import { injectionDebugLog } from "../../lib/injection-debug-log";
 import { resolveClientRetryAfter } from "../../lib/retry-after";
-import { enrichOpenCodeZenRateLimitMessage } from "../../providers/opencode-zen-rate-limit";
+import { enrichOpenCodeZenUpstreamMessage } from "../../providers/opencode-zen-rate-limit";
 import { CODE_MODE_EXEC_TOOL_NAME, modelInList, namespacedToolName } from "../../types";
 import type {
   AdapterEvent,
@@ -7497,7 +7497,7 @@ async function handleResponsesInner(
       const message = normalized.cyberPolicy
         ? normalized.message
           ?? (isCyberPolicyCode(normalized.code) ? CYBER_POLICY_FALLBACK_MESSAGE : normalized.safeText)
-        : enrichOpenCodeZenRateLimitMessage(
+        : enrichOpenCodeZenUpstreamMessage(
           `Provider error ${upstreamResponse.status}: ${normalized.safeText}`,
           {
             status: upstreamResponse.status,
@@ -7508,7 +7508,7 @@ async function handleResponsesInner(
             hasApiKey: Boolean(route.provider.apiKey?.trim()),
             upstreamRetryAfter,
             // This recovery path is the HTTP Responses wire; custom runTurn transports
-            // never reach enrichOpenCodeZenRateLimitMessage here.
+            // never reach enrichOpenCodeZenUpstreamMessage here.
             supportsHttpSameKeyRetry: true,
           },
         );
