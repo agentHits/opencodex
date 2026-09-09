@@ -233,6 +233,9 @@ describe("main quota policy at native admission", () => {
       } else {
         expect(result.firstAdmission).toEqual({ admitted: false, error: "CodexMainProfileDrainingError" });
         expect(result.settled.status).toBe("ready");
+        // Every owned startup reads the pinned file before it can accept or reject a binding, so
+        // policyReadsPinned above cannot pass on an empty read list.
+        expect(result.after.tokenReads).toBeGreaterThan(0);
       }
       if (unowned || unverified) {
         expect(result.after).toMatchObject({ matched: false, policy: null });
