@@ -97,7 +97,8 @@ including dispatch overrides and adapter/sidecar retries. `fetchWithHeaderTimeou
 legacy final argument for callers but no longer permits default-follow sends. Both same-origin
 and cross-origin redirects remain observable responses: retry helpers must not synthesize a 502
 before the owning route can apply its existing response and health policy. Native Responses and
-compact retain their 3xx/Location relay contract. This server policy does not govern client-side
+compact retain their 3xx/Location relay contract; image and search sidecar owners consume 3xx
+through their existing upstream-error path without relaying Location. This server policy does not govern client-side
 redirect following; providers requiring a redirect must be configured with their final API URL.
 
 ### Fetch-helper import boundary

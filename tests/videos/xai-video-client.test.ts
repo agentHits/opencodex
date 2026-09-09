@@ -34,7 +34,7 @@ for (const phase of ["submit", "poll"] as const) test.each([307, 308])(`video ${
     expect(targetHits).toBe(0);
     expect(originHits).toBe(1);
     expect(error).toBeInstanceOf(Error);
-    expect(error.status).toBe(status);
+    expect(error).toMatchObject({ status });
   } finally {
     await origin.stop(true);
     await target.stop(true);

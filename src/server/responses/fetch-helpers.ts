@@ -170,6 +170,10 @@ export function storedPoolReplayDispatchNotifier(
   }) as ProviderFetch;
 }
 
+/**
+ * Fetch through the header deadline with redirects always manual.
+ * @param _manualRedirect Ignored; retained for call compatibility. Even false uses manual.
+ */
 export async function fetchWithHeaderTimeout(
   url: string,
   init: Omit<RequestInit, "signal">,
