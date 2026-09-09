@@ -1,7 +1,7 @@
 import { getCodexAccountHealthSnapshot, type CodexCooldownSource } from "../codex/routing";
 import { getAnthropicAccountHealthSnapshot } from "./anthropic-routing";
 import { isAccountNeedsReauth } from "../codex/account-runtime-state";
-import { getCodexAccountCredential, listCodexAccountIds } from "../codex/account-store";
+import { getCodexAccountCredential, listCodexAccountIds, readCodexAccountRecord } from "../codex/account-store";
 import { MAIN_CODEX_ACCOUNT_ID } from "../codex/main-account";
 import { readRuntimePort } from "../config/process-state";
 import { LOCAL_MANAGEMENT_READ_PATHS } from "../lib/local-management-capability";
@@ -200,13 +200,36 @@ export function projectCodexAccountHealth(input: {
 }): OAuthAccountHealth {
   const now = input.now ?? Date.now();
   const snap = getCodexAccountHealthSnapshot(input.accountId, now);
+  // A persisted terminal verdict outranks the in-memory reauth flag rather than duplicating it:
+  // the flag lives in this process and a revoked grant does not. Without this read, an account
+  // whose grant was revoked upstream keeps its login-time `lastCodexValidationStatus: "ok"` and
+  // every surface reports it healthy until someone tries to use it (#4120). Only a re-login
+  // clears the marker, so `reauth_required` is the accurate projection — and it is deliberately
+  // checked ahead of any cooldown, because telling an operator to wait out a rate limit on a
+  // credential that will never work again is a false promise.
+  const needsReauth = input.needsReauth || hasTerminalCodexValidationFailure(input.accountId);
   return projectOAuthAccountHealth({
-    needsReauth: input.needsReauth,
-    reauthReason: input.needsReauth ? "refresh_failed" : undefined,
+    needsReauth,
+    reauthReason: needsReauth ? "refresh_failed" : undefined,
     cooldownUntilMs: snap?.cooldownUntil,
     cooldownReason: cooldownReasonFromSource(snap?.cooldownSource),
     now,
   });
+}
+
+/**
+ * True when the stored pool record carries a terminal validation verdict — the refresh grant was
+ * revoked or expired, so no retry recovers it. The main account has no record in the pool store,
+ * so it never matches.
+ */
+function hasTerminalCodexValidationFailure(accountId: string): boolean {
+  // The main account lives in the native Codex auth file, not the pool store, so a lookup could
+  // only ever miss — and each lookup re-reads and re-hardens the whole store file.
+  if (accountId === MAIN_CODEX_ACCOUNT_ID) return false;
+  const record = readCodexAccountRecord(accountId);
+  return record?.deletedAt == null
+    && record?.lastCodexValidationTerminal === true
+    && record?.lastCodexValidationStatus === "failed";
 }
 
 /**
@@ -272,13 +295,11 @@ function collectLocalCodexEntries(now: number): OAuthHealthEntry[] {
     const hasPoolCredential = accountId !== MAIN_CODEX_ACCOUNT_ID && getCodexAccountCredential(accountId) !== null;
     if (!hasPoolCredential && !needsReauth && !snap) continue;
 
-    const health = projectOAuthAccountHealth({
-      needsReauth,
-      reauthReason: needsReauth ? "refresh_failed" : undefined,
-      cooldownUntilMs: snap?.cooldownUntil,
-      cooldownReason: cooldownReasonFromSource(snap?.cooldownSource),
-      now,
-    });
+    // Call the projector rather than inlining a second copy of it. This collector serves the CLI
+    // (`ocx status`, `ocx doctor`) while the dashboard DTO goes through projectCodexAccountHealth,
+    // and the duplicated body is exactly how the CLI would have kept reporting a revoked account
+    // as healthy after the dashboard stopped.
+    const health = projectCodexAccountHealth({ accountId, needsReauth, now });
     pushEntry(entries, "codex", accountId, health);
   }
   return entries;
