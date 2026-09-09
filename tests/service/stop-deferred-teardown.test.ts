@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProxyOwnershipRefusedError, stopProxyGracefully, type GracefulStopIo } from "../../src/lib/process-control";
+import { stopProxyGracefully } from "../../src/lib/process-control";
 import { performStopTeardown } from "../../src/server/stop-teardown";
 import type { CodexNativeRestoreResult } from "../../src/codex/inject";
 import { STOP_HISTORY_INCOMPLETE_EXIT_CODE } from "../../src/update/stop-contract.mjs";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
-import { repoPath } from "../helpers/repo-root";
+import { fixturePath, repoPath } from "../helpers/repo-root";
 
 /**
  * Behavioural cover for the deferred shared teardown (#3008).
@@ -48,90 +49,26 @@ function restoreResult(success: boolean): CodexNativeRestoreResult {
   } as unknown as CodexNativeRestoreResult;
 }
 
-/** Execute current function bodies with I/O dependencies, without importing the CLI dispatcher. */
-function functionSlice(source: string, start: string, end: string): string {
-  const from = source.indexOf(start);
-  const to = source.indexOf(end, from);
-  if (from < 0 || to <= from) throw new Error(`missing function boundary: ${start}`);
-  return source.slice(from, to);
-}
-
 async function runParentStop(options: { receipt: boolean; response: unknown; restore: CodexNativeRestoreResult; status?: number }) {
-  const receipts = await import("../../src/config/pending-teardown");
-  const cli = readFileSync(repoPath("src", "cli", "index.ts"), "utf8");
-  const control = readFileSync(repoPath("src", "lib", "process-control.ts"), "utf8");
-  const transpiler = new Bun.Transpiler({ loader: "ts" });
-  const calls = { killed: 0, native: 0, grok: 0, cleared: 0, exited: 0 };
-  const urls: string[] = [];
-  const stopResults: boolean[] = [];
-  let nonce: string | undefined;
-  const processState = { exitCode: 0 };
-  const unused = () => { throw new Error("unexpected external I/O in parent stop fixture"); };
-  const stopDependencies = {
-    stopProxyGracefully,
-    ProxyOwnershipRefusedError,
-    // The 409 fixture has no message; the imported helper reports null for that body.
-    lastRefusalMessage: null,
-    isProcessAlive: () => true,
-    readRuntimePort: () => ENDPOINT,
-    killProxy: () => { calls.killed += 1; },
-    waitForStoppedPort: async () => {},
+  const child = spawnSync(process.execPath, [fixturePath("parent-stop-runner.ts")], {
+    cwd: repoPath(),
+    env: { ...process.env, OPENCODEX_HOME: home },
+    input: JSON.stringify(options),
+    encoding: "utf8",
+    timeout: 20_000,
+    windowsHide: true,
+  });
+  expect(child.error, child.stderr).toBeUndefined();
+  expect(child.signal, child.stderr).toBeNull();
+  const reportPath = join(home, "parent-stop-result.json");
+  expect(existsSync(reportPath), child.stderr).toBe(true);
+  const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+    calls: { killed: number; native: number; grok: number; cleared: number; exited: number };
+    urls: string[]; nonce?: string; receiptExists: boolean; unexpectedIo: string[];
   };
-  const stopBody = functionSlice(control, "async function stopProxy(", "/** After stop/kill,");
-  const stop = new Function(...Object.keys(stopDependencies),
-    `${transpiler.transformSync(stopBody)}; return stopProxy;`)(...Object.values(stopDependencies)) as (
-      pid: number, io: GracefulStopIo
-    ) => Promise<boolean>;
-  const dependencies = {
-    process: processState,
-    console: { log() {}, warn() {}, error() {} },
-    ProxyOwnershipRefusedError,
-    STOP_HISTORY_INCOMPLETE_EXIT_CODE,
-    loadConfig: unused,
-    listPendingTeardowns: receipts.listPendingTeardowns,
-    isPendingTeardownAbandoned: unused,
-    isProcessAlive: unused,
-    claimPendingTeardown: (...args: Parameters<typeof receipts.claimPendingTeardown>) => {
-      if (!options.receipt) throw new Error("receipt storage unavailable");
-      const claimed = receipts.claimPendingTeardown(...args);
-      nonce = claimed.nonce;
-      return claimed;
-    },
-    stopServiceIfInstalledDetailed: () => "absent",
-    isServiceOwnershipError: () => false,
-    readPid: () => 4242,
-    readRuntimePort: () => ENDPOINT,
-    stopProxy: async (pid: number, io: GracefulStopIo) => {
-      const result = await stop(pid, {
-        ...io,
-        fetchFn: (async (url: string | URL | Request) => {
-          urls.push(String(url));
-          return new Response(JSON.stringify(options.response), { status: options.status ?? 200 });
-        }) as typeof fetch,
-        waitExit: () => { calls.exited += 1; return true; },
-        exitTimeoutMs: 1,
-        env: { OPENCODEX_HOME: home },
-      });
-      stopResults.push(result);
-      return result;
-    },
-    removePid() {},
-    removeRuntimePort() {},
-    revertSystemEnv() {},
-    findLiveProxy: unused,
-    proxyStillLiveAfterStop: unused,
-    clearPendingTeardown: (value: string) => { calls.cleared += 1; return receipts.clearPendingTeardown(value); },
-    pendingTeardownPathFor: receipts.pendingTeardownPathFor,
-    quarantinePendingTeardown: unused,
-    restoreNativeCodexAsync: async () => { calls.native += 1; return options.restore; },
-    stripGrokConfig: () => { calls.grok += 1; return { ok: true, changed: true, message: "Grok restored" }; },
-  };
-  const handlers = functionSlice(cli, "async function restoreSharedClientStateAfterStop(", "async function handleUninstall(");
-  const handleStop = new Function(...Object.keys(dependencies),
-    `${transpiler.transformSync(handlers)}; return handleStop;`)(...Object.values(dependencies)) as () => Promise<boolean>;
-  const result = await handleStop();
-  return { result, calls, urls, stopResults, nonce, exitCode: processState.exitCode,
-    receiptExists: nonce !== undefined && existsSync(receipts.pendingTeardownPathFor(nonce)) };
+  expect(report.unexpectedIo, child.stderr).toEqual([]);
+  expect(report.urls, child.stderr).toHaveLength(1);
+  return { ...report, exitCode: child.status, stderr: child.stderr };
 }
 
 describe("parent CLI shared teardown completion", () => {
@@ -140,26 +77,21 @@ describe("parent CLI shared teardown completion", () => {
       response: { success: false, sharedTeardown: "performed" }, restore: restoreResult(true) });
     expect(outcome.urls).toEqual(["http://127.0.0.1:10100/api/stop"]);
     expect(outcome.calls).toMatchObject({ killed: 0, exited: 1, native: 1, grok: 1, cleared: 0 });
-    expect(outcome.stopResults).toEqual([false]);
-    expect(outcome.result).toBe(true);
     expect(outcome.exitCode).toBe(0);
   });
 
   test("a confirmed performed teardown prevents duplicate parent restoration", async () => {
     const outcome = await runParentStop({ receipt: false,
       response: { success: true, sharedTeardown: "performed" }, restore: restoreResult(true) });
-    expect(outcome.stopResults).toEqual([true]);
     expect(outcome.calls).toMatchObject({ killed: 0, native: 0, grok: 0 });
-    expect(outcome.result).toBe(true);
+    expect(outcome.exitCode).toBe(0);
   });
 
   test("a failed parent restoration leaves its actual receipt outstanding", async () => {
     const outcome = await runParentStop({ receipt: true,
       response: { success: false, sharedTeardown: "performed" }, restore: restoreResult(false) });
     expect(outcome.urls[0]).toContain(`teardownNonce=${outcome.nonce}`);
-    expect(outcome.stopResults).toEqual([false]);
     expect(outcome.calls).toMatchObject({ killed: 0, native: 1, grok: 1, cleared: 0 });
-    expect(outcome.result).toBe(false);
     expect(outcome.exitCode).toBe(1);
     expect(outcome.receiptExists).toBe(true);
   });
@@ -167,9 +99,8 @@ describe("parent CLI shared teardown completion", () => {
   test("confirmed deferral leaves restoration and receipt discharge to the parent", async () => {
     const outcome = await runParentStop({ receipt: true,
       response: { success: true, sharedTeardown: "deferred" }, restore: restoreResult(true) });
-    expect(outcome.stopResults).toEqual([true]);
     expect(outcome.calls).toMatchObject({ killed: 0, native: 1, grok: 1, cleared: 1 });
-    expect(outcome.result).toBe(true);
+    expect(outcome.exitCode).toBe(0);
     expect(outcome.receiptExists).toBe(false);
   });
 
@@ -180,18 +111,17 @@ describe("parent CLI shared teardown completion", () => {
     const outcome = await runParentStop({ receipt: true,
       response: { success: false, sharedTeardown: "performed" }, restore });
     expect(outcome.calls).toMatchObject({ killed: 0, native: 1, grok: 1, cleared: 1 });
-    expect(outcome.result).toBe(true);
     expect(outcome.exitCode).toBe(STOP_HISTORY_INCOMPLETE_EXIT_CODE);
     expect(outcome.receiptExists).toBe(false);
   });
 
   test("a refused stop keeps the parent from restoring or discharging its receipt", async () => {
     const outcome = await runParentStop({ receipt: true, status: 409,
-      response: { success: false }, restore: restoreResult(true) });
+      response: { success: false, message: "Run the stop outside the installed service." }, restore: restoreResult(true) });
     expect(outcome.calls).toMatchObject({ killed: 0, exited: 0, native: 0, grok: 0, cleared: 0 });
-    expect(outcome.result).toBe(false);
     expect(outcome.exitCode).toBe(1);
     expect(outcome.receiptExists).toBe(true);
+    expect(outcome.stderr).toContain("Run the stop outside the installed service.");
   });
 });
 
