@@ -273,14 +273,15 @@ class BridgeStreamState {
 
   /** Per-leg upstream output_index -> client output_index. */
   private indexMap = new Map<number, number>();
-  private suppressedIndexes = new Set<number>();
+  /** Upstream output_index -> the intercepted call that owns it, so parallel calls stay distinct. */
+  private suppressedSearches = new Map<number, InterceptedSearchCall>();
   private searches: InterceptedSearchCall[] = [];
   private sawOtherClientCall = false;
   private terminalBlock: { block: string; delimiter: string; payload: Record<string, unknown> } | undefined;
 
   beginLeg(): void {
     this.indexMap = new Map();
-    this.suppressedIndexes = new Set();
+    this.suppressedSearches = new Map();
     this.searches = [];
     this.sawOtherClientCall = false;
     this.terminalBlock = undefined;
@@ -384,28 +385,28 @@ class BridgeStreamState {
     if (payload.type === "response.output_item.added" && upstreamIndex !== undefined) {
       if (isWebSearchCallItem(payload.item)) {
         const item = payload.item as Record<string, unknown>;
-        this.suppressedIndexes.add(upstreamIndex);
-        this.searches.push({
+        const intercepted: InterceptedSearchCall = {
           callId: typeof item.call_id === "string" ? item.call_id : "",
           itemId: typeof item.id === "string" ? item.id : undefined,
           argumentsText: typeof item.arguments === "string" ? item.arguments : "",
-        });
+        };
+        this.suppressedSearches.set(upstreamIndex, intercepted);
+        this.searches.push(intercepted);
         return [];
       }
       if (isClientExecutedItem(payload.item)) this.sawOtherClientCall = true;
     }
 
-    if (upstreamIndex !== undefined && this.suppressedIndexes.has(upstreamIndex)) {
+    const pending = upstreamIndex === undefined ? undefined : this.suppressedSearches.get(upstreamIndex);
+    if (pending) {
       // Argument deltas and the matching done frame belong to a call the client never sees;
       // the done frame still carries the authoritative complete arguments.
       if (payload.type === "response.output_item.done" && isRecord(payload.item)) {
         const args = payload.item.arguments;
-        const pending = this.searches[this.searches.length - 1];
-        if (pending && typeof args === "string" && args.length > 0) pending.argumentsText = args;
+        if (typeof args === "string" && args.length > 0) pending.argumentsText = args;
       }
       if (payload.type === "response.function_call_arguments.done" && typeof payload.arguments === "string") {
-        const pending = this.searches[this.searches.length - 1];
-        if (pending && payload.arguments.length > 0) pending.argumentsText = payload.arguments;
+        if (payload.arguments.length > 0) pending.argumentsText = payload.arguments;
       }
       return [];
     }
