@@ -424,7 +424,7 @@ import {
 } from "../responses-undeclared-tool-guard";
 import { createGithubCopilotResponsesBlockRewrite } from "../github-copilot-responses-repair";
 import { responsesJsonToSseStream } from "../responses-json-events";
-import { streamingContextOverflowResponse } from "./context-overflow";
+import { jsonContextOverflowResponse, streamingContextOverflowResponse } from "./context-overflow";
 import { guardTerminalEventStream } from "./terminal-guard";
 import {
   emptyCompletionRetryEnabled,
@@ -2987,6 +2987,11 @@ export async function handleComboResponses(
     const failureDecision = comboFailureDecision(failure.response.status, failure.classificationText, {
       code: failure.upstreamCode,
     });
+    const wantsStream = (rawBody as { stream?: unknown } | null)?.stream === true;
+    // Local byte admission has its own diagnostic; do not relabel it as an upstream refusal.
+    const classifyOverflow = failure.response.status === 413
+      && (wantsStream || (failure.upstreamCode !== "outbound_body_too_large"
+        && failure.upstreamCode !== "translation_buffer_limit"));
     if (storedPool401ReplayDispatched) {
       if (failureDecision === "hop" && unreadableEncryptedAgentTask && !comboPayloadReadable) {
         const recoveredTarget = await pickWithWait({
@@ -3011,15 +3016,19 @@ export async function handleComboResponses(
       // Keep the spent Pool budget sticky even after a recovered routed child:
       // no later failure may reopen ordinary combo/native account hopping.
       adoptFailedChildLog(childLog);
+      if (classifyOverflow && failureDecision === "stop") {
+        return wantsStream
+          ? streamingContextOverflowResponse(requestedModel, options.translatorBudget)
+          : jsonContextOverflowResponse();
+      }
       return lastFailure;
     }
     if (failureDecision === "stop") {
       adoptFailedChildLog(childLog);
-      if (
-        failure.response.status === 413
-        && (rawBody as { stream?: unknown } | null)?.stream === true
-      ) {
-        return streamingContextOverflowResponse(requestedModel, options.translatorBudget);
+      if (classifyOverflow) {
+        return wantsStream
+          ? streamingContextOverflowResponse(requestedModel, options.translatorBudget)
+          : jsonContextOverflowResponse();
       }
       return lastFailure;
     }
@@ -5701,7 +5710,8 @@ async function handleResponsesInner(
 
     // Non-2xx passthrough failures must never reach Codex as an empty body —
     // Codex renders that as the opaque "Unknown error" (#452). Combo attempts
-    // keep their typed failure envelope. Non-empty bodies are relayed verbatim
+    // keep their typed failure envelope. Except for the classified 413 below,
+    // non-empty bodies are relayed verbatim
     // (headers included) so pool-retry Activation B/D and client diagnostics stay intact.
     // Manual-redirect policy (#914): a 3xx is relayed as-is (Location preserved
     // through sanitizePassthroughHeaders) so a redirect to a dead host can never
@@ -5729,11 +5739,10 @@ async function handleResponsesInner(
       // The bounded reader owns the original body, deadline, abort settlement, and lock.
       // Unsafe partial data falls back to #452's non-empty status-only JSON.
       const errorText = await readDisplaySafeErrorText(upstreamResponse, upstream.signal, "");
-      if (upstreamResponse.status === 413 && clientRequestedStream) {
-        return streamingContextOverflowResponse(
-          parsed._responseModelId ?? parsed.modelId,
-          translatorBudget,
-        );
+      if (upstreamResponse.status === 413) {
+        return clientRequestedStream
+          ? streamingContextOverflowResponse(parsed._responseModelId ?? parsed.modelId, translatorBudget)
+          : jsonContextOverflowResponse();
       }
       return formatPassthroughUpstreamError(upstreamResponse.status, errorText, {
         statusText: upstreamResponse.statusText,
@@ -7465,11 +7474,10 @@ async function handleResponsesInner(
       } finally {
         cleanupUpstreamAbort();
       }
-      if (upstreamResponse.status === 413 && clientRequestedStream && !options.comboAttempt) {
-        return streamingContextOverflowResponse(
-          parsed._responseModelId ?? parsed.modelId,
-          translatorBudget,
-        );
+      if (upstreamResponse.status === 413) {
+        return clientRequestedStream
+          ? streamingContextOverflowResponse(parsed._responseModelId ?? parsed.modelId, translatorBudget)
+          : jsonContextOverflowResponse();
       }
       if (!isFixedCodexAccount(authCtx)) {
         recordSubagentQuotaFailureForThreadSpawn(

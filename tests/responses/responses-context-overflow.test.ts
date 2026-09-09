@@ -117,16 +117,45 @@ describe("Responses provider input overflow", () => {
     }
   });
 
-  test("non-streaming callers retain the upstream 413 status and body", async () => {
+  test.each(["openai-responses", "openai-chat", "anthropic"] as const)("non-streaming %s preserves HTTP 413 with a safe context classification", async adapter => {
     const upstream = upstream413();
-    saveConfig(config({ target: provider("openai-responses", upstream) }));
+    saveConfig(config({ target: provider(adapter, upstream) }));
     const server = startServer(0);
     try {
       const response = await request(String(server.url), "target/kimi-k3", false);
       expect(response.status).toBe(413);
+      expect(response.headers.get("content-type")).toContain("application/json");
       expect(await response.json()).toEqual({
-        detail: "request body too large; echoed private request marker should-not-reach-client",
+        error: {
+          message: PROVIDER_INPUT_TOO_LARGE_MESSAGE,
+          type: "invalid_request_error",
+          code: "context_length_exceeded",
+        },
       });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test.each(["openai-responses", "openai-chat"] as const)("routed %s compaction preserves the classified 413 without replay", async adapter => {
+    let hits = 0;
+    const upstream = upstream413(() => { hits += 1; });
+    saveConfig(config({ target: provider(adapter, upstream) }));
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/v1/responses/compact", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "target/kimi-k3", input: [{ role: "user", content: "summarize this history" }] }),
+      });
+      expect(response.status).toBe(413);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(await response.json()).toEqual({ error: {
+        message: PROVIDER_INPUT_TOO_LARGE_MESSAGE,
+        type: "invalid_request_error",
+        code: "context_length_exceeded",
+      } });
+      expect(hits).toBe(1);
     } finally {
       await server.stop(true);
     }
@@ -199,7 +228,7 @@ describe("Responses provider input overflow", () => {
     }
   });
 
-  test("a combo stops on 413 and does not dispatch a second oversized target", async () => {
+  test.each([true, false])("a combo stops on 413 without dispatching a second target (stream=%s)", async stream => {
     let firstHits = 0;
     let secondHits = 0;
     const first = upstream413(() => { firstHits += 1; });
@@ -220,8 +249,19 @@ describe("Responses provider input overflow", () => {
     saveConfig(next);
     const server = startServer(0);
     try {
-      const failed = await responseFailed(await request(String(server.url), "combo/fallback", true));
-      expect((failed.error as { code?: string }).code).toBe("context_length_exceeded");
+      const response = await request(String(server.url), "combo/fallback", stream);
+      if (stream) {
+        const failed = await responseFailed(response);
+        expect((failed.error as { code?: string }).code).toBe("context_length_exceeded");
+      } else {
+        expect(response.status).toBe(413);
+        expect(response.headers.get("content-type")).toContain("application/json");
+        expect(await response.json()).toEqual({ error: {
+          message: PROVIDER_INPUT_TOO_LARGE_MESSAGE,
+          type: "invalid_request_error",
+          code: "context_length_exceeded",
+        } });
+      }
       expect(firstHits).toBe(1);
       expect(secondHits).toBe(0);
     } finally {
