@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { clearCachedProviderQuotas, setCachedProviderQuotaForTests } from "../../src/providers/quota-routing-cache";
 import { quotaInactiveReason } from "../../src/combos/resolve";
-import { CATALOG_INACTIVE_REASON_FIELD, deriveEntry } from "../../src/codex/catalog/sync";
+import { buildCatalogEntries, CATALOG_INACTIVE_REASON_FIELD, deriveEntry } from "../../src/codex/catalog/sync";
 import type { RawEntry } from "../../src/codex/catalog/parsing";
 import type { OcxConfig } from "../../src/types";
 import type { ProviderQuota } from "../../src/providers/quota";
@@ -144,5 +144,33 @@ describe("quota-inactive catalog rows (#1711)", () => {
       expect(entry.visibility).toBe("list");
       expect(Object.hasOwn(entry, CATALOG_INACTIVE_REASON_FIELD)).toBe(false);
     }
+  });
+
+  test("a seeded quota reaches the built catalog entry, still listed", () => {
+    // The whole path in one case: seed the routing cache, let the predicate read it, carry the
+    // result on the CatalogModel, and build the served entries. The unit cases above would all
+    // stay green if a refactor moved the stamp out of the entry builder, and this one would not.
+    setCachedProviderQuotaForTests("alpha", exhausted());
+    setCachedProviderQuotaForTests("beta", funded());
+    const models = [
+      { id: "model-x", provider: "alpha" },
+      { id: "model-y", provider: "beta" },
+    ].map(model => {
+      const reason = quotaInactiveReason(config(), [{ provider: model.provider }], NOW);
+      return reason ? { ...model, quotaInactiveReason: reason } : model;
+    });
+
+    const entries = buildCatalogEntries(null, [], models);
+    const bySlug = new Map(entries.map(entry => [entry.slug as string, entry]));
+    const exhaustedRow = bySlug.get("alpha/model-x")!;
+    const fundedRow = bySlug.get("beta/model-y")!;
+
+    // Present, listed, and marked — the row is still offered, which is the issue's requirement.
+    expect(exhaustedRow).toBeDefined();
+    expect(exhaustedRow.visibility).toBe("list");
+    expect(exhaustedRow[CATALOG_INACTIVE_REASON_FIELD]).toBe("no_credit");
+    // The funded provider's row is untouched, so the marker is per-row rather than catalog-wide.
+    expect(fundedRow.visibility).toBe("list");
+    expect(Object.hasOwn(fundedRow, CATALOG_INACTIVE_REASON_FIELD)).toBe(false);
   });
 });
