@@ -89,6 +89,28 @@ describe("#4202 install-tree dependency ownership", () => {
     expect(verifyInstallTree(packageDir, "2.0.0")).toEqual({ ok: true, failures: [] });
   });
 
+  test("a half-extracted Bun directory is size-gated even when Bun is not a sentinel", () => {
+    // Sentinels are the bun/zod subset when it is non-empty, so a manifest that declares
+    // zod but not bun leaves bun out of the sentinel loop entirely. The size gate has to
+    // key on the directory, as it did before the pnpm carry, or a truncated binary with no
+    // package.json rides through and the tree is called healthy.
+    const packageDir = join(root, "lib", "node_modules", ...PKG.split("/"));
+    mkdirSync(join(packageDir, "bin"), { recursive: true });
+    writeFileSync(join(packageDir, "package.json"), JSON.stringify({
+      name: PKG, version: "2.0.0", dependencies: { zod: "1" },
+    }));
+    writeFileSync(join(packageDir, "bin", "ocx.mjs"), "#!/usr/bin/env node\n" + "x".repeat(2048));
+    writeDependency(join(packageDir, "node_modules", "zod"), "zod");
+    // Interrupted extraction: the binary landed, the manifest did not.
+    mkdirSync(join(packageDir, "node_modules", "bun"), { recursive: true });
+    writeFileSync(join(packageDir, "node_modules", "bun", "bun.exe"), Buffer.alloc(1024));
+
+    const result = verifyInstallTree(packageDir, "2.0.0");
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain("bundled Bun binary missing or truncated (< 10MB)");
+  });
+
   test("boot restore keeps the backup when the live tree only resolves through an ancestor", () => {
     // Live tree in a global npm layout, its dependencies supplied only by the sibling install.
     const globalRoot = join(root, "lib", "node_modules");

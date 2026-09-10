@@ -33,6 +33,17 @@ function candidateTreeDependencyDir(packageDir, name) {
   return existsSync(join(dir, "package.json")) ? dir : undefined;
 }
 
+/**
+ * The candidate's own bun directory, whether or not it carries a readable package.json.
+ * The size gate keys on the DIRECTORY, matching the pre-carry verifier: a half-extracted
+ * node_modules/bun holding a truncated binary and no manifest is still a broken tree, and
+ * bun is not always among the sentinels, so the sentinel loop cannot be relied on to catch it.
+ */
+function ownTreeBunDir(packageDir) {
+  const dir = join(packageDir, "node_modules", "bun");
+  return existsSync(dir) ? dir : undefined;
+}
+
 /** The node_modules directory a package sits directly inside, or undefined. */
 function enclosingNodeModules(packageDir) {
   const parent = dirname(packageDir);
@@ -108,7 +119,7 @@ function verifyTreeWithDependencyLookup(packageDir, expectedVersion, dependencyD
   // The bundled Bun binary is the load-bearing artifact: without it the launcher exits
   // before serving anything, and a boot probe that called this tree healthy would reap
   // the only backup (review High 3). Size-gate the real binary, not just its package.json.
-  const bunPkgDir = dependencyDir(packageDir, "bun");
+  const bunPkgDir = dependencyDir(packageDir, "bun") ?? ownTreeBunDir(packageDir);
   if (bunPkgDir) {
     const bunBinary = findLargestFile(bunPkgDir);
     if (!bunBinary || bunBinary.size < 10 * 1024 * 1024) {
