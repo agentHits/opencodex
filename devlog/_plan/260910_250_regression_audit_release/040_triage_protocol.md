@@ -5,9 +5,11 @@ wp2 returns six lane reports. This is how they become a release decision.
 ## 1. Normalize
 
 Each lane return is split into individual findings. A finding is only admitted with an
-exact `path:line` anchor or a literal command and its output. An unanchored assertion is
-recorded as **unsubstantiated** and re-derived by the main session or dropped; it never
-blocks and it never passes silently.
+exact `path:line` anchor or a literal command and its output. An unanchored or misanchored
+assertion is recorded as **unsubstantiated** and the main session **must** re-derive it
+against the tree. Dropping it undecided is not an option: a real blocker described with a
+wrong line number is still a real blocker, and the anchor rule exists to make triage cheap,
+not to discard findings.
 
 Findings from different lanes that name the same defect are merged, keeping every anchor.
 
@@ -20,11 +22,20 @@ exactly one disposition.
 | --- | --- | --- |
 | `BLOCK` | Matches a blocker clause | Must be fixed and landed on `dev` before promotion |
 | `SHIP` | Real but does not match a clause | Recorded here, filed as an issue if it deserves one, released as is |
-| `PRE-EXISTING` | Present in `2f3f73629` as well | Not this release's problem; prove it with a command against the released tree |
+| `PRE-EXISTING` | The same user-visible failure was reachable on `2f3f73629` | Not this release's problem; requires the proof below |
+| `RUNTIME-CHECK` | Plausible but only decidable by running something | Must be resolved before promotion, by a targeted test, a CI job, or a reasoned rebuttal — never left as a confidence label |
 | `WRONG` | The lane misread the code | Rebutted with the anchor that disproves it |
 
-A finding is `PRE-EXISTING` only with proof: `git show 2f3f73629:<path>` showing the same
-defect, or a test that fails on the baseline. "It looks old" is not proof.
+A finding is `PRE-EXISTING` only when the **user-visible failure** was reachable on the
+baseline — not merely that some function it touches already existed. Showing that an old
+helper is unchanged proves nothing when a new caller reaches it under new conditions;
+clause 3 exists precisely for that case. Acceptable proof is byte identity of every file on
+the failure path (`git rev-parse 2f3f73629:<path>` equal to `git rev-parse origin/dev:<path>`
+for each), a test that fails on the baseline, or a baseline CI run showing the same failure.
+
+`BLOCK` may never be downgraded to `SHIP`, and it may only become `PRE-EXISTING` under the
+proof above. Weak-proof downgrade is the same evasion as reclassifying to `SHIP`, taken by a
+longer route.
 
 ## 3. Remediate
 
@@ -42,6 +53,9 @@ Landing a fix **moves the candidate**. When that happens:
 3. Re-run only the lanes whose read scope intersects the fix, not all six.
 
 ## 4. Escalate rather than weaken
+
+A `RUNTIME-CHECK` finding that cannot be resolved is treated as a `BLOCK`, not as a
+`SHIP`. An unfalsified hang or teardown risk is not evidence of safety.
 
 If a `BLOCK` cannot be fixed inside this scope — it needs a design decision, an external
 credential, or a change the user has not authorized — the release stops and the outcome is
