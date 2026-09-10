@@ -605,6 +605,8 @@ export const ja: Record<TKey, string> = {
   "models.discoveryFailedProvider": "プロバイダーがモデル検出エラーを報告しました。",
   "models.discoveryFailedGeneric": "モデル検出に失敗しました。",
   "models.openProviderSettings": "プロバイダー設定を開く",
+  "models.inactiveNoCredit": "クレジットなし",
+  "models.inactiveNoCreditHint": "このエントリの背後にあるプロバイダーはすべて現在クレジットがないため、リクエストは失敗します。一覧には残り、クレジットがリセットまたは追加されれば再び使えます。",
   "models.discoveryFailedDependency": "このプロバイダーではモデル検出が有効です。失敗が続く間は、プロバイダー設定で「{control}」をオフにすると、手動で追加したモデルや静的モデルを使えます。",
   "models.loading": "読み込み中…",
   "models.search": "モデルを検索…",

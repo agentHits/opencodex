@@ -663,6 +663,8 @@ export const tr: Record<TKey, string> = {
   "models.discoveryFailedProvider": "Sağlayıcı bir model keşfi hatası bildirdi.",
   "models.discoveryFailedGeneric": "Model keşfi başarısız oldu.",
   "models.openProviderSettings": "Sağlayıcı ayarlarını aç",
+  "models.inactiveNoCredit": "Kredi yok",
+  "models.inactiveNoCreditHint": "Bu girdinin arkasındaki tüm sağlayıcıların kredisi şu anda bitmiş durumda, bu yüzden istek başarısız olur. Girdi listede kalır ve kredi sıfırlandığında veya yüklendiğinde yeniden kullanılabilir.",
   "models.discoveryFailedDependency": "Bu sağlayıcı için model keşfi açık. Başarısız olmaya devam ettiği sürece, elle eklenen veya statik modelleri kullanmak için sağlayıcı ayarlarından „{control}“ seçeneğini kapatın.",
   "models.loading": "Yükleniyor…",
   "models.search": "Modellerde ara…",

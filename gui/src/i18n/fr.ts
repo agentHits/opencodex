@@ -661,6 +661,8 @@ export const fr: Record<TKey, string> = {
   "models.discoveryFailedProvider": "Le fournisseur a signalé une erreur de détection des modèles.",
   "models.discoveryFailedGeneric": "Échec de la détection des modèles.",
   "models.openProviderSettings": "Ouvrir les paramètres du fournisseur",
+  "models.inactiveNoCredit": "Aucun crédit",
+  "models.inactiveNoCreditHint": "Tous les fournisseurs derrière cette entrée sont à court de crédit ; une requête échouerait. L’entrée reste listée et redevient utilisable une fois le crédit réinitialisé ou rechargé.",
   "models.discoveryFailedDependency": "La découverte de modèles est activée pour ce fournisseur. Tant qu’elle échoue, désactivez « {control} » dans les paramètres du fournisseur pour utiliser à la place les modèles ajoutés manuellement ou statiques.",
   "models.loading": "Chargement…",
   "models.search": "Rechercher des modèles…",
