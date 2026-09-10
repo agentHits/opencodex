@@ -24,6 +24,9 @@ lane has to invent a maintainer policy. An item is in when the issue states the 
 no competing design is open; it is out when landing it would decide a policy the maintainer has not
 decided.
 
+Six items inside the round also left a real choice open; audit round 1 caught that and the orchestrator
+ made those calls in writing (`030_audit_round1.md`), so no lane decides policy.
+
 Excluded on purpose, with the decision that blocks each one:
 
 - #4213 — whether unknown native-surface endpoints are forwarded upstream or keep returning 404 is a
