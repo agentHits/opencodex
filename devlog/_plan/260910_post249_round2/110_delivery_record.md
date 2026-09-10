@@ -19,12 +19,12 @@ Append-only. One row per deliverable, filled when it actually lands on `dev`.
 | roadmap | — | #4155 | `3b9fab90e` | green | `a7509fe00` | — |
 | A1 | #4129 | #4157 | `421aea87a` | green | `4498fb910` | yes |
 | A2 | #4148 | #4161 | `799330bcf` | green | `5b8f1fcfa` | yes |
-| A3 | #4141 | — | | | | in progress, #4152 landed |
-| B1 | #3666 | #4156 | `3ff57ce49` | held | | |
-| B2 | #4075 | #4158 | `3dc7bd19b` | held | | |
+| A3 | #4141 | #4164 | `ae057c421` | green | `95a3f6a59` | yes |
+| B1 | #3666 | #4156 | `db846c65d` | 23 green, gate red | | |
+| B2 | #4075 | #4158 | `3dc7bd19b` | 23 green, gate red | | |
 | B3 | #3859 | #4160 | `c8a734cd0` | green | `8a5cfd366` | yes |
-| B4 | #1711 | — | | | | awaiting decision |
-| B5 | #4038 | — | | | | awaiting decision |
+| B4 | #1711 | #4165 | `5c3e7e7ff` | 23 green, gate red | | |
+| B5 | #4038 | #4166 | `d5e042c9c` | 23 green, gate red | | |
 | — | #4147 | #4153 | `abf35fa94` | green | `2ce5f381f` | yes |
 
 ### #4147 landed as the contributor's own commit
@@ -70,7 +70,53 @@ The Lane B audit (`_research/_audit_wp3.md`) passed all three diffs but found on
 real defect: `gui/src/pages/Models.tsx:1405` and `:1475` still count the group
 header and `activeCount` from the unfiltered rows, so with the free-only filter on
 the header claims more models than the list shows. The empty state at `:1681` does
-it correctly. Assigned to Lane B.
+it correctly. Fixed by Lane B; #4156 is now at `db846c65d`.
+
+### Where the round stopped, and why
+
+Lane A is complete: #4129, #4148 and #4141 are all on `dev` and closed. #4147 and
+#3859 are closed too. Five issues delivered.
+
+The remaining four — #3666, #4075, #1711, #4038 — are **code-complete and audited
+PASS**, and every one of them sits at twenty-three green checks with
+`enforce-target` as the only failure. Its message is literally
+`missing UI screenshot`.
+
+That is the whole blocker. The gate requires a screenshot of the interface change,
+producing one requires `bun run build:gui`, and this round forbids local builds. It
+is not a false positive: PR #4162, which changed nothing but documentation, tripped
+the same gate merely by quoting the trigger token in its description, and rewording
+the description made the gate pass. So on four PRs that genuinely do change the
+dashboard, the requirement is real and the maintainer has to choose between
+allowing a build for screenshots, integrating past the gate with admin rights, or
+carrying these four into a later round.
+
+#1711 and #4038 were started on the recommendations already recorded in their plan
+docs rather than waiting further, because the round's instruction was to finish the
+work. Each PR body states the contested choice: #1711 says plainly that a custom
+catalog field cannot grey out the native Codex picker, which only understands
+`list` and `hide`; #4038 names #4040 and explains that the minimum-decode-window
+guard is what answers the objection that closed it. Both are cheap to revert.
+
+### Second-round audit findings, all fixed
+
+`_research/_audit_wp3b.md` passed #4165 and #4166 and raised four items, all since
+addressed by Lane B: custom dashboard rows dropped `quotaInactiveReason` on the
+rebuild from `config.customModels`; the zero-credit test covered the helper and
+`deriveEntry` but not the gather-to-served-entry path; the Logs attempt table
+rendered only the end-to-end rate although the DTO already carried the decode rate;
+and the new field reached `/api/request-history`, which the plan had asked to keep
+out.
+
+The audit also answered the question worth asking about #4165's earlier CI failure:
+the fix filled a missing stamp on the `deriveEntry(null, …)` fallback and extended
+the new test to cover both derivation paths. No existing catalog equality was
+relaxed to make the suite pass.
+
+Fixing the last of those broke the typecheck, which is worth recording because it
+is a direct cost of this round's constraints: with local typecheck forbidden, a
+signature change is only discovered by remote CI, and the `gates` job's failing
+step has to be read out of the workflow rather than seen locally.
 
 A1 and A2 were audited again **after** they landed, against `origin/dev` rather
 than against the lane's own report. Both match the fix the plan chose, both
