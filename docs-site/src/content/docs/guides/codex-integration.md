@@ -720,6 +720,18 @@ When an account leaves pool selection, the reason travels with the decision inst
 
 A main-account refresh that does not complete still answers `503` with `Retry-After`, because a retry may still succeed. The message now adds that a failure which persists means the main account needs reauthentication, rather than only asking for another attempt.
 
+### Keeping a downgraded account out of rotation
+
+`codexPool.excludedPlans` lists plan keys that automatic pool selection skips, matched case-insensitively against the plan stored on each account. It is absent by default, so an existing install rotates exactly as before.
+
+```bash
+ocx config set codexPool '{"excludedPlans":["free"]}'
+```
+
+This is a selection policy, not a block. An excluded account keeps its credential, quota history, and thread affinity, stays visible on the account surface, and is still reachable by explicit account selection such as `work/gpt-5.4`. What changes is that automatic rotation stops choosing it, including when it is already the active account or already bound to a thread — which is the state a lapsed subscription leaves behind.
+
+Two deliberate limits. The main Codex account is never excluded by plan, because selection-only routing withholds its plan rather than reading the fenced native credential, so a rule covering it would disagree with itself. And when no unexcluded account remains, the excluded one still answers rather than failing closed; pausing every account is still the way to stop serving entirely. There is no `minimumPlan` counterpart, because ranking ChatGPT plans against each other needs a total ordering that does not exist here.
+
 ## Restoring native Codex
 
 `ocx stop` stops the proxy and any installed background service, then attempts to restore native Codex. OpenCodex removes verified routing artifacts and reports an incomplete restore when it cannot safely recover configuration files.

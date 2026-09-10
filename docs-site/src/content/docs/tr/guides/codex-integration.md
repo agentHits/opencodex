@@ -439,6 +439,18 @@ Bir hesap havuz seçiminden çıktığında neden, görüntüleme için yeniden 
 
 Tamamlanmayan bir ana hesap yenilemesi, yeniden denemede başarılı olabileceği için hâlâ `Retry-After` ile `503` yanıtı verir. Mesaj artık kalıcı bir başarısızlığın ana hesabın yeniden kimlik doğrulaması gerektirdiğini de belirtiyor.
 
+### Sürümü düşen bir hesabı rotasyondan çıkarma
+
+`codexPool.excludedPlans`, otomatik havuz seçiminin atladığı plan anahtarlarını listeler ve her hesapta saklanan planla büyük/küçük harf gözetmeden karşılaştırır. Varsayılan olarak yoktur; mevcut bir kurulum tam olarak eskisi gibi rotasyon yapar.
+
+```bash
+ocx config set codexPool '{"excludedPlans":["free"]}'
+```
+
+Bu bir engelleme değil, seçim politikasıdır. Dışarıda bırakılan hesap kimlik bilgisini, kota geçmişini ve iş parçacığı bağını korur, hesap listesinde görünmeye devam eder ve `work/gpt-5.4` gibi açık bir seçimle hâlâ erişilebilir. Değişen tek şey, otomatik rotasyonun onu artık seçmemesidir; hesap zaten etkin olsa ya da bir iş parçacığına bağlı olsa bile. Süresi dolan bir abonelik tam olarak bu durumu bırakır.
+
+İki kasıtlı sınır var. Ana Codex hesabı plana göre hiçbir zaman dışarıda bırakılmaz: yalnızca-seçim yönlendirmesi korunan yerel kimlik bilgisini okumamak için planını saklar, dolayısıyla ana hesabı kapsayan bir kural kendisiyle çelişirdi. Ayrıca dışarıda bırakılmamış hiçbir hesap kalmadığında, dışarıda bırakılan hesap başarısız olmak yerine yine yanıt verir; hizmeti tamamen durdurmak için hâlâ tüm hesapları duraklatmak gerekir. `minimumPlan` karşılığı yoktur, çünkü ChatGPT planlarını sıralamak burada bulunmayan bir tam sıralama gerektirir.
+
 ## Yerel Codex'i geri yükleme
 
 `ocx stop`, proxy'yi ve kurulu arka plan servisini durdurur, ardından yerel Codex'i geri yüklemeyi dener. OpenCodex yalnızca sahipliğini doğrulayabildiği yönlendirme öğelerini kaldırır; yapılandırma dosyaları güvenle geri yüklenemiyorsa işlemin tamamlanmadığını bildirir.

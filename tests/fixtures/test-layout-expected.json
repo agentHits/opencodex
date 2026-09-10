@@ -290,6 +290,7 @@
   "codex-native-residue.test.ts": "codex-integration",
   "codex-plan.test.ts": "codex-integration",
   "codex-plugins-doctor.test.ts": "codex-integration",
+  "codex-pool-plan-exclusion.test.ts": "codex-integration",
   "codex-pool-rotation.test.ts": "codex-integration",
   "codex-prompt-adopt.test.ts": "codex-integration",
   "codex-prompt-base-variants.test.ts": "codex-integration",
