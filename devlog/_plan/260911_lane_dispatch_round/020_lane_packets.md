@@ -72,7 +72,8 @@ Owned: `src/server/responses/core.ts`, `src/server/responses/compact.ts`,
 `src/server/responses/policy-fallback.ts`, `src/server/chat-completions.ts`,
 `src/server/claude-messages.ts`, `src/server/request-log-conversation.ts`,
 `src/server/responses-undeclared-tool-guard.ts`, `src/providers/opencode-go-transport.ts`,
-`src/types/tools.ts`. You do not own `codex-ws-exchange.ts` or `codex-ws-wire.ts` (L6) or
+`src/types/tools.ts`, and `docs-site/src/content/docs/reference/configuration/providers.md` (the page
+#4184 already edits). You do not own `codex-ws-exchange.ts` or `codex-ws-wire.ts` (L6) or
 `codex-auth-error.ts` (L3).
 
 1. **#4172 — OpenCode Go sessionless requests omit `x-opencode-session`.** Expected behaviour is
@@ -113,7 +114,8 @@ Owned: `src/codex/account-usability.ts`, `account-pause.ts`, `account-store.ts`,
 `account-runtime-state.ts`, `plan.ts`, `plan-from-token.ts`, `warmup.ts`, `model-entitlements.ts`
 (all under `src/codex/`), plus `src/server/responses/codex-auth-error.ts`,
 `src/server/management/oauth-account-routes.ts`, the single key `codexPool.excludedPlans` in
-`src/config.ts`, and `docs-site/src/content/docs/**/guides/codex-integration.md`.
+`src/config.ts`, and `docs-site/src/content/docs/guides/codex-integration.md` and its seven locale copies under
+`docs-site/src/content/docs/{fr,ja,ko,ru,tr,zh-cn,zh-tw}/guides/codex-integration.md`.
 
 1. **#4126 — a newly created ChatGPT Free account fails Codex warmup with HTTP 404.** Carry PR #4188
    by `chilung-cgu` (open **draft**, `REVIEW_REQUIRED`, reset by the readiness gate rather than
@@ -127,7 +129,9 @@ Owned: `src/codex/account-usability.ts`, `account-pause.ts`, `account-store.ts`,
 3. **#4211 — keep Free-tier accounts out of pool selection.** **Decision: ship**
    **`codexPool.excludedPlans` as an array, absent by default,** so an existing install sees no
    behaviour change. Do not ship `minimumPlan`: ranking plans needs an ordering this repository does
-   not have.
+   not have. **Decision: this round ships selection only.** If the dashboard or CLI display the issue
+   also asks for needs `src/cli/account.ts`, a GUI component, or a locale key, stop and report; write
+   `Refs #4211` rather than `Closes #4211` when the display half is not included.
 
 ## L4 — service, update, CLI, and connected client
 
@@ -152,7 +156,9 @@ Owned: directories `src/update/`, `src/cli/`, `src/client/`; files `bin/ocx.mjs`
    `docs-site/src/content/docs/reference/cli/lifecycle.md`.
 2. **#4169 — every stop refusal is reported as a `CODEX_HOME` ownership mismatch,** hiding
    `respawnable_service`. Carry PR #4170 by `yeongjunyoo` (open **draft**, `REVIEW_REQUIRED`); it
-   touches `src/cli/index.ts` and `src/lib/process-control.ts`, both yours.
+   touches `src/cli/index.ts` and `src/lib/process-control.ts`, both yours, plus its two tests
+   `tests/lib/process-control-graceful.test.ts` and `tests/providers/xai/grok-lifecycle.test.ts`,
+   which you keep.
 3. **#4204 — Windows: a stale persisted CLI 0.135.0 strips max/ultra while Desktop runs 0.153.4.**
    The clamp is `src/codex/catalog/effort.ts:441`. #4178 by `luvs01` is open, not a draft, full CI
    green, and owns `src/codex/cli-install-provenance.ts`: if it lands first, rebase onto it;
@@ -188,7 +194,10 @@ directory `src/adapters/qoder/`.
    what length and timing trigger it and where the prelude budget goes. **Decision: the only in-scope
    fix is to classify and report the timeout honestly, including the close code and the cause.** A
    configurable budget, an SSE fallback, or a size preflight comes back as a report, not a patch.
-2. **#4190 — vendor CLI agent scaffolding leaks into routed output** for `qoder`.
+2. **#4190 — vendor CLI agent scaffolding leaks into routed output** for `qoder`. **Decision: fix it
+   inside `src/adapters/qoder/` by sanitizing the vendor scaffolding out of routed output, failing
+   closed when the shape is unrecognized.** If the fix needs `src/adapters/coding-agent/protocol.ts`,
+   which no lane owns, stop and report.
 
 ## L7 — documentation
 
@@ -204,4 +213,3 @@ Owned: `docs-site/src/content/docs/guides/providers.md`,
 2. **#4200 — the remote hub guide breaks on a fresh config** (nested `ocx config set` fails when the
    parent object is absent) and has no macOS data-plane TLS example. English source first;
    translations are a follow-up.
-

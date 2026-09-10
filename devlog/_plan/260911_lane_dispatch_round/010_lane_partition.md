@@ -32,7 +32,8 @@ Collision-free PRs, touching no file any other open PR touches: #4062, #4104, #4
 `src/server/responses/compact.ts`, `src/server/responses/policy-fallback.ts`,
 `src/server/chat-completions.ts`, `src/server/claude-messages.ts`,
 `src/server/request-log-conversation.ts`, `src/server/responses-undeclared-tool-guard.ts`,
-`src/providers/opencode-go-transport.ts`, `src/types/tools.ts`. Stack: #4172 → #4176.
+`src/providers/opencode-go-transport.ts`, `src/types/tools.ts`,
+`docs-site/src/content/docs/reference/configuration/providers.md`. Stack: #4172 → #4176.
 
 **L2** `codex/260911-l2-catalog-provider` — `src/providers/quota.ts`,
 `src/providers/quota-types.ts`, `src/providers/quota-wire.ts`,
@@ -44,7 +45,8 @@ Collision-free PRs, touching no file any other open PR touches: #4062, #4104, #4
 `src/codex/plan.ts`, `src/codex/plan-from-token.ts`, `src/codex/warmup.ts`,
 `src/codex/model-entitlements.ts`, `src/server/responses/codex-auth-error.ts`,
 `src/server/management/oauth-account-routes.ts`, the single key `codexPool.excludedPlans` in
-`src/config.ts`, and `docs-site/src/content/docs/**/guides/codex-integration.md`.
+`src/config.ts`, and `docs-site/src/content/docs/guides/codex-integration.md` and its seven locale copies under
+`docs-site/src/content/docs/{fr,ja,ko,ru,tr,zh-cn,zh-tw}/guides/codex-integration.md`.
 Stack: #4126 → #4212 → #4211.
 
 **L4** `codex/260911-l4-service-cli` — directories `src/update/`, `src/cli/`, `src/client/`; files
@@ -71,4 +73,3 @@ Stack: #4126 → #4212 → #4211.
 - `src/config.ts`: only L3, and only `codexPool.excludedPlans`.
 - `docs-site/src/content/docs/guides/providers.md`: L7 only. A lane whose carried PR edits it drops
   that hunk and reports the wording to the orchestrator.
-
