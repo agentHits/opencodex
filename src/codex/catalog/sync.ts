@@ -440,6 +440,10 @@ export function deriveEntry(
   if (model && isRouted) applyCatalogMetadata(entry, model.provider, model.id, model.contextCap);
   applyCatalogModelMetadata(entry, model);
   if (model?.catalogKind) entry.opencodex_catalog_kind = model.catalogKind;
+  // Same additive stamp as the templated path above. A routed row that reaches the no-template
+  // fallback is still a served row, so omitting it here would make the field depend on whether a
+  // template happened to be cached — which is exactly what the regression test caught.
+  if (model?.quotaInactiveReason) entry[CATALOG_INACTIVE_REASON_FIELD] = model.quotaInactiveReason;
   if (!isRouted) applyNativeOpenAiContextOverride(entry, contextCap);
   return ensureStrictCatalogFields(normalizeServiceTiers(entry), {
     preserveExactInputModalities: preserveExact,

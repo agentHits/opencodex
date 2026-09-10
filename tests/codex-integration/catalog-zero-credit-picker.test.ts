@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { clearCachedProviderQuotas, setCachedProviderQuotaForTests } from "../../src/providers/quota-routing-cache";
 import { quotaInactiveReason } from "../../src/combos/resolve";
 import { CATALOG_INACTIVE_REASON_FIELD, deriveEntry } from "../../src/codex/catalog/sync";
+import type { RawEntry } from "../../src/codex/catalog/parsing";
 import type { OcxConfig } from "../../src/types";
 import type { ProviderQuota } from "../../src/providers/quota";
 
@@ -121,19 +122,27 @@ describe("quota-inactive catalog rows (#1711)", () => {
   });
 
   test("the served entry stays visibility list and carries the reason as an extension field", () => {
-    const entry = deriveEntry(null, "alpha/model-x", "desc", 5, {
-      id: "model-x",
-      provider: "alpha",
-      quotaInactiveReason: "no_credit",
-    });
-    // The whole point of the issue: still offered, just marked.
-    expect(entry.visibility).toBe("list");
-    expect(entry[CATALOG_INACTIVE_REASON_FIELD]).toBe("no_credit");
+    // Both derivation paths, because deriveEntry builds the entry twice over: once by cloning a
+    // cached template and once from scratch when none is available. Covering only one of them is
+    // what let the fallback ship unstamped, so the field would have appeared or vanished
+    // depending on whether a template happened to be cached.
+    for (const template of [null, { slug: "gpt-5.6-sol", visibility: "list" } as RawEntry]) {
+      const entry = deriveEntry(template, "alpha/model-x", "desc", 5, {
+        id: "model-x",
+        provider: "alpha",
+        quotaInactiveReason: "no_credit",
+      });
+      // The whole point of the issue: still offered, just marked.
+      expect(entry.visibility).toBe("list");
+      expect(entry[CATALOG_INACTIVE_REASON_FIELD]).toBe("no_credit");
+    }
   });
 
   test("a serviceable row carries no field at all", () => {
-    const entry = deriveEntry(null, "alpha/model-y", "desc", 5, { id: "model-y", provider: "alpha" });
-    expect(entry.visibility).toBe("list");
-    expect(Object.hasOwn(entry, CATALOG_INACTIVE_REASON_FIELD)).toBe(false);
+    for (const template of [null, { slug: "gpt-5.6-sol", visibility: "list" } as RawEntry]) {
+      const entry = deriveEntry(template, "alpha/model-y", "desc", 5, { id: "model-y", provider: "alpha" });
+      expect(entry.visibility).toBe("list");
+      expect(Object.hasOwn(entry, CATALOG_INACTIVE_REASON_FIELD)).toBe(false);
+    }
   });
 });
