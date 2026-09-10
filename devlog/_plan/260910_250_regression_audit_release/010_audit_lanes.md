@@ -49,8 +49,8 @@ bootout recovery, and nine i18n locale files that must not contradict `en`.
 
 ## L5 — Security, privacy, release surface
 
-Cross-cutting read of `src/lib/privacy.ts`, the body-size admission path, OrcaRouter
-key-exchange bounds, web-search bridge egress, `package.json`,
+Cross-cutting read of `src/lib/privacy.ts`, the body-size admission path, web-search
+bridge egress, `package.json`,
 `scripts/test-layout/layout.json`, `structure/{02_config-and-codex-home,04_transports-and-sidecars}.md`,
 and the repository invariants in `AGENTS.md`: the Lab/core import boundary, the
 synchronous `startServer` window, no tracked gitlink, and no request-body or credential

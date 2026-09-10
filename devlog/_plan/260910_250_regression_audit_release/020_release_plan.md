@@ -28,14 +28,30 @@ they must be waited for on that exact SHA.
    the tree is green before we spend a promotion on it.
 2. **Land blockers first.** Any wp3 fix goes to `dev` through a pull request, which moves
    the candidate. Re-freeze and re-verify on the new SHA; old-head green is not evidence.
-3. **Pre-move `dev`.** Dispatch `dev-version-bump.yml` (it is `on: workflow_dispatch`,
-   not `workflow_call`-only) with `intended-version=2.50.0`, `mode=pre-move`, from the
-   default branch. It opens a pull request and does **not** push to `dev`, because the
-   `Protect dev` ruleset requires review. Merge that PR so `dev` reads 2.51.0 before the
-   publish reaches `assert-ahead`. Use the workflow rather than a hand-written one-file PR
-   so its tag/npm/version-line proofs run.
-4. **Promote to `main`.** Open a promotion PR carrying the frozen candidate tree into
-   `main`, with the version already at `2.50.0`. Merge it. Record the merge SHA.
+3. **Pre-move `dev`.** Dispatch `dev-version-bump.yml` with `intended-version=2.50.0`,
+   `mode=pre-move`. It is `on: workflow_dispatch`, but `dev-version-bump.yml:79` refuses
+   a non-default ref, so dispatch it with `--ref main`. It opens a pull request and does
+   **not** push to `dev`, because the `Protect dev` ruleset requires review. Merge that PR
+   so `dev` reads 2.51.0 before the publish reaches `assert-ahead`. Use the workflow rather
+   than a hand-written one-file PR so its tag/npm/version-line proofs run.
+4. **Promote the frozen SHA to `main`, not current `dev`.** After step 3, `origin/dev` is
+   2.51.0 and is no longer the candidate. Promotion always names the recorded freeze SHA
+   explicitly.
+
+   The freeze SHA is **not** an ancestor of `main`, and `main` carries commits `dev` does
+   not, so there is nothing to fast-forward. Replicate the 2.49.0 method: branch from
+   `main`, merge the freeze SHA into that branch as a single
+   `release: promote verified 2.50.0 product tree to main` commit, then open the PR into
+   `main`. For 2.49.0 that was branch `codex/release-249-main-01a08498`, promote commit
+   `62849dfa6` (parents `9a27e8699` = old `main`, `ad36c7be8` = the dev freeze), merged by
+   PR #4117 as `2f3f73629`.
+
+   The gate on this step is **tree equality**, not a green diff: after promotion,
+   `git rev-parse <main merge>^{tree}` must equal `git rev-parse <freeze SHA>^{tree}`.
+   For 2.49.0 all three of the promote commit, the dev freeze, and the merged `main` tip
+   resolved to tree `66294fb3eb15592afd732f8b8e29d0bcc644fe9e`. Any conflict resolution
+   that changes that tree means a different product shipped than the one audited.
+   Record the merge SHA.
 5. **Wait for the release-branch gates on the merge SHA.** Push-event `ci.yml` and
    `service-lifecycle.yml` on `main` for that exact SHA, both successful.
 6. **Dry-run, then publish.** Dispatch `release.yml` with `--ref main`,

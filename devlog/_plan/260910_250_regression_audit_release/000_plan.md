@@ -12,7 +12,7 @@
 | Group | Files | Note |
 | --- | --- | --- |
 | `devlog` | 885 | No runtime. Not audited. |
-| `src` | 62 | Audited: L1-L3, L5, L6 |
+| `src` | 62 | Audited: L1-L6 (L4 owns `src/server/management/*`, `src/server/{management-api,auth-cors,index}.ts`, `src/service.ts`) |
 | `tests` | 42 | Read as evidence by every lane, not a lane of its own |
 | `docs-site` | 28 | Not release-blocking on its own |
 | `gui` | 27 | Audited: L4 |

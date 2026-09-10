@@ -30,6 +30,20 @@ Verdict: **FAIL**. Every finding was verified independently by the main session 
 | R7 | `dry-run` defaults to `true` and the run must come from `refs/heads/main` | `sed -n '22,26p'`, `sed -n '153,170p'` `release.yml` | Dry-run-then-publish made explicit |
 | R8 | Scope doc misattributed the 121-file figure, derived the devlog count by subtraction, and said 20 open PRs | `git diff --shortstat`; `gh api ... --jq 'length'` -> 74 | Counts table rewritten from the real command |
 
+Round 2 verdict: **GO-WITH-FIXES**. R1-R8 all confirmed FIXED with anchors, and the
+mechanical lane-coverage check over the 94 changed product paths returned zero unlaned.
+Three new findings were raised and folded:
+
+| # | Finding | Verified by | Fold |
+| --- | --- | --- | --- |
+| R9 | After the pre-move, `origin/dev` is 2.51.0; promoting current `dev` would publish the wrong version. The plan never pinned the promotion source to the freeze SHA | `020_release_plan.md:37` as written | Step 4 now names the recorded freeze SHA explicitly |
+| R10 | The freeze SHA is not an ancestor of `main` and `main` carries commits `dev` lacks, so a naive `base=main head=<freeze>` PR is a 127-commit history merge rather than a tree promotion | `git merge-base --is-ancestor 12c248f52 origin/main` -> 1 | Step 4 documents the 2.49.0 branch-and-merge method and makes **tree equality** the gate: promote tree, dev freeze tree, and merged `main` tree all resolved to `66294fb3eb15592afd732f8b8e29d0bcc644fe9e` for 2.49.0 |
+| R11 | `000_plan.md` said `src` is audited by L1-L3, L5, L6, but L4 owns `src/server/management/*` and `src/service.ts` | `010_audit_lanes.md:44` | Counts table corrected to L1-L6 |
+
+Also folded from the round-2 residual: `dev-version-bump.yml:79` refuses a non-default
+ref, so the pre-move dispatch must use `--ref main`; and L5 no longer names OrcaRouter
+key-exchange bounds, which are not in this delta.
+
 ## Audit findings (wp2)
 
 | ID | Lane | File:line | Failure mode | Blocker | Disposition |
