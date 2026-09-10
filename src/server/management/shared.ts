@@ -198,14 +198,26 @@ export function costResult(entry: MetricSource): CostResult {
   return { kind: "value", estimate, estimateReasons };
 }
 
-export function requestLogDto(entry: RequestLogEntry): Record<string, unknown> {
+/**
+ * `/api/logs` row projection.
+ *
+ * `includeDecodeRate` exists because `/api/request-history` shares this DTO but not its
+ * contract (#4038). The value would be meaningful there — `firstOutputMs` does survive into a
+ * persisted-usage row — so this is a scope decision, not a correctness one: the decode rate is
+ * a Logs-page metric, and widening a separate endpoint's response shape is not this change's
+ * business. Flipping it on later is one argument.
+ */
+export function requestLogDto(
+  entry: RequestLogEntry,
+  { includeDecodeRate = true }: { includeDecodeRate?: boolean } = {},
+): Record<string, unknown> {
   return {
     ...entry,
     displayMetrics: {
       tokPerSecond: tokPerSecondResult(entry),
       // The parent uses the REQUEST's own TTFT. A combo parent must not borrow an attempt's,
       // which would measure a window the parent never had.
-      decodeTokPerSecond: decodeTokPerSecondResult(entry),
+      ...(includeDecodeRate ? { decodeTokPerSecond: decodeTokPerSecondResult(entry) } : {}),
       cost: costResult(entry),
     },
     ...(entry.attempts?.length
@@ -215,7 +227,7 @@ export function requestLogDto(entry: RequestLogEntry): Record<string, unknown> {
           displayMetrics: {
             tokPerSecond: tokPerSecondResult(attempt),
             // Each attempt measures its own attempt-relative TTFT.
-            decodeTokPerSecond: decodeTokPerSecondResult(attempt),
+            ...(includeDecodeRate ? { decodeTokPerSecond: decodeTokPerSecondResult(attempt) } : {}),
             cost: costResult({ ...attempt, attempts: undefined, routeDecision: entry.routeDecision, requestedServiceTier: entry.requestedServiceTier, configuredServiceTier: entry.configuredServiceTier, responseServiceTier: entry.responseServiceTier }),
           },
         })),

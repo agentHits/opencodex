@@ -597,4 +597,45 @@ describe("estimated decode rate (#4038)", () => {
     expect(dto!.attempts[0].displayMetrics.decodeTokPerSecond)
       .toEqual({ kind: "value", value: 30, estimated: true });
   });
+
+  test("request history opts out of the decode rate, parent and attempts alike", async () => {
+    // /api/request-history shares this DTO but not its contract. The value would be meaningful
+    // there — firstOutputMs does survive into a persisted-usage row — so the exclusion is a
+    // scope decision rather than a correctness one, and it has to be asserted or it silently
+    // reverses the first time someone touches the DTO.
+    const { requestLogDto } = await import("../../src/server/management/shared");
+    const entry = baseEntry({
+      durationMs: 10_000,
+      firstOutputMs: 2_000,
+      usage: { inputTokens: 10, outputTokens: 240 },
+      attempts: [{
+        provider: "anthropic",
+        model: "claude-3-haiku-20240307",
+        durationMs: 10_000,
+        firstOutputMs: 2_000,
+        usageStatus: "reported",
+        usage: { inputTokens: 10, outputTokens: 240 },
+      }],
+    } as Partial<RequestLogEntry>);
+
+    const history = requestLogDto(entry, { includeDecodeRate: false }) as Record<string, any>;
+    expect(Object.hasOwn(history.displayMetrics, "decodeTokPerSecond")).toBe(false);
+    expect(Object.hasOwn(history.attempts[0].displayMetrics, "decodeTokPerSecond")).toBe(false);
+    // Everything else the endpoint already returned is untouched.
+    expect(history.displayMetrics.tokPerSecond.kind).toBe("value");
+    expect(history.displayMetrics.cost).toBeDefined();
+
+    // The default is still to include it, so /api/logs is unaffected by the opt-out existing.
+    const logs = requestLogDto(entry) as Record<string, any>;
+    expect(logs.displayMetrics.decodeTokPerSecond).toEqual({ kind: "value", value: 30, estimated: true });
+  });
+
+  test("the request-history route actually passes the opt-out", async () => {
+    // The DTO assertion above proves the flag works; this proves the endpoint uses it. Without
+    // it, a correct flag and a route that never sets it would both look fine.
+    const source = await Bun.file("src/server/management/request-history-routes.ts").text();
+    const calls = [...source.matchAll(/requestLogDto\(/g)];
+    expect(calls.length).toBeGreaterThan(0);
+    expect([...source.matchAll(/includeDecodeRate: false/g)]).toHaveLength(calls.length);
+  });
 });

@@ -1148,7 +1148,17 @@ function LogDetailDialog({
                         )}
                       </td>
                       <td className="num mono">{attempt.durationMs}ms</td>
-                      <td className="num mono">{formatTokPerSecond(attempt.displayMetrics?.tokPerSecond, localeTag)}</td>
+                      <td className="num mono">
+                        {formatTokPerSecond(attempt.displayMetrics?.tokPerSecond, localeTag)}
+                        {/* #4038: the DTO already carries a per-attempt decode rate measured on
+                            that attempt's own TTFT, so the attempt table stacks it the same way
+                            the parent row and the list do. */}
+                        {attempt.displayMetrics?.decodeTokPerSecond?.kind === "value" && (
+                          <span className="logs-stack-end muted" title={t("logs.detail.decodeTokPerSec")}>
+                            {formatTokPerSecond(attempt.displayMetrics.decodeTokPerSecond, localeTag)}
+                          </span>
+                        )}
+                      </td>
                       <td className="num mono">{formatEstimatedUsd(attemptCost, t, localeTag)}</td>
                       <td className="log-detail-break">{reason}</td>
                     </tr>
