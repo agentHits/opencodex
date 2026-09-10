@@ -663,6 +663,8 @@ export const ru: Record<TKey, string> = {
   "models.loading": "Загрузка…",
   "models.search": "Поиск моделей…",
   "models.showMore": "Показать ещё {n}",
+  "models.freeOnly": "Только бесплатные",
+  "models.noFreeMatch": "Здесь нет бесплатных моделей. Отключите «Только бесплатные», чтобы увидеть остальные.",
   "models.allowlistLabel": "Только выбранные",
   "models.allowlistHint": "В каталог попадают только отмеченные модели (пусто = все). Полезно для провайдеров, предоставляющих тысячи моделей.",
   "models.selectedCount": "Выбрано: {n}",

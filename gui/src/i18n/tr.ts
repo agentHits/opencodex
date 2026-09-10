@@ -666,6 +666,8 @@ export const tr: Record<TKey, string> = {
   "models.loading": "Yükleniyor…",
   "models.search": "Modellerde ara…",
   "models.showMore": "{n} tane daha göster",
+  "models.freeOnly": "Yalnızca ücretsiz",
+  "models.noFreeMatch": "Burada ücretsiz model yok. Diğerlerini görmek için „Yalnızca ücretsiz“ seçeneğini kapatın.",
   "models.allowlistLabel": "Sadece seçilenler",
   "models.allowlistHint": "Sadece işaretli modeller kataloğa gönderilir.",
   "models.selectedCount": "{n} seçildi",
