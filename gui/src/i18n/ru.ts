@@ -660,6 +660,7 @@ export const ru: Record<TKey, string> = {
   "models.discoveryFailedProvider": "Провайдер сообщил об ошибке обнаружения моделей.",
   "models.discoveryFailedGeneric": "Не удалось обнаружить модели.",
   "models.openProviderSettings": "Открыть настройки провайдера",
+  "models.discoveryFailedDependency": "Обнаружение моделей включено для этого провайдера. Пока оно не работает, отключите «{control}» в настройках провайдера, чтобы использовать вручную добавленные или статические модели.",
   "models.loading": "Загрузка…",
   "models.search": "Поиск моделей…",
   "models.showMore": "Показать ещё {n}",

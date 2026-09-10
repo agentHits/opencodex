@@ -76,7 +76,7 @@ import {
   type ShadowCallData,
   type V2Status,
 } from "./models-shared";
-import { EmptyProviderHint } from "./models-provider-hints";
+import { DiscoveryDependencyHint, EmptyProviderHint } from "./models-provider-hints";
 import { shadowCallModelOptions } from "./dashboard-shared";
 import { shadowSourceModelBadge, shadowSourceModelLabel } from "./shadow-call-source";
 
@@ -1680,6 +1680,10 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
             {rows.length === 0 && (
               <EmptyProviderHint liveModels={liveModels} discovery={discovery} showFailureBadge={false} />
             )}
+            {/* A group WITH rows and a failed fetch got the amber header badge and nothing that
+                explains the dependency; #4075 is the reporter having to discover on their own
+                that turning discovery off is what makes a manually added model usable. */}
+            {rows.length > 0 && discoveryFailure && <DiscoveryDependencyHint />}
             {pricingKnown && (
               <div className="row models-provider-hint">
                 <Switch
