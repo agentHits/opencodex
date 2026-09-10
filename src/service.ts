@@ -2338,7 +2338,23 @@ export function readWindowsSchedulerXmlState(
 }
 
 // ── macOS (launchd) ──
-function installLaunchd(): void {
+/**
+ * Deps follow {@link startLaunchd}: `launchctl` replaces the LAYER, returning a
+ * {@link runLaunchctl} result, not a spawnSync result. It is optional so this stays
+ * assignable to `ServiceOps.install` and `RepairServiceDeps.repairLaunchd`
+ * (`() => void`), and so `platformOps` wires the same function the tests exercise.
+ *
+ * The seam is what makes the eviction below testable at all. The live-service-manager
+ * guard refuses every mutating verb from an armed test process and `bootout` is not on
+ * its read-only list, so a test reaching the real runner would fail closed on the guard
+ * instead of exercising the sequence.
+ *
+ * No `matches` dep: unlike `startLaunchd`, this function never consults
+ * {@link launchdJobMatchesPlist}. It has just rewritten the plist, so a live job is stale
+ * by construction and there is nothing to compare against.
+ */
+export function installLaunchd(deps: { launchctl?: typeof runLaunchctl } = {}): void {
+  const run = deps.launchctl ?? runLaunchctl;
   const dir = join(homedir(), "Library", "LaunchAgents");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   recordOwnedConfigPath(getConfigDir(), serviceStatePath());
@@ -2352,17 +2368,41 @@ function installLaunchd(): void {
   // so the staleness diagnostic judges exactly what launchd runs.
   const launcher = stableLauncherEntry();
   writeServiceDefinitionFile(p, buildPlist(resolvedProxyEnv(), { launcher }), "utf8");
-  // Best-effort: an absent job is fine here, and a failed unload is caught by the
-  // load verification below with a better message than a raw unload error.
-  runLaunchctl(["unload", p]);
-  const loaded = runLaunchctl(["load", "-w", p]);
+  // `unload` is the legacy verb and it does not evict a job bootstrapped into the GUI
+  // domain — which is precisely the state that could not repair itself. Modern launchd
+  // answers `load -w` for an already-bootstrapped job with "Load failed: 5:
+  // Input/output error" AND exits 0, so `ocx update` replaced the binary, ran repair,
+  // and left launchd running the PREVIOUS job while the fresh plist sat unused (#4141).
+  //
+  // This EVICTS the running job. That is the repair being asked for, and it is why it
+  // lives here and nowhere else: `installLaunchd` has already rewritten the plist, so
+  // whatever is loaded is stale by construction. `ocx service start` must never do
+  // this, and `startLaunchd` accordingly still refuses to.
+  //
+  // Absence is fine: booting out a job that is not there is a no-op, and a real failure
+  // is reported by the load verification below with a better message than a raw
+  // eviction error would carry.
+  const bootoutTarget = `${launchdGuiDomain()}/${LABEL}`;
+  run(["bootout", bootoutTarget]);
+  let loaded = run(["load", "-w", p]);
+  if (launchctlLoadFailed(loaded.stderr)) {
+    // Still bootstrapped after an eviction: the job re-registered between the two calls,
+    // or the first `bootout` raced a job that had not finished exiting. Evict and load
+    // once more — ONCE. A bounded retry recovers the race; a loop would turn a genuinely
+    // wedged domain into a hang instead of the diagnosable throw below.
+    run(["bootout", bootoutTarget]);
+    loaded = run(["load", "-w", p]);
+  }
   if (!loaded.ok || launchctlLoadFailed(loaded.stderr)) {
     // Do NOT write install state for a load that did not take: state describing an
     // unused plist is what made this failure invisible.
     throw new Error(
       `launchctl could not load ${p}: ${loaded.stderr || "load reported failure"}\n`
-      + "A previous job may still be bootstrapped. Try:\n"
-      + `  launchctl bootout ${launchdGuiDomain()}/${LABEL}\n`
+      // The hint used to tell the operator to run `bootout` by hand. It now runs twice
+      // above, so naming it as an untried remedy would send someone to repeat what just
+      // failed. Report what was attempted instead.
+      + `A previous job is still bootstrapped after two attempts to boot it out of ${launchdGuiDomain()}.\n`
+      + `Inspect it with:\n  launchctl print ${bootoutTarget}\n`
       // macOS `service repair` delegates straight to installLaunchd, so this fires for
       // an already-installed service too; repair reloads it without re-registering.
       + `then re-run '${wasInstalled ? "ocx service repair" : "ocx service install"}'.`,

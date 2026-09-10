@@ -155,6 +155,18 @@ export interface CatalogModel {
    * catalog field can do.
    */
   quotaInactiveReason?: "no_credit";
+  /**
+   * Discovered per-token cost class for this routed model (#3666). "free" means the provider's
+   * own /models row reported a numeric zero for BOTH the prompt and the completion rate;
+   * "paid" means at least one rate is above zero. ABSENT means unknown — the provider published
+   * no usable pair, or this row never came from a models API at all.
+   *
+   * Fail closed: a partial, non-numeric, or negative rate leaves the field absent, never "free",
+   * because showing a paid model under a Free filter costs the user money while hiding a free
+   * one costs a click. This is a management/Dashboard projection only — deriveEntry never
+   * serializes it into the Codex catalog, and it never affects routing or visibility.
+   */
+  pricingStatus?: "free" | "paid";
   /** OpenCodex-only catalog ownership marker; Codex ignores the serialized extension field. */
   catalogKind?: typeof CODEX_CUSTOM_MODEL_CATALOG_KIND | typeof CODEX_PROVIDER_MODEL_CATALOG_KIND;
 }
