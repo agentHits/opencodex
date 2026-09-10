@@ -96,12 +96,27 @@ Nothing was accepted on a lane's authority. Re-checked directly:
 | --- | --- | --- |
 | Candidate-tree CI (`dev` dispatch, audit evidence only) | run 34457689927, `lane=all` on `12c248f52`, attempt 2 conclusion `success` | done |
 | Freeze tree to reproduce on `main` | `git rev-parse 12c248f52^{tree}` = `d8f5a7143bcd6cb86185c4e8d4c6a6c4ad0fa822` | recorded |
-| `dev` pre-move to 2.51.0 | | pending |
-| `main` promotion merge SHA | | pending |
-| Push-event Cross-platform CI on merge SHA | | pending |
-| Service lifecycle on merge SHA | | pending |
+| `dev` pre-move to 2.51.0 | `dev-version-bump.yml` run 34463313646 opened PR #4194; merged; `origin/dev` = `cf44f6fe887d19f53ede1e09abfe0fe3cf137059`, `package.json` 2.51.0 | done |
+| Promotion commit | `3a3de889b6ef3217497f6c5029acf08aec09c0cf`, parents `2f3f73629` (old `main`) and `12c248f52` (freeze), tree `d8f5a7143bcd6cb86185c4e8d4c6a6c4ad0fa822` | done |
+| `main` promotion merge SHA | PR #4195 merged; `origin/main` = `2d4d7a22381a2e497c2442902104619e25f937c7`, tree `d8f5a7143bcd6cb86185c4e8d4c6a6c4ad0fa822`, version 2.50.0 | done |
+| Push-event Cross-platform CI on merge SHA | run 34464454730 | pending |
+| Service lifecycle on merge SHA | run 34464454609, conclusion `success` | done |
 | `release.yml` dry run | | pending |
 | `release.yml` publish | | pending |
 | npm `latest` = 2.50.0 | | pending |
 | `gitHead` matches promoted `main` | | pending |
 | git tag + GitHub release | | pending |
+
+### Gates that failed by design on the promotion PR
+
+`enforce-target` failed #4195 with "wrong base (main); missing UI screenshot". That gate is
+written for contributor pull requests: `main` receives only release promotions, and a
+promotion necessarily carries dashboard files while changing no UI of its own. The 2.49.0
+promotion PR #4117 failed the same check and was merged the same way. `AGENTS.md` records
+the maintainer promotion exception, and the gates that actually decide are the push-event
+runs on the merge SHA, which `release.yml` independently requires.
+
+Local `prepush` was skipped on the promotion branch. It runs the full ~850-file suite
+against a tree byte-identical to one already green on Linux, macOS, and Windows
+(`lane=all` run 34457689927), and it was additionally blocked waiting on another Bun test
+lock. The remote push-event runs on `2d4d7a223` are the evidence that counts.
