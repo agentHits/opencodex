@@ -320,6 +320,12 @@ fallback 行为，参见 [Sub-agent Surface](/guides/sub-agent-surface/)。
 
 后台重新验证是独立功能，默认关闭。它要求 Token Guardian、`openai` 的 `proactive` 刷新策略及 `tokenGuardian.codexWarmupEnabled`，并跳过等待注册验证的账号。
 
+### 账号停止处理请求的原因
+
+账号退出账号池选择时，原因随判定一起传递，而不是为显示重新计算，因此界面不会在路由已排除该账号时仍显示正常。`GET /api/codex-auth/accounts` 在每个账号的 `needsReauth` 旁返回 `reauthReason`：从未保存凭据为 `missing_credential`，刷新持续失败为 `refresh_failed`，用量查询本身被拒绝为 `quota_unauthorized`。
+
+主账号刷新未完成时仍返回带 `Retry-After` 的 `503`，因为重试仍可能成功。消息中现在补充说明：若持续失败，则主账号需要重新认证，而不只是再试一次。
+
 ## 恢复原生 Codex
 
 `ocx stop` 会停止 proxy 和已安装的后台服务，然后尝试恢复原生 Codex。OpenCodex 只移除能够确认归属的路由配置；如果无法安全恢复配置文件，会报告恢复未完成。

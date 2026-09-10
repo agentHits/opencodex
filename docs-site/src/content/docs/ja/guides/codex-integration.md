@@ -249,6 +249,12 @@ ocx service install    # persistent: auto-starts on login and respawns on crash
 
 バックグラウンド再検証は別機能で既定では無効です。Token Guardian、`openai` の `proactive` 更新ポリシー、`tokenGuardian.codexWarmupEnabled` が必要で、登録検証待ちのアカウントは除外します。
 
+### アカウントがリクエストを処理しなくなった理由
+
+アカウントがプール選択から外れるとき、その理由は表示用に再計算されるのではなく判断とともに伝わります。そのため、ルーティングが除外している最中に画面が正常と表示することはありません。`GET /api/codex-auth/accounts` は各アカウントの `needsReauth` と並べて `reauthReason` を返します。資格情報が保存されていない場合は `missing_credential`、更新が繰り返し失敗する場合は `refresh_failed`、使用量の取得自体が拒否された場合は `quota_unauthorized` です。
+
+メインアカウントの更新が完了しない場合も、再試行で成功する可能性があるため `Retry-After` 付きの `503` を返します。ただしメッセージには、失敗が続くならメインアカウントの再認証が必要である旨を加えました。
+
 ## ネイティブ Codexの復元
 
 `ocx stop` はプロキシとインストール済みのバックグラウンドサービスを停止し、ネイティブ Codex の復元を試みます。OpenCodex は所有を確認できるルーティング設定を削除し、設定ファイルを安全に復元できない場合は未完了として報告します。

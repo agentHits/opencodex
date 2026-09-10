@@ -382,6 +382,7 @@
     "codex-account-mode-state.test.ts": "gui",
     "codex-account-namespaces.test.ts": "codex-integration",
     "codex-account-store.test.ts": "codex-integration",
+    "codex-account-unusable-reason.test.ts": "codex-integration",
     "codex-admission-primitives.test.ts": "codex-integration",
     "codex-admission.test.ts": "codex-integration",
     "codex-affinity-debug.test.ts": "codex-integration",
