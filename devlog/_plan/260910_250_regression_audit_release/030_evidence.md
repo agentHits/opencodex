@@ -71,6 +71,11 @@ Six `xai/grok-4.6` lanes, dispatched in one round, fresh context each, read-only
 | F7 | L6 | `src/cli/capabilities.ts` | `ocx models live --free-only` is a real new flag that is not a declared capability, so it does not reach the generated surface map. | `SHIP` — documentation gap, not the map/registry split that once shipped a phantom `ocx request-history` |
 | F8 | CI | `tests/codex-integration/codex-log-guard-maintenance-coderabbit.test.ts` | `classifies continuous progress stopped by MAX_ITERATIONS as bounded work` timed out at 60s on Windows shard 5/6 of run 34457689927 attempt 1, taking 112.8s. | `PRE-EXISTING` — proved by byte identity against the released tree: `src/codex/log-guard/maintenance.ts` (`81b3a465b`), the test file (`54e83bba2`), and `tests/helpers/remove-tree.ts` (`53e36a584`) are the same blobs at `2f3f73629` and `origin/dev`. Nothing in this delta can have caused it |
 
+F8 note: `tests/preload.ts` is the one file on that failure path this delta does touch,
+and its diff is a comment block with no statement change, so the byte-identity argument is
+complete rather than merely true. Attempt 2 of the run passed on rerun. The full reasoning,
+including why the timeout is not hardened before the release, is in `060_release_readiness.md`.
+
 ### Independent re-derivation by the main session
 
 Nothing was accepted on a lane's authority. Re-checked directly:
@@ -89,7 +94,8 @@ Nothing was accepted on a lane's authority. Re-checked directly:
 
 | Gate | Evidence | Status |
 | --- | --- | --- |
-| Candidate-tree CI (`dev` dispatch, audit evidence) | run 34457689927 on `12c248f52` | pending |
+| Candidate-tree CI (`dev` dispatch, audit evidence only) | run 34457689927, `lane=all` on `12c248f52`, attempt 2 conclusion `success` | done |
+| Freeze tree to reproduce on `main` | `git rev-parse 12c248f52^{tree}` = `d8f5a7143bcd6cb86185c4e8d4c6a6c4ad0fa822` | recorded |
 | `dev` pre-move to 2.51.0 | | pending |
 | `main` promotion merge SHA | | pending |
 | Push-event Cross-platform CI on merge SHA | | pending |
