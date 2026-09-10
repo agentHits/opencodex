@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { filterFreeModelRows, modelPricingKnown, type ModelRow } from "../../gui/src/pages/models-shared";
+import {
+  filterFreeModelRows,
+  freeOnlyInForce,
+  modelPricingKnown,
+  type ModelRow,
+} from "../../gui/src/pages/models-shared";
 import { repoPath } from "../helpers/repo-root";
 
 /**
@@ -79,7 +84,7 @@ describe("free-only runs before the page slice (#3666)", () => {
   }
 
   test("the Models page filters, then searches, then sorts, then slices", () => {
-    const filter = at(modelsPage, "const scoped = filterFreeModelRows(rows, freeOnlyOn)");
+    const filter = at(modelsPage, "const scoped = filterFreeModelRows(rows, freeOnlyActive)");
     const search = at(modelsPage, "scoped.filter(m => m.id.toLowerCase().includes(q))");
     const sort = at(modelsPage, "filtered.toSorted(");
     const slice = at(modelsPage, "sorted.slice(0, shown)");
@@ -89,7 +94,7 @@ describe("free-only runs before the page slice (#3666)", () => {
   });
 
   test("the provider inventory filters before its chip render cap", () => {
-    const filter = at(inventory, "filterFreeModelRows(visible, freeOnly)");
+    const filter = at(inventory, "filterFreeModelRows(visible, freeOnlyActive)");
     const slice = at(inventory, "filtered.slice(0, CHIP_RENDER_CAP)");
     expect(filter).toBeLessThan(slice);
   });
@@ -111,5 +116,62 @@ describe("free-only runs before the page slice (#3666)", () => {
     expect(group).toContain("const activeCount = scoped.filter(isVisible).length");
     expect(group).toContain("scoped.map(m => ({ id: m.id, native: m.native === true }))");
     expect(group).not.toContain('total: rows.length })');
+  });
+
+  test("both surfaces gate the narrowing on the same condition that shows the switch", () => {
+    // The switch renders under `pricingKnown`, but the operator's choice is component state that
+    // outlives the rows it was made against. If the filter kept reading the raw flag, a refresh
+    // that came back without pricing would hide the control and empty the list at the same time,
+    // leaving no way to undo it. Both consumers must read the derived flag.
+    expect(modelsPage).toContain("const freeOnlyActive = freeOnlyInForce(freeOnlyOn, rows)");
+    expect(modelsPage).not.toContain("filterFreeModelRows(rows, freeOnlyOn)");
+    expect(inventory).toContain("const freeOnlyActive = freeOnlyInForce(freeOnly, visible)");
+    expect(inventory).not.toContain("filterFreeModelRows(visible, freeOnly)");
+  });
+
+  test("the empty-state copy is bound to the same derived flag", () => {
+    // `models.noFreeMatch` reads "turn off Free only". Printing it while the switch is hidden
+    // tells the user to use a control that is not on screen.
+    expect(modelsPage).toContain("{freeOnlyActive && scoped.length === 0 && rows.length > 0 && (");
+    expect(inventory).toContain('t(freeOnlyActive && priced.length === 0 ? "models.noFreeMatch"');
+  });
+});
+
+/**
+ * The stale-evidence path.
+ *
+ * `freeOnly` is per-provider component state with no reset. `pricingKnown` is derived from the
+ * rows on every render. They can disagree, and the only dangerous direction is on-with-no-prices:
+ * the switch is gone, every row is unclassified, and an ungated filter returns nothing.
+ */
+describe("free-only lapses when the pricing evidence does", () => {
+  const priced = [row("gemma:free", "free"), row("claude-sonnet-5", "paid")];
+  const unpriced = [row("llama3.2"), row("qwen3")];
+
+  test("on, with prices, the narrowing is in force", () => {
+    expect(freeOnlyInForce(true, priced)).toBe(true);
+  });
+
+  test("on, after the prices disappear, the narrowing lapses instead of emptying the list", () => {
+    expect(freeOnlyInForce(true, unpriced)).toBe(false);
+    expect(filterFreeModelRows(unpriced, freeOnlyInForce(true, unpriced)).map(r => r.id))
+      .toEqual(["llama3.2", "qwen3"]);
+    // Ungated, this is the reported trap: an empty list under a switch that is no longer drawn.
+    expect(filterFreeModelRows(unpriced, true)).toEqual([]);
+  });
+
+  test("an empty provider never leaves the narrowing in force", () => {
+    expect(freeOnlyInForce(true, [])).toBe(false);
+  });
+
+  test("off is off regardless of the evidence", () => {
+    expect(freeOnlyInForce(false, priced)).toBe(false);
+    expect(freeOnlyInForce(false, unpriced)).toBe(false);
+  });
+
+  test("the gate agrees with the condition that renders the control", () => {
+    for (const rows of [priced, unpriced, []]) {
+      expect(freeOnlyInForce(true, rows)).toBe(modelPricingKnown(rows));
+    }
   });
 });

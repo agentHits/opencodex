@@ -68,6 +68,7 @@ import {
   writeCollapsedProviders,
   discoveryFailureLabel,
   filterFreeModelRows,
+  freeOnlyInForce,
   modelPricingKnown,
   REASONING_EFFORT_LEVELS,
   type ModelRow,
@@ -1416,7 +1417,11 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
     // it: the search box has always been a transient find-as-you-type that leaves the counts
     // alone, while Free only is a narrowing the user holds on, so a header still reading the
     // whole provider would claim more models than the list under it shows.
-    const scoped = filterFreeModelRows(rows, freeOnlyOn);
+    // Gated on `pricingKnown` through `freeOnlyInForce`: the switch below is hidden when the
+    // provider stops publishing prices, so a narrowing left on from an earlier render must lapse
+    // with it rather than empty the list behind a control that is no longer there.
+    const freeOnlyActive = freeOnlyInForce(freeOnlyOn, rows);
+    const scoped = filterFreeModelRows(rows, freeOnlyActive);
     const activeCount = scoped.filter(isVisible).length;
     const recentForProvider = modelDiscovery?.recentArrivals[provider] ?? [];
     const recentIds = new Set(recentForProvider.map(row => row.id));
@@ -1687,7 +1692,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
             )}
             {/* Reads `scoped`, not `filtered`: with a search term that matches nothing, the
                 honest message is the search one, not "this provider has no free models". */}
-            {freeOnlyOn && scoped.length === 0 && rows.length > 0 && (
+            {freeOnlyActive && scoped.length === 0 && rows.length > 0 && (
               <p className="muted text-label" role="status">{t("models.noFreeMatch")}</p>
             )}
             {rows.length > PAGE / 2 && (
