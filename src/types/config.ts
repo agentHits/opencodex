@@ -288,6 +288,26 @@ export interface OcxRemoteGuiConfig {
 
 export type OcxConnectedClientId = "codex" | "claude";
 
+/**
+ * Redaction policy for management and CLI projections (#3859).
+ *
+ * `privacy` rather than `dashboard`: `ocx status` and `ocx account` are not the dashboard, and
+ * they read the same projections.
+ */
+export interface OcxPrivacyConfig {
+  /**
+   * Mask stored account emails before they leave the proxy. Omitted or `true` is the historical
+   * behaviour and the default.
+   *
+   * Setting this to `false` is a real disclosure decision, not a display preference. Management
+   * is not always loopback — under `remoteGui` the unmasked address reaches every management
+   * principal that can reach the hub, not only someone sitting at the machine. The default
+   * therefore stays masked, and turning it off is an explicit opt-in by the operator who owns
+   * those accounts.
+   */
+  maskEmails?: boolean;
+}
+
 export interface OcxClientConnectionConfig {
   serverUrl: string;
   managementUrl: string;
@@ -335,6 +355,8 @@ export interface OcxConfig {
   remoteGui?: OcxRemoteGuiConfig;
   /** Remote-hub client state. The admission secret is stored only in service-api-token. */
   client?: OcxClientConnectionConfig;
+  /** Operator-facing redaction policy for management and CLI projections. */
+  privacy?: OcxPrivacyConfig;
   /** Opt in to one identical-turn retry when a Responses completion has no text or tool call. */
   emptyCompletionRetry?: boolean;
   /**

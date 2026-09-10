@@ -79,6 +79,20 @@ export function filterFreeModelRows<T extends PricedRow>(rows: readonly T[], fre
   return freeOnly ? rows.filter(row => row.pricingStatus === "free") : [...rows];
 }
 
+/**
+ * Whether the Free-only narrowing is actually in force for this set of rows.
+ *
+ * The switch is offered only where discovery returned prices, but the operator's choice is
+ * component state that outlives the rows it was made against. When the evidence goes away —
+ * a refresh that comes back without pricing, a re-auth, a discovery fallback to a static
+ * catalog — the control disappears while the stale `true` keeps filtering, and every row is
+ * unclassified, so the list empties with no visible way to turn it off. Gate the filter on the
+ * same condition that gates the switch and the narrowing lapses with the control.
+ */
+export function freeOnlyInForce(freeOnly: boolean, rows: readonly PricedRow[]): boolean {
+  return freeOnly && modelPricingKnown(rows);
+}
+
 function containsDisplayNameControlCharacter(value: string): boolean {
   return [...value].some(character => {
     const codePoint = character.codePointAt(0)!;

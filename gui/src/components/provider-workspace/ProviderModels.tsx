@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
 import { Switch } from "../../ui";
 import type { WorkspaceItem } from "../../provider-workspace/catalog";
-import { filterFreeModelRows, modelPricingKnown, type ModelRow } from "../../pages/models-shared";
+import { filterFreeModelRows, freeOnlyInForce, modelPricingKnown, type ModelRow } from "../../pages/models-shared";
 import { putModelVisibility } from "../../model-visibility";
 import { readJsonOrThrow } from "../../fetch-json";
 import { createBoundedFetch } from "../../bounded-fetch";
@@ -82,7 +82,11 @@ function ProviderModelInventory({ item, apiBase, availableModels, selectedModels
   const pricingKnown = modelPricingKnown(visible);
   // Absent pricingStatus is never free — the classifier omits it exactly when the provider's
   // rates were missing, partial, or unusable.
-  const priced = filterFreeModelRows(visible, freeOnly);
+  // Lapses with the switch: `pricingKnown` hides the control when discovery stops returning
+  // prices, and a stale `freeOnly` would otherwise keep filtering an inventory in which nothing
+  // can classify as free.
+  const freeOnlyActive = freeOnlyInForce(freeOnly, visible);
+  const priced = filterFreeModelRows(visible, freeOnlyActive);
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = priced.filter(row => [row.id, row.namespaced].some(value => value.toLowerCase().includes(normalizedQuery)));
   const labels = new Map<string, number>();
@@ -263,7 +267,7 @@ function ProviderModelInventory({ item, apiBase, availableModels, selectedModels
         value={query} onChange={event => setQuery(event.target.value)} aria-label={t("pws.modelSearchPlaceholder")} />
       {modelRows !== null && visible.length === 0 ? <p className="muted">{t("pws.noModels")}</p>
         : filtered.length === 0 && modelRows !== null
-          ? <p className="muted" role="status">{t(freeOnly && priced.length === 0 ? "models.noFreeMatch" : "pws.noModelMatch")}</p>
+          ? <p className="muted" role="status">{t(freeOnlyActive && priced.length === 0 ? "models.noFreeMatch" : "pws.noModelMatch")}</p>
         : <ul className="pws-model-list">{filtered.slice(0, CHIP_RENDER_CAP).map(row => <ProviderModelChip key={row.namespaced}
           row={row} disambiguate={(labels.get(row.id) ?? 0) > 1} copied={copiedId === row.namespaced}
           isDefault={row.id === item.defaultModel} selected={row.native !== true && selectedSet.has(row.id)}

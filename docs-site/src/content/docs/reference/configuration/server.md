@@ -224,6 +224,32 @@ use `ssh -g -L`, broad container publishing, or forwarding modes that expose the
 `0.0.0.0`. Bind explicitly with `ssh -L 127.0.0.1:20100:localhost:10100` when unsure.
 :::
 
+## Account email masking (`privacy`)
+
+Stored account emails are masked everywhere they leave the proxy — the dashboard account lists,
+`GET /api/codex-auth/accounts`, `GET /api/oauth/status`, and the `ocx status` logins section all
+show `p***n@example.com` rather than the address on file.
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `privacy.maskEmails?` | `boolean` | `true` | Set to `false` to show stored account emails in full. Absent, `true`, and any malformed value all keep masking, so only a deliberate `false` reveals an address. |
+
+Turn it off when you run many accounts on a machine you control and cannot tell them apart from
+masked forms. Read the flag as a disclosure decision rather than a display preference: management
+is not always loopback, so on a hub configured with `remoteGui` an unmasked address reaches every
+management principal that can reach the hub, not only someone sitting at the machine. The flag
+moves only the email field — tokens, refresh tokens, and account identifiers stay redacted either
+way.
+
+```json
+{ "privacy": { "maskEmails": false } }
+```
+
+`ocx config set privacy.maskEmails false` fails with `config parent path not found` until the
+block exists, because `config set` walks into existing objects and never creates them. Write the
+whole object instead — `ocx config set privacy '{"maskEmails":false}'` — or add the block to
+`config.json` by hand.
+
 ## Storage cleanup
 
 `storageCleanupPolicy` is disabled by default. When enabled, it runs on `startup`, `daily`, `weekly`,
