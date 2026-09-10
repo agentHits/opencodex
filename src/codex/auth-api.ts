@@ -116,7 +116,7 @@ import type { CodexQuotaRefreshOutcome } from "./quota-refresh-outcome";
 import { getMainAccountHardLockStatus, type MainAccountHardLockStatus } from "./main-account-hard-lock";
 import { observeMainReserveRevocation } from "./reserve-availability";
 import { emailMaskingEnabled, projectEmail } from "../lib/privacy";
-import { codexWarmupFailureReason, warmCodexAccount } from "./warmup";
+import { codexWarmupFailureReason, isCodexWarmupProvisioningFailure, warmCodexAccount } from "./warmup";
 export { maskEmail } from "../lib/privacy";
 import type { CodexAccount, CodexAccountCredentials, OcxConfig } from "../types";
 import type { CatalogDisposition } from "./convergence-types";
@@ -588,7 +588,11 @@ async function verifyCodexAccountWarmup(
     return {
       ok: false,
       response: jsonResponse({
-        error: "Codex account warmup failed. Reauthenticate the account and try again.",
+        // Every fallback model was refused for a provisioning reason, so telling the operator to
+        // reauthenticate sends them back through a login that already succeeded.
+        error: isCodexWarmupProvisioningFailure(err)
+          ? "Codex account warmup failed. Verify account model access or provisioning and try again."
+          : "Codex account warmup failed. Reauthenticate the account and try again.",
         code: "codex_warmup_failed",
         reason,
         accountId,
