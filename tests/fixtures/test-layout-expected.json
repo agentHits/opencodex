@@ -1139,6 +1139,7 @@
   "winsw-stop-hardening.test.ts": "windows",
   "winsw.test.ts": "service",
   "ws-endpoint.test.ts": "responses",
+  "ws-failure-stage.test.ts": "responses",
   "ws-upstream-reuse.test.ts": "responses",
   "ws-upstream.test.ts": "responses",
   "xai-client.test.ts": "images",
