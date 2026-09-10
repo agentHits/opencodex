@@ -608,6 +608,8 @@ export const ja: Record<TKey, string> = {
   "models.loading": "読み込み中…",
   "models.search": "モデルを検索…",
   "models.showMore": "さらに {n} 件表示",
+  "models.freeOnly": "無料のみ",
+  "models.noFreeMatch": "ここに無料モデルはありません。「無料のみ」をオフにすると残りが表示されます。",
   "models.allowlistLabel": "選択のみ",
   "models.allowlistHint": "チェックしたモデルのみカタログに送信します(空 = すべて)。数千のモデルを公開するプロバイダーで有用です。",
   "models.selectedCount": "{n} 件選択",

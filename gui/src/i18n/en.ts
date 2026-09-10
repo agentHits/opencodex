@@ -679,6 +679,8 @@ export const en = {
   "models.loading": "Loading…",
   "models.search": "Search models…",
   "models.showMore": "Show {n} more",
+  "models.freeOnly": "Free only",
+  "models.noFreeMatch": "No free models here. Turn off Free only to see the rest.",
   "models.allowlistLabel": "Only selected",
   "models.allowlistHint": "Only checked models ship to the catalog (empty = all). Useful for providers exposing thousands of models.",
   "models.selectedCount": "{n} selected",

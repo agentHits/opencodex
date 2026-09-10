@@ -661,6 +661,8 @@ export const ko: Record<TKey, string> = {
   "models.loading": "불러오는 중…",
   "models.search": "모델 검색…",
   "models.showMore": "{n}개 더 보기",
+  "models.freeOnly": "무료만",
+  "models.noFreeMatch": "여기에는 무료 모델이 없어요. ‘무료만’을 끄면 나머지가 보여요.",
   "models.allowlistLabel": "선택만 노출",
   "models.allowlistHint": "체크한 모델만 카탈로그에 노출돼요 (비우면 전체). 수천 개 모델을 노출하는 프로바이더에 유용해요.",
   "models.selectedCount": "{n}개 선택",

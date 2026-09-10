@@ -664,6 +664,8 @@ export const fr: Record<TKey, string> = {
   "models.loading": "Chargement…",
   "models.search": "Rechercher des modèles…",
   "models.showMore": "Afficher {n} de plus",
+  "models.freeOnly": "Gratuits uniquement",
+  "models.noFreeMatch": "Aucun modèle gratuit ici. Désactivez « Gratuits uniquement » pour voir les autres.",
   "models.allowlistLabel": "Sélection uniquement",
   "models.allowlistHint": "Seuls les modèles cochés sont inclus dans le catalogue (vide = tous). Utile pour les fournisseurs proposant des milliers de modèles.",
   "models.selectedCount": "{n} sélectionnés",
