@@ -46,9 +46,44 @@ key-exchange bounds, which are not in this delta.
 
 ## Audit findings (wp2)
 
-| ID | Lane | File:line | Failure mode | Blocker | Disposition |
-| --- | --- | --- | --- | --- | --- |
-| _pending_ | | | | | |
+Six `xai/grok-4.6` lanes, dispatched in one round, fresh context each, read-only.
+**All six returned `NO-BLOCKER`.** No finding matched any of the eight blocker clauses.
+
+| Lane | Agent | Verdict | Files read |
+| --- | --- | --- | --- |
+| L1 responses / web-search | `01a08aa6-5954-76f1-a205-f4a85b76457f` | NO-BLOCKER | 31 |
+| L2 accounts / quota / OAuth | `01a08aa6-59f5-79d3-a567-556a80d05c84` | NO-BLOCKER | 23 |
+| L3 catalog / providers / config | `01a08aa6-5aa1-7132-b053-776bb02b0fe7` | NO-BLOCKER | 36 |
+| L4 management / service / GUI | `01a08aa6-5b57-7343-9e1c-b4b3ea186478` | NO-BLOCKER | 41 |
+| L5 security / privacy / release | `01a08aa6-5c11-7c52-b4db-6ec685159a33` | NO-BLOCKER | 40 |
+| L6 operator CLI | `01a08aa6-5ccd-76c0-af89-83cf0ea80e28` | NO-BLOCKER | 34 |
+
+### Non-blocking findings, with dispositions
+
+| ID | Lane | Anchor | What it is | Disposition |
+| --- | --- | --- | --- | --- |
+| F1 | L1 | `src/web-search/passthrough-bridge.ts:503` | If the upstream emits a `web_search` function call and then `response.failed`/`incomplete`, `decide()` ends without `searchEndFrames`, so a client can keep a "Searching the web" cell open under a failed turn. The explicit `kind === "fail"` path does close it. Opt-in bridge only, default off. | `SHIP` — cosmetic, on a feature that must be explicitly enabled |
+| F2 | L3 | `src/codex/catalog/provider-fetch.ts:1415` | Classification reads `pricing.prompt`/`completion` only, so a row with both at zero plus a paid `pricing.request`/`image`/`web_search` key would classify `free`. No in-tree fixture has that shape. | `SHIP` — `RUNTIME-CHECK` resolved: `pricingStatus` is consumed only by `src/cli/models-runtime.ts:68` and `gui/src/pages/models-shared.ts:85` as a display filter. It gates no routing and no spend, so the worst case is a mislabelled row, not a charge |
+| F3 | L3 | `src/codex/catalog/provider-fetch.ts:1996` | A custom google-adapter gateway returning both `data[]` and a non-Google `models[]` would take the AI Studio parser with zero `generateContent` rows and publish an authoritative empty catalog. The `data[]`-only case is covered by `tests/adapters/google/google-models-listing.test.ts`. | `SHIP` — requires a dual-envelope body no known gateway sends |
+| F4 | L2 | `src/oauth/token-guardian.ts:257` vs `src/codex/auth-api.ts:1265` | `isCodexAccountUsable` does not read the persisted terminal flag, so after a restart routing can attempt a dead grant once more. | `PRE-EXISTING` — same process-lifetime pattern as 2.49.0; the guardian that writes the flag is opt-in and default off |
+| F5 | L2, L5 | `src/oauth/health.ts:231` | A revoked grant with no persisted terminal and no in-memory reauth can still project healthy after a restart when the guardian never ran. | `PRE-EXISTING` — 2.49.0 behavior; 2.50.0 only adds the `validation_pending` projection, which is strictly more informative |
+| F6 | L4 | `src/service.ts:2386` | Install/repair bootout evicts the loaded job, including one that is currently serving, after the plist has been rewritten. | `SHIP` — this is the intended #4141 repair; `startLaunchd` at :2422 still refuses that eviction on the ordinary start path |
+| F7 | L6 | `src/cli/capabilities.ts` | `ocx models live --free-only` is a real new flag that is not a declared capability, so it does not reach the generated surface map. | `SHIP` — documentation gap, not the map/registry split that once shipped a phantom `ocx request-history` |
+| F8 | CI | `tests/codex-integration/codex-log-guard-maintenance-coderabbit.test.ts` | `classifies continuous progress stopped by MAX_ITERATIONS as bounded work` timed out at 60s on Windows shard 5/6 of run 34457689927 attempt 1, taking 112.8s. | `PRE-EXISTING` — proved by byte identity against the released tree: `src/codex/log-guard/maintenance.ts` (`81b3a465b`), the test file (`54e83bba2`), and `tests/helpers/remove-tree.ts` (`53e36a584`) are the same blobs at `2f3f73629` and `origin/dev`. Nothing in this delta can have caused it |
+
+### Independent re-derivation by the main session
+
+Nothing was accepted on a lane's authority. Re-checked directly:
+
+| Claim | Command | Result |
+| --- | --- | --- |
+| Email masking on by default | `rg -n maskEmails src/lib/privacy.ts` | `config?.privacy?.maskEmails !== false` — absent, malformed, and non-boolean all mask |
+| Inbound body limit safe default | `rg -n MAX_DECOMPRESSED_BODY_BYTES src/server/request-decompress.ts` | 256 MiB, returned when the configured value is undefined |
+| No Lab import in the three core files | `rg -n 'from "[./]*lab/' src/router.ts src/server/lifecycle.ts src/server/responses/core.ts` | no match |
+| `startServer` still synchronous | `rg -n 'function startServer' src/server/index.ts` | `export function startServer(...): Server<WsData>` — not `async` |
+| No tracked gitlink | `git ls-files -s \| grep -c '^160000'` | 0; `.gitmodules` absent |
+| i18n keys in every locale | per-locale `rg -c` for the four new keys | 6 matches in each of en, ko, de, fr, ja, ru, tr, zh, zh-TW |
+| Web-search bridge opt-in | `rg -n webSearchBridge src/` | armed only by `providers.<name>.webSearchBridge.enabled` |
 
 ## Release artifacts (wp4)
 
