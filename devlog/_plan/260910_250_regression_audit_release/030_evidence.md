@@ -99,13 +99,37 @@ Nothing was accepted on a lane's authority. Re-checked directly:
 | `dev` pre-move to 2.51.0 | `dev-version-bump.yml` run 34463313646 opened PR #4194; merged; `origin/dev` = `cf44f6fe887d19f53ede1e09abfe0fe3cf137059`, `package.json` 2.51.0 | done |
 | Promotion commit | `3a3de889b6ef3217497f6c5029acf08aec09c0cf`, parents `2f3f73629` (old `main`) and `12c248f52` (freeze), tree `d8f5a7143bcd6cb86185c4e8d4c6a6c4ad0fa822` | done |
 | `main` promotion merge SHA | PR #4195 merged; `origin/main` = `2d4d7a22381a2e497c2442902104619e25f937c7`, tree `d8f5a7143bcd6cb86185c4e8d4c6a6c4ad0fa822`, version 2.50.0 | done |
-| Push-event Cross-platform CI on merge SHA | run 34464454730 | pending |
+| Push-event Cross-platform CI on merge SHA | run 34464454730, conclusion `success` | done |
 | Service lifecycle on merge SHA | run 34464454609, conclusion `success` | done |
-| `release.yml` dry run | | pending |
-| `release.yml` publish | | pending |
-| npm `latest` = 2.50.0 | | pending |
-| `gitHead` matches promoted `main` | | pending |
-| git tag + GitHub release | | pending |
+| `release.yml` dry run | run 34465317829, `validate-dispatch` and `publish` both `success` | done |
+| `release.yml` publish | run 34465442114, `dry-run=false`, `expected-sha=2d4d7a223`; `npm publish --tag latest --access public` printed `+ @bitkyc08/opencodex@2.50.0` | done |
+| npm `latest` = 2.50.0 | `npm view @bitkyc08/opencodex dist-tags` -> `{"preview":"2.48.0-preview.20260908","latest":"2.50.0"}` | done |
+| `gitHead` matches promoted `main` | `npm view @bitkyc08/opencodex@2.50.0 gitHead` = `2d4d7a22381a2e497c2442902104619e25f937c7`, identical to `origin/main` | done |
+| git tag + GitHub release | `git rev-list -n1 v2.50.0` = `2d4d7a223`; release `v2.50.0` published 2026-09-10T10:21:15Z, not a draft, not a prerelease | done |
+| Tarball integrity | Downloaded tarball hashes to `sha512-lrcM1sBfjbjqB3h5i2q7A6FbPOXxrdxqhWC7S+w0+oCOZ+9f8ucCgXPt9D2p81dS78ZfYYSJZuDWbU1Ov0VOhQ==`, equal to `dist.integrity`; manifest version 2.50.0; 1094 files, 23,923,744 bytes unpacked | done |
+| Published source bytes | `src/lib/privacy.ts`, `src/web-search/passthrough-bridge.ts`, and `src/cli/models-runtime.ts` inside the tarball are SHA-256 identical to the same paths at `2d4d7a223` | done |
+| Provenance | Registry attestations are `npm/attestation/tree/main/specs/publish/v0.1` and `slsa.dev/provenance/v1` | done |
+
+### The registry smoke timed out, and why nothing was republished
+
+`npm publish` printed `+ @bitkyc08/opencodex@2.50.0` at 10:20:46, and the workflow's
+own `Post-publish registry smoke` then failed to read the version back through six bounded
+attempts over roughly 27 seconds. It emitted
+"npm publish succeeded, but registry verification remains pending; continuing GitHub
+release creation without republishing" and proceeded, which is the correct behavior: the
+publication receipt already existed.
+
+The registry served 2.50.0 about 20 minutes after the publish. It was polled, never
+republished. This is the documented failure mode — a timed-out availability smoke is not a
+failed publish, and republishing on it is how a release gets damaged.
+
+### `preview` is intentionally not part of this release
+
+`origin/preview` remains `2.49.0-preview.20260909` and the npm `preview` dist-tag remains
+`2.48.0-preview.20260908`. `release.yml:161-165` refuses a preview publish whose version is
+not `*-preview.*`, so promoting the plain 2.50.0 tree onto that branch would break its
+version line. Bringing `preview` forward needs its own `2.50.0-preview.<date>` commit and
+is a separate decision.
 
 ### Gates that failed by design on the promotion PR
 
