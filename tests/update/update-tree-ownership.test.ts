@@ -176,4 +176,36 @@ describe("#4202 install-tree dependency ownership", () => {
     symlinkSync(target, exposed, "dir");
     expect(verifyPnpmInstallTree(exposed, "2.0.0")).toEqual({ ok: true, failures: [] });
   });
+
+  test("the pnpm verifier accepts the default isolated store, where deps are siblings", () => {
+    // pnpm's isolated linker puts each dependency of X beside X inside
+    // .pnpm/<X>@<ver>/node_modules, not inside X/node_modules, and the physical
+    // dependency lives in its own .pnpm/<dep>@<ver> entry. The dependency is therefore
+    // neither in the package's own tree nor a child of the group root, which is why
+    // ownership has to be probed through the link farm rather than the resolved realpath.
+    const virtualStore = join(root, "global", "v11", "node_modules", ".pnpm");
+    const instance = join(virtualStore, "@bitkyc08+opencodex@2.0.0", "node_modules");
+    const packageDir = join(instance, ...PKG.split("/"));
+    writePackage(packageDir, "2.0.0");
+    writeDependency(join(virtualStore, "bun@1.0.0", "node_modules", "bun"), "bun");
+    writeDependency(join(virtualStore, "zod@1.0.0", "node_modules", "zod"), "zod");
+    symlinkSync(join(virtualStore, "bun@1.0.0", "node_modules", "bun"), join(instance, "bun"), "dir");
+    symlinkSync(join(virtualStore, "zod@1.0.0", "node_modules", "zod"), join(instance, "zod"), "dir");
+    expect(verifyPnpmInstallTree(packageDir, "2.0.0")).toEqual({ ok: true, failures: [] });
+  });
+
+  test("a sibling entry in the same virtual store cannot vouch for an unrelated group", () => {
+    // The instance directory is per package@version, so a dependency parked in a DIFFERENT
+    // instance's link farm is not reachable from this one and must not satisfy it.
+    const virtualStore = join(root, "global", "v11", "node_modules", ".pnpm");
+    const instance = join(virtualStore, "@bitkyc08+opencodex@2.0.0", "node_modules");
+    const packageDir = join(instance, ...PKG.split("/"));
+    writePackage(packageDir, "2.0.0");
+    const otherInstance = join(virtualStore, "something-else@1.0.0", "node_modules");
+    writeDependency(join(otherInstance, "bun"), "bun");
+    writeDependency(join(otherInstance, "zod"), "zod");
+    const result = verifyPnpmInstallTree(packageDir, "2.0.0");
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain("sentinel dependency missing: bun");
+  });
 });
