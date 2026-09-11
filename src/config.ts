@@ -1307,7 +1307,10 @@ const configSchema = z.object({
   }).optional().catch(undefined),
   // Same degrade-to-off rule as the flags above: a hand-edited typo in an opt-in pool
   // feature must never cost the operator their providers.
-  pool: z.object({ kernel: z.boolean().optional() }).optional().catch(undefined),
+  pool: z.object({
+    kernel: z.boolean().optional(),
+    cacheAffinity: z.boolean().optional(),
+  }).optional().catch(undefined),
   // Model ids excluded from the Grok Build managed block (dashboard switches).
   grokExcludedModels: z.array(z.string()).optional(),
   // Invalid values degrade to undefined ("auto") instead of failing the whole
