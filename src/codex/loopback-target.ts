@@ -44,8 +44,13 @@ export function isLoopbackHostname(hostname: string | undefined): boolean {
  * collide; on a specific non-loopback address (a tailnet or LAN IP) 127.0.0.1 is free.
  */
 export function isWildcardHostname(hostname: string | undefined): boolean {
-  const normalized = (hostname ?? "").trim().toLowerCase().replace(/\.$/, "");
-  return normalized === "0.0.0.0" || normalized === "::" || normalized === "[::]" || normalized === "*";
+  const normalized = (hostname ?? "").trim().toLowerCase().replace(/\.$/, "").replace(/^\[(.*)\]$/, "$1");
+  if (normalized === "*" || normalized === "0") return true;
+  // Every spelling of the IPv4 unspecified address ("0.0.0.0", "00.0.0.000", …).
+  if (/^(0+\.){3}0+$/.test(normalized)) return true;
+  // Every spelling of the IPv6 unspecified address ("::", "::0", "0::", "0:0:0:0:0:0:0:0", …):
+  // nothing but zero groups and colons. A dual-stack `::` bind answers on 127.0.0.1 as well.
+  return normalized.includes(":") && /^[0:]+$/.test(normalized);
 }
 
 /**

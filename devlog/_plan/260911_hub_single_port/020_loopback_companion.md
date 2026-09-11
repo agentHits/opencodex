@@ -162,3 +162,18 @@ bind-scope case in that file).
   `reference/configuration/server.md`, `skills/ocx`.
 - Follow-up (not in this stack as scoped): the Claude/management destination split described
   above, i.e. what `ocx claude` should dial on a companion hub.
+
+## Review round (coordinator)
+
+Two findings from the read-only review, both fixed in a follow-up commit:
+
+- `localClientSkipReason` claimed `"hub-gated"` even when the operator's own toggle was OFF, which
+  would have sent that operator to enable a listener that cannot make the sync happen. The reason is
+  now the conjunction the Grok path already used: toggle ON **and** gate closed. It takes the client
+  id (default `codex`) so a Grok OFF does not silence the Codex gate.
+- `isWildcardHostname` missed the IPv6 unspecified aliases (`::0`, `[::0]`, `0::`,
+  `0:0:0:0:0:0:0:0`), bare `0`, and padded IPv4 zeros. A `hostname: "::0"` companion would have
+  passed both checks and then rolled back with EADDRINUSE — the exact misdiagnosis the check exists
+  to prevent. Normalisation now strips brackets and matches any all-zero spelling.
+
+Verification: `bun test tests/cli/hub-gated-local-clients.test.ts tests/server/loopback-listener-admission.test.ts tests/server/loopback-listener-integration.test.ts tests/cli/cli-dispatch.test.ts tests/clients/sync-client-integrations.test.ts` → 144 pass / 0 fail; `bun run typecheck` clean.

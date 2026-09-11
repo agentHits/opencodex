@@ -96,8 +96,19 @@ export const HUB_GATED_SKIP_MESSAGE =
 /** Why a local-client write was skipped. The gate outranks the toggle: it is the surprising one. */
 export type LocalClientSkipReason = "desired_disabled" | "hub-gated";
 
-export function localClientSkipReason(config: LocalClientSyncConfig): LocalClientSkipReason {
-  return localClientSyncAllowed(config) ? "desired_disabled" : "hub-gated";
+/**
+ * "hub-gated" is claimed only when the toggle is ON and the gate is what stopped the write.
+ * With the toggle OFF the gate is moot: telling that operator to enable the loopback listener
+ * would send them to a key that cannot make the sync happen — the mirror image of the defect
+ * this reason exists to fix.
+ */
+export function localClientSkipReason(
+  config: LocalClientSyncConfig,
+  client: DurableIntentClientId = "codex",
+): LocalClientSkipReason {
+  return integrationEnabled(config, client) && !localClientSyncAllowed(config)
+    ? "hub-gated"
+    : "desired_disabled";
 }
 
 /**
@@ -110,8 +121,9 @@ export function localClientSkipMessage(
   config: LocalClientSyncConfig,
   integrationOffMessage: string,
   hubSuffix?: string,
+  client: DurableIntentClientId = "codex",
 ): string {
-  if (localClientSyncAllowed(config)) return integrationOffMessage;
+  if (localClientSkipReason(config, client) !== "hub-gated") return integrationOffMessage;
   return hubSuffix ? `${HUB_GATED_SKIP_MESSAGE} ${hubSuffix}` : HUB_GATED_SKIP_MESSAGE;
 }
 

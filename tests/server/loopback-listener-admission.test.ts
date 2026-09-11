@@ -201,7 +201,10 @@ describe("loopback companion listener configuration", () => {
   test("a port-less listener is refused wherever the public listener already holds loopback", () => {
     // Wildcards included: 0.0.0.0 answers on 127.0.0.1 too, so the companion would collide
     // there just as surely as on an explicit loopback bind.
-    for (const hostname of [undefined, "127.0.0.1", "localhost", "::1", "0.0.0.0", "::", "[::]"]) {
+    for (const hostname of [
+      undefined, "127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0", "00.0.0.000", "0", "*",
+      "::", "[::]", "::0", "[::0]", "0::", "0:0:0:0:0:0:0:0",
+    ]) {
       const result = validateConfigCandidate(candidate(hostname === undefined ? {} : { hostname }));
       expect({ hostname, ok: result.ok }).toEqual({ hostname, ok: false });
       if (!result.ok) {

@@ -56,6 +56,18 @@ describe("the hub gate has its own reason and its own sentence", () => {
     expect(localClientSkipReason(hubConfig({ runtimeRole: undefined }))).toBe("desired_disabled");
   });
 
+  test("a real OFF on a gated hub is reported as the toggle, not the gate", () => {
+    // Enabling the listener would not make this sync happen, so naming the gate here would
+    // send the operator to the wrong key — the mirror image of the defect the reason fixes.
+    const off = hubConfig({ clientIntegrations: { codex: false } });
+    expect(localClientSyncAllowed(off)).toBe(false);
+    expect(localClientSkipReason(off)).toBe("desired_disabled");
+    expect(localClientSkipMessage(off, "Codex integration is OFF")).toBe("Codex integration is OFF");
+    // Per-client: a Grok OFF does not silence the Codex gate and vice versa.
+    expect(localClientSkipReason(off, "grok")).toBe("hub-gated");
+    expect(localClientSkipReason(hubConfig({ clientIntegrations: { grok: false } }))).toBe("hub-gated");
+  });
+
   test("the message names the hub and the key that opens the gate", () => {
     expect(HUB_GATED_SKIP_MESSAGE).toContain("This machine is a hub");
     expect(HUB_GATED_SKIP_MESSAGE).toContain("unauthenticatedLoopbackListener");
