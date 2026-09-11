@@ -67,11 +67,14 @@ desired 지문만 달라져 상태가 stale 이 된다(state.ts:411). JSON 클�
 프래그먼트를 다시 쓴다. 즉 미수정 설치는 자동으로 따라온다.
 
 --overwrite-conflict 는 사용자가 kind 나 options 를 직접 고쳐 이미 foreign-edit 인 경우에만 필요하다.
-tests/clients/integrations-writer.test.ts:534 의 conflict 케이스는 사용자가 baseURL 을 편집한 상황이지
+tests/clients/integrations-writer.test.ts:525 의 conflict 케이스는 사용자가 baseURL 을 편집한 상황이지
 ocx 가 kind 를 바꾸는 상황이 아니다.
 
-회귀 테스트를 추가한다: 생성 계약의 kind 가 바뀌었을 때 미수정 기록이 conflict 가 아니라 stale 로
-분류되고 refresh 가 프래그먼트를 다시 쓴다는 것을 tests/clients/integrations-writer.test.ts 에 고정한다.
+회귀 테스트는 구성 가능한 쪽으로 넣는다. 이전 빌드가 쓴 기록(옛 지문)을 이 하네스에서 만들 수 없어
+"옛 기록 + 새 계약 -> stale" 은 직접 재현할 수 없다. 그 경로는 코드로만 확인된다
+(state.ts:213 recordedBlockIsOwned, state.ts:405-411 stale 분류, writer.ts:390-391 재작성).
+대신 보완 관계인 보호 쪽을 고정한다: 사용자가 kind 를 손으로 되돌리면 여전히 conflict / foreign-edit 이고
+apply 가 거부된다. baseURL 편집에만 있던 보호를 kind 에도 명시적으로 건다.
 
 ## 검증
 
