@@ -223,3 +223,17 @@ as open rather than quietly satisfied — is making the binding explicitly cache
 of identity-derived. The criterion's plural "pools" is likewise honest only because Anthropic
 already holds its live sessions; this change brings Codex to the behaviour Anthropic has, rather
 than adding a second implementation.
+
+### The "## Change surface" block above is SUPERSEDED
+
+It still names `pool.kernel`, `hasCodexQuotaHeadroom` and `reevaluateAffinityQuota` alone.
+Implementing it as written fails three of the folded findings and cannot pass the 90% keep case.
+The fold is the spec. Concretely, the build is:
+
+- `src/types/config.ts` and `src/config.ts` — `pool.cacheAffinity?: boolean`, default off.
+- `src/codex/routing.ts` `reevaluateAffinityQuota` AND `previewReusableAffinityAccount` — both
+  copies swap the rebind bar to `!isCodexAccountUsable || (!isUnknownUsage(usage) && usage >= 100)`
+  when the flag is on, and the `lastReevalAt` short circuit keys off that same bar.
+
+The pre-audit block stays as the record of what was planned before the audit rather than being
+rewritten to look correct.
