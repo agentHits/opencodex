@@ -130,3 +130,49 @@ it reaches a real dispatch.
   unchanged even when cooled, because rotation stays reactive-only for that install.
 - A cursor case: a manual key selection through `PUT /api/providers/keys/active` clears the
   rotation cursor.
+
+### Plan audit — FAIL, folded
+
+**Blocker 1 — the picker does not mutate the route.** `selectProactiveApiKey` writes
+`config.providers[name]` and RETURNS a clone; it never touches `route.provider`. The plan said
+"wire the call" without saying what to do with the return, which is not implementable: a literal
+reading leaves the live route on the cooled key and the whole unit is a no-op that still writes
+config. The call site is:
+
+```
+const picked = selectProactiveApiKey(config, route.providerName, now);
+if (picked) route.provider = picked;
+```
+
+**Blocker 2 — the assignment must land before the copies, not merely before the send.**
+"One call serves all four consumers" is true only because nothing reassigns `route.provider`
+between the pin and each consumer — but they do not all read it late. `adapterProvider` is
+copied at `core.ts`:4458 and the adapter is bound at :4477, and the HTTP path captures
+`builtInitialRequest` at :7139. So the assignment goes BEFORE :4450, ahead of every copy. The
+audit also showed why this cannot be left to self-healing: the HTTP and `runTurn` paths can
+re-read a stale selection through `refreshDispatchAdapter` (:4197), but the image bridge
+(:6570) and web search (:6655) call `providerFetch(route.provider)` directly and have no such
+second chance. Ordering is the entire correctness argument here.
+
+**Major 1 accepted, with the reason recorded.** Putting the picker on the first-attempt path
+means an ordinary request can now perform a persisted config write. It is bounded: the picker
+returns null unless a strategy is configured AND the committed key is already cooled, so a
+healthy install does one predicate and stops. The write goes through the same
+`commitProviderApiKeySelection` / `mutatePersistedConfig` lock the reactive rotation uses, and a
+later same-request 429 rotation serializes behind that lock rather than racing it. The cost is
+paid exactly once per cooldown, replacing a request that was otherwise spent earning a 429 the
+runtime could already predict.
+
+**Major 2 — two first-send paths this unit does NOT cover, named rather than silently dropped.**
+Native compact for `openai-apikey` (`src/server/responses/compact.ts`:669, dispatch at :745-883)
+never enters `core.ts`, and the keyed `/v1/images` path (`src/server/images.ts`:701) reads
+`candidates.keyed.apiKey` directly rather than a provider object. Each has a different
+provider-resolution shape and needs its own dispatch harness, so they become their own
+work-phase instead of riding along untested here. `collaboration.ts` and
+`encrypted-payload.ts` are NOT affected: they import `rotateProviderTransportOn429` and
+dispatch no first attempt.
+
+**Minors folded.** The web-search fetch is `core.ts`:6655, not :6653 (that line is a comment).
+The stale-selection re-read is :4197, not :4196. `src/server/management/provider-routes.ts`:832
+and :931 also `clearKeyCooldowns` on key replace and delete, so the cursor reset belongs there
+too — five routes, not three.
