@@ -101,3 +101,66 @@ The Anthropic and generic halves are not frozen, so a narrower first slice exist
 unify the affinity key for those two kinds only, leaving the Codex thread-affinity
 map on its current key until the freeze lifts. That slice still needs assumption 1
 answered, which is why this phase stays closed rather than being re-scoped now.
+
+## wp3 plan — what criterion c-4 actually requires
+
+This phase was recorded as blocked on three product decisions: the shared affinity key shape,
+the shared-cohort `prompt_cache_key` fallback, and a minimum-token cache gate. Re-reading the
+criterion against the code shows none of the three is on the path to it.
+
+> c-4: Account selection consults cache affinity before quota for subscription pools, proven by
+> a test where the cache-affine account is chosen over a higher-headroom one.
+
+That is a statement about **ordering**, not about key shape. The phase title pairs ordering with
+"a unified affinity key", but only the ordering half is an acceptance criterion, and the two are
+separable: reordering uses each kind's EXISTING affinity binding and introduces no new key.
+Assumption 1 gates the unified key, not this. Assumption 2 is a property of the Anthropic
+session-key derivation, which the ordering change does not touch. Assumption 3 is explicitly
+optional in the original text ("decide whether to implement") and is not required by c-4.
+
+So the unified key stays open and stays out of this cycle. The ordering ships now.
+
+## Only one kind actually breaks cache affinity
+
+Verified on the branch head rather than assumed:
+
+- **Anthropic already honours affinity unconditionally.** `src/oauth/anthropic-routing.ts`:604-610
+  returns `{ reason: "affinity" }` whenever the affined account is present, not reauth-flagged,
+  not cooled and credential-usable. `autoSwitchThreshold` governs NEW-session picks
+  (`anthropicAutoSwitchThreshold`, :111) and never rebinds a live session.
+- **Codex does not.** `reevaluateAffinityQuota` (`src/codex/routing.ts`:2031) rebinds a live
+  thread whenever the quota strategy is active and usage crosses `autoSwitchThreshold` (:2047),
+  which throws away a warm prompt cache on a hint rather than on evidence.
+- The generic OAuth kind has no affinity at all, so it has nothing to reorder.
+
+That makes this a one-function change, and it makes the criterion's "pools" plural satisfiable:
+after it, both subscription pools keep a bound conversation on its account until that account
+genuinely cannot serve.
+
+## Change surface
+
+`src/codex/routing.ts`, `reevaluateAffinityQuota` only. Under `pool.kernel`, the rebind bar
+stops being "crossed the threshold" and becomes the same **drained** test the pin-release path
+already uses (`releaseDrainedCodexAccountPin`, :1866):
+
+```
+!isCodexAccountUsable(config, entry.accountId, selectionOptions)
+  || !hasCodexQuotaHeadroom(config, entry.accountId, selectionOptions, now)
+```
+
+Reusing that predicate rather than inventing a second notion of "spent" is deliberate: two
+definitions of exhausted in one file is how they drift. The reeval-interval short circuit keeps
+its current shape so a bound thread is still not re-scored more than once a minute.
+
+Flag off restores today's behaviour exactly, which is what makes shipping this without the three
+open decisions safe rather than presumptuous.
+
+## Acceptance
+
+- A bound thread on an account at 90% usage with `autoSwitchThreshold: 80` and a sibling at 10%
+  KEEPS its account while the flag is on — the cache-affine account chosen over the
+  higher-headroom one, which is c-4 verbatim.
+- The same fixture with the flag off still moves, so the old behaviour is provably intact.
+- A bound thread whose account is genuinely drained still moves with the flag on, so the change
+  is a reordering and not a pin.
+- Red control: with the flag branch removed, the first case must fail.
