@@ -152,17 +152,27 @@ Remote clients journal and restore native integrations locally while model traff
 ## Local destinations on a hub
 
 A client running on the proxy's own machine has two destinations, and they are resolved
-separately by `src/lib/local-destinations.ts`. Inference (`localInferenceOrigin`) is
+separately by `src/lib/local-destinations.ts`. Inference (`localInferenceDestination`) is
 `127.0.0.1` on the unauthenticated loopback listener's effective port when that listener is
-enabled, otherwise the public port; a hub bound to a tailnet or LAN address has no other local
-data socket, so `ocx claude`, the `system-env` injection, the Claude Desktop profile, the Cursor
-gateway value, the gateway-model cache, the routed vision self-fetch and the API-access loopback
-fallback all go through that resolver rather than composing the port themselves. Management
+enabled, otherwise the public port on the bind address — `127.0.0.1` for a loopback or wildcard
+bind, and the tailnet or LAN address otherwise, where no loopback data socket exists at all. So
+`ocx claude`, the `system-env` injection, the Claude Desktop profile, the Cursor gateway value,
+the gateway-model cache, the routed vision self-fetch and the API-access loopback fallback all go
+through that resolver rather than composing the port themselves. Management
 (`localManagementOrigin`) is the hub's loopback `hub.managementIngress` when enabled, otherwise
-the public bind address, and the caller supplies the management credential. Management
-authentication has no loopback bypass and the data-loopback listener serves no `/api/*`, so these
-two must never be collapsed into one base URL, and an admin credential must never be written into
-an exported client configuration.
+the public bind address, and the caller supplies the management credential. `fetchClaudeCodeState`
+is that resolver's caller: it sends the local admin token to the management ingress, or — with no
+ingress — to the bind address, and either destination is host-local and never reaches an exported
+client configuration. Management authentication has no loopback bypass and the data-loopback
+listener serves no `/api/*`, so these two must never be collapsed into one base URL, and an admin
+credential must never be written into an exported client configuration.
+
+Both resolvers share the same fallback shape, and the inference one additionally reports whether
+its destination demands data-plane admission: the loopback listener and a genuinely loopback bind
+need no credential, while a wildcard or tailnet bind does. Each caller either attaches that
+credential — the `OPENCODEX_API_AUTH_TOKEN` / service-token-file / `apiKeys` ladder, never the
+admin token — or logs that it is degrading. Composing `http://127.0.0.1:<public port>` by hand is
+what produced a dead socket on a tailnet-bound hub in the first place.
 
 ## Connected Claude Desktop profiles
 
