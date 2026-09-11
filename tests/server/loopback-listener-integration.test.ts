@@ -290,9 +290,11 @@ describe("unauthenticated loopback listener", () => {
         { method: "GET", path: "/" },
         { method: "GET", path: "/healthz" },
         { method: "GET", path: "/readyz" },
-        { method: "POST", path: "/v1/chat/completions", body: '{"model":"x","messages":[]}' },
-        { method: "POST", path: "/v1/messages", body: '{"model":"x","messages":[]}' },
         { method: "GET", path: "/v1/opencodex/artifacts/x" },
+        // The two inference wires are admitted as POST only (see the dedicated test below).
+        { method: "GET", path: "/v1/messages" },
+        { method: "GET", path: "/v1/chat/completions" },
+        { method: "POST", path: "/v1/messages/count_tokens", body: '{"model":"x","messages":[]}' },
         // Voice call-create is admitted only as POST; the keyed sideband join only as an upgrade.
         { method: "GET", path: "/v1/live/rtc_x" },
         { method: "GET", path: "/v1/realtime/calls/rtc_x" },
@@ -458,6 +460,50 @@ describe("unauthenticated loopback listener", () => {
         const res = await fetch(`${base}${path}`, { headers: upgradeHeaders });
         expect({ path, status: res.status }).toEqual({ path, status: 404 });
         expect(res.headers.get("content-type")).toContain("application/json");
+      }
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("admits the two local client inference wires, and still refuses /api/* (#4236)", async () => {
+    // The hub's own local clients do not speak Responses: `ocx claude`, the system-env
+    // injection and Claude Desktop speak the Anthropic wire, Cursor / the vision helper /
+    // aside speak OpenAI chat. On a tailnet-bound hub this listener is their only local
+    // socket, so a 404 here is the whole "Codex works but nothing else does" defect.
+    const loopbackPort = await freePort();
+    saveConfig(baseConfig(loopbackPort));
+    const server = await startLoopbackTestServer(loopbackPort);
+    const base = `http://127.0.0.1:${loopbackPort}`;
+    const publicBase = `http://127.0.0.1:${server.port}`;
+    try {
+      for (const path of ["/v1/messages", "/v1/chat/completions"]) {
+        const viaPublic = await fetch(`${publicBase}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        // The public listener is unchanged: a wildcard bind still demands a credential.
+        expect({ path, status: viaPublic.status }).toEqual({ path, status: 401 });
+
+        // Deliberately malformed so it fails INSIDE the handler. Neither 401 (not admitted)
+        // nor 404 (not on the allowlist) may come back.
+        const viaLoopback = await fetch(`${base}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        expect({ path, status: viaLoopback.status }).not.toEqual({ path, status: 401 });
+        expect({ path, status: viaLoopback.status }).not.toEqual({ path, status: 404 });
+      }
+
+      // Management discovery is the OTHER destination contract and must not ride along: the
+      // CLI resolves `/api/*` through the authenticated surface with a management credential.
+      for (const path of ["/api/claude-code", "/api/config"]) {
+        const response = await fetch(`${base}${path}`, {
+          headers: { "x-opencodex-api-key": "admin-secret" },
+        });
+        expect({ path, status: response.status }).toEqual({ path, status: 404 });
       }
     } finally {
       await server.stop(true);
@@ -929,18 +975,23 @@ describe("loopback companion listener", () => {
     const server = startServer(port);
     try {
       // Same socket semantics as the ported form, same default-deny. A companion is a bind
-      // address change, never an admission change — `/api/*` in particular stays unreachable
-      // without a management credential, and the Anthropic wire stays off this listener.
-      for (const path of ["/api/config", "/healthz", "/"]) {
+      // address change, never an admission change — `/api/*`, health and the GUI stay
+      // unreachable here no matter which port the listener shares.
+      for (const path of ["/api/config", "/api/claude-code", "/healthz", "/readyz", "/"]) {
         const response = await fetch(`http://127.0.0.1:${port}${path}`);
         expect({ path, status: response.status }).toEqual({ path, status: 404 });
       }
-      const messages = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: '{"model":"x","messages":[]}',
-      });
-      expect(messages.status).toBe(404);
+      // The inference wires the hub's own clients speak ARE served (#4236); malformed bodies,
+      // so a non-404 proves admission rather than an upstream call.
+      for (const path of ["/v1/messages", "/v1/chat/completions"]) {
+        const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        expect({ path, status: response.status }).not.toEqual({ path, status: 404 });
+        expect({ path, status: response.status }).not.toEqual({ path, status: 401 });
+      }
       expect((await fetch(`http://127.0.0.1:${port}/v1/models`)).status).toBe(200);
     } finally {
       await server.stop(true);

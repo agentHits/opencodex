@@ -822,6 +822,17 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
    * keeps the paid upstream behind its own admission and forward-credential checks, so admit only
    * the exact methods and paths it serves (#3428).
    *
+   * `POST /v1/messages` (Anthropic wire) and `POST /v1/chat/completions` (OpenAI chat wire)
+   * are the inference endpoints the hub's OWN local clients speak: `ocx claude` and the
+   * `system-env` injection and Claude Desktop 3P dial the first, Cursor Private Inference, the
+   * vision `routed-describe` helper and aside/opencode the second (#4236). On a hub whose
+   * public listener binds a tailnet address there is no other local socket for them, so
+   * leaving them off this list left every non-Codex local client pointed at a closed port.
+   * Both handlers resolve their own admission from the RECEIVING listener's policy view — the
+   * same resolver and the same loopback short-circuit `/v1/responses` already uses — so this
+   * adds a wire, not a trust level. `/api/*` is deliberately still absent: local management
+   * discovery goes to the authenticated management surface, never to this listener.
+   *
    * `GET /v1/models` is on the list for a reason that is easy to miss. When catalog
    * materialization fails or finds no source, `syncCodex` warns and injects with
    * `catalogPath: null`; Codex then builds an ONLINE model manager and `model/list` refreshes
@@ -834,6 +845,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
       return req.method === "POST" || req.headers.get("upgrade")?.toLowerCase() === "websocket";
     }
     if (path === "/v1/responses/compact") return req.method === "POST";
+    if (path === "/v1/messages" || path === "/v1/chat/completions") return req.method === "POST";
     if (path === "/v1/alpha/search") return req.method === "POST";
     if (path === "/v1/images/generations" || path === "/v1/images/edits") {
       return req.method === "POST";
@@ -2014,10 +2026,13 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
           ...admissionFields(admission),
           inboundProtocol: "chat",
         };
+        // `policy`, not `config`: this route is now served on the unauthenticated loopback
+        // listener too (#4236), and only the receiving listener's view produces CORS headers
+        // that match the admission decision made above.
         return runAdmittedHttpTurn(req, policy, async turnAdmissionLease => withCors(
           await handleChatCompletions(req, config, logCtx, { requestId, start, turnAdmissionLease, admission }),
           req,
-          config,
+          policy,
         ));
       }
 
