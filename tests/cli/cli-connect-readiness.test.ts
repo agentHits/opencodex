@@ -18,6 +18,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import { repoRoot } from "../helpers/repo-root";
+import { INTERNAL_DEADLINE_MS } from "../helpers/test-budget";
+import { connectCompletionReport } from "../../src/cli/connect";
+import type { ClientCatalogReadiness } from "../../src/client/catalog-compatibility";
 
 /** Codex CLI 0.135.0's ladder, verbatim from the parse error in the issue. */
 const OLD_CLI = ["none", "minimal", "low", "medium", "high", "xhigh"];
@@ -106,6 +109,11 @@ function runStatusProbe(options: {
     const result = spawnSync(process.execPath, ["--eval", script], {
       cwd: repoRoot(),
       encoding: "utf8",
+      // Bun's test timeout cannot interrupt spawnSync, so a child that wedged on a lock or an
+      // unexpected probe would hang the worker rather than fail. Same budget the existing
+      // client fixtures use.
+      timeout: INTERNAL_DEADLINE_MS,
+      killSignal: "SIGKILL",
       env: {
         ...process.env,
         OPENCODEX_HOME: opencodexHome,
@@ -173,7 +181,10 @@ describe("#4207 connected-client readiness", () => {
     const probe = runStatusProbe({ connected: true, ladder: OLD_CLI, catalog: "not json" });
 
     expect(probe.status.readiness).toBe("unverified");
-    expect(probe.status.readinessReason).toContain("could not be read");
+    // The write-time gate says "the downloaded catalog could not be read", which points the
+    // operator at a download that is not the problem. These bytes are already installed.
+    expect(probe.status.readinessReason)
+      .toBe("the installed catalog is not readable JSON, so the local Codex CLI cannot parse it either");
   });
 
   test("a machine with no client connection never probes the runtime", () => {
@@ -186,5 +197,55 @@ describe("#4207 connected-client readiness", () => {
     expect(probe.status.readiness).toBeUndefined();
     expect(probe.status.readinessReason).toBeUndefined();
     expect(probe.lines[0]).toBe("Connection: disconnected");
+  });
+});
+
+describe("#4207 what ocx connect reports when the local CLI cannot use the catalog", () => {
+  const incompatible: ClientCatalogReadiness = {
+    kind: "incompatible",
+    reason: "the installed catalog uses reasoning level max, which the selected local Codex CLI rejects",
+    unsupportedEfforts: ["max"],
+    affectedModels: ["gpt-5.6-sol"],
+  };
+  const connection = { serverUrl: "https://hub.example.test", apiKeyId: "client-key-1" };
+
+  test("a ready client reports the connection and the local verdict", () => {
+    const report = connectCompletionReport(connection, ["codex"], { kind: "ready" });
+
+    expect(report.failure).toBeNull();
+    expect(report.lines[0]).toContain("Connected to https://hub.example.test");
+    expect(report.lines[1]).toContain("ready");
+  });
+
+  test("an unverifiable runtime is reported but does not fail the command", () => {
+    // Refusing here would block a working configuration on absent evidence, which is the line
+    // the write-time gate already refuses to cross.
+    const report = connectCompletionReport(connection, ["codex"], { kind: "unverified", reason: "no Codex CLI was observed" });
+
+    expect(report.failure).toBeNull();
+    expect(report.lines.join(" ")).toContain("unverified");
+  });
+
+  test("a proven incompatibility fails the command and withholds the success line", () => {
+    const report = connectCompletionReport(connection, ["codex"], incompatible);
+
+    expect(report.failure).toBe(`client_not_ready: ${incompatible.reason}`);
+    // A caller grepping for "Connected to" must not read a catalog the local CLI cannot parse
+    // as success, so the verdict leads and that phrase is withheld.
+    expect(report.lines[0]).toContain("not ready");
+    expect(report.lines.join(" ")).not.toContain("Connected to");
+    // The connection really was saved. Saying so is what keeps the failure from reading as a
+    // rollback that never happened.
+    expect(report.lines.join(" ")).toContain("was saved");
+  });
+
+  test("a Claude-only connection is told, but not failed, by an old Codex CLI", () => {
+    // Nothing in this connection launches Codex, so a stale binary elsewhere on PATH is not a
+    // reason to fail an operator's Claude Desktop setup.
+    const report = connectCompletionReport(connection, ["claude"], incompatible);
+
+    expect(report.failure).toBeNull();
+    expect(report.lines.join(" ")).toContain("nothing here launches Codex");
+    expect(report.lines[0]).toContain("Connected to");
   });
 });

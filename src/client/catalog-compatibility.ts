@@ -175,7 +175,14 @@ export function inspectClientCatalogReadiness(
   if (body === null) return { kind: "unverified", reason: "the installed catalog could not be read" };
   const assessment = assessClientCatalogCompatibility(body, deps);
   if (assessment.kind === "compatible") return { kind: "ready" };
-  if (assessment.kind === "unverified") return assessment;
+  if (assessment.kind === "unverified") {
+    // assessClientCatalogCompatibility words its parse failure for bytes that have just been
+    // downloaded. These bytes are already installed, so blaming a download would send the
+    // operator to the wrong place; name the file that is actually unusable.
+    return parseModels(body) === null
+      ? { kind: "unverified", reason: "the installed catalog is not readable JSON, so the local Codex CLI cannot parse it either" }
+      : assessment;
+  }
   return {
     kind: "incompatible",
     reason: installedCatalogRejectionReason(assessment.unsupportedEfforts, assessment.affectedModels),
