@@ -132,11 +132,11 @@ Codex 池選擇套用於清除既有親和性後的下一個請求；進行中�
 
 ### `ocx account auto-switch <provider> <on|off|status|threshold <0-100>> [--json]`
 
-控制 `openai` Codex 帳戶池閾值，或儲存通用 OAuth 帳戶池閾值。`on` 儲存 80%，`off` 儲存 0%，`threshold <n>` 接受 0–100。通用池的閾值目前不參與執行；儲存閾值不會啟用閾值切換、改變供應商啟用設定或停用 429 錯誤後的輪替。通用池的查詢與修改結果使用伺服器確認值。通用池的 `poolEnabled` 是已儲存的供應商設定，`null` 表示未指定，並不代表繼承後的實際狀態。`inert: true` 表示閾值未套用；能力未知時也不會回報 `enabled: true`。API 金鑰供應商、Anthropic 與無效值會被拒絕。
+控制 `openai` Codex 帳戶池閾值，或儲存通用 OAuth 帳戶池閾值。`on` 儲存 80%，`off` 儲存 0%，`threshold <n>` 接受 0–100。通用池的閾值只有在 `pool.kernel` 開啟且 `strategy: "fill-first"` 時才參與選擇；旗標關閉時，儲存閾值不會啟用閾值切換。兩種情況下都不會改變供應商啟用設定或停用 429 錯誤後的輪替。通用池的查詢與修改結果使用伺服器確認值。通用池的 `poolEnabled` 是已儲存的供應商設定，`null` 表示未指定，並不代表繼承後的實際狀態。`inert: true` 表示閾值已儲存但未套用，`inert: false` 表示帳戶池正在套用它。沒有 `inert` 欄位表示能力未知，此時同樣不會回報 `enabled: true`。API 金鑰供應商、Anthropic 與無效值會被拒絕。
 
 ```text
 openai: { provider, autoSwitchThreshold: number, enabled: boolean }
-generic OAuth: { provider, autoSwitchThreshold: number | null, enabled: boolean, poolEnabled: boolean | null, inert: true | null }
+generic OAuth: { provider, autoSwitchThreshold: number | null, enabled: boolean, poolEnabled: boolean | null, inert: boolean | null }
 ```
 
 ### `ocx account login|reauth|code|cancel ...`

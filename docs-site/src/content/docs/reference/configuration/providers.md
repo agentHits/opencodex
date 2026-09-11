@@ -565,8 +565,9 @@ second account.
 | --- | --- | --- | --- |
 | `oauthAccountFailover.enabled?` | `boolean` | presence-driven | Global override for the **pre-dispatch account preference** only. `false` stops a healthy request being steered toward the account with more known headroom. It does **not** disable 429 rotation. |
 | `providers.<name>.oauthAccountFailover.enabled?` | `boolean` | inherits | Per-provider override for the same preference; beats the global setting in either direction. `false` declines the preference for this provider even when the global setting is `true`, and `true` opts this provider in even when the global setting is `false`. Reactive 429 rotation is unaffected either way. |
-| `providers.<name>.oauthAccountFailover.strategy?` | `"quota" \| "round-robin" \| "fill-first"` | — | Declared pool strategy for a generic OAuth provider (#695). Persisted through `ocx account strategy <provider> <name>` or `PUT /api/oauth/accounts/pool`; the generic selector does not act on it yet, so omitted and set behave the same today. |
-| `providers.<name>.oauthAccountFailover.autoSwitchThreshold?` | `number` | — | Declared 0–100 usage percent for a proactive switch on a generic OAuth provider (#695). Set with `ocx account auto-switch <provider> threshold <n>`; inert until the selector consumes it. |
+| `providers.<name>.oauthAccountFailover.strategy?` | `"quota" \| "round-robin" \| "fill-first"` | — | Pool strategy for a generic OAuth provider (#695). Persisted through `ocx account strategy <provider> <name>` or `PUT /api/oauth/accounts/pool`. The selector acts on it only while `pool.kernel` is on; with the flag off, omitted and set behave the same. `quota` is the pre-kernel behaviour either way. |
+| `providers.<name>.oauthAccountFailover.autoSwitchThreshold?` | `number` | `80` | 0–100 usage percent at which `fill-first` advances off the active account (#695). Set with `ocx account auto-switch <provider> threshold <n>`. Read only under `pool.kernel` with `strategy: "fill-first"`; an account with no measured usage counts as under the threshold. |
+| `providers.<name>.oauthAccountFailover.stickyLimit?` | `number` | `1` | Successful dispatches retained on one `round-robin` selection, 1–100 (#695). Read only under `pool.kernel` with `strategy: "round-robin"`. |
 
 To decline proactive account steering for one provider whose terms you would rather not test,
 while still recovering from a rate limit:
@@ -586,10 +587,10 @@ That setting survives logging in, adding an account, and reauthenticating.
 Generic OAuth providers (Google Antigravity, xAI, Cursor, Kimi, GitHub Copilot, Nous, and any
 other OAuth provider outside the Codex and Anthropic pools) also accept `strategy` and
 `autoSwitchThreshold` on the same key, through `GET`/`PUT /api/oauth/accounts/pool?provider=<name>`
-and the `ocx account strategy` / `ocx account auto-switch` verbs. The response carries
-`"inert": true` for those two fields only — `enabled` is live and governs the pre-dispatch
-preference. `stickyLimit` and
-`quotaWindow` are not part of the generic contract. Codex (`/api/codex-auth`) and Anthropic
+and the `ocx account strategy` / `ocx account auto-switch` / `ocx account sticky` verbs. The response carries
+`"inert"` for those three fields only — `true` while they are stored but not consumed,
+`false` once `pool.kernel` is on and they actually select an account — `enabled` is live and governs the pre-dispatch
+preference. `quotaWindow` is not part of the generic contract. Codex (`/api/codex-auth`) and Anthropic
 (`anthropicAccountPool`) keep their own contracts unchanged.
 
 Deliberately narrower than `anthropicAccountPool`: no session affinity, no quota-ranked

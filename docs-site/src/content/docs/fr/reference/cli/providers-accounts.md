@@ -208,11 +208,11 @@ renvoient 1 ; une sonde de quota en amont qui échoue ou expire produit plutôt 
 
 ### `ocx account auto-switch <provider> <on|off|status|threshold <0-100>> [--json]`
 
-Contrôle le seuil du pool Codex `openai`, ou enregistre celui d’un pool OAuth générique. `on` enregistre 80 %, `off` 0 % et `threshold <n>` accepte 0–100. Les seuils génériques sont actuellement inactifs : leur sauvegarde ne change ni le basculement par seuil, ni l’activation du fournisseur, ni la rotation réactive après une erreur 429. Pour les pools génériques, les sorties utilisent la réponse confirmée du serveur. Pour un pool générique, `poolEnabled` est le réglage enregistré (`null` signifie non spécifié), pas l’état effectif hérité. `inert: true` indique que le seuil ne s’applique pas ; une capacité inconnue ne produit jamais `enabled: true`. Les fournisseurs à clé API, Anthropic et les valeurs invalides sont refusés.
+Contrôle le seuil du pool Codex `openai`, ou enregistre celui d’un pool OAuth générique. `on` enregistre 80 %, `off` 0 % et `threshold <n>` accepte 0–100. Un seuil générique n’oriente la sélection que si `pool.kernel` est activé avec `strategy: "fill-first"` ; le drapeau désactivé, sa sauvegarde n’active pas le basculement par seuil. Dans les deux cas, elle ne change ni l’activation du fournisseur, ni la rotation réactive après une erreur 429. Pour les pools génériques, les sorties utilisent la réponse confirmée du serveur. Pour un pool générique, `poolEnabled` est le réglage enregistré (`null` signifie non spécifié), pas l’état effectif hérité. `inert: true` indique un seuil enregistré mais non appliqué, `inert: false` un seuil que le pool applique réellement. L’absence d’`inert` signale une capacité inconnue, qui ne produit jamais `enabled: true`. Les fournisseurs à clé API, Anthropic et les valeurs invalides sont refusés.
 
 ```text
 openai: { provider, autoSwitchThreshold: number, enabled: boolean }
-generic OAuth: { provider, autoSwitchThreshold: number | null, enabled: boolean, poolEnabled: boolean | null, inert: true | null }
+generic OAuth: { provider, autoSwitchThreshold: number | null, enabled: boolean, poolEnabled: boolean | null, inert: boolean | null }
 ```
 
 ### `ocx account priority <provider> <account-id|main> [<-100..100|first|earlier|normal|later|last|reset>] [--json]`
