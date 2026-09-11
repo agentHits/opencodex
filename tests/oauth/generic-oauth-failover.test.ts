@@ -625,10 +625,16 @@ describe("#695 the generic pool consumes its persisted strategy behind pool.kern
   test("a 429 under round-robin rotates instead of ranking", async () => {
     const ids = await seed(3);
     await setActiveAccount("xai", ids[0]!);
-    // No quota evidence anywhere, so the quota path would hand back the ring untouched.
+    // Quota evidence pointing SOMEWHERE ELSE is what makes this case mean anything. With no
+    // evidence the pre-kernel path hands the ring back untouched and lands on the same
+    // account round-robin would, so the test would pass whether or not the branch exists.
+    setCachedProviderAccountQuotaForTests("xai", ids[1]!, { weeklyPercent: 80, updatedAt: Date.now() });
+    setCachedProviderAccountQuotaForTests("xai", ids[2]!, { weeklyPercent: 5, updatedAt: Date.now() });
     const next = rotateGenericOAuthAccountOn429(kernelConfig("round-robin"), "xai", ids[0]!, null);
     expect(next).not.toBeNull();
     expect(next).not.toBe(ids[0]!);
+    // Round-robin takes its turn. Quota would have chased the roomier third account.
+    expect(next).toBe(ids[1]!);
   });
 
   test("a 429 under fill-first leaves the cooled account rather than holding it", async () => {
@@ -639,6 +645,10 @@ describe("#695 the generic pool consumes its persisted strategy behind pool.kern
     // Well under threshold: the initial-preference rule would keep this account. The 429 path
     // must not, because the account it would hold is the one that just failed.
     setCachedProviderAccountQuotaForTests("xai", sorted[0]!, { weeklyPercent: 10, updatedAt: Date.now() });
+    // The successor is the BUSIER of the two survivors, so quota ranking would skip past it.
+    // Fill-first still takes it: filling one account before opening the next is the point.
+    setCachedProviderAccountQuotaForTests("xai", sorted[1]!, { weeklyPercent: 70, updatedAt: Date.now() });
+    setCachedProviderAccountQuotaForTests("xai", sorted[2]!, { weeklyPercent: 5, updatedAt: Date.now() });
 
     const next = rotateGenericOAuthAccountOn429(cfg, "xai", sorted[0]!, null);
     expect(next).toBe(sorted[1]!);
