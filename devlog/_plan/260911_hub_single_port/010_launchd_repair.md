@@ -7,17 +7,41 @@ Scope: `src/service.ts` macOS path only, plus the two shared test-safety guards 
 uncovered. Defects 3 and 4 from the issue (secondary-port misdiagnosis, `ocx status` fence
 comparison) are deliberately left to PR2, which owns the loopback listener.
 
+Two rounds. The first is the three commits below; the second folds in a review of them, and
+every fix it carries is marked in place. In short: the new protocol was still asking the OLD
+two-state `launchdJobMatchesPlist` at both decision points (so an unreadable `launchctl print`
+still evicted a healthy hub, twice), the no-op pre-check compared whole-file bytes while
+`buildPlist` bakes the repairing process's `PATH`, the comment justifying `kickstart -k` was
+wrong about launchd re-reading the plist, and every mutating verb still addressed `gui/<uid>`
+alone while the new probe reports `user/<uid>` too.
+
 ## What shipped
 
 ### A — `installLaunchd()` (repair must not be an outage)
 
-1. **No-op pre-check.** The plist is rendered BEFORE anything is written. If the rendered
-   bytes equal the on-disk bytes, the data-token file is unchanged, and
-   `launchdJobMatchesPlist()` reports `{loaded:true, matchesPlist:true}`, the function
-   re-asserts 0600 on the plist, refreshes install state, logs
+1. **No-op pre-check, on the TRI-STATE probe.** The plist is rendered BEFORE anything is
+   written. If the rendered bytes equal the on-disk bytes, the data-token file is unchanged,
+   and `probeLaunchdLoadState()` answers `loaded-current`, the function re-asserts 0600 on the
+   plist, refreshes install state, logs
    `service is already loaded from the current plist; nothing to do.` and returns. launchd is
    not touched at all. This is the headline fix: a repair of a healthy hub used to evict it
    unconditionally.
+
+   Two things the first round got wrong here, both found in review:
+
+   - It asked `launchdJobMatchesPlist`, which reports `loaded:false` for EVERY non-zero
+     `launchctl print` — EPERM from a non-Aqua ssh/cron context, an unspawnable launchctl, an
+     undocumented status. On a healthy serving hub that read as "not loaded", so the pre-check
+     evicted, the verification failed the same way, the rollback evicted again and the error
+     ended with "IS NOT RUNNING" about a job that was up. Both checks now go through
+     `probeLaunchdLoadState`, and `unknown` refuses to touch launchd at all (item 9).
+   - It compared whole-file bytes, while `buildPlist` bakes `process.env.PATH` from whichever
+     process is repairing. A tray helper, `ocx update`'s child or an ssh session carries a
+     different PATH, so the pre-check missed and the healthy hub was evicted *and* had its
+     PATH narrowed. `reusePreviousPlistPathVariable()` now puts the installed PATH back when
+     PATH is the ONLY difference and the live job runs the exec line this install baked — the
+     two files then compare equal on their own terms, and the PATH the service already runs
+     with survives. Anything else differing means a real rewrite, PATH included.
 2. **Backup + rollback.** The previous plist bytes are held in memory and copied to
    `<plist>.prev` before the overwrite. On terminal failure the bytes go back, a
    bootout/settle/bootstrap tries to re-register them, and the thrown error states whether
@@ -25,25 +49,58 @@ comparison) are deliberately left to PR2, which owns the loopback listener.
 3. **`bootstrap gui/$uid <plist>` replaces `load -w`.** `bootout` was already
    domain-explicit; `load` acts on the CALLER's bootstrap domain, so from ssh/cron/another
    bootstrap context the old pair deleted the gui-domain job and registered nothing.
-4. **Bounded settle between bootout and bootstrap** — up to 5 × 200 ms while
-   `launchctl print gui/$uid/<label>` still answers 0, the launchd twin of the Windows
+4. **Bounded settle after an eviction that evicted something** — up to 5 × 200 ms while
+   `launchctl print <target>` still answers 0, the launchd twin of the Windows
    `SCHEDULER_SETTLE_DELAYS_MS` idea. `bootout` is asynchronous, so the old back-to-back
-   retry raced the same exiting job twice and added nothing.
-5. **Success is `launchctl print` agreeing, never stderr.** `launchdJobMatchesPlist` is
-   consulted against the command this install actually baked, and `writeServiceInstallState`
+   retry raced the same exiting job twice and added nothing. A `bootout` that exited 3 is not
+   settled: nothing is exiting to wait for.
+5. **Success is `probeLaunchdLoadState()` answering `loaded-current`, never stderr.** It is
+   asked against the command this install actually baked, and `writeServiceInstallState`
    runs only after it agrees. Stderr regexes are advisory routing signals now.
-6. **One retry, routed by the failure.** Exit 5 / `Bootstrap failed` → `kickstart -k`, then
-   `enable` + a second bootout/bootstrap (see the launchctl findings below). Exit 0 with a
-   disagreeing `print` → one more bootout/bootstrap, because that is the silent no-op. Any
-   other failure (malformed plist, EPERM) throws immediately so the real stderr reaches the
-   operator undelayed — the property the previous code had and kept.
-7. **Error text names the outage and the remedy**: the job was evicted from `gui/<uid>` and
-   is not running, `launchctl bootstrap gui/<uid> <plist>` recovers it, plus
-   `launchctl print` and `launchctl print-disabled` to inspect.
+6. **One retry, routed by the failure.** Exit 5 / `Bootstrap failed` → `kickstart -k` (only
+   when the rendered bytes are already on disk, see item 10), then `enable` + a second
+   bootout/bootstrap (see the launchctl findings below). Exit 0 with a disagreeing probe →
+   one more bootout/bootstrap, because that is the silent no-op. Any other failure (malformed
+   plist, EPERM) throws immediately so the real stderr reaches the operator undelayed — the
+   property the previous code had and kept. A probe that answered `unknown` is NOT retried: a
+   retry is another eviction.
+7. **Error text names what the probe actually found.** `not-loaded`: the job was evicted from
+   `gui/<uid>` and is not running (or the previous plist was restored and re-bootstrapped).
+   `loaded-stale`: it *is* loaded, from a different command than the plist just written —
+   telling that operator "nothing is listening" sends them to fix the wrong thing. Both name
+   `launchctl bootstrap gui/<uid> <plist>` as the remedy, plus `launchctl print` and
+   `launchctl print-disabled` to inspect.
 8. **`stableLauncherEntry()` prefers the recorded launcher** when it is still an absolute
    executable file, falling back to the PATH walk otherwise (defect 1g). A repair from a
    context without `ocx` on PATH no longer rewrites a working launcher-form plist into the
    version-pinned Bun + CLI pair.
+
+   **This is not a macOS-only change.** `installSystemd` resolves the same function, so a
+   Linux repair from a PATH-less context now keeps the `ExecStart` the unit already has. The
+   failure it prevents there is milder (systemd reloads and restarts; it never evicts into
+   nothing), but the silent rewrite was identical, so the behaviour is deliberately shared
+   rather than branched. `tests/service/service.test.ts` covers the systemd side directly.
+9. **An unverifiable launchd state refuses to act.** `unknown` from the pre-check throws
+   before a single file is written or a single verb is run, saying the job may be RUNNING and
+   naming `launchctl print gui/<uid>/<label>` and `launchctl print user/<uid>/<label>` so the
+   operator can ask it themselves. `unknown` after the bootstrap neither evicts again nor
+   rolls back (a rollback is another eviction) and never claims the job is down: an accepted
+   bootstrap warns and records install state, a refused one throws with the real stderr and
+   an explicit "this says nothing about whether it is running".
+10. **`kickstart -k` is only trusted for bytes already on disk.** launchd restarts the
+   definition it has CACHED; it does not re-read the plist. When only `EnvironmentVariables`
+   changed the exec line is unchanged, so the verification would agree, install state would be
+   written, repair would report success — and launchd would keep the OLD environment. So new
+   bytes skip `kickstart` entirely and go to `enable` + evict/bootstrap, which is the only way
+   to hand launchd a new definition. A fresh install counts as new bytes.
+11. **Both user domains are evicted, and `<plist>.prev` is removed on success.** The probe
+   reports `user/<uid>` as well as `gui/<uid>`, so a gui-only `bootout` left a user-domain
+   registration of the same Label alive and then bootstrapped a SECOND one into `gui/` — two
+   `KeepAlive` jobs fighting for one port. `launchdEvictionTargets()` is the shared list, used
+   by `installLaunchd`, `stopLaunchd` and the install-cleanup `stop`; `bootout` against a
+   label a domain does not hold exits 3 and changes nothing, so both are addressed
+   unconditionally rather than enumerated first. The rollback copy is deleted once the new
+   definition is verified loaded, instead of living until the next `uninstall`.
 
 ### B — `statusLaunchd()` / `diagnoseService()` darwin branch
 
@@ -72,9 +129,16 @@ answer, and a throw used to escape to the top level and skip it.
 
 ### D — `stopLaunchd` / `uninstallLaunchd`
 
-`bootout gui/<uid>/<label>` first; legacy `unload` survives only for `status === null`, i.e.
-launchctl could not be spawned at all. Exit 3 ("No such process") is the not-loaded case, not
-a failure. `uninstallLaunchd` routes through `stopLaunchd` and also removes `<plist>.prev`.
+`bootout` in EVERY domain `launchdEvictionTargets()` names (`gui/<uid>` and `user/<uid>`);
+legacy `unload` survives only when launchctl could not be spawned at all (`status === null`).
+Exit 3 ("No such process") is the not-loaded case, not a failure. `uninstallLaunchd` routes
+through `stopLaunchd` and also removes `<plist>.prev`.
+
+Gui-only was the remaining half of the same defect: against a `user/`-domain job
+`ocx service stop` exited 3 in a domain that never held it and returned as though it had
+stopped something, and the install-cleanup `stop` did the same before laying new assets over a
+live manager. The cleanup `stop` now treats 0/3/112/113 as benign per domain
+(`launchctlBootoutBenign`) and throws on anything else, so it still fails closed.
 
 ### Two test-safety guards this work uncovered
 
@@ -92,6 +156,14 @@ Both were pre-existing, and both were hitting this machine.
   it is the real `~/.opencodex/service-state.json`, so a sandboxed test still wrote the live
   record. Observed directly: one run replaced this host's `codexHome`/`opencodexHome` with
   `/var/folders/...` paths.
+
+  Two review fixes on top: the filter asks the guard's own `isProtectedHomeUnderTest()` so one
+  canonicalization decides (a local `resolve()` calls `/var/folders/...` and
+  `/private/var/folders/...` different directories on macOS), and `writeServiceInstallState`
+  goes through `serviceStateWritePaths()`, which THROWS when the filter leaves nothing. With
+  `OPENCODEX_HOME` unset under an armed guard both candidates resolve to the real home, the
+  list went empty, and the writer silently wrote nowhere while reporting success. Reads stay
+  quiet — an empty read list is "no install state", which is true.
 
 Both real files on this machine were restored from the live job's own
 `launchctl print` output and re-verified (`plutil -lint` OK, command identical to the running
@@ -173,54 +245,101 @@ record; it references nothing and is harmless.
   defect 1c). The no-op now lives inside `installLaunchd`, which is the only function that
   knows whether the rendered plist differs — a check in `repairService` would have to re-render
   it to be correct.
+- **PATH is reused only when it is the ONLY difference.** Always preserving the installed
+  PATH would make it un-updatable except through `uninstall` + `install`; never preserving it
+  is the bug. So a plist that differs in PATH *and* something else is rewritten whole, which
+  means a repair that legitimately changes the definition still bakes the repairing process's
+  PATH. That is the accepted residual: at that point the eviction was going to happen anyway,
+  and the operator asked for a new definition. The narrow rule is what keeps the common case —
+  a repair from a tray helper or `ocx update`'s child against an otherwise-identical
+  definition — from being an outage.
+- **`unknown` refuses the whole command, install included.** A repair that cannot read
+  launchd's state cannot prove the hub is down, and evicting on that guess is the original
+  defect. A fresh install refuses for the same reason: the install path's own cleanup ops
+  already fail closed on `unknown`, and the label may be held by a registration we cannot see.
+  The cost is that a repair from a context which genuinely cannot reach `gui/<uid>` (ssh,
+  cron) now fails instead of acting — with an error that says so and names the two `print`
+  commands. That is the direction that keeps a serving hub serving.
+- **Both domains are evicted unconditionally rather than enumerated.** `probeLaunchdLoadState`
+  stops at the first domain that answers, so it cannot report "both"; asking twice more just
+  to learn what `bootout` reports by exiting 3 would add a round trip per install for nothing.
+- **`kickstart -k` kept, but narrowed.** It is still the only recovery that does not open a
+  second eviction window, which is worth having for the busy-label case. It just cannot
+  publish bytes, so it is limited to the case where there are none to publish.
 
 ## Tests
 
-New `tests/service/launchd-repair.test.ts` (30 cases), registered in
+`tests/service/launchd-repair.test.ts` (46 cases), registered in
 `scripts/test-layout/layout.json` and `tests/fixtures/test-layout-expected.json`. The five
 obsolete `installLaunchd` cases in `tests/service/service.test.ts` (which asserted the `load`
-verb) were removed and replaced by a pointer comment; one new `stableLauncherEntry` case was
-added there, and the two existing launcher-discovery cases now pass `state: null` to stay
-PATH-discovery tests.
+verb) were removed and replaced by a pointer comment; two new `stableLauncherEntry` cases were
+added there (the recorded-launcher preference, and the systemd half of it), and the two
+existing launcher-discovery cases now pass `state: null` to stay PATH-discovery tests.
 
-Coverage: healthy-and-identical repair is a no-op (zero launchctl calls); identical plist but
-stale live command still reloads; the reload is domain-explicit `bootstrap` with no `load` /
-`unload`; the settle loop waits while `print` answers 0 and is bounded at 5 × 200 ms; exit 0
-with a disagreeing `print` is a failure; exit 5 tries `kickstart -k`; a disabled job takes
-`enable` + bootstrap; an ordinary repair never runs `enable`; a malformed plist is not
+Every `installLaunchd` case injects `plistPath` into its own fixture directory and a scripted
+tri-state `probe`, so none of them can reach the real LaunchAgents path or a live launchctl.
+`OPENCODEX_HOME` is pinned per case and RESTORED afterwards — the first round set it with no
+`afterEach`, which leaks this file's temp home into the next file in the same Bun worker.
+
+Coverage: healthy-and-identical repair is a no-op (zero launchctl calls); a plist differing
+ONLY in the baked PATH is also a no-op and keeps the installed PATH on disk; identical plist
+but stale live command still reloads, and deletes `<plist>.prev`; the reload is
+domain-explicit `bootstrap` preceded by a `bootout` of BOTH domains, with no `load`/`unload`;
+the settle loop waits while `print` answers 0, is bounded at 5 × 200 ms per evicted domain, and
+is skipped entirely for a `bootout` that exited 3; exit 0 with a disagreeing probe is a
+failure; exit 5 tries `kickstart -k` for unchanged bytes and refuses to trust it for an
+env-only change (two bootstraps, no kickstart); a disabled job takes `enable` + bootstrap in a
+pinned twelve-verb sequence; an ordinary repair never runs `enable`; a malformed plist is not
 retried; terminal failure restores the previous bytes and names
-`launchctl bootstrap gui/<uid> <plist>` and `print-disabled`; a fresh install invents no
-rollback; the LaunchAgents guard refuses the real directory; the 0/112/113/spawn-failure
-tri-state including "113 in gui is not absence, ask user/ too"; all four diagnostic states
-with `unknown` producing neither "not loaded" nor a repair recommendation; plus source-oracle
-cases for the repair-branch try/catch, the install-cleanup ops, and the state-path filter.
+`launchctl bootstrap gui/<uid> <plist>` and `print-disabled`; a `loaded-stale` outcome is
+reported as loaded rather than down; a fresh install invents no rollback; an `unknown`
+pre-check changes nothing at all (no verb, no file, no `.prev`) and names both `print`
+commands; an `unknown` after an accepted bootstrap neither retries nor rolls back; an
+`unknown` after a refused one throws without "IS NOT RUNNING"; the LaunchAgents guard refuses
+the real directory. Plus `reusePreviousPlistPathVariable` (PATH-only, anything-else, identical,
+a PATH containing `$&`, a definition with no PATH entry), `launchdEvictionTargets`, the
+0/112/113/spawn-failure probe tri-state including "113 in gui is not absence, ask user/ too",
+all four diagnostic states, and source-oracle cases for the repair-branch try/catch, the
+install-cleanup ops (both domains, benign statuses), `installLaunchd` never using
+`launchdJobMatchesPlist` while `startLaunchd` still does, the PATH pre-check, the state-path
+filter plus its fail-loud write path, stop/uninstall, and the shared systemd launcher.
 
 ## Verification
 
 Run from the worktree with `node_modules` symlinked.
 
 ```
-bun run typecheck                                  → clean (no output)
-bun test tests/service/launchd-repair.test.ts      → 30 pass, 0 fail, 106 expect()
-bun test tests/service/service.test.ts             → 204 pass, 0 fail, 663 expect()
-bun test tests/service                             → 518 pass, 9 fail
-bun test tests/service tests/update \
-  tests/cli/uninstall.test.ts tests/ci-workflows \
-  tests/codex-integration/codex-service-manager-probe.test.ts \
+bun run typecheck                                    → clean (no output)
+bun test tests/service/launchd-repair.test.ts        → 46 pass, 0 fail, 169 expect()
+bun test tests/service/service.test.ts               → 205 pass, 0 fail, 668 expect()
+bun test tests/service/launchd-repair.test.ts \
+  tests/service/service.test.ts \
   tests/test-layout.test.ts tests/test-layout-tooling.test.ts
-                                                   → 1505 pass, 9 fail
-bun run privacy:scan                               → Privacy scan passed
+                                                     → 268 pass, 0 fail, 1388 expect()
+bun test tests/service tests/update \
+  tests/cli/uninstall.test.ts                        → 765 pass, 9 fail
+bun run privacy:scan                                 → Privacy scan passed
 ```
 
-Those 9 failures are pre-existing and identical on `dev`: 8 `winsw` cases plus
-`xAI API-key runtime injects priority while OAuth does not`. They are cross-file
-`OPENCODEX_HOME` pollution inside a single domain-wide `bun test` invocation — each file
-passes alone (`bun test tests/service/winsw.test.ts` → 25 pass,
-`tests/service/service-tier-capability.test.ts` → 35 pass) — and the same 9 fail on a stashed
-working tree at `dev`. The full suite was not run, per the lane instruction; hosted CI is the
-proof.
+Those 9 failures are pre-existing: 8 `winsw` cases plus `xAI API-key runtime injects priority
+while OAuth does not`. They are cross-file `OPENCODEX_HOME` pollution inside a single
+domain-wide `bun test` invocation — each file passes alone (`bun test
+tests/service/winsw.test.ts` → 25 pass) — and the same 9 failed on `dev` before this branch
+existed. **The full suite was NOT run** (focused files plus typecheck, per the lane
+instruction); hosted CI on the pushed head is the proof.
 
 Host state after the run: `~/Library/LaunchAgents/com.opencodex.proxy.plist` 1985 bytes,
-0600, `plutil -lint` OK, command identical to `launchctl print gui/501/com.opencodex.proxy`;
-`~/.opencodex/service-state.json` 320 bytes with the real homes; `~/.opencodex/service-api-token`
-untouched; `/healthz` on 10100 → 200; no `*.prev` file left behind.
+0600, `plutil -lint` OK, command and `EnvironmentVariables` identical to
+`launchctl print gui/501/com.opencodex.proxy`; `~/.opencodex/service-state.json` 320 bytes with
+the real homes; `~/.opencodex/service-api-token` untouched; `/healthz` on 10100 → 200; no
+`*.prev` file left behind. No `launchctl bootout`/`bootstrap`/`kickstart`/`enable` was run
+against the live label at any point in this round — only `print`.
+
+Both real files had to be restored AGAIN during this round, and not by this branch's tests: a
+concurrent session working out of another worktree (`.claude/worktrees/agent-ae68eb45f20e1f3c6`,
+whose `cliPath` the damaged state file recorded) ran the unguarded suite and rewrote the live
+plist with `/var/folders/.../opencodex-test-*` homes plus the live state record with its own
+sandbox paths. launchd kept serving from its cached definition, so nothing broke — which is
+exactly why it goes unnoticed until the next restart. Restored from the running job's own
+`launchctl print` output, as before. That is the strongest argument for the two guards in this
+PR: until every branch carries them, any worktree's `bun test tests/service` can do this.
