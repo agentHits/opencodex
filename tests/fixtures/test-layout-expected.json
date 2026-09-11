@@ -629,6 +629,7 @@
   "lab-public-wire-contract.test.ts": "lab",
   "lab-read-filter-validation.test.ts": "lab",
   "lab-read-surfaces.test.ts": "lab",
+  "launchd-repair.test.ts": "service",
   "legacy-shell-compat.test.ts": "responses",
   "live-service-manager-guard.test.ts": "service",
   "local-management-attestation.test.ts": "server",
