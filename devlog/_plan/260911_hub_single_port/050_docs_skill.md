@@ -202,7 +202,10 @@ a hand-written one-element array.
 
 Two corrections that the code supports and the plan's own wording did not.
 
-**`ocx service restart` does not restart a healthy macOS job.** The assignment (and the design doc)
+**`ocx service restart` does not restart a healthy macOS job.** *(Superseded — see
+[Restart wording](#restart-wording-after-ee6a20a0e) below. The finding was right and the base fixed
+the code rather than keeping the copy; this paragraph is kept as the reason the fix exists.)* The
+assignment (and the design doc)
 said to document "restart with `ocx service restart` or `launchctl kickstart -k …`". On darwin,
 `serviceCommand` maps `restart` → `repair` (`src/service.ts:4862`), `repairService` calls
 `installLaunchd` (`:3587`), and after PR1 `installLaunchd` returns early — printing
@@ -225,6 +228,43 @@ bind, reachable a second way. The guide now states this beside the forwarder, an
 example port moved off `10100` so the two sockets cannot be confused. This is a documentation fix,
 not a code change: the companion is for processes *on* the hub, which send their own loopback
 `Host`.
+
+## Restart wording after `ee6a20a0e`
+
+The base (#4249) gained `ee6a20a0e` *fix(service): make `ocx service restart` restart a healthy
+launchd job* after this unit was written, which inverts the claim the section above had just landed
+in five files. `restart` no longer folds into `repair`: it runs the same refresh and, when nothing
+was reloaded, runs `launchctl kickstart -k gui/<uid>/com.opencodex.proxy` in place, verifies with
+`probeLaunchdLoadState`, and prints `ℹ️  service restarted (launchctl kickstart -k …)`. `repair`
+keeps the no-op — a repair of a healthy service must not be an outage — and a bare `ocx service`
+still selects `repair`. Linux always restarted (`systemctl --user restart`); Windows is unchanged.
+
+So every passage that said *restart aliases repair* / *restarts nothing* / *run kickstart yourself*
+was rewritten to name `ocx service restart` as the verb, and `launchctl kickstart -k` demoted to the
+documented manual fallback that the failure path itself prints:
+
+- `guides/remote-hub.md` — the macOS service-operations block now leads with `ocx service restart`
+  and its one output line, states that a bare `ocx service` still picks `repair`, and notes that
+  Linux/Windows never had the gap. The `unauthenticatedLoopbackListener` "restart the proxy" prose
+  and the two troubleshooting rows name the command; the no-op row is now about `repair`, which is
+  the verb that still correctly does nothing.
+- `ko/guides/remote-hub.md` — the same three places, mirrored.
+- `skills/ocx/references/04_failure_semantics.md` — the second "reads as a failure and is not" entry
+  is inverted: `restart` is NOT an alias, so an agent asked for a restart says `ocx service restart`
+  rather than writing a launchctl line for the operator.
+- `skills/ocx/references/05_remote_hub.md` — the listener field, the hub-gate fix and the
+  standalone-rollback step each name the command.
+- `skills/ocx/SKILL.md` — the pointer line now carries both halves of the pair.
+- `tests/ci-workflows/docs-remote-hub-claims.test.ts` — the launchd-semantics gate pins the new
+  claim (`ocx service restart` … always restarts), forbids the old "is an alias of `repair`"
+  sentence, and keeps the kickstart line pinned only alongside the words "manual fallback", so the
+  page cannot quietly promote it back to the recommended route.
+
+Both locales now also distinguish `ocx restart` (the proxy process you started) from
+`ocx service restart` (the service the manager supervises) wherever a restart is prescribed —
+`src/cli/help.ts:62`'s verb is a different one and was left alone. `src/cli/registry.ts`'s `service`
+entry was already reconciled in the base by `ee6a20a0e`; the docs were made to match it, not the
+reverse.
 
 ## Decisions
 

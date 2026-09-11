@@ -79,12 +79,20 @@ bytes match the file, the token file is unchanged, and `launchctl print` reports
 loaded from that plist, launchd is not touched at all. Do not retry it, and do not escalate
 to `ocx service uninstall`.
 
-**`ocx service restart` is an alias of `repair`, so on a healthy macOS job it restarts
-nothing.** That matters whenever a restart is the actual requirement — after a change to
-`unauthenticatedLoopbackListener`, `hostname` or `port`. To bounce the process, tell the
-operator to run `launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy`, or
-`ocx service stop` followed by `ocx service start`. Reserve `ocx service repair` for a job
-loaded from an older plist, or not loaded at all.
+**`ocx service restart` is NOT an alias of `repair` — it always restarts.** It runs the same
+refresh, and when nothing was reloaded (the healthy, unchanged job above) it restarts the
+loaded job in place with `launchctl kickstart -k gui/<uid>/com.opencodex.proxy`, verifies the
+job with the same probe, and prints `service restarted (launchctl kickstart -k …)`. So when a
+restart is the actual requirement — after a change to `unauthenticatedLoopbackListener`,
+`hostname` or `port` — tell the operator `ocx service restart`, not a hand-written launchctl
+command. Linux restarts through `systemctl --user restart` and Windows stops then starts the
+task, on either verb.
+
+A bare `ocx service` still selects `repair`, so it will not bounce a healthy hub. Reserve
+`ocx service repair` for a job loaded from an older plist, or not loaded at all.
+`launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy` is still a correct manual fallback
+and the failure path names it, but do not lead with it. `ocx restart` is a different verb
+entirely: it restarts a proxy process, not the service the manager supervises.
 
 `ocx service status` has four launchd verdicts, and only two of them call for a repair:
 
@@ -109,7 +117,8 @@ can exit 0 having deliberately written nothing:
 > unauthenticatedLoopbackListener is enabled.
 
 That is the hub gate, not the operator's `clientIntegrations` toggle, and not a lock
-conflict — there is nothing to retry. Either enable the listener and restart the proxy, or
+conflict — there is nothing to retry. Either enable the listener and restart the proxy
+(`ocx service restart` on a service install), or
 report that this hub leaves its own clients native. Details:
 [05_remote_hub.md](05_remote_hub.md#the-hub-gate-on-the-hubs-own-clients).
 

@@ -137,9 +137,17 @@ describe("the one-port hub recipe", () => {
 
   test("the English page keeps the macOS launchd semantics a repair changed", async () => {
     const source = await Bun.file(GUIDE).text();
-    // `restart` aliases `repair`, and a repair of a healthy job is now a no-op, so the kickstart
-    // line is the only way to actually bounce a launchd hub.
+    // `repair` of a healthy job is a no-op, and `restart` is no longer an alias of it (#4249):
+    // `ocx service restart` refreshes the definition and, when nothing was reloaded, kickstarts
+    // the loaded job in place. Naming the no-op without naming the verb that DOES restart is what
+    // sent operators to a hand-written launchctl command.
+    expect(source).toContain("ocx service restart");
+    expect(source).toMatch(/`ocx service restart`[^\n]*always restarts/);
+    expect(source).not.toMatch(/`ocx service restart` is an alias of `repair`/);
+    // The kickstart line stays pinned, but only as the documented manual fallback -- the page has
+    // to say so, or it reads as the recommended route again.
     expect(source).toContain("launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy");
+    expect(source).toContain("manual fallback");
     // The fourth status state is the one that used to be reported as "not loaded" and sent
     // operators to repair a serving hub.
     expect(source).toContain("launchd state could not be verified");

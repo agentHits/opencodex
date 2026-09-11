@@ -106,7 +106,7 @@ ocx config set unauthenticatedLoopbackListener '{"enabled":true,"port":10104}'
 
 `port`를 지정하면 로컬 통합이 리스너를 따라 `http://127.0.0.1:10104`를 기록합니다. 이 포트는 프록시 포트와 달라야 하고 OS가 자동 할당하지 않습니다. 임시 포트는 재시작 때마다 바뀌는데 이미 실행 중인 app-server는 예전 `base_url`을 들고 있기 때문입니다.
 
-**이 필드를 바꾸면 프록시를 재시작하세요.** 소켓은 시작할 때 한 번 바인드되고 로컬 클라이언트 파일도 그때 결정된 값으로 기록되므로, 실행 중인 허브는 예전 답을 유지합니다. 포트 지정 허브에서는 이것이 `ocx claude`가 리스너에 닿는지 `404`를 받는지의 차이입니다. launchd 작업을 실제로 재시작하는 방법은 [macOS 서비스 운영](#macos-서비스-운영)을 보세요.
+**이 필드를 바꾸면 프록시를 재시작하세요.** 소켓은 시작할 때 한 번 바인드되고 로컬 클라이언트 파일도 그때 결정된 값으로 기록되므로, 실행 중인 허브는 예전 답을 유지합니다. 포트 지정 허브에서는 이것이 `ocx claude`가 리스너에 닿는지 `404`를 받는지의 차이입니다. 백그라운드 서비스라면 명령은 항상 재시작하는 `ocx service restart`입니다. [macOS 서비스 운영](#macos-서비스-운영)을 보세요. `ocx restart`는 다른 명령입니다. 직접 띄운 프록시 프로세스를 재시작하며, 서비스 관리자가 감독하는 서비스를 다루지 않습니다.
 
 ### 허브 자신의 로컬 클라이언트
 
@@ -225,13 +225,20 @@ ocx config set corsAllowOrigins '["http://localhost:10100"]'
 
 `ocx service install`과 `ocx service repair`는 실행 중인 허브에 다시 실행해도 안전합니다. repair는 plist를 먼저 렌더링해 비교합니다. 렌더링 결과가 디스크의 바이트와 같고, 토큰 파일도 그대로이며, `launchctl print`가 그 plist에서 로드된 작업을 보고하면 repair는 `0600`을 다시 확인하고 설치 상태를 갱신한 뒤 `service is already loaded from the current plist; nothing to do.`를 출력하고 끝냅니다. launchd를 전혀 건드리지 않습니다. 이전 빌드는 정상 작업도 무조건 bootout해서 진단 명령이 장애가 되었습니다.
 
-이 no-op에는 알아 둘 결과가 하나 있습니다. **`ocx service restart`는 `repair`의 별칭이므로, 정상인 macOS 작업에서는 아무것도 재시작하지 않습니다.** `unauthenticatedLoopbackListener`, `hostname`, `port`를 바꾼 뒤처럼 프로세스를 실제로 교체해야 할 때는 작업을 kick하세요.
+**항상 재시작하는 명령은 `ocx service restart`입니다.** 더 이상 `repair`의 별칭이 아닙니다. 같은 갱신을 수행하고, 그 결과 아무것도 reload되지 않았다면 — 위의 정상·무변경 경우 — 이미 로드된 작업을 `launchctl kickstart -k`로 제자리에서 재시작하고, `launchctl print`로 작업이 살아 있는지 다시 확인한 뒤 한 줄을 출력합니다.
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy
+ocx service restart
+# ℹ️  service restarted (launchctl kickstart -k gui/501/com.opencodex.proxy).
 ```
 
-CLI로는 `ocx service stop` 다음 `ocx service start`가 같은 일을 합니다. `ocx service repair`는 원래 용도, 즉 더 오래된 plist에서 로드된 작업이나 로드되지 않은 작업에 쓰세요.
+`unauthenticatedLoopbackListener`, `hostname`, `port`를 바꾼 뒤에 실행할 명령이 이것입니다. kickstart는 eviction 구간을 만들지 않으므로, 예전의 무조건 repair와 달리 장애가 아닙니다.
+
+서브커맨드 없는 `ocx service`는 여전히 `restart`가 아니라 `repair`를 고릅니다. "현재 상태로 맞춘다"는 멱등한 동작이고, 정상인 허브를 바운스하라는 요청이 아니기 때문입니다. `ocx service repair`는 원래 용도, 즉 더 오래된 plist에서 로드된 작업이나 로드되지 않은 작업에 쓰고, 정상 작업에서는 계속 아무것도 하지 않는다고 기대하세요.
+
+`launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy`를 직접 실행하거나 `ocx service stop` 다음 `ocx service start`를 실행하는 방법도 여전히 동작하고, 실패 경로가 앞의 명령을 대안으로 알려 줍니다. 다만 둘 다 이제 권장 경로는 아닙니다.
+
+Linux와 Windows에는 이 공백이 없었습니다. `ocx service restart`는 각각 `systemctl --user restart`와 예약 작업의 stop 후 start로 끝나며, 어떤 동사로 요청했든 재시작했습니다.
 
 `ocx service status`는 네 가지 launchd 상태를 구분하고, 마지막 것이 자주 잘못 읽힙니다.
 
@@ -320,9 +327,9 @@ docker compose up -d
 - `ocx hub invite`가 광고할 데이터 Origin이 이 컴퓨터의 루프백이 된다고 하면, 바인드가 루프백 전용이거나 와일드카드이고 `hub.dataPublicOrigin`이 설정되지 않은 상태입니다. 광고할 주소가 없고 tailnet/LAN 주소를 추측하지도 않습니다. 아무것도 발급되지 않았습니다. `hub.dataPublicOrigin`을 설정하거나 이번 초대에만 `--data-url`을 주세요.
 - 참가하는 컴퓨터의 교환이 거부되고 코드가 소모되면, grant가 그 컴퓨터가 보내지 않는 Origin에 묶였던 것입니다. 초대 출력의 `Bound browser origin:` 줄을 다시 보세요. 상대 컴퓨터가 실행해야 하는 포트를 알려 주거나, 허브에서 `http://localhost:10100`을 허용하는 방법을 제시합니다.
 - `ocx hub invite`가 `--management-url`을 거부하면, 허브에서 그 플래그는 `hub.managementPublicOrigin`을 덮어쓰는 것이 아니라 확인하는 것입니다. 설정을 바꾸거나 플래그를 빼세요.
-- 허브에서 `ocx claude`가 native로 실행되거나 허브가 자기 클라이언트 설정을 쓰지 않으면 `unauthenticatedLoopbackListener`가 꺼져 있습니다. 건너뛴 메시지가 게이트를 지목합니다. 리스너를 켜고 프록시를 재시작하세요.
-- 허브에서 `ocx claude`가 리스너로부터 `404`를 받으면, 리스너 경로가 생기기 전이나 포트가 바뀌기 전에 시작된 프로세스가 아직 돌고 있는 것입니다. [macOS 서비스 운영](#macos-서비스-운영)을 보고 재시작하세요.
-- macOS에서 `ocx service restart`가 `nothing to do`를 출력하고 프로세스가 바뀌지 않는 것은 정상입니다. `restart`는 `repair`의 별칭이고 정상 작업의 repair는 의도적으로 no-op입니다. `launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy`를 쓰세요.
+- 허브에서 `ocx claude`가 native로 실행되거나 허브가 자기 클라이언트 설정을 쓰지 않으면 `unauthenticatedLoopbackListener`가 꺼져 있습니다. 건너뛴 메시지가 게이트를 지목합니다. 리스너를 켜고 프록시를 재시작하세요. 서비스 설치라면 `ocx service restart`입니다.
+- 허브에서 `ocx claude`가 리스너로부터 `404`를 받으면, 리스너 경로가 생기기 전이나 포트가 바뀌기 전에 시작된 프로세스가 아직 돌고 있는 것입니다. `ocx service restart`로 재시작하세요. [macOS 서비스 운영](#macos-서비스-운영)을 보세요.
+- macOS에서 `ocx service repair`가 `nothing to do`를 출력하고 프로세스가 바뀌지 않는 것은 정상입니다. 정상 작업의 repair는 의도적으로 no-op입니다. 새 프로세스가 필요했다면 `ocx service restart`를 실행하세요. 로드된 작업을 제자리에서 kickstart하고 `service restarted (launchctl kickstart -k …)`를 보고합니다. 그것이 실패할 때에만 `launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy`가 수동 대안이며, 실패 메시지가 그 명령을 알려 줍니다.
 - `ocx service install`이 `OPENCODEX_API_AUTH_TOKEN`을 거부하면 그 값은 관리자 토큰입니다. `unset OPENCODEX_API_AUTH_TOKEN` 후 다시 실행하세요. 서비스가 데이터 플레인 토큰을 직접 준비합니다.
 - 허브가 부팅에서 계속 죽고 `ocx status`가 `admin-collision (file)`을 보이면, `service-api-token` 파일에 관리자 토큰이 들어 있어서 허브가 관리 API를 닫은 상태입니다. 파일을 삭제하고 `ocx service repair`를 실행해 데이터 플레인 토큰을 준비하세요. 이 경우 환경 변수를 unset해도 해결되지 않습니다. 원인은 파일입니다.
 - 루프백이 아닌 평문 HTTP로는 pairing을 할 수 없고, 이를 우회하는 플래그도 없습니다. 관리 Origin을 HTTPS 뒤에 두거나 루프백에서 pairing하세요. 관리자 토큰은 HTTP로 보내지 않습니다.

@@ -192,8 +192,10 @@ change across restarts while already-running app-servers kept the previous `base
 
 **Restart the proxy after changing this field.** The sockets are bound once at startup and the local
 client files are written from the resolved value, so a running hub keeps its old answer. On a ported
-hub that is the difference between `ocx claude` reaching the listener and getting a `404` from it.
-See [macOS service operations](#macos-service-operations) for how to actually bounce a launchd job.
+hub that is the difference between `ocx claude` reaching the listener and getting a `404` from it. On
+a background service the verb is `ocx service restart`, which always restarts — see
+[macOS service operations](#macos-service-operations). `ocx restart` is a different verb: it bounces
+the proxy process you started yourself, not the service the manager supervises.
 
 ### The hub's own local clients
 
@@ -429,17 +431,30 @@ file is unchanged, and `launchctl print` reports the job loaded from that plist,
 nothing to do.` and returns — launchd is never touched. Earlier builds evicted a healthy job
 unconditionally, which made a diagnostic command an outage.
 
-That no-op has one consequence worth knowing: **`ocx service restart` is an alias of `repair`, so on
-a healthy macOS job it restarts nothing.** To actually bounce the process — which is what you need
-after changing `unauthenticatedLoopbackListener`, `hostname` or `port` — kick the job:
+**`ocx service restart` is the verb that always restarts.** It is no longer an alias of `repair`. It
+runs the same refresh, and when that reloaded nothing — the healthy, unchanged case above — it
+restarts the already-loaded job in place with `launchctl kickstart -k`, re-reads `launchctl print` to
+confirm the job survived, and prints one line:
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy
+ocx service restart
+# ℹ️  service restarted (launchctl kickstart -k gui/501/com.opencodex.proxy).
 ```
 
-`ocx service stop` followed by `ocx service start` is the equivalent through the CLI. Use
-`ocx service repair` for the case it is actually for: a job loaded from an older plist, or not loaded
-at all.
+That is what to run after changing `unauthenticatedLoopbackListener`, `hostname` or `port`. The
+kickstart opens no eviction window, so it is not the outage the old unconditional repair was.
+
+A bare `ocx service` still selects `repair`, not `restart`: it is an idempotent "make it current",
+not a request to bounce a healthy hub. Use `ocx service repair` for the case it is actually for — a
+job loaded from an older plist, or not loaded at all — and expect it to keep doing nothing on a
+healthy one.
+
+`launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy` by hand, or `ocx service stop` followed by
+`ocx service start`, both still work and the error path names the first one as a fallback. Neither is
+the recommended route any more.
+
+Linux and Windows never had this gap: `ocx service restart` there ends in `systemctl --user restart`
+and a stop-then-start of the scheduled task respectively, whichever verb asked.
 
 `ocx service status` distinguishes four launchd states, and the last one is the one people misread:
 
@@ -666,13 +681,16 @@ For a service rollback, stop the branch service and repair the prior release aga
   configured value. Change the config, or drop the flag.
 - **`ocx claude` on the hub launches native Codex/Claude, or the hub refuses to write its own client
   configs:** `unauthenticatedLoopbackListener` is off. The skip message names the gate. Enable the
-  listener and restart the proxy.
+  listener and restart the proxy (`ocx service restart` on a service install).
 - **`ocx claude` on the hub gets `404` from the listener:** the proxy is still the process that
-  started before the listener's wires existed, or before the port changed. Restart it —
-  see [macOS service operations](#macos-service-operations).
-- **`ocx service restart` printed `nothing to do` and the process did not bounce (macOS):** expected.
-  `restart` aliases `repair`, and a repair of a healthy job is deliberately a no-op. Use
-  `launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy`.
+  started before the listener's wires existed, or before the port changed. Restart it with
+  `ocx service restart` — see [macOS service operations](#macos-service-operations).
+- **`ocx service repair` printed `nothing to do` and the process did not bounce (macOS):** expected.
+  A repair of a healthy job is deliberately a no-op. When you wanted a new process, run
+  `ocx service restart`, which kickstarts the loaded job in place and reports
+  `service restarted (launchctl kickstart -k …)`. Only if that fails is
+  `launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy` the manual fallback — the failure
+  message names it.
 - **`ocx service install` refuses `OPENCODEX_API_AUTH_TOKEN`:** that value is a management admin
   token. `unset OPENCODEX_API_AUTH_TOKEN` and rerun; the service provisions its own data-plane
   token. See [The data-plane token provisions itself](#the-data-plane-token-provisions-itself).

@@ -165,7 +165,9 @@ different client key owns the journal, or the restore was only partial.
 
 Details, including the one-port recipe, the invite flow and key rotation's two-step commit:
 `references/05_remote_hub.md`. Service and launchd semantics, including why
-`ocx service repair` can correctly do nothing: `references/04_failure_semantics.md`.
+`ocx service repair` can correctly do nothing while `ocx service restart` always restarts —
+so a restart is never a hand-written `launchctl kickstart`:
+`references/04_failure_semantics.md`.
 
 ## References
 

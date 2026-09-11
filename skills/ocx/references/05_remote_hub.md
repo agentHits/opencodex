@@ -40,7 +40,10 @@ local management calls use the authenticated management surface with a managemen
 credential. Do not propose widening the listener to `/api/*` as a fix for anything.
 
 Changing this field needs a proxy restart — the sockets bind once at startup and the
-exported client files are written from the resolved port.
+exported client files are written from the resolved port. On a background service the command
+is `ocx service restart`, which always restarts (on macOS it kickstarts an unchanged,
+already-loaded job in place); `ocx service repair` would correctly no-op and leave the old
+process serving. `ocx restart` is the separate verb for a proxy you started yourself.
 
 ### The hub gate on the hub's own clients
 
@@ -55,7 +58,8 @@ Read that as the gate, not as the operator's `clientIntegrations` toggle — it 
 only when the toggle is ON and the gate is what stopped the write. A gated `ocx ensure`
 leaves an existing managed Grok block in place instead of stripping it, and a gated
 `ocx restore back` reports the gate instead of blaming a competing writer. The fix is to
-enable the listener and restart, or to accept that this hub leaves its own clients native.
+enable the listener and restart (`ocx service restart` on a service install), or to accept
+that this hub leaves its own clients native.
 
 ### The hub's data token is not yours to produce
 
@@ -302,8 +306,9 @@ Revocation is the other half:
 - **Device lost, already disconnected, or unreachable:** delete the key in the hub
   dashboard under Integrations → API Keys.
 
-To return the hub itself to a normal install, set `runtimeRole` to `standalone` and
-restart. Leftover `hub` and `remoteGui` blocks are inert outside the hub role.
+To return the hub itself to a normal install, set `runtimeRole` to `standalone` and restart
+with `ocx service restart` (or `ocx restart` for a proxy you run yourself). Leftover `hub` and
+`remoteGui` blocks are inert outside the hub role.
 
 A remote browser logging itself out (`/api/session/logout`) is a third, separate action.
 It ends a browser session; it does not disconnect a client or revoke a key.
