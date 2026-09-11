@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { delimiter, isAbsolute, join, posix, win32 } from "node:path";
@@ -602,6 +602,68 @@ describe("service install auth preflight", () => {
     // The chokepoint refuses it too, so no caller can write the broken state (#2696).
     expect(() => writeServiceApiTokenFile()).toThrow(/management \(admin\) token/);
     expect(existsSync(serviceApiTokenFilePath())).toBe(false);
+  });
+
+  test("a reused token file that holds the ADMIN token is refused, not silently accepted", () => {
+    // The incident shape, and the gap the first round left: the `origin: "file"` branch never
+    // re-checked the collision, so a hand-pasted admin token on disk was reused, `ocx status`
+    // said `present (file)`, and the hub crash-looped at boot with nothing naming the cause.
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    delete process.env.OPENCODEX_API_AUTH_TOKEN;
+    saveConfig({
+      port: 10100,
+      hostname: "0.0.0.0",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+    const admin = `ocx_admin_${"f".repeat(43)}`;
+    writeFileSync(serviceApiTokenFilePath(), `${admin}\n`, "utf8");
+
+    // Install/repair stops at the preflight, where the operator can still act.
+    expect(() => assertServiceAuthEnvironment()).toThrow(/management \(admin\) token/);
+    expect(() => assertServiceAuthEnvironment()).toThrow(/ocx service repair/);
+    // `unset` is the WRONG remedy here: nothing is exported. Deleting the file is.
+    expect(() => assertServiceAuthEnvironment()).not.toThrow(/unset OPENCODEX_API_AUTH_TOKEN/);
+    // And the writer is still the last line of defence, whichever caller got there.
+    expect(() => writeServiceApiTokenFile()).toThrow(/not a data-plane token/);
+    // Refusing must not mutate the file; the operator deletes it deliberately.
+    expect(readFileSync(serviceApiTokenFilePath(), "utf8").trim()).toBe(admin);
+
+    // And a LOOPBACK install is refused too: `buildServiceShellCommand` cats the file into
+    // OPENCODEX_API_AUTH_TOKEN whenever it exists, whatever the hostname, so the management
+    // plane is fenced closed at boot there as well.
+    saveConfig({
+      port: 10100,
+      hostname: "127.0.0.1",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+    expect(() => assertServiceAuthEnvironment()).toThrow(/management \(admin\) token/);
+  });
+
+  test("reusing an existing token file makes 'owner-only' true rather than assumed", () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    delete process.env.OPENCODEX_API_AUTH_TOKEN;
+    saveConfig({
+      port: 10100,
+      hostname: "0.0.0.0",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+    // `readServiceApiTokenState` accepts any bounded regular file, so a reused token can be
+    // world-readable -- and `ocx status` calls that path "owner-only".
+    writeFileSync(serviceApiTokenFilePath(), `${"c".repeat(64)}\n`, { encoding: "utf8", mode: 0o644 });
+    if (process.platform !== "win32") chmodSync(serviceApiTokenFilePath(), 0o644);
+
+    expect(writeServiceApiTokenFile()).toEqual({ path: serviceApiTokenFilePath(), origin: "file" });
+    expect(readFileSync(serviceApiTokenFilePath(), "utf8").trim()).toBe("c".repeat(64));
+    if (process.platform !== "win32") {
+      expect(statSync(serviceApiTokenFilePath()).mode & 0o777).toBe(0o600);
+    }
   });
 
   test("allows non-loopback service install when the API token is in the service environment", () => {

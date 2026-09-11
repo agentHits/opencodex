@@ -687,23 +687,56 @@ describe("status hub block", () => {
     expect(hubStatusLines(configured!).join("\n")).toContain("hub.dataPublicOrigin");
   });
 
-  test("the token source is reported, never the token, and env wins over the file", () => {
+  test("the token state is about the file the service reads, never about this shell", () => {
     withHome(home => writeFileSync(join(home, "service-api-token"), `${TOKEN}\n`, "utf8"), () => {
       const fromFile = collectHubStatus(hub() as Parameters<typeof collectHubStatus>[0], { port: 10100 }, {});
       expect(fromFile?.dataToken).toBe("present (file)");
-      // Service precedence: the launch wrapper exports the file only when the environment
-      // has nothing, so an env token is what the running process is actually using.
-      const fromEnv = collectHubStatus(
+      expect(fromFile?.dataTokenEnvInShell).toBe(false);
+
+      // `present (env)` used to be reported here whenever the CALLING shell exported the
+      // variable -- but the launchd plist and the systemd unit overwrite it from the file
+      // before exec, so the label described the operator's terminal, not the hub.
+      const withShellVar = collectHubStatus(
         hub() as Parameters<typeof collectHubStatus>[0],
         { port: 10100 },
         { OPENCODEX_API_AUTH_TOKEN: "from-the-shell" },
       );
-      expect(fromEnv?.dataToken).toBe("present (env)");
-      for (const status of [fromFile!, fromEnv!]) {
+      expect(withShellVar?.dataToken).toBe("present (file)");
+      expect(withShellVar?.dataTokenEnvInShell).toBe(true);
+      expect(hubStatusLines(withShellVar!).join("\n")).toContain("the installed service reads the file, not this");
+
+      for (const status of [fromFile!, withShellVar!]) {
         const rendered = [JSON.stringify(status), ...hubStatusLines(status)].join("\n");
         expect(rendered).not.toContain(TOKEN);
         expect(rendered).not.toContain("from-the-shell");
       }
+    });
+  });
+
+  test("a token file holding the ADMIN token is called out, not reported as present", () => {
+    // The #4236 incident read `present (file)` while the hub crash-looped, because the file
+    // held the MANAGEMENT token and nothing in the report compared the two.
+    const admin = `ocx_admin_${"f".repeat(43)}`;
+    withHome(home => writeFileSync(join(home, "service-api-token"), `${admin}\n`, "utf8"), () => {
+      const status = collectHubStatus(hub() as Parameters<typeof collectHubStatus>[0], { port: 10100 }, {});
+      expect(status?.dataToken).toBe("admin-collision (file)");
+      const lines = hubStatusLines(status!).join("\n");
+      expect(lines).toContain(status!.dataTokenPath);
+      expect(lines).toContain("MANAGEMENT token");
+      expect(lines).toContain("ocx service repair");
+      expect([JSON.stringify(status), lines].join("\n")).not.toContain(admin);
+    });
+    // The same comparison doctor and the service chokepoint use: byte-equal to the configured
+    // admin token counts too, not only the minted prefix.
+    withHome(home => {
+      writeFileSync(join(home, "service-api-token"), "hand-pasted-management-key\n", "utf8");
+    }, () => {
+      const status = collectHubStatus(
+        hub() as Parameters<typeof collectHubStatus>[0],
+        { port: 10100 },
+        { OPENCODEX_ADMIN_AUTH_TOKEN: "hand-pasted-management-key" },
+      );
+      expect(status?.dataToken).toBe("admin-collision (file)");
     });
   });
 
