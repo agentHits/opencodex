@@ -1037,6 +1037,18 @@ const hubConfigSchema = z.object({
     }
     return origin;
   }).optional(),
+  // Same canonical-origin rule as managementPublicOrigin, and deliberately NOT `.catch`ed:
+  // a mistyped data origin must be rejected at write time, because silently dropping it
+  // makes `ocx hub invite` print the `http://<hostname>:<port>` fallback that the operator
+  // set this field precisely to replace.
+  dataPublicOrigin: z.string().transform((value, ctx) => {
+    const origin = canonicalHttpOrigin(value);
+    if (!origin) {
+      ctx.addIssue({ code: "custom", message: "must be a canonical http(s) origin without credentials, path, query, or fragment" });
+      return z.NEVER;
+    }
+    return origin;
+  }).optional(),
   // A malformed hand edit disables only the optional ingress. Live writes are rejected by
   // managementIngressConfigError before this load-time degradation can hide the mistake.
   managementIngress: z.union([
