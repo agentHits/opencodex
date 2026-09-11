@@ -335,11 +335,18 @@ the real homes; `~/.opencodex/service-api-token` untouched; `/healthz` on 10100 
 `*.prev` file left behind. No `launchctl bootout`/`bootstrap`/`kickstart`/`enable` was run
 against the live label at any point in this round — only `print`.
 
-Both real files had to be restored AGAIN during this round, and not by this branch's tests: a
-concurrent session working out of another worktree (`.claude/worktrees/agent-ae68eb45f20e1f3c6`,
-whose `cliPath` the damaged state file recorded) ran the unguarded suite and rewrote the live
-plist with `/var/folders/.../opencodex-test-*` homes plus the live state record with its own
-sandbox paths. launchd kept serving from its cached definition, so nothing broke — which is
-exactly why it goes unnoticed until the next restart. Restored from the running job's own
-`launchctl print` output, as before. That is the strongest argument for the two guards in this
-PR: until every branch carries them, any worktree's `bun test tests/service` can do this.
+Both real files had to be restored TWICE during this round, and neither time by this branch's
+tests — every `installLaunchd` write here is refused by `assertNotRealLaunchAgentsUnderTest`,
+and the only other writer of that path (`uninstallLaunchd`) is guarded the same way.
+Concurrent sessions in OTHER worktrees ran the unguarded suite and rewrote the live plist with
+`/var/folders/.../opencodex-test-*` homes plus the live state record with their own sandbox
+paths. The damaged state file names its writer in `cliPath`: once
+`.claude/worktrees/agent-ae68eb45f20e1f3c6`, once a scratchpad worktree belonging to a sibling
+agent of this very task. launchd keeps serving from its cached definition, so nothing breaks —
+which is exactly why it goes unnoticed until the next restart. Restored both times from the
+running job's own `launchctl print` output (plist 1985 bytes / state 320 bytes, verified).
+
+That is the strongest argument for the two guards in this PR, and also its limit: a guard only
+protects the branch that has it. Until this lands, any worktree's `bun test tests/service` can
+do this again — including after this round was verified, so the live files are worth re-checking
+once the concurrent sessions are finished.
