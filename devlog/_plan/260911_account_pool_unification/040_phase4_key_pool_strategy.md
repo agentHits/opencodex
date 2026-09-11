@@ -176,3 +176,77 @@ dispatch no first attempt.
 The stale-selection re-read is :4197, not :4196. `src/server/management/provider-routes.ts`:832
 and :931 also `clearKeyCooldowns` on key replace and delete, so the cursor reset belongs there
 too — five routes, not three.
+
+## wp4 plan — quota-aware API key selection
+
+wp4b wired the picker in; this gives it the third strategy. Today
+`apiKeyPoolStrategy` accepts only `round-robin` and `fill-first`
+(`src/config.ts`:586, `src/types/provider.ts`:399), so an API key pool cannot do what every
+other pool in this codebase already does: prefer the credential with the most room left.
+
+| Symbol | File | Line |
+|---|---|---|
+| `apiKeyPoolStrategy` schema | `src/config.ts` | 586 |
+| `apiKeyPoolStrategy` type | `src/types/provider.ts` | 399 |
+| `selectProactiveApiKey` strategy read | `src/providers/key-failover.ts` | 135 |
+| per-key quota cache (private) | `src/providers/quota-key-accounts.ts` | 22 |
+| `identity()` cache key | `src/providers/quota-key-accounts.ts` | 50 |
+| `readProviderApiKeyQuotas` | `src/providers/quota-key-accounts.ts` | 101 |
+| `keyQuotaReaderForProvider` | `src/providers/quota.ts` | 2897 |
+| editor field list | `src/server/auth-cors.ts` | 821 |
+
+### The one real obstacle: the selector is synchronous, the quota reader is not
+
+Per-key quota already exists — `keyQuotaReaderForProvider` serves seventeen providers — but it
+is reached only through `readProviderApiKeyQuotas`, which is `async` and probes the network on a
+miss. `selectProactiveApiKey` is synchronous and sits on the first-attempt path, where it must
+not await anything.
+
+So `quota-key-accounts.ts` grows one cache-only, synchronous reader:
+
+```
+export function cachedApiKeyQuota(name, provider, keyId, key): ProviderQuota | null
+```
+
+It recomputes the same `identity()` the async path stores under, reads `cache`, and returns
+null on a miss. It never probes, never awaits and never schedules one — a selector that could
+trigger a network read on the request path would be a worse defect than the one this unit
+fixes. A miss is simply "no evidence", which is the same word the OAuth side uses.
+
+Env-placeholder keys resolve through `resolveProviderApiKey` exactly as the async path does,
+inside a try/catch: an unresolvable key is a miss, not a throw on the dispatch path.
+
+### Ranking, and what happens without evidence
+
+`quota` ranks the eligible keys by remaining headroom and takes the roomiest. When NO eligible
+key has a cached row, it falls back to the first eligible key — which is what `fill-first`
+already does, and therefore exactly today's behaviour for a provider whose quota reader does not
+exist or has never run.
+
+That is deliberately NOT the OAuth rule. `preferredInitialAccount` returns null without
+evidence because its active account is still perfectly usable. Here the function has already
+established that the committed key is cooling, so returning null would mean deliberately
+dispatching on a spent key. There is no no-op available; the only question is which replacement.
+
+### Change surface
+
+`src/providers/quota-key-accounts.ts` — add `cachedApiKeyQuota` and a
+`setCachedProviderApiKeyQuotaForTests` seam mirroring the account-side
+`setCachedProviderAccountQuotaForTests`, because a synchronous reader of a private cache is
+otherwise untestable without a live probe.
+
+`src/types/provider.ts`:399 and `src/config.ts`:586 — widen the union to include `quota`.
+`src/server/auth-cors.ts`:821 already lists the field as editor-visible and needs no change.
+
+`src/providers/key-failover.ts` — a third branch in `selectProactiveApiKey`. `round-robin` and
+`fill-first` keep their current code paths byte for byte.
+
+### Acceptance
+
+- `tests/adapters/key-failover.test.ts`: the roomiest eligible key wins; a cooled roomier key is
+  skipped; with no cached rows the first eligible key is taken; an unknown strategy value still
+  degrades to no-op. Red control for each: with the `quota` branch removed the ranking cases must
+  fail.
+- `apiKeyPoolStrategy` is currently undocumented in `docs-site` — no row exists anywhere. It
+  gains one in `reference/configuration/providers.md` describing all three values, since shipping
+  a third undocumented value is how the generic pool ended up inert and unexplained.
