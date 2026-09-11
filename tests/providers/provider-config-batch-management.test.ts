@@ -402,8 +402,15 @@ describe("atomic provider editor batch", () => {
     baseline.providers.alpha!.apiKeyPoolStrategy = "round-robin";
     const next = structuredClone(baseline);
     next.providers.alpha!.defaultModel = "alpha-new";
-    const response = await putBatch(loadConfig(), { baseline, next });
-    expect(response?.status).toBe(200);
+    // Same seam the other successful-PUT cases use: the destination check would otherwise do a
+    // real DNS lookup for alpha.example.test on the commit path.
+    const destinationSpy = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+    try {
+      const response = await putBatch(loadConfig(), { baseline, next });
+      expect(response?.status).toBe(200);
+    } finally {
+      destinationSpy.mockRestore();
+    }
 
     // The PUT cleared the cooldowns, so key one is eligible again. Cool only the committed key
     // and point the selection back at it, the same way as above.
