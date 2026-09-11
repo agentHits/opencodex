@@ -836,7 +836,7 @@ container usually has no unlocked keychain session, so requests would fail close
 `${ENV_VAR}` reference in the service environment there instead. Env references are left untouched
 by `store`.
 
-The `zhipu-bigmodel-responses` preset seeds `glm-5.3` and `glm-5-turbo` with
+The `zhipu-bigmodel-responses` preset seeds `glm-5.3`, `glm-5.3-flash` and `glm-5-turbo` with
 `liveModels: false` for `https://open.bigmodel.cn/api/v1`. Its static roster and
 per-model context, effort, and summary metadata come from the
 [BigModel Responses guide](/guides/providers/#bigmodel-coding-plan-over-responses).
