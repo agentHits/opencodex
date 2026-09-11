@@ -266,6 +266,16 @@ Both locales now also distinguish `ocx restart` (the proxy process you started) 
 entry was already reconciled in the base by `ee6a20a0e`; the docs were made to match it, not the
 reverse.
 
+A repo-wide grep for the old claim found two more pages outside this unit's original file list, and
+both were fixed in the same commit because they quote the code verbatim and the code changed:
+`reference/cli/lifecycle.md` (en + ko) had `| restart | Alias of repair. |` in the `ocx service`
+subcommand table, and the `ocx status` version-skew paragraph still printed the pre-`ee6a20a0e`
+advice (`ocx service repair (ocx service restart is an alias)`) that `src/cli/version-skew.ts` no
+longer emits. The `repair` row and the bare-`ocx service` row there are now honest about the
+conditional reload too, which was a gap PR1 left rather than one this round created. The other five
+locales of `lifecycle.md` (`fr`, `ja`, `ru`, `tr`, `zh-cn`, `zh-tw`) still carry both old rows —
+added to Left over, same follow-up as the other translation parity work.
+
 ## Decisions
 
 - **Keep #4241's structure and every guarded claim.** The loopback-bind trap, the forwarder section
@@ -328,7 +338,9 @@ No repository-wide suite (operator instruction); hosted CI at the exact pushed h
 
 - **Five translations** (`fr`, `ja`, `ru`, `tr`, `zh-cn`, `zh-tw`) of `guides/remote-hub.md` and
   `reference/configuration/server.md`, which still carry both #4241's defects and the pre-#4236
-  recipe. One follow-up.
+  recipe. One follow-up. The same five copies of `reference/cli/lifecycle.md` join it: their
+  `ocx service` table still says `restart` is an alias of `repair`, and their `ocx status` paragraph
+  still prints the pre-`ee6a20a0e` skew advice. en + ko are fixed.
 - `POST /v1/messages/count_tokens` on the loopback listener is documented as a 404 in two places. If
   PR3's open question is answered yes, both sentences move together.
 - Cursor's `apiKeyMode` copy (PR3's note) is GUI text and is not documented here either way.
