@@ -61,26 +61,15 @@ export async function putCodexPoolStrategy(
   fetchImpl: PoolStrategyFetch = (input, init) => fetch(input, init),
 ): Promise<{ ok: true; strategy: AccountPoolStrategy; stickyLimit: number } | { ok: false }> {
   if (body.strategy === undefined && body.stickyLimit === undefined) return { ok: false };
-  try {
-    const response = await fetchImpl(`${apiBase}/api/codex-auth/pool-strategy`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...(body.strategy !== undefined ? { strategy: body.strategy } : {}),
-        ...(body.stickyLimit !== undefined ? { stickyLimit: body.stickyLimit } : {}),
-      }),
-    });
-    if (!response.ok) return { ok: false };
-    const json = await response.json() as {
-      accountPoolStrategy?: unknown;
-      accountPoolStickyLimit?: unknown;
-    };
-    return {
-      ok: true,
-      strategy: normalizeAccountPoolStrategy(json.accountPoolStrategy ?? body.strategy),
-      stickyLimit: normalizeAccountPoolStickyLimit(json.accountPoolStickyLimit ?? body.stickyLimit),
-    };
-  } catch {
-    return { ok: false };
-  }
+  // The prefixed `accountPoolStrategy`/`accountPoolStickyLimit` response keys are gone with
+  // the Codex-only route: the unified contract answers with neutral keys for every kind.
+  const { CODEX_POOL_PROVIDER, putPoolSettings } = await import("./pool-settings");
+  const settings = await putPoolSettings(
+    apiBase,
+    CODEX_POOL_PROVIDER,
+    { strategy: body.strategy, stickyLimit: body.stickyLimit },
+    (input, init) => fetchImpl(input, init as RequestInit),
+  );
+  if (!settings) return { ok: false };
+  return { ok: true, strategy: settings.strategy, stickyLimit: settings.stickyLimit };
 }

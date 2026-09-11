@@ -133,9 +133,11 @@ describe("account pool strategy helpers", () => {
     );
     expect(result).toEqual({ ok: true, strategy: "round-robin", stickyLimit: 3 });
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe("http://proxy/api/codex-auth/pool-strategy");
+    expect(calls[0]!.url).toBe("http://proxy/api/pool/settings");
     expect(calls[0]!.init.method).toBe("PUT");
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      // The Codex pool is addressed by provider id like every other kind now.
+      provider: "openai",
       strategy: "round-robin",
       stickyLimit: 3,
     });
@@ -281,12 +283,12 @@ describe("CodexPoolStrategySetting optimistic strategy select", () => {
       if (url.endsWith("/api/codex-auth/active") && (!init || init.method === undefined)) {
         return active.promise;
       }
-      if (url.endsWith("/api/codex-auth/pool-strategy") && init?.method === "PUT") {
+      if (url.endsWith("/api/pool/settings") && init?.method === "PUT") {
         puts.push(init.body ? JSON.parse(String(init.body)) : null);
         return new Response(JSON.stringify({
           ok: true,
-          accountPoolStrategy: "round-robin",
-          accountPoolStickyLimit: 1,
+          strategy: "round-robin",
+          stickyLimit: 1,
         }), { status: 200 });
       }
       throw new Error(`unexpected fetch: ${url} ${init?.method ?? "GET"}`);
@@ -331,7 +333,7 @@ describe("CodexPoolStrategySetting optimistic strategy select", () => {
           accountPoolStickyLimit: 1,
         }), { status: 200 });
       }
-      if (url.endsWith("/api/codex-auth/pool-strategy") && init?.method === "PUT") {
+      if (url.endsWith("/api/pool/settings") && init?.method === "PUT") {
         return put.promise;
       }
       throw new Error(`unexpected fetch: ${url} ${init?.method ?? "GET"}`);
@@ -380,7 +382,7 @@ describe("CodexPoolStrategySetting optimistic strategy select", () => {
           accountPoolStickyLimit: 1,
         }), { status: 200 });
       }
-      if (url.endsWith("/api/codex-auth/pool-strategy") && init?.method === "PUT") {
+      if (url.endsWith("/api/pool/settings") && init?.method === "PUT") {
         return new Response("fail", { status: 500 });
       }
       throw new Error(`unexpected fetch: ${url} ${init?.method ?? "GET"}`);
@@ -416,7 +418,7 @@ describe("CodexPoolStrategySetting optimistic strategy select", () => {
 
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/codex-auth/pool-strategy") && init?.method === "PUT") {
+      if (url.endsWith("/api/pool/settings") && init?.method === "PUT") {
         return put.promise;
       }
       throw new Error(`unexpected fetch: ${url} ${init?.method ?? "GET"}`);
