@@ -162,6 +162,18 @@ Six findings, all on the shape of the resolution rather than on the split itself
    caller may POST the entire conversation to `/v1/messages` on that socket — while costing Claude
    Code its server-side count. The pinned 404 test became a pinned reachability test and the
    allowlist comment carries the argument. `/api/*`, `/healthz`, `/readyz` and the GUI stay 404.
+
+   Widening the allowlist also turned a weaker assertion in
+   `tests/server/reserve-ingress.test.ts` into a real one. Its two translated-wire cases asserted a
+   local 404 and said outright that it "does NOT prove admission propagation inside the translated
+   handler" — the 404 came from the allowlist, not from the handler. With the wires served, those
+   requests reach the handler and give the same answer the Responses transport already gives on
+   that listener: loopback admission makes Reserve eligible, so the turn is refused 429 behind a
+   WHAM probe with nothing reaching the upstream, while the public listener's `dedicated` admission
+   is not eligible and forwards the caller's own credential. The describe block's invariant —
+   eligibility is decided by the RECEIVING listener, not the dial address — is now proven on four
+   transports instead of two. One stale comment in the same file ("chat is intentionally not served
+   by the secondary listener") was corrected.
 6. **Docs**: `structure/01_runtime.md`'s socket paragraph was split into four; `structure/09` now
    states that `fetchClaudeCodeState` sends the admin token to the management ingress or, without
    one, to the bind address — host-local, never exported — and records the inference resolver's
@@ -227,6 +239,18 @@ bun test tests/lib/local-destinations.test.ts \
   tests/providers/cursor/cursor-integration-status.test.ts \
   tests/vision/vision-routed.test.ts \
   tests/server/loopback-companion-client-targets.test.ts             # 241 pass
+bun test tests/server/reserve-ingress.test.ts                        # 32 pass
+bun test tests/cli/cli-export-command.test.ts \
+  tests/cli/hub-gated-local-clients.test.ts \
+  tests/clients/integrations-writer.test.ts \
+  tests/codex-integration/codex-desired-state.test.ts \
+  tests/codex-integration/reserve-auth-context.test.ts \
+  tests/codex-integration/reserve-catalog.test.ts \
+  tests/codex-integration/reserve-dispatch.test.ts \
+  tests/codex-integration/reserve-helper-boundary.test.ts \
+  tests/providers/xai/grok-sync.test.ts \
+  tests/server/management-client-config-route.test.ts \
+  tests/server/reserve-claude-policy.test.ts                         # 245 pass
 bun test tests/claude-integration/claude-gateway-cache.test.ts \
   tests/claude-integration/claude-system-env-auto.test.ts \
   tests/claude-integration/claude-shell-hook.test.ts \
