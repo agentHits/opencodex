@@ -20,12 +20,13 @@ import { join } from "node:path";
 import { fetchHubState, HubClientError } from "../../src/client/hub-client";
 import {
   hubStateCachePath,
+  hubStateFailureReason,
   readCachedHubState,
   resolveHubState,
   writeCachedHubState,
   type HubStateOwner,
 } from "../../src/client/hub-state";
-import type { HubStateDTO } from "../../src/remote/hub-state";
+import { parseHubStateBody, type HubStateDTO } from "../../src/remote/hub-state";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const previousHome = process.env.OPENCODEX_HOME;
@@ -46,6 +47,7 @@ function hubState(overrides: Partial<HubStateDTO> = {}): HubStateDTO {
     providers: [{ name: "xai", adapter: "openai-chat", authMode: "oauth", hasCredential: true, disabled: false }],
     oauth: [{ provider: "xai", loggedIn: true }],
     subagentModels: ["xai/grok-4.6"],
+    truncated: false,
     claudeCode: { enabled: true },
     ...overrides,
   };
@@ -123,6 +125,55 @@ describe("fetchHubState", () => {
       fetchImpl: jsonFetch(body),
     }).catch((e: unknown) => e);
     expect((error as HubClientError).code).toBe("hub_state_schema_invalid");
+  });
+
+  test("the truncation flag crosses the wire, and an older hub's document still parses", async () => {
+    const flagged = await fetchHubState(OWNER.serverUrl, "ocx_data_x", {
+      fetchImpl: jsonFetch(hubState({ truncated: true })),
+    });
+    expect(flagged.truncated).toBe(true);
+    // A hub that predates the flag sends no `truncated` key. Refusing that document would turn
+    // an honesty field into a compatibility break; absent reads as "nothing was dropped".
+    const { truncated: _dropped, ...withoutFlag } = hubState();
+    const older = await fetchHubState(OWNER.serverUrl, "ocx_data_x", { fetchImpl: jsonFetch(withoutFlag) });
+    expect(older.truncated).toBe(false);
+    // A present non-boolean is still refused, like every other field in this contract.
+    expect(parseHubStateBody({ ...hubState(), truncated: "yes" })).toBeNull();
+  });
+});
+
+describe("hubStateFailureReason", () => {
+  // Every code `fetchHubState` throws needs a sentence: this string is printed verbatim in the
+  // `ocx status` banner, and `state unavailable (hub_state_http_507)` sends an operator hunting
+  // for a client bug when the hub has answered and said something.
+  test.each([
+    ["hub_state_content_type_invalid", "the hub's state response was not JSON"],
+    ["hub_state_http_507", "the hub answered HTTP 507 to the state request"],
+    ["hub_state_http_502", "the hub answered HTTP 502 to the state request"],
+  ] as const)("%s renders as a sentence", (code, expected) => {
+    expect(hubStateFailureReason(new HubClientError(code, "raw"))).toBe(expected);
+  });
+
+  test("an unknown code still falls back to the code rather than inventing a status", () => {
+    expect(hubStateFailureReason(new HubClientError("hub_state_http_oops", "raw"))).toBe("hub_state_http_oops");
+    expect(hubStateFailureReason(new HubClientError("something_else", "raw"))).toBe("something_else");
+  });
+
+  test("the sentences reach the resolution, not just the helper", async () => {
+    const contentType = await resolveHubState({
+      owner: OWNER,
+      token: "ocx_data_x",
+      fetchImpl: jsonFetch("<html>captive portal</html>", { contentType: "text/html" }),
+    });
+    expect(contentType.stateSource).toBe("unavailable");
+    expect(contentType.reason).toBe("the hub's state response was not JSON");
+    const overSized = await resolveHubState({
+      owner: OWNER,
+      token: "ocx_data_x",
+      fetchImpl: jsonFetch({ error: {} }, { status: 507 }),
+    });
+    expect(overSized.stateSource).toBe("unavailable");
+    expect(overSized.reason).toBe("the hub answered HTTP 507 to the state request");
   });
 });
 

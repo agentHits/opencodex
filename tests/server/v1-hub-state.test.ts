@@ -130,7 +130,11 @@ describe("GET /v1/hub-state", () => {
         hasCredential: true,
         disabled: false,
       });
-      expect(state!.providers.find(p => p.name === "quiet")?.disabled).toBe(true);
+      // A disabled provider is not exported at all: `/v1/catalog` and `/v1/models` filter it
+      // out, so naming it here would be the only place a data key learns it exists.
+      expect(state!.providers.map(p => p.name)).not.toContain("quiet");
+      expect(text).not.toContain("quiet");
+      expect(state!.truncated).toBe(false);
       expect(state!.oauth.find(entry => entry.provider === "xai")?.loggedIn).toBe(true);
       expect(state!.subagentModels).toEqual(["xai/grok-4.6", "gpt-5.6-sol"]);
       expect(state!.claudeCode.enabled).toBe(true);
@@ -205,6 +209,29 @@ describe("GET /v1/hub-state", () => {
       // A distinct code, not the generic not_found: it is what tells "this host is not a hub"
       // apart from "this build has no such route", and the latter would pass vacuously.
       expect(await res.json()).toMatchObject({ error: { code: "hub_state_not_a_hub" } });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("hitting a cap is reported as truncated rather than silently clipped", async () => {
+    // 201 providers against a 200 cap. A body that simply stopped at 200 would tell a client the
+    // other provider does not exist, which is the same confident-and-wrong report #4236 is about.
+    const providers: Record<string, unknown> = {};
+    for (let i = 0; i < 201; i += 1) {
+      providers[`p${i}`] = { adapter: "openai-chat", baseUrl: "https://example.test/v1", models: ["m"] };
+    }
+    saveConfig(hubConfig({ providers: providers as OcxConfig["providers"], defaultProvider: "p0" }));
+    const server = startServer(0);
+    try {
+      const res = await fetch(new URL("/v1/hub-state", server.url), {
+        headers: { "x-opencodex-api-key": DATA_KEY },
+      });
+      expect(res.status).toBe(200);
+      const state = parseHubStateBody(await res.json());
+      expect(state).not.toBeNull();
+      expect(state!.providers).toHaveLength(200);
+      expect(state!.truncated).toBe(true);
     } finally {
       await server.stop(true);
     }

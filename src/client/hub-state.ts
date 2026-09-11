@@ -118,6 +118,11 @@ export function writeCachedHubState(owner: HubStateOwner, state: HubStateDTO, fe
  *
  * `hub_state_unsupported` is the version-skew case and gets an explicit upgrade instruction:
  * left as a bare code it reads like a bug in the client.
+ *
+ * Every code `fetchHubState` can throw has a sentence here, including the open-ended
+ * `hub_state_http_<status>` family. This reason is printed in the `ocx status` banner, and a
+ * banner reading `state unavailable (hub_state_http_507)` sends the reader looking for a client
+ * bug when the hub has in fact answered and said something.
  */
 export function hubStateFailureReason(error: unknown): string {
   if (error instanceof HubClientError) {
@@ -129,14 +134,24 @@ export function hubStateFailureReason(error: unknown): string {
       case "hub_state_schema_invalid":
       case "hub_state_invalid":
         return "the hub returned an unreadable hub-state document";
+      case "hub_state_content_type_invalid":
+        // Usually a captive portal, a TLS-terminating proxy or an error page in front of the
+        // hub: the request reached SOMETHING, and that something is not the hub's API.
+        return "the hub's state response was not JSON";
       case "body_too_large":
         return "the hub's state response exceeded the allowed size";
       case "unreachable":
         return "the hub is unreachable";
       case "redirect_refused":
         return "the hub redirected the state request";
-      default:
-        return error.code;
+      default: {
+        const status = error.code.startsWith("hub_state_http_")
+          ? error.code.slice("hub_state_http_".length)
+          : null;
+        return status && /^\d+$/.test(status)
+          ? `the hub answered HTTP ${status} to the state request`
+          : error.code;
+      }
     }
   }
   return "the hub state could not be read";

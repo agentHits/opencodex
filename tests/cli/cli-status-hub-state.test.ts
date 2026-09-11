@@ -49,6 +49,7 @@ function hubState(overrides: Partial<HubStateDTO> = {}): HubStateDTO {
     ],
     oauth: [{ provider: "xai", loggedIn: true }, { provider: "anthropic", loggedIn: false }],
     subagentModels: ["xai/grok-4.6", "gpt-5.6-sol"],
+    truncated: false,
     claudeCode: { enabled: true },
     ...overrides,
   };
@@ -141,6 +142,7 @@ describe("the hub banner and block", () => {
     providers: hubState().providers,
     oauth: hubState().oauth,
     subagentModels: hubState().subagentModels,
+    truncated: false,
     claudeCodeEnabled: true,
   };
 
@@ -176,6 +178,13 @@ describe("the hub banner and block", () => {
     expect(lines.join("\n")).toContain("no API key (authMode oauth)");
     expect(lines.join("\n")).toContain("Delegable models (hub https://hub.example.test:8443): xai/grok-4.6, gpt-5.6-sol");
     expect(lines.join("\n")).toContain("Hub version: 2.51.0");
+  });
+
+  test("a truncated hub state says so instead of presenting a prefix as the whole list", () => {
+    const lines = remoteHubStatusLines({ ...live, truncated: true }).join("\n");
+    expect(lines).toContain("the hub truncated this state to fit its response caps");
+    // And the honest case stays quiet: a note on every report would train the reader to skip it.
+    expect(remoteHubStatusLines(live).join("\n")).not.toContain("truncated");
   });
 
   test("no hub state means no hub block, rather than an empty one that reads as 'nothing configured'", () => {
@@ -296,6 +305,7 @@ describe("ocx status end to end on a connected client", () => {
         providers: [],
         oauth: [],
         subagentModels: [],
+        truncated: false,
         claudeCodeEnabled: null,
       });
       const human = await runStatus(home, codexHome, false);

@@ -1411,6 +1411,13 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         // `/api/*` or handing the client an admin token to read `GET /api/providers` would
         // have traded a reporting defect for a credential one.
         //
+        // What it discloses beyond /v1/catalog and /v1/models, exactly: `hasCredential`,
+        // `loggedIn`, `authMode`, the featured roster, and the NAME and adapter of an ENABLED
+        // provider those routes omit for want of a usable credential — which is the point of
+        // the route. A `disabled` provider is NOT exported (`buildHubState` drops it), because
+        // the catalog filters it out too and naming it here would be the only place a data key
+        // learns of it.
+        //
         // Placed between /v1/catalog and /v1/models so all three least-privilege client reads
         // stay in sight of each other.
         const admission = resolveApiAuth(req, policy);

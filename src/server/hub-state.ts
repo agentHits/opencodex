@@ -37,11 +37,15 @@ export interface HubStateLoginRow {
  * sees exactly what the hub itself would offer.
  */
 export function hubSubagentRoster(config: Pick<OcxConfig, "subagentModels">): string[] {
+  return uncappedSubagentRoster(config).slice(0, MAX_HUB_STATE_SUBAGENT_MODELS);
+}
+
+/** The same roster before the cap, so `truncated` can be computed instead of guessed. */
+function uncappedSubagentRoster(config: Pick<OcxConfig, "subagentModels">): string[] {
   const roster = config.subagentModels === undefined ? DEFAULT_SUBAGENT_MODELS : config.subagentModels;
   return roster
     .filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "")
-    .map(entry => entry.trim())
-    .slice(0, MAX_HUB_STATE_SUBAGENT_MODELS);
+    .map(entry => entry.trim());
 }
 
 export function buildHubState(
@@ -49,7 +53,13 @@ export function buildHubState(
   logins: readonly HubStateLoginRow[],
   hubVersion: string,
 ): HubStateDTO {
-  const providers: HubStateProvider[] = Object.entries(config.providers ?? {})
+  // A disabled provider is dropped, not exported with a flag. `/v1/catalog` and `/v1/models`
+  // both filter it out (`src/router.ts`, `src/codex/catalog/*`), so exporting it here was the
+  // one thing this route told a data-key holder that no other data-plane route does — and a
+  // client has no use for it either: it cannot be routed to, so absence IS the truthful report,
+  // and `authMode` already explains a present-but-credential-less row without it.
+  const enabledProviders = Object.entries(config.providers ?? {}).filter(([, provider]) => provider.disabled !== true);
+  const providers: HubStateProvider[] = enabledProviders
     .slice(0, MAX_HUB_STATE_PROVIDERS)
     .map(([name, provider]) => ({
       name,
@@ -59,12 +69,20 @@ export function buildHubState(
         : null,
       // Presence only. Identical to the projection GET /api/providers already ships.
       hasCredential: Boolean(provider.apiKey),
-      disabled: provider.disabled === true,
+      // Always false here. The field stays in the contract for an older hub's documents; see
+      // `HubStateProvider` in src/remote/hub-state.ts.
+      disabled: false,
     }));
   // Field-by-field, never a spread: oauthLoginSummary also carries the operator's email.
   const oauth: HubStateOAuthEntry[] = logins
     .slice(0, MAX_HUB_STATE_OAUTH_PROVIDERS)
     .map(entry => ({ provider: entry.provider, loggedIn: entry.loggedIn === true }));
+  const rosterBeforeCap = uncappedSubagentRoster(config).length;
+  // Said out loud rather than silently: the caps are a prefix, and a client presenting a prefix
+  // as the whole list is the same confident-and-wrong report this route exists to prevent.
+  const truncated = enabledProviders.length > MAX_HUB_STATE_PROVIDERS
+    || logins.length > MAX_HUB_STATE_OAUTH_PROVIDERS
+    || rosterBeforeCap > MAX_HUB_STATE_SUBAGENT_MODELS;
   return {
     schemaVersion: HUB_STATE_SCHEMA_VERSION,
     runtimeRole: "hub",
@@ -73,6 +91,7 @@ export function buildHubState(
     providers,
     oauth,
     subagentModels: hubSubagentRoster(config),
+    truncated,
     // Same predicate the launch path uses: absence means enabled.
     claudeCode: { enabled: config.claudeCode?.enabled !== false },
   };

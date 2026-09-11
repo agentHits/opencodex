@@ -16,8 +16,17 @@
  * entirely. No keys, no tokens, no quotas, no usage, no account identity — and nothing of that
  * shape may be added later, because this surface is reachable with a data key.
  *
- * Provider NAMES already leak through `/v1/catalog` slugs, so the delta this adds is only the
- * two booleans.
+ * The delta over `/v1/catalog`, stated exactly, because "only two booleans" was wrong and a
+ * wrong boundary claim is worse than none. Provider names already leak through `/v1/catalog`
+ * slugs and `/v1/models` ids, but only for providers those routes list. What this route adds is:
+ * `hasCredential`, `loggedIn`, `authMode`, the featured roster — and the NAME and adapter of an
+ * ENABLED provider that the catalog omits for want of a usable credential. That last one is the
+ * point of the route (a client has to be able to say "the hub has xai configured and has no key
+ * for it" rather than "the hub cannot serve grok"), and it is the whole widening.
+ *
+ * A provider the operator marked `disabled` is NOT exported — see `src/server/hub-state.ts`.
+ * Naming it would tell a data-key holder about a provider no other data-plane route mentions,
+ * and a client has no use for it: it is not routable, so "absent" is the truthful report.
  */
 
 export const HUB_STATE_SCHEMA_VERSION = 1;
@@ -45,6 +54,11 @@ export interface HubStateProvider {
   authMode: HubStateAuthMode;
   /** Presence only — the same `!!p.apiKey` projection `GET /api/providers` ships. */
   hasCredential: boolean;
+  /**
+   * Always `false` from a hub of this version, which does not export a disabled provider at all.
+   * The field stays in the contract because an OLDER hub does send `true`, and a client reading
+   * one must still be able to label the row rather than present it as routable.
+   */
   disabled: boolean;
 }
 
@@ -65,6 +79,13 @@ export interface HubStateDTO {
   oauth: HubStateOAuthEntry[];
   /** The hub's effective featured subagent roster — what a client should delegate to. */
   subagentModels: string[];
+  /**
+   * At least one row was dropped to fit a cap above, so the arrays are a prefix rather than the
+   * whole truth. Silent truncation is what this flag exists to prevent: a client that lists 200
+   * of 240 providers and says nothing has told the reader the other 40 do not exist, which is
+   * the same class of confident-and-wrong report #4236 is about.
+   */
+  truncated: boolean;
   claudeCode: { enabled: boolean };
 }
 
@@ -101,6 +122,11 @@ export function parseHubStateBody(value: unknown): HubStateDTO | null {
   if (!claudeCode || typeof claudeCode !== "object" || Array.isArray(claudeCode)) return null;
   const enabled = (claudeCode as Record<string, unknown>).enabled;
   if (typeof enabled !== "boolean") return null;
+  // Absent means false: a hub that predates the flag truncated nothing this client can detect,
+  // and refusing its document would turn a new honesty field into a compatibility break. A
+  // present non-boolean is still refused, like every other field here.
+  if (raw.truncated !== undefined && typeof raw.truncated !== "boolean") return null;
+  const truncated = raw.truncated === true;
 
   const providers: HubStateProvider[] = [];
   for (const row of raw.providers) {
@@ -150,6 +176,7 @@ export function parseHubStateBody(value: unknown): HubStateDTO | null {
     providers,
     oauth,
     subagentModels,
+    truncated,
     claudeCode: { enabled },
   };
 }

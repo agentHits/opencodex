@@ -89,6 +89,8 @@ export type CliRemoteHubStatus = {
   providers: HubStateProvider[];
   oauth: HubStateOAuthEntry[];
   subagentModels: string[];
+  /** The hub hit one of its own caps, so the lists above are a prefix and the report says so. */
+  truncated: boolean;
   /** The hub's own Claude Code toggle; a client cannot infer it from local config. */
   claudeCodeEnabled: boolean | null;
 };
@@ -309,6 +311,7 @@ export function disconnectedRemoteHubStatus(): CliRemoteHubStatus {
     providers: [],
     oauth: [],
     subagentModels: [],
+    truncated: false,
     claudeCodeEnabled: null,
   };
 }
@@ -354,6 +357,7 @@ export async function collectRemoteHubStatus(
     providers: resolved.state?.providers ?? [],
     oauth: resolved.state?.oauth ?? [],
     subagentModels: resolved.state?.subagentModels ?? [],
+    truncated: resolved.state?.truncated === true,
     claudeCodeEnabled: resolved.state ? resolved.state.claudeCode.enabled : null,
   };
 }
@@ -402,6 +406,11 @@ export function remoteHubStatusLines(remoteHub: CliRemoteHubStatus): string[] {
     `Delegable models (hub ${origin}): ${remoteHub.subagentModels.length === 0 ? "none" : remoteHub.subagentModels.join(", ")}`,
   ];
   if (remoteHub.hubVersion) lines.push(`Hub version: ${remoteHub.hubVersion}`);
+  // The hub told us its own lists are a prefix. Saying nothing here would make this report claim
+  // completeness it does not have — the same shape of confident-and-wrong answer as #4236.
+  if (remoteHub.truncated) {
+    lines.push("  (the hub truncated this state to fit its response caps; some rows are not listed)");
+  }
   return lines;
 }
 
