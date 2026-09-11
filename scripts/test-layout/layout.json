@@ -941,6 +941,7 @@
     "openai-chat-hardening.test.ts": "adapters/openai",
     "openai-chat-invalid-tool-call-diagnostics.test.ts": "adapters/openai",
     "openai-chat-model-suffix.test.ts": "adapters/openai",
+    "openai-chat-path-override.test.ts": "adapters/openai",
     "openai-chat-native-policy.test.ts": "adapters/openai",
     "openai-chat-parallel-stream.test.ts": "adapters/openai",
     "openai-chat-system-order.test.ts": "adapters/openai",

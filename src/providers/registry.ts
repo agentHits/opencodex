@@ -232,6 +232,19 @@ export interface ProviderRegistryEntry {
    */
   responsesPath?: string;
   /**
+   * Relative send path for the `openai-chat` wire, seeded into saved config exactly like
+   * `responsesPath`. Needed when one upstream serves both wires under different prefixes,
+   * because a per-model wire override changes the adapter and not the base URL.
+   */
+  chatCompletionsPath?: string;
+  /**
+   * Endpoints this entry used to live at, kept so a saved custom provider that still points
+   * at one keeps receiving this row's metadata through `registryEntryForProviderDestination`.
+   * Destination matching is by adapter plus normalized base URL, so moving a row's wire or
+   * prefix would otherwise orphan every config a user wrote against the old address.
+   */
+  destinationAliases?: readonly { readonly baseUrl: string; readonly adapter: string }[];
+  /**
    * Responses upstream that stores nothing server-side. Stateful request parameters
    * are dropped and `store` is pinned false, and orphaned tool results left by a
    * replay miss are repaired rather than forwarded.
@@ -362,7 +375,7 @@ export interface ProviderRegistryEntry {
 
 export type ProviderConfigSeed = Pick<
   OcxProviderConfig,
-  "adapter" | "baseUrl" | "apiKeyTransport" | "responsesPath" | "authMode" | "keyOptional" | "freeTier" | "modelSuffixBracketStrip" | "defaultModel" | "models"
+  "adapter" | "baseUrl" | "apiKeyTransport" | "responsesPath" | "chatCompletionsPath" | "authMode" | "keyOptional" | "freeTier" | "modelSuffixBracketStrip" | "defaultModel" | "models"
   | "liveModels" | "contextWindow" | "modelContextWindows" | "modelInputModalities"
   | "modelDisplayNames"
   | "modelMaxInputTokens" | "defaultMaxOutputTokens" | "modelMaxOutputTokens"
@@ -2635,12 +2648,32 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
   // exact 131_072 every other source in this repo uses for that model. Coding Plan pricing stays
   // unpublished, so no cost entry is asserted.
   {
-    id: "zai", label: "Z.AI — GLM Coding Plan", baseUrl: "https://api.z.ai/api/coding/paas/v4", adapter: "openai-chat", authKind: "key",
+    id: "zai", label: "Z.AI — GLM Coding Plan", baseUrl: "https://api.z.ai", adapter: "openai-responses", authKind: "key",
+    // One subscription and one key, three protocols. docs.z.ai/guides/llm/glm-5.3 lists them:
+    // Chat Completions at /api/coding/paas/v4, Responses at /api/v1, Anthropic Messages at
+    // /api/anthropic. docs.z.ai/devpack/latest-model points Codex-family clients at /api/v1,
+    // and the Chat path is the one that misbehaves in practice.
+    //
+    // Responses is the default and Chat stays reachable per model through `modelAdapters`.
+    // The two wires sit under different prefixes, and a wire override swaps the adapter
+    // without touching baseUrl, so each wire carries its own relative send path.
+    //
+    // Measured 2026-09-12 against a live key: every roster id answers 200 on
+    // /api/v1/responses, and every one also answers 200 on the Chat prefix, so no model
+    // needs a `modelWireDefaults` pin. /api/v1/chat/completions returns 403
+    // model_access_denied, which is why the Chat path cannot simply hang off the new base.
+    responsesPath: "/api/v1/responses",
+    chatCompletionsPath: "/api/coding/paas/v4/chat/completions",
+    // The address this row occupied before the move. A saved custom provider still pointing
+    // at the Chat endpoint keeps receiving this row's metadata (#1100).
+    destinationAliases: [{ baseUrl: "https://api.z.ai/api/coding/paas/v4", adapter: "openai-chat" }],
     dashboardUrl: "https://z.ai/manage-apikey/apikey-list", defaultModel: "glm-5.3",
     note: "GLM-5.3 coding subscription",
     models: ["glm-5.3", "glm-5.3[1m]", "glm-5.3-flash", "glm-5.2", "glm-5.2[1m]", "glm-5.1", "glm-5", "glm-4.6"],
-    modelContextWindows: { "glm-5.3": 1_000_000, "glm-5.3[1m]": 1_000_000, "glm-5.3-flash": 1_000_000, "glm-5.2": 1_000_000, "glm-5.2[1m]": 1_000_000 },
-    // Z.AI's OpenAI path returns 400 code 1211 for bracketed model ids.
+    // The upstream catalog reports 1_048_576 for the 5.3 family, which is what the domestic
+    // Responses row already carries. Both are documented as "1M"; this is that number.
+    modelContextWindows: { "glm-5.3": 1_048_576, "glm-5.3[1m]": 1_048_576, "glm-5.3-flash": 1_048_576, "glm-5.2": 1_000_000, "glm-5.2[1m]": 1_000_000 },
+    // Z.AI returns 400 for bracketed model ids on both wires; the aliases are local.
     modelSuffixBracketStrip: true,
     noVisionModels: ZAI_GLM_5X_SIDECAR_VISION_MODELS,
     modelInputModalities: ZAI_GLM_5X_INPUT_MODALITIES,
@@ -2649,6 +2682,9 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     modelMaxOutputTokens: Object.fromEntries(ZAI_GLM_53_MODELS.map(id => [id, 131_072])),
     modelSupportsReasoningSummaries: Object.fromEntries(ZAI_GLM_5X_MODELS.map(id => [id, true])),
     preserveReasoningContentModels: ZAI_GLM_5X_MODELS,
+    // Responses replay uses this provider-level flag; the model list above still covers a
+    // caller who opts back into Chat.
+    preserveResponsesReasoningContent: true,
   },
   // Zhipu's domestic BigModel platform: OpenAI-compatible pay-as-you-go on open.bigmodel.cn — a
   // different host and billing product from the `zai` coding-plan subscription above.
@@ -3516,12 +3552,22 @@ export function registryEntryForProviderDestination(
   if (typeof provider.baseUrl !== "string" || !provider.baseUrl) return undefined;
   if (provider.authMode !== undefined && provider.authMode !== "key") return undefined;
   const endpoint = normalizedProviderEndpoint(provider.baseUrl);
-  return PROVIDER_REGISTRY.find(entry =>
+  const eligible = (entry: ProviderRegistryEntry): boolean =>
     entry.authKind === "key"
     && !entry.allowBaseUrlOverride
-    && !/\{[^}]*\}/.test(entry.baseUrl)
+    && !/\{[^}]*\}/.test(entry.baseUrl);
+  const direct = PROVIDER_REGISTRY.find(entry =>
+    eligible(entry)
     && entry.adapter === provider.adapter
     && normalizedProviderEndpoint(entry.baseUrl) === endpoint);
+  if (direct) return direct;
+  // A row that moved keeps answering for the address it used to occupy, so an existing
+  // custom provider written against the old endpoint does not silently lose its metadata.
+  return PROVIDER_REGISTRY.find(entry =>
+    eligible(entry)
+    && (entry.destinationAliases ?? []).some(alias =>
+      alias.adapter === provider.adapter
+      && normalizedProviderEndpoint(alias.baseUrl) === endpoint));
 }
 
 /**
