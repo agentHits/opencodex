@@ -25,6 +25,7 @@ import { withProcessRuntimeProvenance } from "../lib/bun-runtime";
 import { selfLaunchArgv } from "../lib/self-launch-argv";
 import { ANTHROPIC_PARENT_ENV_SLOTS, trustedNodeLauncherContext, type AnthropicParentEnvSlot } from "./launcher-context";
 import { readClientConnectionState, type ClientConnectionState } from "../client/state";
+import { resolveHubState } from "../client/hub-state";
 import { readServiceApiTokenState, type ServiceApiTokenState } from "../lib/service-secrets";
 import { DEFAULT_CATALOG_PATH } from "../codex/paths";
 import { readFileSync } from "node:fs";
@@ -663,6 +664,43 @@ export function rootSkipPermissionsNotice(env: ClaudeLaunchEnv): string {
   return `⚠ Root --dangerously-skip-permissions requested: preserving user IS_SANDBOX=${env.IS_SANDBOX}; Claude Code's root guard remains in control.`;
 }
 
+/**
+ * The hub's featured subagent roster, or undefined to fall back to local `subagentModels`.
+ *
+ * Best-effort by design: a launch must not fail because the hub is slow or old. But the
+ * fallback is ANNOUNCED (#4236) — a silently local roster is exactly how an operator came to
+ * believe a hub that serves grok could only delegate to five native models.
+ *
+ * An empty hub roster is honoured as empty, not treated as "no answer": an operator who cleared
+ * the hub's featured list meant it.
+ */
+export async function resolveHubRosterForClaude(
+  connection: { serverUrl: string; apiKeyId: string; connectedAt: string },
+  token: string,
+  deps: { resolve?: typeof resolveHubState; warn?: (message: string) => void } = {},
+): Promise<readonly string[] | undefined> {
+  const warn = deps.warn ?? (message => console.error(message));
+  const resolve = deps.resolve ?? resolveHubState;
+  try {
+    const resolved = await resolve({
+      owner: { serverUrl: connection.serverUrl, apiKeyId: connection.apiKeyId, connectedAt: connection.connectedAt },
+      token,
+    });
+    if (!resolved.state) {
+      warn(`⚠ Hub roster unavailable (${resolved.reason ?? "unknown reason"}); using this machine's local subagentModels instead. The delegable agents below may not be what the hub can route.`);
+      return undefined;
+    }
+    if (resolved.stateSource === "cache") {
+      warn(`⚠ Hub roster came from a cached read ${resolved.ageSeconds ?? "?"}s old (${resolved.reason ?? "live read failed"}).`);
+    }
+    return resolved.state.subagentModels;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`⚠ Hub roster could not be read (${message}); using this machine's local subagentModels instead.`);
+    return undefined;
+  }
+}
+
 export async function cmdClaude(args: string[]): Promise<number> {
   const config = loadConfig();
   const clientState = readClientConnectionState();
@@ -675,10 +713,13 @@ export async function cmdClaude(args: string[]): Promise<number> {
   if (preflight.kind === "native") return launchNativeClaude(config, args, preflight.notice);
   let route: number | ClaudeRoutingTarget;
   let contextWindows: Record<string, number>;
+  /** The hub's featured roster on a connected client; undefined means "use local config". */
+  let hubRoster: readonly string[] | undefined;
   if (clientState.kind === "connected") {
     if (tokenState?.kind !== "present") return 1;
     route = { baseUrl: clientState.value.serverUrl, admissionToken: tokenState.token };
     contextWindows = readConnectedClaudeContextWindows();
+    hubRoster = await resolveHubRosterForClaude(clientState.value, tokenState.token);
   } else {
     const port = await ensureProxyForClaude();
     if (!port) {
@@ -710,16 +751,24 @@ export async function cmdClaude(args: string[]): Promise<number> {
     console.error(`⚠ Gateway model cache could not be refreshed: ${message}`);
   }
   // Sync roster agents (devlog 070): subagentModels + self -> ~/.claude/agents/ocx-*.md.
-  if (typeof route === "number") {
-    try {
-      const written = injectClaudeAgentDefs(config, contextWindows);
-      if (written === null) {
-        console.error("⚠ Claude agent definitions could not be synced; check ~/.claude/agents permissions.");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`⚠ Claude agent definitions could not be synced: ${message}`);
+  //
+  // This used to run only when `route` was a number — i.e. never on a connected client, where
+  // `route` is a ClaudeRoutingTarget (#4236). So `~/.claude/agents/ocx-*.md` on a client stayed
+  // whatever a previous standalone run had left, and the five delegable agents an operator saw
+  // were a frozen snapshot of a machine that no longer does the routing. Nothing in the output
+  // said so; the roster simply looked like the answer.
+  //
+  // On a client the roster comes from the hub, because the local `subagentModels` list is the
+  // one this machine had before it joined. The five-row cap stays: it is a Claude Code picker
+  // constraint, not the defect — sourcing the five from the wrong machine was.
+  try {
+    const written = injectClaudeAgentDefs(config, contextWindows, undefined, hubRoster);
+    if (written === null) {
+      console.error("⚠ Claude agent definitions could not be synced; check ~/.claude/agents permissions.");
     }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`⚠ Claude agent definitions could not be synced: ${message}`);
   }
   return spawnClaude(args, env);
 }
