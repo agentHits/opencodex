@@ -1,3 +1,4 @@
+import { putCodexPoolStrategy } from "../src/pool-settings";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { act } from "react";
@@ -9,7 +10,7 @@ import {
   normalizeAccountPoolStickyLimit,
   normalizeAccountPoolStrategy,
   parseAccountPoolStickyLimitDraft,
-  putCodexPoolStrategy,
+  
 } from "../src/account-pool-strategy";
 import AccountPoolStrategyControls from "../src/components/AccountPoolStrategyControls";
 import CodexPoolStrategySetting from "../src/components/CodexPoolStrategySetting";

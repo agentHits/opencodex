@@ -119,3 +119,26 @@ export async function putPoolSettings(
     return null;
   }
 }
+
+/**
+ * Codex strategy/sticky write, kept as a named helper because three call sites use it.
+ *
+ * It lives HERE rather than in `account-pool-strategy.ts` for a structural reason: that module
+ * owns the value normalizers this one imports, so putting the transport there too would make the
+ * two modules import each other. The first draft papered over that with a dynamic import and the
+ * bundler called it out as ineffective, which was the cycle telling on itself.
+ */
+export async function putCodexPoolStrategy(
+  apiBase: string,
+  body: { strategy?: AccountPoolStrategy; stickyLimit?: number },
+  fetchImpl: PoolSettingsFetch = (input, init) => fetch(input, init),
+): Promise<{ ok: true; strategy: AccountPoolStrategy; stickyLimit: number } | { ok: false }> {
+  if (body.strategy === undefined && body.stickyLimit === undefined) return { ok: false };
+  const settings = await putPoolSettings(apiBase, CODEX_POOL_PROVIDER, {
+    strategy: body.strategy,
+    stickyLimit: body.stickyLimit,
+  }, fetchImpl);
+  if (!settings) return { ok: false };
+  return { ok: true, strategy: settings.strategy, stickyLimit: settings.stickyLimit };
+}
+

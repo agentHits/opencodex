@@ -52,24 +52,3 @@ export function parseAccountPoolStickyLimitDraft(value: string): number | null {
   const n = Number(trimmed);
   return n >= MIN_ACCOUNT_POOL_STICKY_LIMIT && n <= MAX_ACCOUNT_POOL_STICKY_LIMIT ? n : null;
 }
-
-export type PoolStrategyFetch = (input: string, init: RequestInit) => Promise<Response>;
-
-export async function putCodexPoolStrategy(
-  apiBase: string,
-  body: { strategy?: AccountPoolStrategy; stickyLimit?: number },
-  fetchImpl: PoolStrategyFetch = (input, init) => fetch(input, init),
-): Promise<{ ok: true; strategy: AccountPoolStrategy; stickyLimit: number } | { ok: false }> {
-  if (body.strategy === undefined && body.stickyLimit === undefined) return { ok: false };
-  // The prefixed `accountPoolStrategy`/`accountPoolStickyLimit` response keys are gone with
-  // the Codex-only route: the unified contract answers with neutral keys for every kind.
-  const { CODEX_POOL_PROVIDER, putPoolSettings } = await import("./pool-settings");
-  const settings = await putPoolSettings(
-    apiBase,
-    CODEX_POOL_PROVIDER,
-    { strategy: body.strategy, stickyLimit: body.stickyLimit },
-    (input, init) => fetchImpl(input, init as RequestInit),
-  );
-  if (!settings) return { ok: false };
-  return { ok: true, strategy: settings.strategy, stickyLimit: settings.stickyLimit };
-}
