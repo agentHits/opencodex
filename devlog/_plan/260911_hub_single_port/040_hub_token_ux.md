@@ -158,6 +158,11 @@ that is the service's own precedence: the wrapper exports the file only when the
 nothing, so naming the file first would name a source the running process is not using. A test
 asserts no token value appears in either the JSON or the lines.
 
+> **Superseded by the review round below (§2 and §5).** The reasoning in that last sentence is
+> backwards: the wrapper *overwrites* the environment from the file, so `present (env)` described
+> the operator's own shell. The states are now `present (file)` / `unsafe (file)` /
+> `admin-collision (file)` / `missing`, with the shell's variable as its own field.
+
 ### 6. Help, registry, capabilities, skill surface
 
 `ocx hub` is a registry entry with a runner in `DISPATCH_COMMANDS`, two banner lines in
@@ -259,3 +264,146 @@ not modified. Two read-only commands were:
   should be admitted implicitly is a pairing-policy question for its own change.
 - `ocx hub` has exactly one subcommand. Further hub-side verbs (listing or revoking issued client
   keys from the CLI rather than the dashboard's **Integrations → API Keys**) are not in this PR.
+
+## Review round (PR #4252)
+
+Six findings, all accepted. Two were the same mistake in two places: the code trusted a value it
+had already learned not to trust (the reused token file) and printed a value it had not checked
+(the loopback data origin). The other four were honesty defects in text the operator is supposed
+to paste or believe.
+
+### 1. `ocx hub invite` printed a loopback data origin (should-fix)
+
+`derivedHubDataOrigin` sends `0.0.0.0`, `::` and `127.0.0.1` all through `probeHostname`, which
+spells every one of them as loopback — so on a hub bound to loopback or to a wildcard with no
+`hub.dataPublicOrigin`, the "run on the other machine" line said `ocx connect
+http://localhost:10100`. That tells the other machine to dial **itself**, and because the pairing
+code is single-use it is spent on a connect that cannot succeed. The live hub on the maintainer's
+Mac is exactly this shape (`hostname: 127.0.0.1`).
+
+New `resolveHubDataOrigin(override, configured, bindHostname, port)` returns either a usable
+origin (tagged `flag` / `config` / `derived`) or `loopback-derived`, and `runInvite` refuses the
+latter **before** the mint. An explicit `--data-url` or `hub.dataPublicOrigin` is never
+second-guessed: a loopback data origin is legitimate over an SSH tunnel.
+
+A wildcard bind is refused the same way rather than resolved. There is no existing helper that
+derives a tailnet or LAN address — `grep networkInterfaces src` has no hits, and `probeHostname`
+deliberately collapses wildcards to loopback — so deriving one here would mean picking an
+interface the operator never chose and advertising it in a credential exchange. The message names
+which shape this hub has (`bindAddressPhrase`: wildcard vs loopback-only) and offers both the
+persistent fix and the per-invite one.
+
+### 2. The reused `service-api-token` was never re-checked for the admin token (should-fix)
+
+This is the incident shape, still reachable on the first round's code: the `origin: "file"` branch
+of `writeServiceApiTokenFile` returned early without calling `assertNotAdminToken`, so a file
+holding the **management** token — hand-pasted pre-#2696, or written by the very incident this
+unit closes — was silently accepted. `ocx status` said `present (file)` and the hub crash-looped
+at boot, with nothing in any output naming the cause.
+
+- `assertNotAdminToken` gained a third argument, `source: "env" | "file"`. It selects the
+  **remedy**, not the rule: `unset OPENCODEX_API_AUTH_TOKEN` is meaningless advice about a file,
+  so the file message says to delete the file and rerun `ocx service repair` (or `install`). The
+  message deliberately does not call `serviceRetryCommand()`, which would pull `diagnoseService()`
+  — and `launchctl` — into an error path that runs at install time.
+- The writer's file branch now calls it, and `assertServiceAuthEnvironment` checks the file too.
+- **Both collision checks moved ahead of the loopback short-circuit.** `buildServiceShellCommand`
+  cats the token file into `OPENCODEX_API_AUTH_TOKEN` whenever the file exists, *whatever the
+  hostname*, so a loopback install with an admin-token file fences its management plane closed at
+  boot just the same. On a connected client the file holds the hub's issued client key, which is
+  never a management token, so the check is a no-op there.
+- `ocx status` gained the state. `HubDataTokenState` now has `admin-collision (file)`, and the
+  block adds two lines naming the consequence and the fix, because "this is what a crash-looping
+  hub looks like in status output" is the sentence that was missing.
+- The reused file is `chmod 0600`'d best-effort on the way through.
+  `readServiceApiTokenState` accepts any bounded regular file, so a reused token could be
+  group- or world-readable while install printed "owner-only". Best-effort because a non-owner
+  cannot chmod and failing the install over a loose mode would be worse than the loose mode.
+
+### 3. The bound browser origin was invisible (should-fix)
+
+`selectInviteBrowserOrigin` falls back to the first admitted loopback origin when
+`http://localhost:10100` is not admitted, and the printed command carries no trace of it — but a
+remote `ocx connect` sends `Origin: http://localhost:<its own configured port>`, so a grant bound
+to anything else is refused at the exchange and the code is spent with no hint. `ocx status`
+cannot show it either; it is a property of the grant, not of the config.
+
+`inviteBoundOriginNotes` now prints the bound origin on **every** successful invite, in both
+human and `--json` mode (stderr, where the single-use warning already lives, so the `--json`
+envelope on stdout is unchanged). When it is not the default it also names the port the other
+machine must be configured with, plus the alternative of admitting the default origin instead.
+
+### 4. Surfaced fix commands that do not run (nit)
+
+- `ocx config set hub.managementPublicOrigin …` exits `config parent path not found: hub` when
+  the `hub` object is absent (`setPath` in `src/cli/config-command.ts:60` walks only existing
+  parents) — and absent is precisely the config being advised. `configSetHubLines` prefixes
+  `ocx config set hub '{}'`, the way `guides/remote-hub.md` does, and **only** when `hub` is
+  actually missing, so the lines paste verbatim either way.
+- `ocx config set corsAllowOrigins '[…]'` replaces the array, so the old one-element literal told
+  an operator with an existing allow-list to delete it. `appendCorsAllowOriginsCommand` emits the
+  current entries plus the new one (idempotent if already present), and the text points at
+  `ocx config get corsAllowOrigins`.
+
+### 5. `present (env)` described the operator's terminal, not the hub (nit)
+
+The status line read the CLI's own shell, but the launchd plist and the systemd unit overwrite
+`OPENCODEX_API_AUTH_TOKEN` from the token file before exec — so on a service-run hub the label
+named a source the running process was not using, which is the opposite of the first round's
+stated reason for preferring `env`. The state is now always about the file, and the shell's
+variable is reported as its own field, `dataTokenEnvInShell`, rendered as a sub-line ("the
+installed service reads the file, not this"). It is kept rather than dropped because it does
+decide what a foreground `ocx start` **in that same shell** would admit.
+
+### 6. A fourth `canonicalHttpOrigin` (nit)
+
+None of the three existing copies was exported. The new one is
+`canonicalHttpOrigin` in `src/lib/gui-pair-capability.ts`, beside `canonicalGuiBrowserOrigin`
+(origin canonicalisation is already that module's job, and it is the only module the CLI pairing
+path and the hub command already share). `src/cli/hub.ts` and `src/cli/gui-pair-client.ts` now
+import it; their local copies are gone.
+
+`src/config.ts` and `src/server/gui-session.ts` keep theirs **deliberately**: `gui-session.ts` is
+a server security-boundary file and folding it in would also mean making it import nothing new,
+which is true here — but this PR's security note rests on `src/server/*` having no diff at all,
+and the config copy is reached from the zod schema path. Four copies became two plus one shared
+export; collapsing the last two is its own change.
+
+### Not changed, and why
+
+- **No tailnet/LAN address derivation.** See finding 1: refusing is the honest answer until
+  something in the repo owns that discovery.
+- **The `--json` envelope is unchanged** (`{ code, expiresAt, dataUrl, managementUrl, command }`).
+  The bound origin is operator advice, so it goes to stderr with the single-use warning rather
+  than growing the documented contract.
+- **`ocx status` still does not show which origin a grant was bound to.** It cannot: grants are
+  not persisted anywhere status reads.
+
+### Verification (review round, this machine)
+
+```
+bun run typecheck                                   # clean
+bun run privacy:scan                                # Privacy scan passed
+bun run skill:surface                               # regenerated (2 added capability detail lines)
+bun test tests/cli/hub-invite.test.ts               # 22 pass (was 16)
+bun test tests/service/service.test.ts              # 211 pass (was 209 here; +2 new)
+bun test tests/service/service-secrets.test.ts      # 10 pass
+bun test tests/service/winsw.test.ts                # 25 pass
+bun test tests/cli/cli-status-json.test.ts          # 54 pass (was 53; one test split into two)
+bun test tests/gui/gui-pair-client.test.ts          # 4 pass
+bun test tests/gui/gui-pair-capability.test.ts      # 2 pass
+bun test tests/cli/cli-registry.test.ts tests/cli/cli-capabilities.test.ts \
+  tests/cli/cli-help.test.ts tests/ci-workflows/skill-ocx.test.ts   # 62 pass
+bun test tests/cli/cli-transport-honesty.test.ts    # 22 pass
+bun test tests/cli/cli-dispatch.test.ts             # 39 pass
+bun test tests/cli/cli-json-contract.test.ts        # 8 pass
+```
+
+`tests/service/service.test.ts` is **209** on this branch with the working tree reverted, not the
+212 recorded in the first round's table; the earlier figure does not reproduce here. The new
+count is 211 = 209 + 2.
+
+No live-hub command was run this round, not even a read-only one: `ocx status` reaches
+`diagnoseService()` → `probeLaunchdLoadState()` → `launchctl`, and the operator instruction for
+this machine is to run no `launchctl` at all. Every sentence the status block can print is pinned
+by `tests/cli/cli-status-json.test.ts` instead. No repository-wide suite, by the same instruction.
