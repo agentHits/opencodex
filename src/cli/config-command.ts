@@ -4,6 +4,7 @@ import { getConfigPath, mutatePersistedConfig, readConfigDiagnostics, sanitizeMo
 import { VISION_REASONING_EFFORTS, isVisionReasoningEffort } from "../reasoning-effort";
 import type { OcxConfig } from "../types";
 import { normalizeVisionReasoningForModel } from "../vision/reasoning";
+import type { ClientConnectionStatus } from "./connect";
 import { CliUsageError, printData, rejectArgs, runCliAction, takeFlag } from "./runtime-api";
 
 const USAGE = `Usage:
@@ -33,18 +34,37 @@ const BLOCKED_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
  * an agent read a client's `config.json`, saw an empty `providers` map and no grok, and concluded
  * the hub could not serve grok. Naming the situation in the config output costs one key.
  *
+ * `connected` is OBSERVED, never assumed. It was briefly hardcoded `true` for any config with a
+ * `client` block, which is the same defect in miniature: the presence of configuration is not
+ * evidence that the connection works, and a machine whose data-plane token was revoked, rotated
+ * away or deleted would have been labelled `connected: true` while it could not reach the hub at
+ * all. `collectClientConnectionStatus` is the one reader that knows — it compares the token file's
+ * fingerprint against the connection record — so the caller passes its answer in and this stays
+ * pure and testable.
+ *
  * Synthetic and NOT persisted, for two reasons. `clientConnectionSchema` is `.strict()`, so a
  * `client.note` field would not validate; and persisted prose drifts from the behaviour it
  * describes. The leading underscore marks it as an annotation rather than a setting, and
  * `config export` emits the real config untouched so round-trips still validate.
  */
-export function remoteHubConfigNote(config: OcxConfig): { connected: boolean; origin: string; note: string } | null {
+export function remoteHubConfigNote(
+  config: OcxConfig,
+  readConnection: () => Pick<ClientConnectionStatus, "state" | "reason" | "token">,
+): { connected: boolean; origin: string; note: string } | null {
   if (config.runtimeRole !== "client" || !config.client) return null;
-  return {
-    connected: true,
-    origin: config.client.serverUrl,
-    note: "provider credentials and model availability live on the hub; run ocx status",
-  };
+  // A thunk, so a standalone or hub install pays nothing: the guard above returns first and the
+  // connection probe (three file reads) never runs.
+  const connection = readConnection();
+  // Both halves are required: a settled connection record AND the token it recorded. Either one
+  // alone describes a machine that cannot read its hub, and `ocx status` is still the command
+  // that has the facts — so the note points there in every case, connected or not.
+  const connected = connection.state === "connected" && connection.token === "owned";
+  const note = connection.state !== "connected"
+    ? `this machine is configured as a client but its connection is ${connection.state}${connection.reason ? ` (${connection.reason})` : ""}; run ocx connect status`
+    : connection.token !== "owned"
+      ? `this machine is configured as a client but its hub data-plane token is ${connection.token}; run ocx connect status`
+      : "provider credentials and model availability live on the hub; run ocx status";
+  return { connected, origin: config.client.serverUrl, note };
 }
 
 function redact(value: unknown, key = ""): unknown {
@@ -148,7 +168,10 @@ export async function handleConfigCommand(argv: string[]): Promise<number> {
       rejectArgs(args, USAGE);
       const diagnostics = readConfigDiagnostics();
       const redacted = redact(diagnostics.config);
-      const note = remoteHubConfigNote(diagnostics.config);
+      // Imported here rather than at module scope: `./connect` pulls the whole client lifecycle
+      // in, and `ocx config get/set` has no use for it.
+      const { collectClientConnectionStatus } = await import("./connect");
+      const note = remoteHubConfigNote(diagnostics.config, () => collectClientConnectionStatus());
       // First key, not last: it has to be read before the empty `providers` map that misled a
       // reader into concluding nothing was configured anywhere.
       const config = note && redacted && typeof redacted === "object" && !Array.isArray(redacted)

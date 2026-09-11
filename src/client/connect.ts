@@ -68,6 +68,7 @@ import {
   assertNoClientDisconnectPending, assertClientConnectionUnchanged, sameClientConnectionOwner,
 } from "./state";
 import { assertClientCatalogCompatible, type CatalogCompatibilityDeps } from "./catalog-compatibility";
+import { hubStateCachePath } from "./hub-state";
 
 class RotationRecoveryRequiredError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -891,6 +892,7 @@ export async function disconnectClient(
     if (!disconnectAtLeast(receipt, "clearing_connection")) advance("clearing_connection");
     if (clearClientConnection(receipt.owner) === "conflict") throw new Error("client_disconnect_owner_changed");
     if (!disconnectAtLeast(receipt, "connection_cleared")) advance("connection_cleared");
+    removeHubStateCache();
     requireDesktopResult(finishRemoteDesktopCleanup(held, receipt.owner));
     if (receipt.phase !== "complete") advance("complete");
     return {
@@ -900,6 +902,23 @@ export async function disconnectClient(
       ...(desktop.restoration ? { desktopRestoration: desktop.restoration } : {}),
     };
   }), deps.lifecycleLockDeps);
+}
+
+/**
+ * Drop the cached hub-state document (#4236).
+ *
+ * It is derived data from a connection that no longer exists, and it is owner-stamped, so a
+ * reader would reject it anyway — but leaving it behind means `<OPENCODEX_HOME>/hub-state.json`
+ * keeps naming the previous hub's providers and logins on a machine that is no longer connected
+ * to anything, which is exactly the wrong artifact to leave where someone might read it.
+ *
+ * Best effort and unconditional on the phase: the disconnect has already succeeded by this point,
+ * and a cache file that cannot be removed must not fail it or block a retry.
+ */
+function removeHubStateCache(): void {
+  try {
+    unlinkSync(hubStateCachePath());
+  } catch { /* absent, or not ours to remove */ }
 }
 
 export async function revokeConnectedClientKey(

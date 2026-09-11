@@ -42,8 +42,13 @@ function runCli(args: string[], home: string) {
 /** 12 KB of base64 stands in for the real thing; the assertion is about the shape, not the size. */
 const PRIOR_CATALOG = "A".repeat(12_288);
 
-function clientHome(): string {
+/** The data-plane token this fixture's `tokenFingerprint` is computed from. */
+const FIXTURE_TOKEN = "fixture-token";
+
+function clientHome(options: { token?: string | null } = {}): string {
   const home = mkdtempSync(join(tmpdir(), "ocx-config-client-"));
+  const token = options.token === undefined ? FIXTURE_TOKEN : options.token;
+  if (token !== null) writeFileSync(join(home, "service-api-token"), token, { mode: 0o600 });
   writeFileSync(join(home, "config.json"), JSON.stringify({
     port: 10100,
     providers: {},
@@ -55,7 +60,7 @@ function clientHome(): string {
       selectedClients: ["codex", "claude"],
       tokenEnv: "OPENCODEX_API_AUTH_TOKEN",
       apiKeyId: "client-one",
-      tokenFingerprint: createHash("sha256").update("fixture-token").digest("hex"),
+      tokenFingerprint: createHash("sha256").update(FIXTURE_TOKEN).digest("hex"),
       protocolVersion: 1,
       connectedAt: "2026-09-01T00:00:00.000Z",
       priorCatalog: PRIOR_CATALOG,
@@ -70,24 +75,63 @@ function standaloneHome(): string {
   return home;
 }
 
+/** The shape `collectClientConnectionStatus()` returns, narrowed to what the note reads. */
+type NoteConnection = Parameters<typeof remoteHubConfigNote>[1] extends () => infer T ? T : never;
+
+function connection(overrides: Partial<NoteConnection> = {}): NoteConnection {
+  return { state: "connected", token: "owned", ...overrides } as NoteConnection;
+}
+
+const CLIENT_CONFIG = {
+  runtimeRole: "client",
+  client: { serverUrl: "https://hub.example.test:8443" },
+} as OcxConfig;
+
 describe("remoteHubConfigNote", () => {
-  test("only a client with a connection block gets a note", () => {
-    expect(remoteHubConfigNote({ runtimeRole: "client" } as OcxConfig)).toBeNull();
-    expect(remoteHubConfigNote({ runtimeRole: "standalone" } as OcxConfig)).toBeNull();
-    expect(remoteHubConfigNote({ runtimeRole: "hub" } as OcxConfig)).toBeNull();
-    expect(remoteHubConfigNote({} as OcxConfig)).toBeNull();
+  test("only a client with a connection block gets a note, and nothing is probed otherwise", () => {
+    // The thunk throws: a standalone or hub install must not pay for the connection probe, and
+    // the guard has to return before it.
+    const refuse = (): NoteConnection => { throw new Error("connection must not be probed"); };
+    expect(remoteHubConfigNote({ runtimeRole: "client" } as OcxConfig, refuse)).toBeNull();
+    expect(remoteHubConfigNote({ runtimeRole: "standalone" } as OcxConfig, refuse)).toBeNull();
+    expect(remoteHubConfigNote({ runtimeRole: "hub" } as OcxConfig, refuse)).toBeNull();
+    expect(remoteHubConfigNote({} as OcxConfig, refuse)).toBeNull();
   });
 
   test("the note names the hub and points at the command that has the facts", () => {
-    const note = remoteHubConfigNote({
-      runtimeRole: "client",
-      client: { serverUrl: "https://hub.example.test:8443" },
-    } as OcxConfig);
+    const note = remoteHubConfigNote(CLIENT_CONFIG, () => connection());
     expect(note).toEqual({
       connected: true,
       origin: "https://hub.example.test:8443",
       note: "provider credentials and model availability live on the hub; run ocx status",
     });
+  });
+
+  test("connected is observed, not assumed: a revoked or rotated-away token reads false", () => {
+    // `connected: true` was hardcoded for any config carrying a `client` block. That is the same
+    // defect in miniature — configuration is not evidence the connection works — and this is the
+    // case that proves it: the key was revoked or rotated at the hub, the token file this machine
+    // holds is no longer the one the connection recorded, and nothing here can reach the hub.
+    for (const token of ["missing", "changed", "unsafe"] as const) {
+      const note = remoteHubConfigNote(CLIENT_CONFIG, () => connection({ token }));
+      expect({ token, connected: note?.connected }).toEqual({ token, connected: false });
+      expect(note?.note).toContain(`hub data-plane token is ${token}`);
+      // Still the hub's origin, and still a pointer at the command that can say more.
+      expect(note?.origin).toBe("https://hub.example.test:8443");
+      expect(note?.note).toContain("ocx connect status");
+    }
+  });
+
+  test("a mismatched or invalid connection record is named rather than called connected", () => {
+    const mismatched = remoteHubConfigNote(CLIENT_CONFIG, () => connection({
+      state: "mismatched", reason: "config.json.client is present without runtimeRole=client",
+    }));
+    expect(mismatched?.connected).toBe(false);
+    expect(mismatched?.note).toContain("its connection is mismatched");
+    expect(mismatched?.note).toContain("config.json.client is present without runtimeRole=client");
+    const disconnected = remoteHubConfigNote(CLIENT_CONFIG, () => connection({ state: "disconnected", token: "missing" }));
+    expect(disconnected?.connected).toBe(false);
+    expect(disconnected?.note).toContain("its connection is disconnected");
   });
 });
 
@@ -141,6 +185,22 @@ describe("ocx config show on a client", () => {
       const validated = runCli(["config", "validate", exported], home);
       expect(validated.status).toBe(0);
       expect(validated.stdout).toContain("Config is valid.");
+    } finally {
+      removeTreeWithRetry(home);
+    }
+  });
+
+  test("a client holding no data-plane token is not reported as connected", () => {
+    // End to end, because the hardcoded `true` lived at the call site's expense: `ocx config
+    // show` is what an agent reads, and this is the machine that cannot reach its hub at all.
+    const home = clientHome({ token: null });
+    try {
+      const result = runCli(["config", "show"], home);
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout);
+      expect(parsed._remoteHub.connected).toBe(false);
+      expect(parsed._remoteHub.origin).toBe("https://hub.example.test:8443");
+      expect(parsed._remoteHub.note).toContain("hub data-plane token is missing");
     } finally {
       removeTreeWithRetry(home);
     }
