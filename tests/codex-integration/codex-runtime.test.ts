@@ -1037,7 +1037,10 @@ describe("resolveCodexRuntime", () => {
     expect(diagnostics[0]?.affectedModels).toEqual(["openrouter/example"]);
   });
 
-  test("an ultra default against a runtime that stops at high produces no clamp diagnostic", async () => {
+  // An exempt default only survives when the surviving ladder advertises it; an orphaned ultra
+  // default (no ultra rung in the ladder) is repaired down for catalog coherence, and because
+  // nothing was removed from the offering the repair produces no clamp diagnostic.
+  test("an orphaned ultra default is repaired without a clamp diagnostic", async () => {
     const { clampCatalogModelsToCodexSupport } = await import("../../src/codex/catalog/effort");
     const diagnostics: Array<{ removedEfforts: string[]; affectedModels: string[] }> = [];
     const models = [{
@@ -1065,9 +1068,7 @@ describe("resolveCodexRuntime", () => {
       }),
       onEffortClamp: (diagnostic) => diagnostics.push(diagnostic),
     });
-    // ultra is exempt from the observed-runtime intersection: the default survives and
-    // nothing is reported, so the persisted diagnostic stays absent.
-    expect(models[0]!.default_reasoning_level).toBe("ultra");
+    expect(models[0]!.default_reasoning_level).toBe("high");
     expect(diagnostics).toEqual([]);
   });
 });

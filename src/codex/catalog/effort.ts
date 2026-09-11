@@ -382,14 +382,19 @@ export function clampEntryToCodexSupportedEfforts(
         .map(level => ({ ...level }));
   }
   const currentDefault = entry.default_reasoning_level;
+  const surviving = (Array.isArray(entry.supported_reasoning_levels) ? entry.supported_reasoning_levels : [])
+    .flatMap(level => typeof (level as { effort?: string })?.effort === "string"
+      ? [(level as { effort: string }).effort]
+      : []);
+  // An exempt default survives only when the surviving ladder actually advertises it;
+  // otherwise the row would name a default the client cannot select (review: PR #4257).
   if (typeof currentDefault === "string"
-    && !supported.has(currentDefault)
-    && !UNCLAMPABLE_REASONING_EFFORTS.has(currentDefault)) {
-    const surviving = (Array.isArray(entry.supported_reasoning_levels) ? entry.supported_reasoning_levels : [])
-      .flatMap(level => typeof (level as { effort?: string })?.effort === "string"
-        ? [(level as { effort: string }).effort]
-        : []);
-    entry.default_reasoning_level = clampedDefaultEffort(currentDefault, surviving);
+    && !supported.has(currentDefault)) {
+    const exemptAndAdvertised = UNCLAMPABLE_REASONING_EFFORTS.has(currentDefault)
+      && surviving.includes(currentDefault);
+    if (!exemptAndAdvertised) {
+      entry.default_reasoning_level = clampedDefaultEffort(currentDefault, surviving);
+    }
   }
 }
 
@@ -475,7 +480,11 @@ export function clampCatalogModelsToObservedCodexSupport(
     const omitted = requiresExactReserveEfforts(entry) && hadLadder && after.size === 0;
     if (lost.length > 0 || defaultClamped || omitted) {
       for (const effort of lost) removed.add(effort);
-      if (defaultClamped && beforeDefault) removed.add(beforeDefault);
+      // An orphaned exempt default (ultra with no ultra rung in the ladder) is repaired for
+      // coherence, but nothing was removed from the offering — do not name it in the diagnostic.
+      if (defaultClamped && beforeDefault && !UNCLAMPABLE_REASONING_EFFORTS.has(beforeDefault)) {
+        removed.add(beforeDefault);
+      }
       if (typeof entry.slug === "string") affected.push(entry.slug);
     }
     if (omitted) models.splice(index, 1);

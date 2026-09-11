@@ -9,8 +9,12 @@ binary is upgraded in place, because the diagnostic is matched to the current
 runtime by **path alone** — the recorded version is never compared when the path
 is unchanged, which is the normal Windows auto-update case. Second, the two
 presentation fields the Codex client renders as cards (`availability_nux`,
-`upgrade`) are deleted at four sites and carried at none, so no announcement or
-upgrade card can ever appear through the proxy. This unit makes the clamp
+`upgrade`) survive end to end on pin-backed native rows but are discarded where
+the account roster is parsed (`model-entitlements.ts` keeps only the slug), so a
+card whose copy lives only on the account endpoint can never appear through the
+proxy. (An earlier draft of this paragraph said "deleted at four sites and
+carried at none"; the explorer pass disproved it — see
+`020_architecture_dispositions.md`.) This unit makes the clamp
 diagnostic version-aware, exempts `max` and `ultra` from the observed-runtime
 intersection entirely, and — pending a probe — lets the account roster contribute
 the presentation copy it currently discards. The per-consumer ladder projection in

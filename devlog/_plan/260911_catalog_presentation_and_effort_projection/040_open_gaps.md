@@ -25,9 +25,10 @@ cycle with the working tree already carrying the CLAMP-04 implementation
 to it, and the four seed-test rows inverted to `["xhigh"]`). That is the recorded
 decision; see `050_revalidation.md`.
 
-Independent of that choice: `src/cli/doctor.ts:1180` does not call
-`effortClampAppliesToRuntime`, so doctor and status can disagree about one file.
-That is a defect either way and belongs in Phase 4.
+Independent of that choice: `src/cli/doctor.ts:1180` did not call
+`effortClampAppliesToRuntime`, so doctor and status could disagree about one file.
+**Historical as of 2026-09-11** — `doctor.ts:1182-1189` now calls the shared
+predicate; recorded in `050_revalidation.md`.
 
 ## GAP-2 — Phase 3 names a consumer that cannot consume
 

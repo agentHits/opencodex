@@ -261,6 +261,9 @@ rungs are still intersected with the observed runtime ladder, and a clamp diagno
 previous binary stops applying once the binary at that path reports a different version (the
 in-place upgrade case), so `ocx status` and `ocx doctor` stop warning about a clamp the upgraded
 runtime no longer needs.
+Catalog visibility is not entitlement: advertising `max`/`ultra` does not guarantee the upstream
+account or provider accepts the tier, and for older native models whose real ladder stops at
+`xhigh` the wire clamp above still maps the selection down at request time.
 
 ## Fast tier rules
 
