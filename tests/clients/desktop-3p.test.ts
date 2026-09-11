@@ -394,6 +394,55 @@ describe("Claude Desktop 3P models", () => {
     }
   });
 
+  /**
+   * Claude Desktop is a LOCAL client (#4236): the gateway base URL it is given must be the
+   * unauthenticated loopback listener when one is enabled, because on a hub bound to a tailnet
+   * address `127.0.0.1:<public port>` is a closed port. Resolved inside `writeDesktop3pConfig`
+   * from the config it already re-reads, so every caller gets the same answer.
+   */
+  test("the written gateway base URL follows the unauthenticated loopback listener", () => {
+    const cases = [
+      { listener: { enabled: true, port: 10104 }, expected: "http://127.0.0.1:10104" },
+      { listener: { enabled: true }, expected: "http://127.0.0.1:4096" },
+      { listener: undefined, expected: "http://127.0.0.1:4096" },
+    ] as const;
+    for (const { listener, expected } of cases) {
+      const dir = mkdtempSync(join(tmpdir(), "ocx-desktop-listener-"));
+      const previous = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+      const previousHome = process.env.OPENCODEX_HOME;
+      process.env.OPENCODEX_HOME = join(dir, "ocx");
+      process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = dir;
+      try {
+        saveConfig({
+          providers: { test: { adapter: "openai-chat", baseUrl: "http://127.0.0.1:1/v1", allowPrivateNetwork: true, liveModels: false, models: ["fixture-model"] } },
+          defaultProvider: "test",
+          port: 4096,
+          // A non-loopback bind is what makes the companion form legal at all.
+          hostname: "100.76.170.81",
+          runtimeRole: "hub",
+          ...(listener ? { unauthenticatedLoopbackListener: listener } : {}),
+        } as OcxConfig);
+        expect(readConfigDiagnostics().source).toBe("file");
+        const written = writeDesktop3pConfig(4096, ["gpt-5.6-sol"], [], "k", "static", undefined, undefined, {
+          lockPath: join(dir, "locks", "desktop.sqlite"),
+        });
+        expect({ listener, written: written.written }).toEqual({ listener, written: true });
+        const profile = JSON.parse(readFileSync(written.path, "utf8"));
+        const applied = profile[Object.keys(profile)[0]];
+        const baseUrl = typeof profile.inferenceGatewayBaseUrl === "string"
+          ? profile.inferenceGatewayBaseUrl
+          : applied?.inferenceGatewayBaseUrl;
+        expect({ listener, baseUrl }).toEqual({ listener, baseUrl: expected });
+      } finally {
+        if (previous === undefined) delete process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
+        else process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = previous;
+        if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+        else process.env.OPENCODEX_HOME = previousHome;
+        removeTreeWithRetry(dir);
+      }
+    }
+  });
+
   test("re-applying an owned profile preserves foreign profile keys", () => {
     const dir = mkdtempSync(join(tmpdir(), "ocx-desktop-merge-"));
     const previous = process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;

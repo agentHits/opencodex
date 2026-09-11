@@ -67,14 +67,16 @@ describe("companion hub: sync-managed and hardcoded clients agree", () => {
       .toBe(`${hardcodedLocalOrigin(HUB_PORT)}/v1`);
   });
 
-  test("the ported form still splits the two, which is why the companion exists", () => {
-    // Kept as a regression witness for the issue's table: with a distinct port the sync
-    // writers move and the hardcoded callers do not, so they disagree by construction.
+  test("the ported form now agrees too: both writers land on the listener's port", () => {
+    // PR2 left these two disagreeing here on purpose (the companion form was the answer, and
+    // the call sites were untouched). #4236's local-client unit closed the gap: `ocx claude`
+    // resolves the listener's EFFECTIVE port, so a 10104-style hub no longer sends Claude to
+    // the public port while Codex goes to the listener.
     const config = hubConfig({ enabled: true, port: 10_104 });
     const codexOrigin = new URL(standaloneCodexRoutingTarget(HUB_PORT, config).baseUrl).origin;
     expect(codexOrigin).toBe(hardcodedLocalOrigin(10_104));
-    expect(buildClaudeEnv(config, HUB_PORT, {}).ANTHROPIC_BASE_URL).toBe(hardcodedLocalOrigin(HUB_PORT));
-    expect(codexOrigin).not.toBe(hardcodedLocalOrigin(HUB_PORT));
+    expect(buildClaudeEnv(config, HUB_PORT, {}).ANTHROPIC_BASE_URL).toBe(hardcodedLocalOrigin(10_104));
+    expect(buildClaudeEnv(config, HUB_PORT, {}).ANTHROPIC_BASE_URL).toBe(codexOrigin);
   });
 
   test("with no listener a hub keeps demanding admission on its public address", () => {

@@ -798,6 +798,7 @@
     "launchd-repair.test.ts": "service",
     "legacy-shell-compat.test.ts": "responses",
     "live-service-manager-guard.test.ts": "service",
+    "local-destinations.test.ts": "lib",
     "local-management-attestation.test.ts": "server",
     "local-management-capability.test.ts": "server",
     "local-management-direct-transport.test.ts": "server",

@@ -3,12 +3,14 @@ import { mkdtempSync} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../../src/config";
+import { parseRequest } from "../../src/responses/parser";
 import { startServer } from "../../src/server";
-import type { OcxConfig } from "../../src/types";
-import { resetVisionDescriptionCache } from "../../src/vision";
+import type { OcxConfig, OcxProviderConfig } from "../../src/types";
+import { planVisionSidecar, resetVisionDescriptionCache } from "../../src/vision";
 import {
   describeImageRouted,
   routedDescribeAdmissionToken,
+  routedDescribeBaseUrl,
   VISION_DESCRIBE_TERMINAL_HEADER,
 } from "../../src/vision/routed-describe";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
@@ -86,6 +88,62 @@ describe("describeImageRouted unit", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  /**
+   * The self-fetch is a local client too (#4236): on a hub bound to a tailnet address the only
+   * socket on 127.0.0.1 is the unauthenticated loopback listener, which now admits the chat
+   * wire this helper speaks. Three topologies, one destination each.
+   */
+  test("the self-fetch base URL follows the unauthenticated loopback listener", () => {
+    expect(routedDescribeBaseUrl({
+      port: 10100,
+      unauthenticatedLoopbackListener: { enabled: true, port: 10104 },
+    })).toBe("http://127.0.0.1:10104");
+    expect(routedDescribeBaseUrl({
+      port: 10100,
+      unauthenticatedLoopbackListener: { enabled: true },
+    })).toBe("http://127.0.0.1:10100");
+    expect(routedDescribeBaseUrl({
+      port: 10100,
+      unauthenticatedLoopbackListener: { enabled: false },
+    })).toBe("http://127.0.0.1:10100");
+    expect(routedDescribeBaseUrl({ port: 10100 })).toBe("http://127.0.0.1:10100");
+  });
+
+  test("the vision plan carries the listener through to the self-fetch", () => {
+    // The planner hands `describeImageRouted` a NARROWED config. Dropping the listener there
+    // would leave the resolver nothing to resolve and silently restore the closed port.
+    const routed: OcxProviderConfig = {
+      adapter: "openai-chat",
+      baseUrl: "https://routed.test/v1",
+      apiKey: "routed-key",
+      noVisionModels: ["text-model"],
+    };
+    const vlm: OcxProviderConfig = { adapter: "openai-chat", baseUrl: "https://vlm.test/v1", apiKey: "k" };
+    const request = parseRequest({
+      model: "routed/text-model",
+      input: [{
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "look at this" },
+          { type: "input_image", image_url: PNG_DATA_URL },
+        ],
+      }],
+    });
+    const plan = planVisionSidecar({
+      port: 10100,
+      hostname: "100.76.170.81",
+      runtimeRole: "hub",
+      unauthenticatedLoopbackListener: { enabled: true, port: 10104 },
+      defaultProvider: "routed",
+      providers: { routed, vlm },
+      visionSidecar: { enabled: true, backend: "routed", model: "vlm/qwen-vl" },
+    } as unknown as OcxConfig, routed, "text-model", request);
+    expect(plan?.backend).toBe("routed");
+    expect(plan?.routedConfig?.unauthenticatedLoopbackListener).toEqual({ enabled: true, port: 10104 });
+    expect(routedDescribeBaseUrl(plan!.routedConfig!)).toBe("http://127.0.0.1:10104");
   });
 
   test("admission ladder: env token first, then first apiKeys entry, as x-opencodex-api-key", () => {

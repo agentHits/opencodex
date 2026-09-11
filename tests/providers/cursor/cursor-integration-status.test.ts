@@ -11,6 +11,7 @@ import { cursorProductJsonCandidates, detectCursorInstalls, type CursorDetectDep
 import { parseCursorEffortTable, type CursorEffortTable } from "../../../src/integrations/cursor-effort-table";
 import { cursorLastSeen, recordCursorSeen, resetCursorSeenForTests } from "../../../src/integrations/cursor-seen";
 import { cursorEffortFamily } from "../../../src/server/models-capabilities";
+import { buildCursorIntegrationStatus } from "../../../src/server/management/cursor-integration-routes";
 import { startServer } from "../../../src/server";
 import type { OcxConfig } from "../../../src/types";
 import { SERVER_BUDGET_MS } from "../../helpers/test-budget";
@@ -225,6 +226,37 @@ describe("GET /api/native-integrations/cursor", () => {
       expect(list.data.some(model => model.id === "kimi/k3")).toBe(false);
     } finally {
       await server.stop(true);
+    }
+  });
+
+  /**
+   * The gateway URL is pasted into Cursor on THIS machine, so it is the local destination
+   * (#4236): the unauthenticated loopback listener when one is enabled, because on a hub bound
+   * to a tailnet address nothing answers on 127.0.0.1:<public port>. Called directly rather
+   * than through a server so the three topologies are compared without three binds.
+   */
+  test("the gateway base URL follows the unauthenticated loopback listener", async () => {
+    const url = new URL("http://127.0.0.1:10100/api/native-integrations/cursor");
+    const cases = [
+      { listener: { enabled: true, port: 10104 } as const, expected: "http://127.0.0.1:10104/v1" },
+      { listener: { enabled: true } as const, expected: "http://127.0.0.1:10100/v1" },
+      { listener: undefined, expected: "http://127.0.0.1:10100/v1" },
+    ];
+    for (const { listener, expected } of cases) {
+      const config: OcxConfig = {
+        ...statusConfig(),
+        port: 10100,
+        hostname: "100.76.170.81",
+        runtimeRole: "hub",
+        ...(listener ? { unauthenticatedLoopbackListener: listener } : {}),
+      };
+      const status = await buildCursorIntegrationStatus(
+        { config, deps: { readRuntimePort: () => undefined }, url },
+        [],
+      );
+      expect({ listener, baseUrl: status.gateway.baseUrl }).toEqual({ listener, baseUrl: expected });
+      // The tailnet address must never reach a value a local app dials.
+      expect(status.gateway.baseUrl).not.toContain("100.76.170.81");
     }
   });
 

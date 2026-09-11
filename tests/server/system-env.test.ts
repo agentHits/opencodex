@@ -310,6 +310,73 @@ describe("system environment injection", () => {
   });
 });
 
+/**
+ * A launchd-started `claude` is a local client (#4236): on a hub bound to a tailnet address the
+ * only socket on 127.0.0.1 is the unauthenticated loopback listener, so that is the port the
+ * injected ANTHROPIC_BASE_URL must name — in the launchd domain AND in the shell env file.
+ * The tracking record keeps the public port separately, because that is the /healthz address.
+ */
+describe("system environment local destination", () => {
+  const hubConfig = (listener?: { enabled: boolean; port?: number }): OcxConfig => ({
+    ...baseConfig,
+    hostname: "100.76.170.81",
+    runtimeRole: "hub",
+    ...(listener ? { unauthenticatedLoopbackListener: listener } : {}),
+  } as OcxConfig);
+
+  function shellEnvBody(): string {
+    const write = writeSpy.mock.calls.find(call => String(call[0]).includes("claude-env.sh"));
+    return String(write?.[1] ?? "");
+  }
+
+  test("a ported listener moves both injected destinations, not the tracked identity", async () => {
+    expect(await injectSystemEnv(4567, hubConfig({ enabled: true, port: 10104 }))).toEqual({ injected: true });
+    expect(launchctlCommands()).toContain("launchctl setenv ANTHROPIC_BASE_URL http://127.0.0.1:10104");
+    expect(shellEnvBody()).toContain("export ANTHROPIC_BASE_URL='http://127.0.0.1:10104'");
+    // port stays the proxy's identity and liveness address; clientPort records what was injected.
+    expect(JSON.parse(trackingFile!)).toMatchObject({ port: 4567, clientPort: 10104 });
+  });
+
+  test("the companion form and a plain install are unchanged", async () => {
+    expect(await injectSystemEnv(4567, hubConfig({ enabled: true }))).toEqual({ injected: true });
+    expect(launchctlCommands()).toContain("launchctl setenv ANTHROPIC_BASE_URL http://127.0.0.1:4567");
+    // No clientPort is recorded when the two are the same, so old readers see the same file.
+    expect(JSON.parse(trackingFile!).clientPort).toBeUndefined();
+
+    execFileSpy.mockClear();
+    trackingFile = undefined;
+    expect(await injectSystemEnv(4567, baseConfig)).toEqual({ injected: true });
+    expect(launchctlCommands()).toContain("launchctl setenv ANTHROPIC_BASE_URL http://127.0.0.1:4567");
+    expect(JSON.parse(trackingFile!).clientPort).toBeUndefined();
+  });
+
+  test("revert proves ownership against the injected port, not the tracked one", () => {
+    trackingFile = JSON.stringify({
+      pid: 123, port: 4567, clientPort: 10104, injectedAt: "2026-07-11T00:00:00.000Z",
+    });
+    // What launchd actually holds is the listener's port: that IS ours.
+    launchctlBaseUrl = "http://127.0.0.1:10104";
+    expect(revertSystemEnv()).toEqual({ reverted: true });
+  });
+
+  test("liveness is still probed on the public port, never on the listener", async () => {
+    // The listener serves no /healthz, so probing it would 404 and revert a LIVE proxy's env.
+    trackingFile = JSON.stringify({
+      pid: 123, port: 4567, clientPort: 10104, injectedAt: "2026-07-11T00:00:00.000Z",
+    });
+    launchctlBaseUrl = "http://127.0.0.1:10104";
+    const probed: string[] = [];
+    globalThis.fetch = mock(async (input: unknown) => {
+      probed.push(String(input));
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+
+    expect(await cleanStaleSystemEnv()).toEqual({ cleaned: false, reason: "proxy still alive" });
+    expect(probed).toEqual(["http://127.0.0.1:4567/healthz"]);
+    expect(unlinkSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("system environment cleanup", () => {
   test("revertSystemEnv unsets owned variables and deletes the tracking file", () => {
     trackingFile = tracking();
