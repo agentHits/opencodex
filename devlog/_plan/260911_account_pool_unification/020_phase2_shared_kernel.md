@@ -217,3 +217,111 @@ starts from them rather than rediscovering them.
 - `tests/adapters/anthropic/anthropic-account-pool.test.ts` — parity
 - `tests/providers/kiro/kiro-pool-rank.test.ts` — the kiro exhaustion special case
   in `account-quota-rank.ts:84-108` survives
+
+## wp2b implementation plan (re-verified against `dev` 29d632ff2)
+
+Every anchor below was re-read on the post-merge tree, after #4275/#4277/#4279/#4284 landed.
+
+| Symbol | File | Line |
+|---|---|---|
+| `isProactivePreferenceEnabled` | `src/oauth/generic-account-failover.ts` | 150 |
+| `rotateGenericOAuthAccountOn429` | `src/oauth/generic-account-failover.ts` | 178 |
+| `preferredInitialAccount` | `src/oauth/generic-account-failover.ts` | 246 |
+| `forgetGenericFailoverRoster` | `src/oauth/generic-account-failover.ts` | 308 |
+| `GenericPoolSettingsDto` / `inert: true` | `src/oauth/pool-settings-capability.ts` | 40 / 54, 65 |
+| `PUT /api/oauth/accounts/active` | `src/server/management/oauth-account-routes.ts` | 325 |
+| generic GET / PUT DTO | `src/server/management/oauth-account-routes.ts` | 360 / 422 |
+| `stickyLimit` 400 | `src/server/management/oauth-account-routes.ts` | 396 |
+| `genericPoolKey` / `pickRoundRobinAccount` / `peekRoundRobinAccount` / `notePoolRotationSuccess` | `src/oauth/pool-kernel.ts` | 12 / 198 / 210 / 222 |
+| `genericFailoverAccountId = resolved.accountId` | `src/server/responses/core.ts` | 4407 |
+| per-provider `oauthAccountFailover` | `src/types/provider.ts` | 520 |
+
+### The question 020 left open: where does a round-robin proposal commit?
+
+`peekRoundRobinAccount` exists and does not advance the ring, which is correct for
+`preferredInitialAccount` — that answer is discardable, and the resolver drops it when the
+account turns out to be removed, reauth-flagged, or missing a Cloud Code Assist project. But
+a peek that never commits is a ring that never turns: every request would propose the same
+account forever, and "round-robin" would be a label on a constant.
+
+So a commit site is mandatory, and it has to be the admission point, not the proposal. That
+point already exists and already has a generic-only branch:
+
+```
+src/server/responses/core.ts:4405-4408
+  if (isGenericFailoverProvider(route.providerName, route.provider)) {
+    genericFailoverAccountId = resolved.accountId;
+  }
+```
+
+One line joins it: `noteGenericPoolSelection(config, route.providerName, resolved.accountId)`.
+The function lives in `generic-account-failover.ts` and does the flag read, the strategy read
+and the `notePoolRotationSuccess(genericPoolKey(name), id, stickyLimit)` call itself. No policy
+moves into `core.ts`, the import comes from a module `core.ts` already imports from, and the
+core-path Lab boundary is untouched — `pool-kernel.ts` pulls only two types.
+
+This is the one file in the unit that sits on every user's request path, so it takes exactly
+one statement and no branching of its own.
+
+### Change surface
+
+**`src/types/config.ts`** — add `pool?: { kernel?: boolean }` beside the existing optional flag
+objects (`resetCreditAutoRedeem` at :833 is the nearest shape). **`src/config.ts`** — add
+`pool: z.object({ kernel: z.boolean().optional() }).optional().catch(undefined)` next to
+`resetCreditAutoRedeem` at :1304. `.catch(undefined)` matches the house rule: a malformed hand
+edit turns the feature off rather than costing the operator their providers.
+
+**`src/types/provider.ts`** — add `stickyLimit?: number` to the per-provider
+`oauthAccountFailover` block at :520, with the same 1..100 range the Anthropic pool documents.
+
+**`src/oauth/generic-account-failover.ts`** — branch BOTH paths on strategy, because branching
+one leaves the setting inert in practice:
+
+| Strategy | `preferredInitialAccount` | `rotateGenericOAuthAccountOn429` |
+|---|---|---|
+| flag off, or absent/`quota` | unchanged: healthy-active return :262, `hasHeadroomEvidence` :267, `rankAccountsByHeadroom` | unchanged: ring after the failed id, then `rankAccountsByHeadroom` |
+| `round-robin` | skip BOTH guards, `peekRoundRobinAccount(genericPoolKey(name), eligible, stickyLimit)` | `pickRoundRobinAccount` over the eligible ring |
+| `fill-first` | skip the healthy-active return; keep active while its usage is under `autoSwitchThreshold`, else advance to the next eligible account | must NOT keep the failed account: advance to the next eligible one |
+
+The two guards are skipped deliberately and for different reasons, both measured in 020's audit:
+`hasHeadroomEvidence` returns false for any provider with no quota data, so leaving it in front
+of round-robin makes round-robin unreachable exactly where it is most useful; and the
+healthy-active early return fires before `autoSwitchThreshold` can ever be read, so fill-first
+would never reach its own threshold test. Keep the presence quorum, the `EXCLUDED_PROVIDERS`
+guard and the per-provider `health` cooldown on every branch.
+
+**`src/oauth/pool-settings-capability.ts`** — `inert` becomes `boolean` computed from the flag
+instead of the literal `true`. `genericPoolSettingsDto` takes the flag as a third argument
+rather than reading config itself, so the DTO stays a pure projection.
+
+**`src/server/management/oauth-account-routes.ts`** — three edits. The active PUT at :325 gains
+`seedPoolRotationAccount(genericPoolKey(provider), accountId)` beside `forgetGenericFailoverRoster`,
+or the operator's pick immediately loses to sticky rotation — the same defect wp1b just fixed on
+the Codex side, and `forgetGenericFailoverRoster` only drops the presence count, never the
+cursor. The 400 at :396 narrows to `quotaWindow` alone. The pool PUT accepts and persists
+`stickyLimit` with the 1..100 validation.
+
+**`src/cli/account-extended.ts`** — the generic branch at :395 currently hardcodes
+`const enabled = false`. With the kernel on it reports the real state.
+
+### Acceptance
+
+Criterion c-3: a test asserts a configured strategy actually changes the selected account, and
+the DTO stops reporting `inert` once the flag is on.
+
+- `tests/oauth/generic-oauth-failover.test.ts` — round-robin rotates across dispatches for a
+  provider with NO quota data (the case the evidence guard blocks today); fill-first holds the
+  active account under threshold and advances over it; quota is byte-identical to today; every
+  one of them is a no-op with `pool.kernel` off.
+- `tests/server/account-pool-management-api.test.ts` — `inert` follows the flag, `stickyLimit`
+  round-trips, `quotaWindow` still 400s. The existing marker test at :435 reads the source for
+  the literal `inert: true;` and moves with the type.
+- `tests/cli/cli-account-pool-verbs.test.ts` — the CLI reports the live threshold when on.
+- Red control for each new case, as in wp1b: the assertion must fail with its production branch
+  removed. A test that passes either way is not coverage.
+
+### Reversibility
+
+`pool.kernel` defaults off, and off means the pre-kernel code path byte for byte: the guards
+stay, the DTO still says `inert: true`, and `noteGenericPoolSelection` returns before touching
+the ring. No migration writes on upgrade; the kernel reads keys that are already persisted.
