@@ -390,3 +390,45 @@ not depend on a browser drag-and-drop.
 - The three server routes still work — they have their own goldens and are not touched.
 - The PR description embeds a real screenshot of the rendered pool settings.
 
+### wp5b plan audit — FAIL, folded
+
+**Blocker 1 — the request adapter, again.** This is the third time this exact shape has been
+caught in this unit, and it is the most dangerous instance. `putAutoSwitchThreshold` sends
+`{ threshold }`; the unified route reads `{ provider, autoSwitchThreshold }`. A URL swap alone
+either 400s, or — with `provider` added and `threshold` left alone — returns **200 while writing
+nothing**, because the route ignores an unknown field. And the function only inspects
+`response.ok`, so the dashboard would report success on every save and change no setting.
+
+Silent success is worse than a visible failure, so the client owns an explicit request mapping:
+`threshold` becomes `autoSwitchThreshold`, `provider` is always sent, and Codex is addressed as
+`provider: "openai"`. The strategy body keys already match and need no mapping; only the
+response did, which is what the original plan named and why the request side slipped past it.
+
+**Major 2 — the read path is a different route, and the plan mislabeled it.** The table called
+the write bodies "Reads". The GUI actually reads the Codex threshold and strategy from
+`GET /api/codex-auth/active` via `extractAutoSwitchThresholdPayload`. That read STAYS: `/active`
+is a mixed pin + failover + pool payload the dashboard needs in one request, and wp5c
+deliberately did not have the unified GET copy it. Stated rather than left implicit, because a
+future reader would otherwise see a half-migrated client and assume it was unfinished.
+
+This narrows the acceptance grep: no GUI file may reference the three legacy pool WRITE
+contracts. `/api/codex-auth/active` legitimately remains, and the grep says so.
+
+**Major 3 — four GUI test files pin the old URLs and payloads:**
+`gui/tests/account-pool-strategy.test.tsx`, `anthropic-pool-quota-window.test.tsx`,
+`codex-account-auto-switch.test.tsx` and `codex-auto-switch-controller.test.tsx`. They move with
+the client. `CodexPoolStrategySetting` reads `result.strategy`/`stickyLimit` from the wrapper,
+so it survives untouched as long as the wrapper maps the DTO; `putAutoSwitchThreshold` callers
+never read the body.
+
+**Minor 4 recorded, not fixed:** `ProviderAuthPanel` still gates the pool card on
+`item.name === "anthropic"`, so a generic OAuth provider has a contract and no UI, and the new
+`supported`/`enabledEffective` fields are not yet rendered. That is a feature the objective does
+not ask for; naming it is better than silently leaving a reader to wonder whether it was missed.
+
+**Screenshot — the gate is stricter than the plan assumed.** It fires on `gui/` PATH CHANGES,
+not on a title cue, so it applies here regardless of wording. A committed PNG alone does not
+satisfy it: the description must contain a rendered embed. A relative path passes the regex but
+renders nothing on GitHub, so the description uses an absolute `raw.githubusercontent.com` URL
+pointing at the committed file on this branch. The waiver is a maintainer COMMENT, not a label.
+
