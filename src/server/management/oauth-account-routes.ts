@@ -638,8 +638,11 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     clearModelCache(name);
     const { clearProviderQuotaCache } = await import("../../providers/quota");
     clearProviderQuotaCache();
-    const { clearKeyCooldowns } = await import("../../providers/key-failover");
+    const { clearKeyCooldowns, forgetApiKeyRotationCursor } = await import("../../providers/key-failover");
     clearKeyCooldowns(name); // manual key management resets 429 cooldown state
+    // ...and the rotation cursor with it. A cursor that predates the operator's choice would
+    // hand the next proactive pick straight back to whichever key the pool had reached.
+    forgetApiKeyRotationCursor(name);
     return jsonResponse({ ok: true, id: result.id }, 201);
   }
   // Opt-in OS keychain storage (#1221): move the active key and pool into the OS credential
@@ -682,8 +685,11 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     clearModelCache(name);
     const { clearProviderQuotaCache } = await import("../../providers/quota");
     clearProviderQuotaCache();
-    const { clearKeyCooldowns } = await import("../../providers/key-failover");
+    const { clearKeyCooldowns, forgetApiKeyRotationCursor } = await import("../../providers/key-failover");
     clearKeyCooldowns(name); // manual key management resets 429 cooldown state
+    // ...and the rotation cursor with it. A cursor that predates the operator's choice would
+    // hand the next proactive pick straight back to whichever key the pool had reached.
+    forgetApiKeyRotationCursor(name);
     return jsonResponse({ ok: true, name, activeId: body.id });
   }
   if (url.pathname === "/api/providers/keys/alias" && req.method === "PUT") {
@@ -711,8 +717,11 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     clearModelCache(name);
     const { clearProviderQuotaCache } = await import("../../providers/quota");
     clearProviderQuotaCache();
-    const { clearKeyCooldowns } = await import("../../providers/key-failover");
+    const { clearKeyCooldowns, forgetApiKeyRotationCursor } = await import("../../providers/key-failover");
     clearKeyCooldowns(name); // manual key management resets 429 cooldown state
+    // ...and the rotation cursor with it. A cursor that predates the operator's choice would
+    // hand the next proactive pick straight back to whichever key the pool had reached.
+    forgetApiKeyRotationCursor(name);
     return jsonResponse({ ok: true });
   }
 
