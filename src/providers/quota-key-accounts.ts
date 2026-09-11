@@ -63,10 +63,11 @@ export function setCachedProviderApiKeyQuotaForTests(
   keyId: string,
   key: string,
   quota: ProviderQuota | null,
+  unavailable?: true,
 ): void {
   const resolved = resolveProviderApiKey(key)?.trim();
   if (!resolved) return;
-  remember(identity(name, provider, keyId, resolved), { ts: Date.now(), quota });
+  remember(identity(name, provider, keyId, resolved), { ts: Date.now(), quota, ...(unavailable ? { unavailable } : {}) });
 }
 
 /** Four workers per roster, not a process-wide network limit. */

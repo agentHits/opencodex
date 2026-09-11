@@ -27,6 +27,7 @@ import { deriveXaiConvId } from "../../src/providers/xai-transport";
 import { routeModel, routedProviderConfig } from "../../src/router";
 import { setProviderKeychainEntryFactoryForTests } from "../../src/providers/key-store";
 import { setActiveProviderApiKey } from "../../src/providers/api-keys";
+import { clearProviderApiKeyQuotaCache, setCachedProviderApiKeyQuotaForTests } from "../../src/providers/quota-key-accounts";
 import { subscribeAccountSelections } from "../../src/lib/account-selection-events";
 import { providerManagementConfigError, safeConfigDTO } from "../../src/server/auth-cors";
 import type { OcxConfig, OcxParsedRequest, OcxProviderConfig } from "../../src/types";
@@ -517,5 +518,56 @@ describe("rotateKeyOn401", () => {
       forgetApiKeyRotationCursor("p");
       expect(selectProactiveApiKey(config, "p", now)).toBeNull();
     });
+
+    /** Quota rows live in a private cache keyed on the resolved secret; seed it through the seam. */
+    function seedQuota(config: OcxConfig, keyId: string, key: string, percent: number | null, unavailable?: true) {
+      setCachedProviderApiKeyQuotaForTests(
+        "p", config.providers.p!, keyId, key,
+        percent === null ? null : { weeklyPercent: percent, updatedAt: Date.now() } as never,
+        unavailable,
+      );
+    }
+
+    function cooledFirstKey(strategy: "round-robin" | "quota") {
+      const config = makeConfig({ apiKey: "key-alpha-000111222333", apiKeyPool: pool3(), apiKeyPoolStrategy: strategy });
+      forgetApiKeyRotationCursor("p");
+      clearProviderApiKeyQuotaCache();
+      rotateKeyOn429(config, "p", null, now);
+      setActiveProviderApiKey(config, "p", "k1");
+      return config;
+    }
+
+    test("quota picks the roomiest eligible key", () => {
+      const config = cooledFirstKey("quota");
+      // beta is nearly spent, gamma is barely touched. Round-robin would have taken beta simply
+      // because it is next; ranking is the entire difference.
+      seedQuota(config, "k2", "key-beta-444555666777", 80);
+      seedQuota(config, "k3", "key-gamma-888999000111", 10);
+      expect(selectProactiveApiKey(config, "p", now)?.apiKey).toBe("key-gamma-888999000111");
+    });
+
+    test("an unmeasured key outranks a measured-and-spent one", () => {
+      const config = cooledFirstKey("quota");
+      // beta is provably at its limit; gamma has never been measured. Unmeasured is not assumed
+      // fresh, but it is not assumed spent either -- and "spent" is the one thing we know here.
+      seedQuota(config, "k2", "key-beta-444555666777", 100);
+      expect(selectProactiveApiKey(config, "p", now)?.apiKey).toBe("key-gamma-888999000111");
+    });
+
+    test("a stale unavailable row is not evidence", () => {
+      const config = cooledFirstKey("quota");
+      // beta carries a roomy last-good measurement attached to a FAILING probe, which the cache
+      // keeps for half an hour. Ranking on it would prefer a number nothing currently supports.
+      seedQuota(config, "k2", "key-beta-444555666777", 0, true);
+      seedQuota(config, "k3", "key-gamma-888999000111", 70);
+      expect(selectProactiveApiKey(config, "p", now)?.apiKey).toBe("key-gamma-888999000111");
+    });
+
+    test("with nothing measured the first eligible key is taken", () => {
+      const config = cooledFirstKey("quota");
+      // A provider with no per-key quota reader must land on exactly today's behaviour.
+      expect(selectProactiveApiKey(config, "p", now)?.apiKey).toBe("key-beta-444555666777");
+    });
+
   });
 });
