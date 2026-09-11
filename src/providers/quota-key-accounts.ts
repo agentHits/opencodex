@@ -39,6 +39,12 @@ export function clearProviderApiKeyQuotaCache(): void {
  * keeps a last-good quota attached for up to LAST_GOOD_MS after a probe starts failing, so
  * returning `entry.quota` on any hit would rank on a number up to half an hour stale -- and
  * rank it ABOVE a key with no row at all. Last-good is a display value, not a selection input.
+ *
+ * A SUCCESSFUL row expires too, on exactly `readEntry`'s freshness predicate. Checking only
+ * `unavailable` was not enough: nothing on the selection path probes or sweeps, so once a
+ * dashboard or CLI read had populated the cache, a row could outlive ACCOUNT_QUOTA_TTL_MS and
+ * keep a "roomy" ten-minute-old measurement ranked above a key with no evidence at all --
+ * until some unrelated write happened to sweep it. Expired is no evidence, same as absent.
  */
 export function cachedApiKeyQuota(
   name: string,
@@ -53,6 +59,9 @@ export function cachedApiKeyQuota(
   if (!resolved) return null;
   const entry = cache.get(identity(name, provider, keyId, resolved));
   if (!entry || entry.unavailable || !entry.quota) return null;
+  const now = Date.now();
+  if (now - entry.ts >= ACCOUNT_QUOTA_TTL_MS) return null;
+  if (now - entry.quota.updatedAt >= LAST_GOOD_MS) return null;
   return entry.quota;
 }
 

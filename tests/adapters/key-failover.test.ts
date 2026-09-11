@@ -29,6 +29,7 @@ import { routeModel, routedProviderConfig } from "../../src/router";
 import { setProviderKeychainEntryFactoryForTests } from "../../src/providers/key-store";
 import { setActiveProviderApiKey } from "../../src/providers/api-keys";
 import { clearProviderApiKeyQuotaCache, setCachedProviderApiKeyQuotaForTests } from "../../src/providers/quota-key-accounts";
+import { ACCOUNT_QUOTA_TTL_MS } from "../../src/providers/quota-wire";
 import { subscribeAccountSelections } from "../../src/lib/account-selection-events";
 import { providerManagementConfigError, safeConfigDTO } from "../../src/server/auth-cors";
 import type { OcxConfig, OcxParsedRequest, OcxProviderConfig } from "../../src/types";
@@ -611,6 +612,31 @@ describe("rotateKeyOn401", () => {
       const config = cooledFirstKey("quota");
       // A provider with no per-key quota reader must land on exactly today's behaviour.
       expect(selectProactiveApiKey(config, "p", now)?.apiKey).toBe("key-beta-444555666777");
+    });
+
+    /**
+     * A SUCCESSFUL row expires too. Nothing on the selection path probes or sweeps, so once a
+     * dashboard or CLI read populated the cache, a ten-minute-old measurement could keep
+     * outranking a key with no evidence until some unrelated write swept it.
+     *
+     * gamma is the roomier key, so a cache that still counts as evidence picks gamma. Expired,
+     * neither row is evidence and the roster order decides -- beta, the same answer the
+     * nothing-measured case above gets. Red control: drop the two freshness checks in
+     * `cachedApiKeyQuota` and this returns gamma.
+     */
+    test("a successful row past its TTL is not evidence either", () => {
+      const config = cooledFirstKey("quota");
+      seedQuota(config, "k2", "key-beta-444555666777", 90);
+      seedQuota(config, "k3", "key-gamma-888999000111", 10);
+      const realNow = Date.now;
+      // Only the CACHE clock moves. The cooldown clock is the `now` the selector is handed, and
+      // the two are independent on purpose -- otherwise this would also un-cool k1.
+      Date.now = () => realNow() + ACCOUNT_QUOTA_TTL_MS + 1;
+      try {
+        expect(selectProactiveApiKey(config, "p", now)?.apiKey).toBe("key-beta-444555666777");
+      } finally {
+        Date.now = realNow;
+      }
     });
 
   });

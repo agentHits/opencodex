@@ -112,8 +112,18 @@ export function hasKeyPoolFailover(provider: OcxProviderConfig): boolean {
  */
 const keyRotationCursor = new Map<string, string>();
 
-/** Forget a provider's cursor so an operator's manual key selection is not second-guessed. */
-export function forgetApiKeyRotationCursor(providerName: string): void {
+/**
+ * Forget a provider's cursor so an operator's manual key selection is not second-guessed.
+ *
+ * Optional name, mirroring `clearKeyCooldowns`, because the batch provider PUT rewrites the
+ * entire roster: a cursor that survives a reorder still names a real id, so round-robin
+ * resumes after the pre-edit position and can skip the first eligible key in the new pool.
+ */
+export function forgetApiKeyRotationCursor(providerName?: string): void {
+  if (!providerName) {
+    keyRotationCursor.clear();
+    return;
+  }
   keyRotationCursor.delete(providerName);
 }
 
