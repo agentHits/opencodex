@@ -173,8 +173,27 @@ credential. The main listener is untouched — remote callers still need the tok
 `ocx sync` then writes `base_url = "http://127.0.0.1:10200/v1"` into the managed Codex provider block
 and omits the auth header, so a directly spawned app-server works without any credential plumbing.
 
-The port is required and must differ from the proxy port. It is never OS-assigned: an ephemeral port
+When you set `port`, it must differ from the proxy port. It is never OS-assigned: an ephemeral port
 would change across restarts while already-running app-servers kept the previous `base_url`.
+
+Omitting `port` selects the **companion** form — the listener binds the proxy port on `127.0.0.1`:
+
+```json
+{
+  "hostname": "100.76.170.81",
+  "port": 10100,
+  "unauthenticatedLoopbackListener": { "enabled": true }
+}
+```
+
+Remote clients dial `100.76.170.81:10100` with a credential; local processes dial
+`127.0.0.1:10100` without one. That is the address every local integration already writes, so
+`ocx claude`, Claude Desktop, Cursor and the system-env injection keep working on a host whose
+public bind they cannot reach. The companion form is accepted only when `hostname` is a specific
+non-loopback, non-wildcard address: on `127.0.0.1`, `localhost` or `0.0.0.0` the public listener
+already holds that loopback address, so OpenCodex refuses the pair at write time and at startup
+rather than failing the second bind. On those binds you do not need the listener at all — a
+loopback bind already admits local callers.
 
 The listener serves only `POST /v1/responses`, its WebSocket upgrade, `POST /v1/responses/compact`,
 `POST /v1/alpha/search` (the native Codex web-search relay), `GET /v1/models`, and the realtime

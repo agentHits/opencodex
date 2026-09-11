@@ -81,8 +81,11 @@ import { scheduleCatalogPrewarm } from "./catalog-prewarm";
 import { maybeShowUpdatePrompt } from "../update/notify";
 import { syncModelsToCodex } from "../codex/sync";
 import {
+  HUB_GATED_SKIP_MESSAGE,
+  localClientSkipReason,
   shouldSyncGrokOnStart,
   syncCodexOnStartIfEnabled,
+  type LocalClientSkipReason,
 } from "../codex/desired-state";
 import {
   reconcileClientStartupBeforeReady,
@@ -174,6 +177,19 @@ async function waitForProxy(timeoutMs = 8_000): Promise<LiveProxy | null> {
   return null;
 }
 
+/**
+ * The one startup line for "nothing was written to Codex".
+ *
+ * Two very different facts reached it: the user's own OFF switch, and a hub declining to
+ * rewrite its own local clients. Printing the toggle's wording for the gate is what made
+ * operators hunt for a switch they never set (#4236).
+ */
+function startupLeftCodexNativeLine(reason: LocalClientSkipReason): string {
+  return reason === "hub-gated"
+    ? `   ${HUB_GATED_SKIP_MESSAGE} Startup left Codex native.`
+    : "   Codex integration OFF; startup left Codex native.";
+}
+
 /** Argv for detached `start`, optionally hard-pinning the listen port. */
 function startArgv(port?: number): string[] {
   const args = ["start"];
@@ -190,6 +206,10 @@ async function chooseListenPort(
   const config = loadConfig();
   const preferred = requestedPort ?? config.port ?? 10100;
   const hardPin = requestedPort !== undefined && requestedPort > 0;
+  // Only an EXPLICITLY ported listener reserves a port. The companion form (`{enabled:true}`
+  // with no port) deliberately shares the public port on 127.0.0.1, so treating it as a
+  // reservation — via `effectiveLoopbackListenerPort` — would refuse every start on a
+  // one-port hub and hop the public listener onto an ephemeral port (#4236).
   const reservedLoopbackPort = config.unauthenticatedLoopbackListener?.enabled
     ? config.unauthenticatedLoopbackListener.port
     : undefined;
@@ -513,7 +533,7 @@ async function handleStart(options: { block?: boolean } = {}) {
       }
     },
   );
-  if (!startupSync.ran) console.log("   Codex integration OFF; startup left Codex native.");
+  if (!startupSync.ran) console.log(startupLeftCodexNativeLine(localClientSkipReason(config)));
   await refreshOwnedRaycastCatalog(config, port);
   // #1046: one warning per startup, after BOTH writes. The server's cache
   // invalidation happens first and the catalog sync second, so the mtime is only
@@ -579,7 +599,9 @@ async function handleEnsure(options: { existingIsSuccess?: boolean } = {}): Prom
         console.error(`⚠️  Model sync skipped: ${e instanceof Error ? e.message : String(e)}`);
         return null;
       });
-      if (synced?.status === "skipped") console.log("   Codex integration OFF; startup left Codex native.");
+      if (synced?.status === "skipped") {
+        console.log(startupLeftCodexNativeLine(synced.skippedReason ?? "desired_disabled"));
+      }
       // Do not refresh Raycast from saved config here: live bind/admission and
       // secondary-listener settings may differ. Explicit sync or server startup
       // owns catalog refresh; ensure must not overwrite a working destination.
@@ -626,7 +648,9 @@ async function handleEnsure(options: { existingIsSuccess?: boolean } = {}): Prom
     console.error(`⚠️  Model sync skipped: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   });
-  if (synced?.status === "skipped") console.log("   Codex integration OFF; startup left Codex native.");
+  if (synced?.status === "skipped") {
+    console.log(startupLeftCodexNativeLine(synced.skippedReason ?? "desired_disabled"));
+  }
   // The child performs Raycast refresh with its actual startup config. The
   // parent's pre-spawn snapshot is not authoritative for a client-file write.
   // The child opens /healthz before its best-effort roster reconcile. Await the same idempotent

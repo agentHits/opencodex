@@ -14,6 +14,7 @@ import { computeVersionSkew, type VersionSkew } from "./version-skew";
 import { redactSecretString, redactUserPath } from "../lib/redact";
 import { collectOrcaCodexHomeDiagnostic, type OrcaCodexHomeDiagnostic } from "../codex/home";
 import { grokFenceEndpointDrift, readGrokStatus } from "../grok/status";
+import { effectiveLoopbackListenerPort } from "../codex/loopback-target";
 import { claudeDesktopIntegrationEnabled } from "../codex/desired-state";
 import { claudeDesktopPolicyHealth, probeClaudeDesktopPolicy, type ClaudeDesktopPolicyHealth } from "../claude/desktop-policy";
 import { collectClientConnectionStatus } from "./connect";
@@ -282,7 +283,13 @@ export async function collectStatus(): Promise<CliStatusView> {
   // no log line — ever reaches us. Surface it here, where the live port is already known.
   const grokDrift = (() => {
     try {
-      return grokFenceEndpointDrift(readGrokStatus(), health.ok ? listen.port : undefined);
+      // Locally reachable is a set: the public port plus the unauthenticated loopback
+      // listener's port. A fence naming either is correct; only a third port is drift (#4236).
+      return grokFenceEndpointDrift(
+        readGrokStatus(),
+        health.ok ? listen.port : undefined,
+        health.ok ? effectiveLoopbackListenerPort(config, listen.port) : null,
+      );
     } catch {
       return null; // reading grok's config must never break `ocx status`
     }

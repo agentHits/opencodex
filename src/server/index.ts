@@ -17,6 +17,7 @@ import {
   loadConfig,
   saveConfig,
   getConfigDir,
+  loopbackCompanionBindError,
   websocketsEnabled,
 } from "../config";
 import { grokDefaultReasoningEffort } from "../grok/effort";
@@ -28,6 +29,7 @@ import { withCatalogWriteSerialization } from "../codex/catalog-write-serializat
 import { invalidateCodexModelsCacheWithPermit } from "../codex/catalog/sync";
 import { currentServiceHomes, serviceStatePathsForOpenCodexHome } from "../service";
 import { shouldSyncCodexOnStart } from "../codex/desired-state";
+import { effectiveLoopbackListenerPort } from "../codex/loopback-target";
 import {
   createWindowsTaskListingCache,
   inspectNativeCodexOwnership,
@@ -773,8 +775,16 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   const bindHost = !configuredHost || /^localhost$/i.test(configuredHost) ? "127.0.0.1" : configuredHost;
 
   // Unauthenticated loopback listener (#1102). Off unless explicitly enabled.
+  // A port-less enabled entry is the companion form: same port as the public listener, on
+  // 127.0.0.1 (#4236). Refuse an impossible pair here, before any bind, so a hand edit that
+  // bypassed validateConfigCandidate reports the collision rather than EADDRINUSE from a
+  // rollback that looks like a foreign process holding the port.
   const loopbackListener = config.unauthenticatedLoopbackListener;
-  const loopbackListenerPort = loopbackListener?.enabled ? loopbackListener.port : null;
+  if (loopbackListener?.enabled === true && loopbackListener.port === undefined) {
+    const companionError = loopbackCompanionBindError(config.hostname, listenPort);
+    if (companionError) throw new Error(companionError);
+  }
+  const loopbackListenerPort = effectiveLoopbackListenerPort(config, listenPort);
   // Hub management ingress is a third, management-only listener. Its address is intentionally
   // fixed: the kernel loopback bind is the trust boundary that permits Tailscale identity headers.
   const managementIngress = config.runtimeRole === "hub" ? config.hub?.managementIngress : undefined;
@@ -2511,10 +2521,17 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
     // who forgot, has to be able to see that an unauthenticated surface is live without
     // reading the file.
     const loopbackPort = loopbackServer.port ?? loopbackListenerPort;
-    console.warn(`⚠️  Unauthenticated loopback listener active on http://127.0.0.1:${loopbackPort}`);
-    console.warn(`   Any local process can use it without a credential — it spends account`);
-    console.warn(`   quota and paid provider credentials, and can starve authenticated`);
-    console.warn(`   remote clients. Not for shared or multi-tenant hosts.`);
+    if (loopbackListener?.enabled === true && loopbackListener.port === undefined) {
+      // The companion form is the intended one-port hub topology, not a surprise surface: the
+      // public listener is already on a non-loopback address, so this line states where local
+      // processes go rather than warning about a second port nobody asked for.
+      console.log(`🔁 Loopback companion active on http://127.0.0.1:${loopbackPort} — same port as the public listener; local processes need no credential`);
+    } else {
+      console.warn(`⚠️  Unauthenticated loopback listener active on http://127.0.0.1:${loopbackPort}`);
+      console.warn(`   Any local process can use it without a credential — it spends account`);
+      console.warn(`   quota and paid provider credentials, and can starve authenticated`);
+      console.warn(`   remote clients. Not for shared or multi-tenant hosts.`);
+    }
   }
 
   if (managementIngressServer) {

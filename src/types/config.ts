@@ -661,13 +661,24 @@ export interface OcxConfig {
    * surface: every process on the machine can reach it, spend account quota, and consume paid
    * provider credentials. Off by default; not for multi-tenant hosts.
    *
-   * The port is required when enabled and must differ from the proxy port. An OS-assigned port
-   * would change across restarts, which would break already-running app-servers holding the
-   * previous `base_url` — the exact symptom #1102 reported and we disproved for token rotation.
+   * Two enabled forms:
+   *
+   *  - `{ enabled: true, port: N }` — a distinct port (the #1102 form). N must differ from the
+   *    proxy port.
+   *  - `{ enabled: true }` — the "companion" form: bind `127.0.0.1:<proxy port>`. Legal only
+   *    when `hostname` is a specific non-loopback, non-wildcard address (a tailnet or LAN IP),
+   *    because otherwise the public socket already owns that loopback address. This is the
+   *    one-port hub shape: remote clients dial `hostname:port`, local processes dial
+   *    `127.0.0.1:port`, and every integration that hardcodes `http://127.0.0.1:<proxy port>`
+   *    keeps working on a hub whose public bind they cannot reach (#4236).
+   *
+   * Neither form is OS-assigned. A changing port would break already-running app-servers
+   * holding the previous `base_url` — the exact symptom #1102 reported and we disproved for
+   * token rotation.
    */
   unauthenticatedLoopbackListener?:
     | { enabled: false }
-    | { enabled: true; port: number };
+    | { enabled: true; port?: number };
   /**
    * Outbound HTTP(S) proxy URL for provider requests (e.g. "http://user:pass@proxy:8080", or
    * "${HTTPS_PROXY}"-style env reference). Mirrored into HTTP_PROXY/HTTPS_PROXY at startup when

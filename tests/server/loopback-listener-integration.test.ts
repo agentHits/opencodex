@@ -865,3 +865,97 @@ describe("Codex injection targets the loopback listener", () => {
     }
   });
 });
+
+/**
+ * The companion form: `{ enabled: true }` with no port, on a hub bound to a tailnet/LAN
+ * address (#4236). One port, two sockets — remote clients reach `hostname:port` with a
+ * credential, local processes reach `127.0.0.1:port` without one.
+ */
+describe("loopback companion listener", () => {
+  function companionConfig(hostname: string): OcxConfig {
+    const config = baseConfig(null) as Record<string, unknown>;
+    config.hostname = hostname;
+    config.unauthenticatedLoopbackListener = { enabled: true };
+    return config as unknown as OcxConfig;
+  }
+
+  test("binds 127.0.0.1 on the public port, and only loopback is credential-free", async () => {
+    const address = firstNonLoopbackIPv4();
+    if (!address) {
+      // Without a second address there is no way to distinguish the two sockets, and a silent
+      // pass would hide exactly the regression this test exists for.
+      console.warn("[loopback-companion] no non-loopback IPv4 interface; same-port check not run");
+      return;
+    }
+    const port = await freePort();
+    saveConfig(companionConfig(address));
+    const logs: string[] = [];
+    const log = console.log;
+    const warn = console.warn;
+    console.log = (...values: unknown[]) => { logs.push(values.join(" ")); };
+    console.warn = (...values: unknown[]) => { logs.push(values.join(" ")); };
+    let server: ReturnType<typeof startServer> | null = null;
+    try {
+      server = startServer(port);
+    } finally {
+      console.log = log;
+      console.warn = warn;
+    }
+    try {
+      expect(server!.port).toBe(port);
+      // The same port, two answers: that is the whole feature.
+      expect((await fetch(`http://127.0.0.1:${port}/v1/models`)).status).toBe(200);
+      expect((await fetch(`http://${address}:${port}/v1/models`)).status).toBe(401);
+
+      // The startup line has to say "companion" rather than warn about a surprise second
+      // port: the operator chose this topology, and the ported form's warning misdescribes it.
+      const startup = logs.join("\n");
+      expect(startup).toContain(`Loopback companion active on http://127.0.0.1:${port}`);
+      expect(startup).toContain("same port as the public listener; local processes need no credential");
+      expect(startup).not.toContain("Unauthenticated loopback listener active");
+    } finally {
+      await server!.stop(true);
+    }
+  }, SERVER_BUDGET_MS);
+
+  test("the route allowlist is unchanged: sharing a port widens no surface", async () => {
+    const address = firstNonLoopbackIPv4();
+    if (!address) {
+      console.warn("[loopback-companion] no non-loopback IPv4 interface; allowlist check not run");
+      return;
+    }
+    const port = await freePort();
+    saveConfig(companionConfig(address));
+    const server = startServer(port);
+    try {
+      // Same socket semantics as the ported form, same default-deny. A companion is a bind
+      // address change, never an admission change — `/api/*` in particular stays unreachable
+      // without a management credential, and the Anthropic wire stays off this listener.
+      for (const path of ["/api/config", "/healthz", "/"]) {
+        const response = await fetch(`http://127.0.0.1:${port}${path}`);
+        expect({ path, status: response.status }).toEqual({ path, status: 404 });
+      }
+      const messages = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"model":"x","messages":[]}',
+      });
+      expect(messages.status).toBe(404);
+      expect((await fetch(`http://127.0.0.1:${port}/v1/models`)).status).toBe(200);
+    } finally {
+      await server.stop(true);
+    }
+  }, SERVER_BUDGET_MS);
+
+  test("an impossible companion fails before any socket opens", async () => {
+    // A hand edit that skipped validateConfigCandidate must read the same sentence the write
+    // boundary gives, not EADDRINUSE from a rolled-back startup that looks like a foreign
+    // process holding the port.
+    const port = await freePort();
+    saveConfig(companionConfig("127.0.0.1"));
+    expect(() => startServer(port)).toThrow(/a port-less listener binds 127\.0\.0\.1/);
+    // Nothing was bound: the refusal lands before the public listener opens.
+    const rebound = Bun.serve({ port, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    await rebound.stop(true);
+  }, SERVER_BUDGET_MS);
+});
