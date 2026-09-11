@@ -383,6 +383,12 @@ Si la lecture authentifiée des quotas avec le nouveau jeton OAuth confirme un q
 
 La revalidation en arrière-plan est distincte et désactivée par défaut. Elle nécessite Token Guardian, la politique `proactive` du fournisseur `openai` et `tokenGuardian.codexWarmupEnabled`, et ignore les comptes dont la validation d’inscription est en attente.
 
+### Pourquoi un compte a cessé de servir les requêtes
+
+Lorsqu'un compte quitte la sélection du pool, la raison accompagne la décision au lieu d'être recalculée pour l'affichage : une interface ne peut donc pas présenter un compte comme sain pendant que le routage l'écarte. `GET /api/codex-auth/accounts` expose `reauthReason` à côté de `needsReauth` pour chaque compte : `missing_credential` si aucun identifiant n'a été enregistré, `refresh_failed` si le renouvellement échoue de façon répétée, et `quota_unauthorized` si la lecture des quotas elle-même a été refusée.
+
+Un renouvellement du compte principal qui n'aboutit pas répond toujours `503` avec `Retry-After`, car une nouvelle tentative peut réussir. Le message précise désormais qu'un échec persistant signifie que le compte principal doit être réauthentifié, au lieu de demander seulement de réessayer.
+
 ## Restauration de Codex natif
 
 `ocx stop` arrête le proxy et le service d'arrière-plan installé, puis tente de restaurer Codex natif. OpenCodex retire les éléments de routage dont il peut vérifier la propriété et signale une restauration incomplète si les fichiers de configuration ne peuvent pas être récupérés en toute sécurité.

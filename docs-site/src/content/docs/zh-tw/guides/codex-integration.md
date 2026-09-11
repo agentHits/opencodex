@@ -327,6 +327,12 @@ ocx service install    # 常駐：登入時自動啟動，崩潰後自動重新�
 
 背景重新驗證是獨立功能，預設關閉。它需要 Token Guardian、`openai` 的 `proactive` 更新政策及 `tokenGuardian.codexWarmupEnabled`，並略過等待註冊驗證的帳號。
 
+### 帳號停止處理請求的原因
+
+帳號退出帳號池選擇時，原因會隨判定一起傳遞，而不是為了顯示重新計算，因此介面不會在路由已排除該帳號時仍顯示正常。`GET /api/codex-auth/accounts` 會在每個帳號的 `needsReauth` 旁回傳 `reauthReason`：從未儲存憑證為 `missing_credential`，更新持續失敗為 `refresh_failed`，用量查詢本身遭拒為 `quota_unauthorized`。
+
+主帳號更新未完成時仍回傳帶 `Retry-After` 的 `503`，因為重試仍可能成功。訊息現在補充說明：若持續失敗，代表主帳號需要重新認證，而不只是再試一次。
+
 ## 恢復原生 Codex
 
 `ocx stop` 會停止 proxy 與已安裝的背景服務，然後嘗試恢復原生 Codex。OpenCodex 只移除能確認歸屬的路由設定；若無法安全恢復設定檔，會回報恢復未完成。

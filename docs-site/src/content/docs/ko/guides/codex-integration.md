@@ -260,6 +260,12 @@ ChatGPT 계정을 추가하거나 재인증할 때 OpenCodex는 일반적으로 
 
 별도의 백그라운드 재검증은 기본적으로 꺼져 있습니다. Token Guardian, `openai`의 `proactive` 갱신 정책, `tokenGuardian.codexWarmupEnabled`가 필요하며 등록 검증 대기 계정은 제외합니다.
 
+### 계정이 요청을 처리하지 못하게 된 이유
+
+계정이 풀 선택에서 빠질 때 그 이유는 표시용으로 다시 계산되지 않고 판단과 함께 전달됩니다. 라우팅이 계정을 제외하는 동안 화면에서만 정상으로 보이는 일이 생기지 않습니다. `GET /api/codex-auth/accounts`는 계정마다 `needsReauth` 옆에 `reauthReason`을 함께 반환합니다. 자격 증명이 저장된 적 없으면 `missing_credential`, 갱신이 계속 실패하면 `refresh_failed`, 사용량 조회 자체가 거부되면 `quota_unauthorized`입니다.
+
+메인 계정 갱신이 끝나지 않은 경우에도 재시도로 성공할 수 있으므로 `Retry-After`와 함께 `503`을 반환합니다. 다만 실패가 계속되면 메인 계정을 다시 인증해야 한다는 내용을 메시지에 덧붙였습니다.
+
 ## 네이티브 Codex 복원
 
 `ocx stop`은 proxy와 설치된 background service를 중지한 뒤 네이티브 Codex 복원을 시도합니다. OpenCodex 소유로 확인된 라우팅 항목을 제거하며, 설정 파일을 안전하게 복구할 수 없으면 미완료로 보고합니다.

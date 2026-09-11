@@ -433,6 +433,12 @@ Yeni OAuth belirteciyle yapılan kota sorgusu 5 saatlik, haftalık veya aylık k
 
 Arka plan doğrulaması ayrı ve varsayılan olarak kapalıdır. Token Guardian, `openai` için `proactive` yenileme ilkesi ve `tokenGuardian.codexWarmupEnabled` gerektirir; kayıt doğrulaması bekleyen hesapları atlar.
 
+### Bir hesabın istek karşılamayı bırakma nedeni
+
+Bir hesap havuz seçiminden çıktığında neden, görüntüleme için yeniden hesaplanmak yerine kararla birlikte taşınır; böylece yönlendirme hesabı dışarıda bırakırken hiçbir yüzey onu sağlıklı gösteremez. `GET /api/codex-auth/accounts` her hesapta `needsReauth` yanında `reauthReason` döndürür: kimlik bilgisi hiç kaydedilmediyse `missing_credential`, yenileme sürekli başarısızsa `refresh_failed`, kullanım sorgusunun kendisi reddedildiyse `quota_unauthorized`.
+
+Tamamlanmayan bir ana hesap yenilemesi, yeniden denemede başarılı olabileceği için hâlâ `Retry-After` ile `503` yanıtı verir. Mesaj artık kalıcı bir başarısızlığın ana hesabın yeniden kimlik doğrulaması gerektirdiğini de belirtiyor.
+
 ## Yerel Codex'i geri yükleme
 
 `ocx stop`, proxy'yi ve kurulu arka plan servisini durdurur, ardından yerel Codex'i geri yüklemeyi dener. OpenCodex yalnızca sahipliğini doğrulayabildiği yönlendirme öğelerini kaldırır; yapılandırma dosyaları güvenle geri yüklenemiyorsa işlemin tamamlanmadığını bildirir.
