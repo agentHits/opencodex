@@ -898,7 +898,7 @@ export async function confirmServiceServing(
  * dead port.
  */
 export async function reportServiceServing(
-  verb: "installed" | "started" | "repaired",
+  verb: "installed" | "started" | "repaired" | "restarted",
   deps: Parameters<typeof confirmServiceServing>[0] = {},
 ): Promise<void> {
   const healthBudgetMs = deps.timeoutMs ?? serviceInstallHealthMs();
@@ -2592,6 +2592,20 @@ function readTextOrNull(path: string): string | null {
 }
 
 /**
+ * What an install or repair actually DID to launchd.
+ *
+ * `reloaded: false` means the no-op path was taken — the plist on disk was already the
+ * rendered one, the data token was unchanged, and the probe answered `loaded-current` — so
+ * launchd was never asked for anything and the job is still the same process it was. That
+ * is the right answer for `repair` (a repair of a healthy service must not be an outage)
+ * and the WRONG one for `restart`, which is the verb an operator reaches for precisely when
+ * they want a new process. Only `restart` acts on it; see {@link restartLaunchdJob}.
+ */
+export interface LaunchdInstallOutcome {
+  reloaded: boolean;
+}
+
+/**
  * Deps follow {@link startLaunchd}: `launchctl` replaces the LAYER, returning a
  * {@link runLaunchctl} result, not a spawnSync result. Every one is optional so this stays
  * assignable to `ServiceOps.install` and `RepairServiceDeps.repairLaunchd`
@@ -2631,6 +2645,9 @@ function readTextOrNull(path: string): string | null {
  *  5. On terminal failure restore the previous plist, try to bootstrap it back, and throw
  *     an error that says what the probe actually found — down, or up on a different
  *     command — and names the manual remedy.
+ *
+ * Returns {@link LaunchdInstallOutcome} so the one caller that needs a RESTART rather than a
+ * repair can tell the no-op path from a reload. See {@link restartLaunchdJob}.
  */
 export function installLaunchd(deps: {
   launchctl?: typeof runLaunchctl;
@@ -2644,7 +2661,7 @@ export function installLaunchd(deps: {
    * refusal mechanical rather than a convention.
    */
   plistPath?: string;
-} = {}): void {
+} = {}): LaunchdInstallOutcome {
   const run = deps.launchctl ?? runLaunchctl;
   const probeLoadState = deps.probe ?? probeLaunchdLoadState;
   const sleepSync = deps.sleepSync ?? ((ms: number) => { Bun.sleepSync(ms); });
@@ -2716,7 +2733,9 @@ export function installLaunchd(deps: {
     // a repair that leaves it stale re-creates the false "OLDER plist" report.
     writeServiceInstallState("scheduler", launcher);
     console.log("ℹ️  service is already loaded from the current plist; nothing to do.");
-    return;
+    // The ONLY `reloaded: false` exit: the process launchd was running when this command
+    // started is still running, same pid. `ocx service restart` turns that into a kickstart.
+    return { reloaded: false };
   }
 
   if (previousPlist !== null) {
@@ -2812,7 +2831,7 @@ export function installLaunchd(deps: {
         verdict.detail ?? "launchctl could not be asked"}. Check: launchctl print ${guiTarget}`,
     );
     writeServiceInstallState("scheduler", launcher);
-    return;
+    return { reloaded: true };
   }
 
   if (verdict.state !== "loaded-current") {
@@ -2855,6 +2874,67 @@ export function installLaunchd(deps: {
   // behind makes the NEXT repair's backup ambiguous (which failure did it come from?) and
   // `uninstall` the only thing that ever cleaned it up.
   if (existsSync(`${p}.prev`)) { try { unlinkSync(`${p}.prev`); } catch { /* best-effort */ } }
+  return { reloaded: true };
+}
+/**
+ * Restart the loaded job IN PLACE — the `restart` half of `ocx service restart`.
+ *
+ * Only reached when {@link installLaunchd} reported `reloaded: false`, i.e. the plist is
+ * already the current one and the probe proved the job is loaded from it. Nothing has to be
+ * published, so this must NOT evict: `kickstart -k` restarts what the domain already holds
+ * without opening an eviction window, which is the whole reason `restart` can be honest
+ * about a healthy service while `repair` stays a no-op on it. `kickstart` restarts the
+ * definition launchd has CACHED and does not re-read the plist — harmless here, and exactly
+ * why the retry path inside `installLaunchd` may only use it for bytes already on disk.
+ *
+ * `launchctl print` answers about REGISTRATION, not liveness, so the verification asks the
+ * same tri-state probe `installLaunchd` does: `loaded-current` is the restart confirmed,
+ * `unknown` is not evidence of anything and only warns, and absence after a kick means the
+ * job went away and KeepAlive did not bring it back — which throws, so the repair branch
+ * reports it and still runs its serving check.
+ *
+ * Both deps are test seams, and the default runner is also refused by
+ * `assertLiveServiceManagerAllowed`: `kickstart` is not a read-only verb, so an armed test
+ * process that reached the real runner would fail closed rather than bounce the developer's
+ * own hub.
+ */
+export function restartLaunchdJob(deps: {
+  launchctl?: typeof runLaunchctl;
+  probe?: typeof probeLaunchdLoadState;
+  /** The exec line the live job must carry; defaults to the one an install would bake. */
+  expectedCommand?: () => string;
+} = {}): void {
+  const run = deps.launchctl ?? runLaunchctl;
+  const target = `${launchdGuiDomain()}/${LABEL}`;
+  const expectedCommand = deps.expectedCommand
+    ?? (() => launchdServiceCommand(stableLauncherEntry()));
+  const kicked = run(["kickstart", "-k", target]);
+  const verdict = (deps.probe ?? probeLaunchdLoadState)({ expectedCommand });
+  if (!kicked.ok || verdict.state === "not-loaded" || verdict.state === "loaded-stale") {
+    // Three different things to say, because they send the operator to three different
+    // places: the job is gone, the job is up on an older definition, or the job is up and
+    // `kickstart` refused — in which case the proxy is fine and only the restart failed.
+    const state = verdict.state === "not-loaded"
+      ? `is NOT loaded in ${launchdGuiDomain()} — nothing is listening`
+      : verdict.state === "loaded-stale"
+        ? "is loaded from a DIFFERENT command than the plist on disk"
+        : "is still loaded, so it may be serving the process this restart failed to replace";
+    throw new Error(
+      `launchctl could not restart ${LABEL}: ${kicked.stderr || "kickstart reported failure"}\n`
+      + `The ${LABEL} job ${state}.\n`
+      + `Restart it manually with:\n  launchctl kickstart -k ${target}\n`
+      + `Inspect it with:\n  launchctl print ${target}\n`
+      + "and run 'ocx service repair' if it is absent.",
+    );
+  }
+  if (verdict.state === "unknown") {
+    console.warn(
+      `⚠️  launchctl accepted the restart but the job state could not be verified — ${
+        verdict.detail ?? "launchctl could not be asked"}. Check: launchctl print ${target}`,
+    );
+    return;
+  }
+  console.log(`ℹ️  service restarted (launchctl kickstart -k ${target}).`);
 }
 /**
  * Deps are named for the layer they replace, not for the process API: `launchctl`
@@ -3422,6 +3502,13 @@ async function restoreWindowsSchedulerTaskIfAbsent(registeredXml: string): Promi
   }
 }
 
+/**
+ * The two CLI verbs `repairService` serves. They differ on ONE platform and ONE case: a
+ * macOS job that is already loaded from the current plist, which `repair` must not touch and
+ * `restart` must restart.
+ */
+export type ServiceRepairVerb = "repair" | "restart";
+
 export interface RepairServiceDeps {
   diagnose?: () => ServiceDiagnostic;
   assertEnv?: () => void;
@@ -3432,8 +3519,17 @@ export interface RepairServiceDeps {
   writeSchedulerState?: () => void;
   writeNativeState?: () => void;
   repairNative?: () => void | Promise<void>;
-  repairLaunchd?: () => void;
+  repairLaunchd?: () => LaunchdInstallOutcome | void;
   repairSystemd?: () => void;
+  /** Restarts a launchd job the install path deliberately left alone. `restart` only. */
+  restartLaunchd?: () => void;
+  /**
+   * Which CLI verb is being served. `repair` must leave a healthy service alone — that no-op
+   * IS the #4236 fix — while `restart` promises a new process, so on darwin it kicks the job
+   * the no-op path did not touch. Windows (stop + start) and Linux
+   * (`systemctl --user restart`) already restart unconditionally, so neither reads this.
+   */
+  verb?: ServiceRepairVerb;
   /** Reads live registered task XML; may be called again after failure, empty when unreadable. */
   readSchedulerXml?: () => string;
   /** Bounded wait before retrying an unreadable live registration snapshot. */
@@ -3706,10 +3802,19 @@ export async function repairService(deps: RepairServiceDeps = {}): Promise<void>
     return;
   }
   if (platform === "darwin") {
-    (deps.repairLaunchd ?? installLaunchd)();
+    const outcome = (deps.repairLaunchd ?? installLaunchd)();
+    // `installLaunchd` is the only function that knows whether it published anything, and its
+    // no-op path leaves the live process running on purpose. `repair` wants exactly that;
+    // `restart` would otherwise restart NOTHING on a healthy hub and send the operator to run
+    // `launchctl kickstart -k` by hand, which is the opposite of what these verbs are for.
+    if ((deps.verb ?? "repair") === "restart" && outcome?.reloaded === false) {
+      (deps.restartLaunchd ?? restartLaunchdJob)();
+    }
     return;
   }
   if (platform === "linux") {
+    // `installSystemd` ends in `systemctl --user restart`, unconditionally, so the unit is
+    // restarted whichever verb asked — there is no no-op path here to compensate for.
     (deps.repairSystemd ?? installSystemd)();
     return;
   }
@@ -4090,7 +4195,10 @@ export function systemdServiceInstallCleanupOps(deps: {
 
 function platformOps(backend: ServiceBackend = "scheduler"): ServiceOps | null {
   if (process.platform === "darwin")
-    return { install: installLaunchd, start: startLaunchd, stop: stopLaunchd, status: statusLaunchd, uninstall: uninstallLaunchd };
+    // Wrapped, not passed: `installLaunchd` reports whether it reloaded launchd, and only
+    // `repairService` (for the `restart` verb) has any use for that. `ServiceOps.install` is
+    // the generic install seam and deliberately promises nothing about a return value.
+    return { install: () => { installLaunchd(); }, start: startLaunchd, stop: stopLaunchd, status: statusLaunchd, uninstall: uninstallLaunchd };
   if (process.platform === "win32") {
     if (backend === "native")
       return { install: installWindowsNative, start: startWinswService, stop: stopWinswService, status: winswStatusSummary, uninstall: uninstallWinswService };
@@ -4985,8 +5093,18 @@ export async function serviceStatusReport(
     + "   Meanwhile: ocx start           (serves in the foreground)";
 }
 
+/**
+ * `restart` is NO LONGER folded into `repair`.
+ *
+ * It used to be, and on macOS that made it a lie: `repair` now returns early when the plist
+ * is already current and the job is loaded from it (#4236), so `ocx service restart` of a
+ * healthy service restarted nothing and the operator had to run `launchctl kickstart -k` by
+ * hand. The two verbs share the whole repair path and diverge only in `repairService`, which
+ * kicks the launchd job the no-op left running. A BARE `ocx service` still maps to `repair`
+ * (see {@link selectServiceSubcommand}): it is an idempotent "make it current", not a
+ * request to bounce a healthy hub.
+ */
 export function normalizeServiceSubcommand(sub?: string): string {
-  if (sub === "restart") return "repair";
   return sub ?? "install";
 }
 
@@ -5145,7 +5263,8 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<v
       process.exit(1);
     }
     const { parsed, command } = plan;
-  if (command === "repair") {
+  if (command === "repair" || command === "restart") {
+    const verb: ServiceRepairVerb = command === "restart" ? "restart" : "repair";
     assertServiceEnvironmentMatchesInstall();
     assertServiceAuthEnvironment();
     // A throw used to escape straight to the top level, so the one command that can
@@ -5156,17 +5275,17 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<v
     // both halves of that answer, and the exit code stays non-zero either way.
     let repairError: unknown;
     try {
-      await repairService();
+      await repairService({ verb });
     } catch (error) {
       repairError = error;
-      console.error(`❌ Service repair failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`❌ Service ${verb} failed: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;
     }
     // All three platforms: a repair that reports success while nothing serves is the
     // defect class this unit exists to close. Windows bakes its port into the
     // scheduler wrapper or the WinSW XML, both of which installedServiceListenPort()
     // now reads.
-    await reportServiceServing("repaired");
+    await reportServiceServing(verb === "restart" ? "restarted" : "repaired");
     if (repairError !== undefined) process.exitCode = 1;
     return;
   }
@@ -5307,8 +5426,8 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<v
     default:
       console.error("Usage: ocx service [install|repair|restart|start|stop|status|uninstall|remove] [--native|--scheduler]");
       console.error("       With no subcommand, installs when absent or repairs/restarts an existing service.");
-      console.error("       repair: refresh and restart the installed backend; stale Windows tasks may request admin approval.");
-      console.error("       restart: alias of repair.");
+      console.error("       repair: refresh the installed backend, reloading it only when the definition changed; stale Windows tasks may request admin approval.");
+      console.error("       restart: the same refresh, but always restarts the service — on macOS a healthy job is kickstarted in place.");
       console.error("       --native (Windows only): register a real SCM service via WinSW instead of Task Scheduler.");
       process.exit(1);
   }

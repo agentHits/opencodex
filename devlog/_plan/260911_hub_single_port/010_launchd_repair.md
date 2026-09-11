@@ -7,8 +7,9 @@ Scope: `src/service.ts` macOS path only, plus the two shared test-safety guards 
 uncovered. Defects 3 and 4 from the issue (secondary-port misdiagnosis, `ocx status` fence
 comparison) are deliberately left to PR2, which owns the loopback listener.
 
-Two rounds. The first is the three commits below; the second folds in a review of them, and
-every fix it carries is marked in place. In short: the new protocol was still asking the OLD
+Three rounds. The first is the three commits below; the second folds in a review of them, and
+every fix it carries is marked in place; the third (section E) makes `ocx service restart`
+actually restart, which the second round's no-op had quietly turned into a no-op of its own. In short: the new protocol was still asking the OLD
 two-state `launchdJobMatchesPlist` at both decision points (so an unreadable `launchctl print`
 still evicted a healthy hub, twice), the no-op pre-check compared whole-file bytes while
 `buildPlist` bakes the repairing process's `PATH`, the comment justifying `kickstart -k` was
@@ -140,6 +141,56 @@ stopped something, and the install-cleanup `stop` did the same before laying new
 live manager. The cleanup `stop` now treats 0/3/112/113 as benign per domain
 (`launchctlBootoutBenign`) and throws on anything else, so it still fails closed.
 
+### E — the `restart` verb (follow-up round)
+
+The no-op in A/1 has a second half. `ocx service restart` maps to the repair path, so once
+`installLaunchd` started returning early on a healthy loaded-current job, a restart of a
+healthy macOS service restarted **nothing** — and the operator docs had to tell people to run
+`launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy` themselves, which is the opposite of
+the "simpler commands" goal.
+
+- `installLaunchd` now returns `LaunchdInstallOutcome { reloaded }`. `false` is the no-op path
+  and only that path: the plist was not rewritten, launchd was not touched, the job is the
+  same process it was. `platformOps` wraps the call, because `ServiceOps.install` promises
+  nothing about a return value.
+- `repairService` takes a `verb: "repair" | "restart"`. On darwin, `restart` + `reloaded:
+  false` runs `restartLaunchdJob()`: `launchctl kickstart -k gui/<uid>/<label>`, verified with
+  `probeLaunchdLoadState` against the exec line an install would bake, logging one line —
+  `service restarted (launchctl kickstart -k gui/<uid>/com.opencodex.proxy).` An `unknown`
+  probe warns (it is not evidence); `not-loaded`/`loaded-stale`/a failed kickstart throw with
+  the manual command, and the repair branch still runs its `reportServiceServing` health wait.
+  `kickstart -k` is the right verb here precisely because it opens no eviction window — and it
+  cannot publish bytes, which is irrelevant when there are none to publish.
+- **`repair` keeps the no-op.** A repair of a healthy service must not be an outage; only the
+  verb that promises a new process costs one.
+- `normalizeServiceSubcommand` no longer folds `restart` into `repair`; `serviceCommand`'s
+  repair branch accepts both and passes the verb down, and reports `restarted` rather than
+  `repaired`. A BARE `ocx service` still selects `repair` — it is an idempotent "make it
+  current", not a request to bounce a healthy hub.
+- **Windows and Linux are unchanged.** The scheduler repair already stops then starts the
+  task, WinSW repair restarts the service, and `installSystemd` ends in an unconditional
+  `systemctl --user restart`, so neither platform has a no-op to compensate for and neither
+  reads the verb. Checked rather than assumed — the Linux installer was the one that could
+  have had the same problem.
+- `src/cli/version-skew.ts` now advises `ocx service restart` instead of
+  `ocx service repair (restart is an alias)`: a version skew leaves the definition byte-
+  identical, so repair would no-op and keep the old process serving. `src/cli/registry.ts`
+  describes the two verbs separately; the `service` usage error does too.
+
+Tests (8 new cases in `tests/service/launchd-repair.test.ts`, 54 total): restart of a healthy
+loaded-current job runs exactly `kickstart -k` on the gui domain and no `bootout`/`bootstrap`;
+repair of the same state runs zero launchctl calls and never reaches the restarter; restart of
+a not-loaded job takes the ordinary evict/bootstrap path with no kickstart; `installLaunchd`
+returns `{ reloaded: false }` / `{ reloaded: true }` for the two paths; `restartLaunchdJob`
+prints the one line naming the command, throws when the job is gone afterwards, and only warns
+on `unknown`; a source-oracle case pins the darwin wiring (restart verb only, real default
+restarter) and the unconditional `systemctl --user restart`. `tests/service/service.test.ts`
+covers the verb surviving `normalizeServiceSubcommand`/`planServiceCommand`/
+`selectServiceSubcommand` and the shared dispatch branch. Every case injects `restartLaunchd`
+or the launchctl seam: the default would kickstart the live hub, and `kickstart` is not on the
+live-service-manager guard's read-only list, so a default call from an armed test process
+fails closed.
+
 ### Two test-safety guards this work uncovered
 
 Both were pre-existing, and both were hitting this machine.
@@ -269,7 +320,8 @@ record; it references nothing and is harmless.
 
 ## Tests
 
-`tests/service/launchd-repair.test.ts` (46 cases), registered in
+`tests/service/launchd-repair.test.ts` (54 cases — 46 from the first two rounds plus 8 for the
+restart verb in section E), registered in
 `scripts/test-layout/layout.json` and `tests/fixtures/test-layout-expected.json`. The five
 obsolete `installLaunchd` cases in `tests/service/service.test.ts` (which asserted the `load`
 verb) were removed and replaced by a pointer comment; two new `stableLauncherEntry` cases were
@@ -307,6 +359,23 @@ filter plus its fail-loud write path, stop/uninstall, and the shared systemd lau
 ## Verification
 
 Run from the worktree with `node_modules` symlinked.
+
+Second round (the `restart` verb):
+
+```
+bun run typecheck                                    → clean (no output)
+bun test tests/service/launchd-repair.test.ts        → 54 pass, 0 fail, 195 expect()
+bun test tests/service/service.test.ts               → 205 pass, 0 fail, 674 expect()
+bun test tests/cli/cli-version-skew.test.ts          → 29 pass, 0 fail
+bun test tests/cli/cli-help.test.ts                  → 17 pass, 0 fail
+bun run privacy:scan                                 → Privacy scan passed
+```
+
+Host state re-verified afterwards, read-only: plist 1985 bytes / state 320 bytes (both
+unchanged, same mtime), `/healthz` on 10100 → 200. No `launchctl` mutation of the live label at
+any point — `kickstart` included.
+
+First round:
 
 ```
 bun run typecheck                                    → clean (no output)

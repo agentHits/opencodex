@@ -32,12 +32,19 @@ import {
   installLaunchd,
   launchdEvictionTargets,
   probeLaunchdLoadState,
+  repairService,
   resolvedProxyEnv,
+  restartLaunchdJob,
   reusePreviousPlistPathVariable,
   runLaunchctl,
   stableLauncherEntry,
 } from "../../src/service";
-import type { LaunchdLoadProbe, LaunchdLoadState } from "../../src/service";
+import type {
+  LaunchdLoadProbe,
+  LaunchdLoadState,
+  ServiceDiagnostic,
+  ServiceRepairVerb,
+} from "../../src/service";
 import { protectedLaunchAgentsDirForTests } from "../../src/lib/test-home-guard";
 import { repoPath } from "../helpers/repo-root";
 
@@ -136,6 +143,19 @@ function fixturePlist(): string {
 /** The plist `installLaunchd` will render in this process, for the byte-identical case. */
 function renderedPlist(): string {
   return buildPlist(resolvedProxyEnv(), { launcher: stableLauncherEntry() });
+}
+
+/** Collect `console.log` lines for the one case whose contract IS the printed line. */
+function captureLog(body: () => void): string[] {
+  const lines: string[] = [];
+  const previous = console.log;
+  console.log = (...parts: unknown[]) => { lines.push(parts.join(" ")); };
+  try {
+    body();
+  } finally {
+    console.log = previous;
+  }
+  return lines;
 }
 
 describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => {
@@ -593,6 +613,186 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
   });
 });
 
+/**
+ * The other half of the no-op (#4249).
+ *
+ * `ocx service restart` runs the repair path, so once `installLaunchd` learned to return
+ * early on a healthy loaded-current job, `restart` of a healthy service restarted NOTHING —
+ * and the operator documentation had to tell people to run
+ * `launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy` by hand. `repair` keeps the
+ * no-op (repairing a healthy service must not be an outage); only `restart` kicks.
+ *
+ * `restartLaunchd` is injected in every case here. Its default is the real
+ * `restartLaunchdJob`, which would kickstart the live hub on this machine.
+ */
+describe("restart restarts, repair stays a no-op (#4249)", () => {
+  const healthyDiag: ServiceDiagnostic = {
+    supported: true,
+    installed: true,
+    enabled: true,
+    running: true,
+    viable: true,
+    startable: false,
+    stale: false,
+    conflict: false,
+    backend: "launchd",
+    summary: "installed and loaded (launchd; gui/501)",
+  };
+
+  /**
+   * Every `repairService` seam a darwin case can reach, owned by the case. `restartLaunchd`
+   * records the call AND runs the real `restartLaunchdJob` over the same scripted launchctl,
+   * so the argv assertions below cover the verb it actually spawns.
+   */
+  function darwinDeps(
+    verb: ServiceRepairVerb,
+    plistPath: string,
+    launchctl: typeof runLaunchctl,
+    probe: typeof probeLaunchdLoadState,
+    restarts: string[],
+  ) {
+    return {
+      platform: "darwin" as const,
+      verb,
+      diagnose: () => healthyDiag,
+      assertEnv: () => {},
+      assertAuth: () => {},
+      repairLaunchd: () => installLaunchd({ launchctl, plistPath, probe, sleepSync: () => {} }),
+      restartLaunchd: () => {
+        restarts.push("restart");
+        restartLaunchdJob({ launchctl, probe });
+      },
+    };
+  }
+
+  test("restart of a healthy loaded-current job kickstarts the gui domain and never boots it out", async () => {
+    const plistPath = fixturePlist();
+    writeFileSync(plistPath, renderedPlist(), "utf8");
+    const { argv, launchctl } = recordingLaunchctl({});
+    const restarts: string[] = [];
+
+    await repairService(darwinDeps("restart", plistPath, launchctl, loadedCurrent().probe, restarts));
+
+    expect(restarts).toEqual(["restart"]);
+    // THE fix: one verb, and it is not an eviction. `kickstart -k` restarts what the domain
+    // already holds, so the listener never goes away.
+    expect(verbs(argv)).toEqual(["kickstart"]);
+    expect(argv[0]?.slice(1, 2)).toEqual(["-k"]);
+    expect(argv[0]?.[2]).toMatch(/^gui\/\d+\/com\.opencodex\.proxy$/);
+    expect(verbs(argv)).not.toContain("bootout");
+    expect(verbs(argv)).not.toContain("bootstrap");
+    // The definition was never rewritten, so there is nothing to roll back.
+    expect(existsSync(`${plistPath}.prev`)).toBe(false);
+  });
+
+  test("repair of the very same state restarts nothing at all", async () => {
+    const plistPath = fixturePlist();
+    writeFileSync(plistPath, renderedPlist(), "utf8");
+    const { argv, launchctl } = recordingLaunchctl({});
+    const restarts: string[] = [];
+
+    await repairService(darwinDeps("repair", plistPath, launchctl, loadedCurrent().probe, restarts));
+
+    // A repair of a healthy hub is still zero launchctl calls — the #4236 property. Only the
+    // restart verb may cost the operator a process.
+    expect(argv).toEqual([]);
+    expect(restarts).toEqual([]);
+  });
+
+  test("restart of a job that is NOT loaded takes the ordinary bootstrap path, with no kickstart", async () => {
+    const plistPath = fixturePlist();
+    const { argv, launchctl } = recordingLaunchctl({ bootstrap: [ok()] });
+    const restarts: string[] = [];
+
+    await repairService(darwinDeps(
+      "restart",
+      plistPath,
+      launchctl,
+      // Pre-check: absent. Verification after the bootstrap: loaded.
+      scriptedProbe("not-loaded", "loaded-current").probe,
+      restarts,
+    ));
+
+    // The install path already started a NEW process, so kicking it again would be a second
+    // restart of a job that is one second old. (`print` is the settle probe between the two
+    // evictions and the bootstrap.)
+    expect(verbs(argv)).toEqual(["bootout", "print", "bootout", "print", "bootstrap"]);
+    expect(verbs(argv)).not.toContain("kickstart");
+    expect(restarts).toEqual([]);
+  });
+
+  test("installLaunchd reports which path it took, because that is the only way to know", () => {
+    const noop = fixturePlist();
+    writeFileSync(noop, renderedPlist(), "utf8");
+    expect(installLaunchd({
+      launchctl: recordingLaunchctl({}).launchctl,
+      plistPath: noop,
+      probe: loadedCurrent().probe,
+      sleepSync: () => {},
+    })).toEqual({ reloaded: false });
+
+    const reloaded = fixturePlist();
+    expect(installLaunchd({
+      launchctl: recordingLaunchctl({ bootstrap: [ok()] }).launchctl,
+      plistPath: reloaded,
+      probe: scriptedProbe("not-loaded", "loaded-current").probe,
+      sleepSync: () => {},
+    })).toEqual({ reloaded: true });
+  });
+
+  test("restartLaunchdJob verifies with the probe and says what it ran", () => {
+    const { argv, launchctl } = recordingLaunchctl({});
+    const logged = captureLog(() => restartLaunchdJob({ launchctl, probe: loadedCurrent().probe }));
+
+    expect(verbs(argv)).toEqual(["kickstart"]);
+    // One line, naming the exact command, so an operator reading the output can repeat it.
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("service restarted (launchctl kickstart -k gui/");
+    expect(logged[0]).toContain("/com.opencodex.proxy)");
+  });
+
+  test("a kickstart whose job is gone afterwards throws instead of claiming a restart", () => {
+    const { launchctl } = recordingLaunchctl({ kickstart: fail(113, "Could not find service") });
+
+    expect(() => restartLaunchdJob({ launchctl, probe: scriptedProbe("not-loaded").probe }))
+      .toThrow(/could not restart com\.opencodex\.proxy[\s\S]*NOT loaded[\s\S]*kickstart -k gui\//);
+  });
+
+  test("an unverifiable state after the kick warns — a probe that cannot answer is not a failure", () => {
+    const { launchctl } = recordingLaunchctl({});
+    const warned: string[] = [];
+    const previous = console.warn;
+    console.warn = (...parts: unknown[]) => { warned.push(parts.join(" ")); };
+    try {
+      // `unknown` is never evidence: EPERM from a non-Aqua context says nothing about the job.
+      restartLaunchdJob({
+        launchctl,
+        probe: scriptedProbe({ state: "unknown", detail: "launchctl could not be run" }).probe,
+      });
+    } finally {
+      console.warn = previous;
+    }
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain("could not be verified");
+  });
+
+  test("the kick is wired to the restart verb only, and defaults to the real job restarter", () => {
+    const source = readFileSync(repoPath("src", "service.ts"), "utf8");
+    const branch = source.slice(
+      source.indexOf('if (platform === "darwin") {', source.indexOf("export async function repairService(")),
+      source.indexOf("throw new Error(`Background service repair is unsupported"),
+    );
+    expect(branch).toContain("const outcome = (deps.repairLaunchd ?? installLaunchd)();");
+    expect(branch).toContain('if ((deps.verb ?? "repair") === "restart" && outcome?.reloaded === false) {');
+    expect(branch).toContain("(deps.restartLaunchd ?? restartLaunchdJob)();");
+    // Linux needs no equivalent: `installSystemd` ends in an unconditional restart, so the
+    // systemd unit is bounced whichever verb asked. Windows stops and starts the task.
+    expect(branch).toContain("(deps.repairSystemd ?? installSystemd)();");
+    expect(source.slice(source.indexOf("function installSystemd()"), source.indexOf("function startSystemd()")))
+      .toContain("sh(`systemctl --user restart ${TASK}`);");
+  });
+});
+
 describe("reusePreviousPlistPathVariable: PATH is the one difference repair may ignore", () => {
   const plist = (path: string, port = 10100): string =>
     `<dict>\n  <key>PATH</key><string>${path}</string>\n  <key>Port</key><string>${port}</string>\n</dict>\n`;
@@ -781,16 +981,16 @@ describe("the surfaces around the repair (#4236 defects 1f, 1h, 2)", () => {
   }
 
   test("the repair branch still reports serving when repairService throws (1f)", () => {
-    const branch = slice('if (command === "repair") {', "// Non-install subcommands follow");
+    const branch = slice('if (command === "repair" || command === "restart") {', "// Non-install subcommands follow");
     // Without the catch, a throw escaped through src/cli/dispatch.ts to the top level and
     // the one command that can evict a hub never reached its own serving check.
     expect(branch).toContain("try {");
-    expect(branch).toContain("await repairService();");
+    expect(branch).toContain("await repairService({ verb });");
     expect(branch).toContain("} catch (error) {");
-    expect(branch).toContain('await reportServiceServing("repaired");');
+    expect(branch).toContain('await reportServiceServing(verb === "restart" ? "restarted" : "repaired");');
     expect(branch).toContain("process.exitCode = 1;");
     // The serving check must not be inside the try, or a throw would still skip it.
-    expect(branch.indexOf("} catch (error) {")).toBeLessThan(branch.indexOf('reportServiceServing("repaired")'));
+    expect(branch.indexOf("} catch (error) {")).toBeLessThan(branch.indexOf("reportServiceServing(verb ==="));
   });
 
   test("install cleanup uses the same probe and the modern evict verb (1h, 2)", () => {

@@ -64,8 +64,9 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
     usage: "ocx service [install|repair|restart|start|stop|status|uninstall|remove]",
     summary: "Run as a background service.",
     details: [
-      "With no subcommand, installs when absent or repairs/restarts an existing service.",
-      "`restart` aliases `repair`; healthy Windows tasks are reused, while stale definitions may re-register and elevate.",
+      "With no subcommand, installs when absent or repairs an existing service.",
+      "`repair` refreshes the definition and reloads the manager only when something changed, so repairing a healthy service is not an outage.",
+      "`restart` is the same refresh but always restarts: on macOS an unchanged, already-loaded job is kickstarted in place. Healthy Windows tasks are reused, while stale definitions may re-register and elevate.",
       "Use `ocx service status` to see diagnostics and log paths.",
     ],
   },

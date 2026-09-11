@@ -242,7 +242,11 @@ describe("systemd service unit", () => {
 
   test("bare service installs only when absent and otherwise selects no-admin repair", async () => {
     expect(normalizeServiceSubcommand()).toBe("install");
-    expect(normalizeServiceSubcommand("restart")).toBe("repair");
+    // `restart` is NOT folded into `repair` any more (#4249). It shares the whole repair path
+    // and diverges only in `repairService`, which kickstarts the macOS job that repair's
+    // no-op deliberately leaves running — collapsing the verbs here made `ocx service
+    // restart` of a healthy service restart nothing.
+    expect(normalizeServiceSubcommand("restart")).toBe("restart");
     expect(normalizeServiceSubcommand("start")).toBe("start");
     expect(normalizeServiceSubcommand("nope")).toBe("nope");
 
@@ -289,11 +293,31 @@ describe("systemd service unit", () => {
     expect(explicitInstall).toMatchObject({ ok: true, command: "install" });
     expect(probes).toBe(0);
 
+    // An explicit `restart` survives planning as itself, and like every explicit subcommand
+    // it never probes for installation. A BARE invocation still chooses `repair`: it is an
+    // idempotent "make it current", not a request to bounce a healthy hub.
+    probes = 0;
+    const explicitRestart = planServiceCommand(["restart"], {
+      probeInstallation: () => { probes += 1; return { state: "installed" }; },
+    });
+    expect(explicitRestart).toMatchObject({ ok: true, command: "restart" });
+    expect(probes).toBe(0);
+    expect(selectServiceSubcommand(parseServiceArgs(["restart"]), {
+      hasExplicitSubcommand: true,
+      installed: true,
+    })).toBe("restart");
+
     const service = await readText("src/service.ts");
     const serviceCommand = service.slice(service.indexOf("export async function serviceCommand"));
     expect(serviceCommand).toContain("const plan = planServiceCommand(filteredArgs);");
     expect(serviceCommand).toContain("const { parsed, command } = plan;");
     expect(serviceCommand).toContain("switch (command)");
+    // Both verbs enter the shared repair branch, which hands the distinction to
+    // `repairService` rather than dispatching twice. Without the second half of the
+    // condition, `restart` would fall through to the usage error.
+    expect(serviceCommand).toContain('if (command === "repair" || command === "restart") {');
+    expect(serviceCommand).toContain('const verb: ServiceRepairVerb = command === "restart" ? "restart" : "repair";');
+    expect(serviceCommand).toContain("await repairService({ verb });");
   });
 
   test("Windows install presence distinguishes unknown queries from proven absence", () => {
