@@ -432,3 +432,60 @@ satisfy it: the description must contain a rendered embed. A relative path passe
 renders nothing on GitHub, so the description uses an absolute `raw.githubusercontent.com` URL
 pointing at the committed file on this branch. The waiver is a maintainer COMMENT, not a label.
 
+### wp5b SPEC — supersedes "Change surface", "The screenshot" and "Acceptance" above
+
+Those three sections predate the audit and disagree with it. This is the spec.
+
+**Change surface.**
+
+NEW `gui/src/pool-settings.ts`, one client for `/api/pool/settings`:
+
+- `getPoolSettings(apiBase, provider)` — `GET ?provider=<name>`, returns the unified DTO.
+- `putPoolSettings(apiBase, provider, fields)` — `PUT`, and it owns an explicit REQUEST
+  mapping rather than forwarding whatever it is handed:
+  - `provider` is ALWAYS sent, and Codex is addressed as `provider: "openai"`.
+  - the Codex threshold field `threshold` becomes `autoSwitchThreshold`.
+  - `strategy` and `stickyLimit` already match and pass through unmapped.
+
+  Without that mapping a URL swap returns 200 and writes nothing, because the route ignores an
+  unknown field — and the caller only inspects `response.ok`, so the dashboard would report
+  success on every save. That is the specific failure this mapping exists to prevent.
+
+MODIFY `gui/src/codex-auto-switch.ts` `putAutoSwitchThreshold` and
+`gui/src/account-pool-strategy.ts` `putCodexPoolStrategy`: same exported signatures, bodies
+delegating through the client, and the `accountPoolStrategy`/`accountPoolStickyLimit` response
+parsing replaced by the DTO's neutral keys.
+
+MODIFY `gui/src/components/provider-workspace/AnthropicAccountPoolSettings.tsx`: read and write
+through the client.
+
+MOVE WITH IT — four test files pin the old URLs and payloads and are part of this change, not
+collateral: `gui/tests/account-pool-strategy.test.tsx`,
+`gui/tests/anthropic-pool-quota-window.test.tsx`, `gui/tests/codex-account-auto-switch.test.tsx`,
+`gui/tests/codex-auto-switch-controller.test.tsx`.
+
+UNCHANGED ON PURPOSE — `GET /api/codex-auth/active`. The dashboard reads the Codex threshold and
+strategy from that mixed pin + failover + pool payload in one request, and wp5c deliberately did
+not have the unified GET copy it. This phase migrates the three pool WRITE contracts, not that
+read.
+
+**Acceptance.**
+
+- `rg` over `gui/` returns no hit for `/api/codex-auth/auto-switch`,
+  `/api/codex-auth/pool-strategy` or `/api/oauth/accounts/pool` — the three legacy WRITE
+  contracts. `/api/codex-auth/active` is expected to remain and is not part of this grep.
+- The four test files above assert the unified path and the mapped request body, including
+  `autoSwitchThreshold` rather than `threshold`.
+- `bun run lint:gui` passes and the GUI suites pass.
+- Red control: with the request mapping removed, the auto-switch save test must fail — the point
+  is that it would otherwise pass silently.
+
+**The screenshot.**
+
+The gate fires on `gui/` PATH CHANGES, not on a title cue, so it applies. A committed PNG alone
+does NOT satisfy it. The description must carry a rendered embed — `![alt](url)`,
+`<img src="...">`, or a reference form — outside comments and fences. A relative path passes the
+regex but renders nothing, so the PNG is committed under the plan unit and the description
+embeds its absolute `raw.githubusercontent.com` URL on this branch. The only waiver is a
+maintainer COMMENT, which is not something this cycle can issue for itself.
+
