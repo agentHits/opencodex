@@ -583,6 +583,13 @@ const commandRunners: Record<string, CommandRunner> = {
       },
     });
   },
+  hub: async deps => {
+    const { runHubCommand } = await import("./hub");
+    return runHubCommand(deps.args.slice(1), {
+      loadConfig: deps.loadConfig,
+      findLiveProxy: deps.findLiveProxy,
+    });
+  },
   service: async deps => {
     process.exitCode = 0;
     await deps.serviceCommand(...deps.args.slice(1));

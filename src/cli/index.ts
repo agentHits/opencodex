@@ -48,7 +48,7 @@ import {
   pendingTeardownPathFor,
   quarantinePendingTeardown,
 } from "../config/pending-teardown";
-import { collectStatus, unusedProxyWarningLines } from "./status";
+import { collectStatus, hubStatusLines, unusedProxyWarningLines } from "./status";
 import { endpointsToProve, everyEndpointProvenDown, sharedTeardownAuthorized, type UninstallObservation } from "./uninstall-plan";
 import { takeFlag } from "./runtime-api";
 
@@ -1434,6 +1434,11 @@ async function handleStatus() {
   console.log(`   Runtime: ${status.json.paths.runtime}`);
   console.log(`   Runtime source: ${status.json.runtime.source}${status.json.runtime.overrideEnv ? ` (${status.json.runtime.overrideEnv})` : ""}`);
   console.log(`   Default provider: ${status.json.defaultProvider}`);
+  // One block rather than six scattered lines, and only on a hub: `hubStatusLines` owns the
+  // sentences so they are testable without spawning the CLI. It prints no token value.
+  if (status.json.hub) {
+    for (const line of hubStatusLines(status.json.hub)) console.log(`   ${line}`);
+  }
   console.log(`   Remote hub: ${status.json.connection.state}${status.json.connection.serverUrl ? ` (${status.json.connection.serverUrl})` : ""}`);
   if (status.json.connection.state === "invalid" || status.json.connection.state === "mismatched") {
     console.log(`   ⚠️  ${status.json.connection.reason}`);

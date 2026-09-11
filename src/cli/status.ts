@@ -18,9 +18,30 @@ import { effectiveLoopbackListenerPort } from "../codex/loopback-target";
 import { claudeDesktopIntegrationEnabled } from "../codex/desired-state";
 import { claudeDesktopPolicyHealth, probeClaudeDesktopPolicy, type ClaudeDesktopPolicyHealth } from "../claude/desktop-policy";
 import { collectClientConnectionStatus } from "./connect";
+import { readServiceApiTokenState, serviceApiTokenFilePath } from "../lib/service-secrets";
 export { proxyHealthFailureReason, isConnectionRefused, isUncleanExitEvidence, probeUncleanExitState } from "./status-probes";
 export type { ListenTarget } from "./status-probes";
 import { checkProxyHealth, probeUncleanExitState, type ListenTarget } from "./status-probes";
+
+/** Where the data-plane admission secret comes from. Source only -- never the value. */
+export type HubDataTokenState = "present (env)" | "present (file)" | "unsafe (file)" | "missing";
+
+export type HubStatus = {
+  /** Advertised data origin: hub.dataPublicOrigin, else derived from the bind address. */
+  dataOrigin: string;
+  /** True when dataOrigin came from config rather than being derived from the bind. */
+  dataOriginConfigured: boolean;
+  /**
+   * The unauthenticated loopback listener, in PR2's two forms: `companion` shares the public
+   * port (the one-port hub), `ported` binds its own. `off` means the hub does not serve its
+   * own local clients at all.
+   */
+  loopbackListener: { state: "off" | "companion" | "ported"; port: number | null };
+  managementIngress: { enabled: boolean; port: number | null };
+  managementPublicOrigin: string | null;
+  dataToken: HubDataTokenState;
+  dataTokenPath: string;
+};
 
 export type CliStatusJson = {
   schemaVersion: 1;
@@ -90,6 +111,18 @@ export type CliStatusJson = {
     policy: ClaudeDesktopPolicyHealth;
   };
   /**
+   * The hub-only facts an operator needs in one place, or null on a standalone/client machine.
+   *
+   * Scattered across the report they were unusable: the public data origin came from `listen`,
+   * the management origin was folded into `dashboard.url`, the loopback companion appeared
+   * nowhere, and the data-plane token appeared nowhere at all -- so the one question a hub
+   * operator actually asks ("is this reachable, and can another machine join?") took four other
+   * commands to answer. Additive and nullable, so `schemaVersion` stays 1.
+   *
+   * Never carries a token value; only which source holds one.
+   */
+  hub: HubStatus | null;
+  /**
    * This CLI's version against the running proxy's (#2701).
    *
    * Additive and optional-by-value, so `schemaVersion` stays 1: an existing consumer that
@@ -118,6 +151,72 @@ function statusDashboardUrl(config: StatusListenConfig, hostname: string | undef
     ? "localhost"
     : reachableHostname;
   return `http://${dashboardHostname}:${port}/`;
+}
+
+/**
+ * The hub block, or null when this machine is not a hub.
+ *
+ * `env` wins over `file` because that is the service's own precedence
+ * (`writeServiceApiTokenFile`): the launch wrapper exports OPENCODEX_API_AUTH_TOKEN from the
+ * file only when the calling environment has none, so reporting the file first would name a
+ * source the running process is not using.
+ *
+ * The token VALUE is never read into the report. `readServiceApiTokenState` returns it, and the
+ * only thing taken from that result is `kind`.
+ */
+export function collectHubStatus(
+  config: Pick<OcxConfig, "runtimeRole" | "hostname" | "port" | "hub" | "unauthenticatedLoopbackListener">,
+  listen: { port: number; hostname?: string | null },
+  env: NodeJS.ProcessEnv = process.env,
+): HubStatus | null {
+  if (config.runtimeRole !== "hub") return null;
+  const listener = config.unauthenticatedLoopbackListener;
+  const loopbackPort = effectiveLoopbackListenerPort(config, listen.port);
+  const ingress = config.hub?.managementIngress;
+  const configuredDataOrigin = config.hub?.dataPublicOrigin;
+  const host = probeHostname(listen.hostname ?? config.hostname);
+  const tokenState = env.OPENCODEX_API_AUTH_TOKEN?.trim()
+    ? "present (env)" as const
+    : ((): HubDataTokenState => {
+      const state = readServiceApiTokenState();
+      return state.kind === "present" ? "present (file)" : state.kind === "unsafe" ? "unsafe (file)" : "missing";
+    })();
+  return {
+    dataOrigin: configuredDataOrigin
+      ?? `http://${host === "127.0.0.1" ? "localhost" : host}:${listen.port}`,
+    dataOriginConfigured: Boolean(configuredDataOrigin),
+    loopbackListener: loopbackPort === null
+      ? { state: "off", port: null }
+      : { state: listener?.enabled && listener.port === undefined ? "companion" : "ported", port: loopbackPort },
+    managementIngress: {
+      enabled: ingress?.enabled === true,
+      port: ingress?.enabled === true ? ingress.port : null,
+    },
+    managementPublicOrigin: config.hub?.managementPublicOrigin ?? null,
+    dataToken: tokenState,
+    dataTokenPath: serviceApiTokenFilePath(),
+  };
+}
+
+/**
+ * The human rendering of the hub block, owned here rather than in the `ocx status` printer so
+ * the sentences are testable without spawning the CLI. Indentation is the caller's.
+ */
+export function hubStatusLines(hub: HubStatus): string[] {
+  const listener = hub.loopbackListener.state === "off"
+    ? "off — this hub does not route its own local Codex/Claude clients"
+    : hub.loopbackListener.state === "companion"
+      ? `companion on http://127.0.0.1:${hub.loopbackListener.port} — same port as the public listener, no credential needed locally`
+      : `ported on http://127.0.0.1:${hub.loopbackListener.port} — a second port local clients must be pointed at`;
+  return [
+    "Hub:",
+    `  Data origin: ${hub.dataOrigin}${hub.dataOriginConfigured ? " (hub.dataPublicOrigin)" : " (derived from the bind address)"}`,
+    `  Loopback listener: ${listener}`,
+    `  Management ingress: ${hub.managementIngress.enabled ? `http://127.0.0.1:${hub.managementIngress.port}` : "disabled"}`,
+    `  Management origin: ${hub.managementPublicOrigin ?? "unset — remote pairing and the remote dashboard need hub.managementPublicOrigin"}`,
+    `  Data token: ${hub.dataToken}${hub.dataToken === "present (file)" || hub.dataToken === "unsafe (file)" ? ` at ${hub.dataTokenPath}` : ""}`,
+    "  Invite a machine: ocx hub invite",
+  ];
 }
 
 export function selectListenTarget(
@@ -357,6 +456,7 @@ export async function collectStatus(): Promise<CliStatusView> {
         source: bunRuntime.source,
         ...(bunRuntime.source === "override" ? { overrideEnv: bunRuntime.overrideEnv } : {}),
       },
+      hub: collectHubStatus(config, listen),
       codexAutostart: codexAutoStartEnabled(config),
       startup,
       defaultProvider: typeof config.defaultProvider === "string" ? config.defaultProvider : null,
