@@ -732,21 +732,24 @@ describe("server 429 key failover (end-to-end)", () => {
 
   /**
    * The two cases above pin the behaviour but not the PATH: an `openai-chat` provider sends
-   * /v1/chat/completions through `handleNativeChatCompletions`, so the independently changed
-   * pick in `responses/core.ts` never runs. This one goes through /v1/responses.
+   * /v1/chat/completions through `handleNativeChatCompletions`, so the pick in
+   * `responses/core.ts` never runs in either of them. This one goes through /v1/responses, so
+   * the independently changed core call site is actually covered.
    *
-   * It also pins what a naive pick gets wrong. The picker answers with the PERSISTED row,
-   * which carries none of the backfills `routedProviderConfig` merges in at request time --
-   * and one of those is the API key itself: a stored `\${VAR}` reference is resolved there and
-   * nowhere in the adapter. Assigning the picked row to `route.provider` wholesale therefore
-   * sends the literal reference as the bearer token. `adapter` and `baseUrl` are not the
-   * demonstrable half of this, because the config schema requires both on a stored row; the
-   * resolved credential is.
+   * The pool keys are stored as `\${VAR}` references on purpose. Reference resolution is one of
+   * the backfills `routedProviderConfig` applies and the adapter does not, so the upstream
+   * bearer proves the route the core path dispatched was a rebuilt one rather than the
+   * picker's persisted snapshot.
    *
-   * Red control: swap `selectProactiveApiKeyTransport` back for `selectProactiveApiKey` in
-   * core.ts and the upstream sees `Bearer \${OCX_KEYFAIL_WARM}` verbatim.
+   * Red control: remove the pick from core.ts and the upstream sees `Bearer resolved-cooled`,
+   * because the committed selection still points at the cooled key.
+   *
+   * What this case does NOT prove is the Transport-vs-snapshot distinction on this path:
+   * `refreshDispatchAdapter` re-derives the transport from config before dispatch, so the
+   * Responses core self-heals a wholesale assignment. That contract is pinned as a unit in
+   * tests/adapters/key-failover.test.ts, where it has a red control that actually fails.
    */
-  test("the Responses core pick keeps the route's resolved credential", async () => {
+  test("the Responses core pick reaches the warm key through /v1/responses", async () => {
     const seen: string[] = [];
     upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
       seen.push(req.headers.get("authorization") ?? "");

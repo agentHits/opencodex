@@ -21,6 +21,7 @@ import {
 import {
   forgetApiKeyRotationCursor,
   selectProactiveApiKey,
+  selectProactiveApiKeyTransport,
 } from "../../src/providers/key-failover";
 import { resolveOpenCodeGoTransport } from "../../src/providers/opencode-go-transport";
 import { deriveXaiConvId } from "../../src/providers/xai-transport";
@@ -493,6 +494,49 @@ describe("rotateKeyOn401", () => {
       expect(picked).not.toBeNull();
       expect(picked?.apiKey).not.toBe("key-alpha-000111222333");
       expect(getKeyCooldownUntil("p", "k1", now)).toBeGreaterThan(now);
+    });
+
+    /**
+     * The picker answers with the PERSISTED row, so a request path that assigns it to a live
+     * route wholesale loses everything `routedProviderConfig` backfills at request time and
+     * every piece of explicit runtime transport state the route was carrying. The most
+     * load-bearing of those is the credential: a stored `\${VAR}` reference is resolved in
+     * `routedProviderConfig` and nowhere in the adapter, so the snapshot's `apiKey` is the
+     * reference itself.
+     *
+     * `selectProactiveApiKeyTransport` is the pre-dispatch twin of
+     * `rotateProviderTransportOn429` and goes through the same rebuild seam. Red control:
+     * return the snapshot from it and both the resolved credential and the retained `fetch`
+     * assertions below fail.
+     */
+    test("the Transport twin rebuilds the route the picker only snapshots", () => {
+      process.env.OCX_KEYFAILOVER_WARM = "resolved-warm-key";
+      try {
+        const config = makeConfig({
+          apiKey: "key-alpha-000111222333",
+          apiKeyPool: [
+            { id: "k1", key: "key-alpha-000111222333", addedAt: 1 },
+            { id: "k2", key: "\${OCX_KEYFAILOVER_WARM}", addedAt: 2 },
+          ],
+          apiKeyPoolStrategy: "round-robin",
+        });
+        forgetApiKeyRotationCursor("p");
+        rotateKeyOn429(config, "p", null, now);
+        setActiveProviderApiKey(config, "p", "k1");
+        const sentinelFetch = (async () => new Response("")) as typeof fetch;
+        const routed = { ...routedProviderConfig("p", config.providers.p!), fetch: sentinelFetch };
+        const transport = selectProactiveApiKeyTransport(config, "p", routed, undefined, now);
+        expect(transport).not.toBeNull();
+        // The route gets the RESOLVED credential.
+        expect(transport?.apiKey).toBe("resolved-warm-key");
+        // Explicit runtime transport state survives the rebuild, exactly as it does on 429.
+        expect(transport?.fetch).toBe(sentinelFetch);
+        // And the persisted row still holds the reference, which is what made the wholesale
+        // assignment wrong in the first place.
+        expect(loadConfig().providers.p!.apiKey).toBe("\${OCX_KEYFAILOVER_WARM}");
+      } finally {
+        delete process.env.OCX_KEYFAILOVER_WARM;
+      }
     });
 
     test("returns null when every key is cooling", () => {
