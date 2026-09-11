@@ -15,6 +15,10 @@ import type { OcxConfig, OcxProviderConfig, RateLimitRetryPolicy, TransientRetry
 import { OPENCODE_GO_SESSION_HEADER } from "./opencode-go-transport";
 import { resolveProviderTransport, type OcxProviderTransport } from "./xai-transport";
 import { sweepExpiredOnWrite } from "../lib/state-store-sweeper";
+// quota-key-accounts imports only node:crypto, the key store and the quota types -- NOT
+// providers/quota.ts -- so the cached reader reaches the dispatch path without dragging the
+// probe machinery onto it.
+import { cachedApiKeyQuota } from "./quota-key-accounts";
 
 // ---- cooldown state (in-memory, same as codex/routing.ts) ----
 
@@ -113,6 +117,56 @@ export function forgetApiKeyRotationCursor(providerName: string): void {
   keyRotationCursor.delete(providerName);
 }
 
+/** The pool entry shape is inline on OcxProviderConfig; name it once rather than re-spelling it. */
+type ApiKeyPoolEntry = NonNullable<OcxProviderConfig["apiKeyPool"]>[number];
+
+/**
+ * Remaining headroom for one key, or null when nothing current measures it.
+ *
+ * Same definition as `headroomOf` on the OAuth side, so the two pools cannot disagree about
+ * what "more room" means. `creditsUsd` is deliberately excluded: it is a currency amount, not
+ * a percentage, and ranking one against the other produces an order that means nothing.
+ */
+function keyHeadroom(providerName: string, provider: OcxProviderConfig, entry: ApiKeyPoolEntry): number | null {
+  const quota = cachedApiKeyQuota(providerName, provider, entry.id, entry.key);
+  if (!quota) return null;
+  const percents = [
+    quota.fiveHourPercent,
+    quota.weeklyPercent,
+    quota.monthlyPercent,
+    ...(quota.customWindows ?? []).map((window: { percent?: number }) => window.percent),
+  ].filter((value): value is number => typeof value === "number");
+  if (percents.length === 0) return null;
+  return 100 - Math.max(...percents);
+}
+
+/**
+ * Order eligible keys best-first, in the same three buckets `rankAccountsByHeadroom` uses:
+ * measured-with-headroom, then unmeasured, then measured-and-spent. Ties keep the roster order.
+ *
+ * An unmeasured key is NOT assumed spent, and not assumed fresh either -- it sits between the
+ * two, which is the only honest position for a key nothing has looked at. A provider that
+ * publishes no per-key differentiation (DeepSeek reports every key at the same percent) ties
+ * across the board and falls through to the roster order, which is exactly today's behaviour.
+ */
+function rankKeysByHeadroom(
+  providerName: string,
+  provider: OcxProviderConfig,
+  eligible: readonly ApiKeyPoolEntry[],
+): ApiKeyPoolEntry[] {
+  return eligible
+    .map((entry, index) => {
+      const headroom = keyHeadroom(providerName, provider, entry);
+      const bucket = headroom === null ? 1 : headroom <= 0 ? 2 : 0;
+      return { entry, bucket, headroom: headroom ?? 0, index };
+    })
+    .sort((left, right) => (left.bucket - right.bucket)
+      || (right.headroom - left.headroom)
+      || (left.index - right.index))
+    .map(row => row.entry);
+}
+
+
 /**
  * Pick a better key BEFORE the first attempt when the committed one is already cooling.
  *
@@ -154,6 +208,10 @@ export function selectProactiveApiKey(
       chosen = candidate;
       break;
     }
+  } else if (strategy === "quota") {
+    // else-if, deliberately. `fill-first` is not a named branch here -- it is the eligible[0]
+    // default above, so replacing that default would silently retarget it.
+    chosen = rankKeysByHeadroom(providerName, provider, eligible)[0] ?? chosen;
   }
   if (chosen.key === provider.apiKey) return null;
 
