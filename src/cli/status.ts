@@ -8,7 +8,7 @@ import { diagnoseService, serviceLogPath } from "../service";
 import { collectStartupHealth, type StartupHealth } from "../codex/autostart-health";
 import { getCodexRoutingKind } from "../codex/inject";
 import { diagnoseCodexShim } from "../codex/shim";
-import { displayCodexRuntimePath, effortClampAppliesToRuntime, loadLastEffortClamp, resolveCodexRuntime } from "../codex/runtime";
+import { displayCodexRuntimePath, effortClampAppliesToRuntime, liveRemovedEfforts, loadLastEffortClamp, resolveCodexRuntime } from "../codex/runtime";
 import { packageVersion } from "./help";
 import { computeVersionSkew, type VersionSkew } from "./version-skew";
 import { redactSecretString, redactUserPath } from "../lib/redact";
@@ -573,7 +573,7 @@ export async function collectStatus(): Promise<CliStatusView> {
   }
   if (clampActive) {
     warningParts.push(
-      `Catalog clamp removed: ${lastClamp!.removedEfforts.join(", ")}. Run ocx doctor for diagnosis and recovery.`,
+      `Catalog clamp removed: ${liveRemovedEfforts(lastClamp).join(", ")}. Run ocx doctor for diagnosis and recovery.`,
     );
   }
   // A Grok fence naming a port we are not listening on is invisible everywhere else:
@@ -611,7 +611,9 @@ export async function collectStatus(): Promise<CliStatusView> {
     warning: warningParts.length > 0 ? warningParts.join(" ") : null,
     catalogClamp: {
       active: clampActive,
-      removedEfforts: clampActive ? (lastClamp?.removedEfforts ?? []) : [],
+      // Report what is still clamped, not what the file happens to name: a leftover written
+      // before the max/ultra exemption lists rungs nothing removes any more.
+      removedEfforts: clampActive ? [...liveRemovedEfforts(lastClamp)] : [],
       runtimeVersion: clampActive ? (lastClamp?.runtimeVersion ?? null) : null,
     },
   };

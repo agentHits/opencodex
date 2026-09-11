@@ -46,6 +46,7 @@ import {
   displayCodexRuntimePath,
   persistEffortClamp,
   resolveAndPersistCodexRuntime,
+  UNCLAMPABLE_REASONING_EFFORTS,
   type EffortClampDiagnostic,
 } from "../runtime";
 
@@ -354,7 +355,13 @@ export function clampEntryToCodexSupportedEfforts(
     ? entry.supported_reasoning_levels as Array<{ effort?: string }>
     : null;
   if (levels && levels.length > 0) {
-    const kept = levels.filter(level => typeof level?.effort === "string" && supported.has(level.effort));
+    // A rung survives when the observed runtime offers it OR when it is one of the rungs the
+    // clamp no longer removes (max/ultra, per the unconditional-emission ruling): CLI versions
+    // that genuinely lack them are out of support, and hiding them from current clients costs
+    // more than it buys. Hub admission is a different question and stays fail-closed in
+    // `catalogEffortCompatibility` below.
+    const kept = levels.filter(level => typeof level?.effort === "string"
+      && (supported.has(level.effort) || UNCLAMPABLE_REASONING_EFFORTS.has(level.effort)));
     if (requiresExactReserveEfforts(entry)) {
       entry.supported_reasoning_levels = kept;
       if (kept.length === 0) {
@@ -375,7 +382,9 @@ export function clampEntryToCodexSupportedEfforts(
         .map(level => ({ ...level }));
   }
   const currentDefault = entry.default_reasoning_level;
-  if (typeof currentDefault === "string" && !supported.has(currentDefault)) {
+  if (typeof currentDefault === "string"
+    && !supported.has(currentDefault)
+    && !UNCLAMPABLE_REASONING_EFFORTS.has(currentDefault)) {
     const surviving = (Array.isArray(entry.supported_reasoning_levels) ? entry.supported_reasoning_levels : [])
       .flatMap(level => typeof (level as { effort?: string })?.effort === "string"
         ? [(level as { effort: string }).effort]

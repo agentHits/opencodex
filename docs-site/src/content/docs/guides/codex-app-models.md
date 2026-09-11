@@ -254,6 +254,14 @@ On the wire, routed adapters map or clamp unsupported tiers. For older native mo
 ladder stops at `xhigh`, `nativeEffortClamp` maps a direct `max` or an `ultra` selection to `xhigh`
 (for example, GPT-5.5). Sol, Terra, and Luna have a real `max` rung.
 
+Catalog advertisement of the two top tiers is unconditional: `ocx sync` no longer removes `max` or
+`ultra` when the installed Codex binary is too old to offer them — Codex versions without those
+rungs are out of support, and hiding them from current clients costs more than it buys. Other
+rungs are still intersected with the observed runtime ladder, and a clamp diagnostic recorded by a
+previous binary stops applying once the binary at that path reports a different version (the
+in-place upgrade case), so `ocx status` and `ocx doctor` stop warning about a clamp the upgraded
+runtime no longer needs.
+
 ## Fast tier rules
 
 Codex stores fast mode as:
