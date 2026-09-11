@@ -602,4 +602,44 @@ describe("legacy pool contract goldens (#wp5)", () => {
       await server.stop(true);
     }
   });
+
+  test("a bad strategy and a bad stickyLimit are rejected identically on every kind", async () => {
+    // One validator, three adapters. The kinds keep their own request and response shapes --
+    // that is what the goldens above pin -- but the VALUE rules are now a single implementation,
+    // so "quota, round-robin, fill-first" and the 1..100 sticky bound cannot drift apart per
+    // kind. Before this, the generic kind carried a private copy of both.
+    const codex = async (payload: Record<string, unknown>) => {
+      const req = new Request("http://localhost/api/codex-auth/pool-strategy", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const resp = await handleCodexAuthAPI(req, new URL(req.url), makeCodexConfig());
+      return resp!.status;
+    };
+    const server = startServer(0);
+    try {
+      const oauth = async (payload: Record<string, unknown>) => {
+        const res = await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+          method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+        });
+        return res.status;
+      };
+      for (const strategy of ["weighted", "", 3, null]) {
+        expect(await codex({ strategy })).toBe(400);
+        expect(await oauth({ provider: "anthropic", strategy })).toBe(400);
+        expect(await oauth({ provider: "google-antigravity", strategy })).toBe(400);
+      }
+      // 0 and 101 sit just outside the shared bound; 1 and 100 are the edges that must pass.
+      for (const stickyLimit of [0, 101, 1.5]) {
+        expect(await codex({ stickyLimit })).toBe(400);
+        expect(await oauth({ provider: "anthropic", stickyLimit })).toBe(400);
+        expect(await oauth({ provider: "google-antigravity", stickyLimit })).toBe(400);
+      }
+      for (const stickyLimit of [1, 100]) {
+        expect(await codex({ stickyLimit })).toBe(200);
+      }
+    } finally {
+      await server.stop(true);
+    }
+  });
+
 });

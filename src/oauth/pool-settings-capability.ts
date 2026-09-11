@@ -1,4 +1,5 @@
 import { isGenericFailoverProvider } from "./generic-account-failover";
+import { parseAccountPoolStickyLimit, parseAccountPoolStrategy } from "./pool-kernel";
 import type { OcxProviderConfig } from "../types";
 
 /**
@@ -28,9 +29,11 @@ export function poolSettingsCapability(name: string, provider: OcxProviderConfig
 }
 
 export function parseGenericPoolStrategy(value: unknown): GenericPoolStrategy | null {
-  return typeof value === "string" && (GENERIC_POOL_STRATEGIES as readonly string[]).includes(value)
-    ? value as GenericPoolStrategy
-    : null;
+  // Delegated, not re-implemented. Three pools accepting the same three names from three
+  // private copies of the same check is how they drift apart: the Codex and Anthropic kinds
+  // already shared this parser while the generic kind carried its own. The names and the
+  // 1..100 bound live in pool-kernel.ts, once.
+  return parseAccountPoolStrategy(value) as GenericPoolStrategy | null;
 }
 
 export function parseGenericAutoSwitchThreshold(value: unknown): number | null {
@@ -38,7 +41,7 @@ export function parseGenericAutoSwitchThreshold(value: unknown): number | null {
 }
 
 export function parseGenericStickyLimit(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 100 ? value : null;
+  return parseAccountPoolStickyLimit(value);
 }
 
 export interface GenericPoolSettingsDto {
