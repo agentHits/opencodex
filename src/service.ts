@@ -63,7 +63,7 @@ import { killWindowsSchedulerWrappers } from "./lib/windows-service-wrappers";
 import { withWindowsServiceMutationLock } from "./lib/windows-service-mutation-lock";
 import { maybeShowStarPrompt } from "./cli/star-prompt";
 import { systemdProperty } from "./service-manager-probe";
-import { isTestHomeGuardArmed } from "./lib/test-home-guard";
+import { assertNotRealLaunchAgentsUnderTest, isTestHomeGuardArmed, protectedHomeForTests } from "./lib/test-home-guard";
 
 const LABEL = "com.opencodex.proxy";
 const TASK = "opencodex-proxy";
@@ -98,11 +98,20 @@ function cliEntry(runtime: DurableBunRuntime = durableBunRuntime()): { bun: stri
  * Only an absolute path is accepted. A bare `ocx` would be re-resolved through `PATH` on
  * every restart, which turns a service definition into a PATH-hijacking surface; naming
  * one validated absolute file keeps the target fixed at install time.
+ *
+ * The RECORDED launcher wins over a fresh PATH walk. `ocx service repair` runs from
+ * whatever shell the operator (or `ocx update`, or a tray helper) happened to have, and a
+ * context without `ocx` on `PATH` used to resolve null here — rewriting a working
+ * launcher-form plist into the version-pinned Bun + CLI pair and then booting the healthy
+ * job out to load it (#4236, defect 1g). A launcher that is still an executable file is
+ * the thing the installed service already runs, so repair must keep naming it; only a
+ * recorded launcher that has disappeared falls through to discovery.
  */
 export function stableLauncherEntry(deps: {
   env?: NodeJS.ProcessEnv;
   isExecutableFile?: (path: string) => boolean;
   pathDelimiter?: string;
+  state?: ServiceInstallState | null;
 } = {}): string | null {
   const env = deps.env ?? process.env;
   const isExecutableFile = deps.isExecutableFile ?? ((path: string): boolean => {
@@ -114,6 +123,8 @@ export function stableLauncherEntry(deps: {
       return false;
     }
   });
+  const recorded = (deps.state === undefined ? readServiceInstallState() : deps.state)?.launcherPath;
+  if (recorded && isAbsolute(recorded) && isExecutableFile(recorded)) return recorded;
   const entries = (env.PATH ?? "").split(deps.pathDelimiter ?? delimiter);
   for (const entry of entries) {
     if (!entry || !isAbsolute(entry)) continue;
@@ -163,7 +174,19 @@ export function serviceStatePathsForOpenCodexHome(opencodexHome: string): string
 }
 
 function serviceStatePaths(): string[] {
-  return serviceStatePathsForOpenCodexHome(currentOpenCodexHome());
+  const paths = serviceStatePathsForOpenCodexHome(currentOpenCodexHome());
+  if (!isTestHomeGuardArmed()) return paths;
+  /*
+   * Under an armed test process the legacy default-home entry IS the developer's real
+   * `~/.opencodex/service-state.json`. It is there so an install made before
+   * OPENCODEX_HOME was set can still be found, but it means a test whose OPENCODEX_HOME
+   * points at a sandbox still writes their live install state — observed while building
+   * the launchd repair coverage: one case replaced the real record's codexHome and
+   * opencodexHome with temp-directory paths. Drop it rather than deny the write, so the
+   * sandbox path keeps working and the real one is simply not in the list.
+   */
+  const real = normalizePathForCompare(protectedHomeForTests());
+  return paths.filter(path => normalizePathForCompare(dirname(path)) !== real);
 }
 
 function currentCodexHome(deps: CodexHomeDeps = {}): string {
@@ -537,9 +560,7 @@ export function buildPlist(
     ...proxyEnv.map(({ name, value }) =>
       `    <key>${name}</key><string>${plistString(value)}</string>`),
   ].filter((line): line is string => Boolean(line)).join("\n");
-  const command = launcher
-    ? buildServiceLauncherShellCommand(launcher)
-    : buildServiceShellCommand(bun, cli);
+  const command = launchdServiceCommand(launcher, runtime);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -602,6 +623,23 @@ function buildServiceShellCommand(bun: string, cli: string, port = resolveServic
 function buildServiceLauncherShellCommand(launcher: string, port = resolveServiceListenPort()): string {
   const tokenFile = serviceApiTokenFilePath();
   return `if [ -f ${shellQuote(tokenFile)} ]; then OPENCODEX_API_AUTH_TOKEN="$(cat ${shellQuote(tokenFile)})"; export OPENCODEX_API_AUTH_TOKEN; fi; exec ${shellQuote(launcher)} start --port ${port}`;
+}
+
+/**
+ * The exec line {@link buildPlist} bakes, for the launcher and runtime a single install
+ * already resolved. Shared so `installLaunchd` can verify the live job against the exact
+ * string it just wrote instead of re-deriving it from install state that has not been
+ * written yet (a fresh install has no state, so `expectedLaunchdCommand` would hand back
+ * the Bun + CLI pair and call a correctly loaded launcher job stale).
+ */
+function launchdServiceCommand(
+  launcher: string | null,
+  runtime: DurableBunRuntime = durableBunRuntime(),
+  port: number = resolveServiceListenPort(),
+): string {
+  if (launcher) return buildServiceLauncherShellCommand(launcher, port);
+  const { bun, cli } = cliEntry(runtime);
+  return buildServiceShellCommand(bun, cli, port);
 }
 
 /**
@@ -989,6 +1027,107 @@ export function launchdJobMatchesPlist(
   // nothing.
   const printedText = `${printed.stdout}\n${printed.stderr}`;
   return { loaded: true, matchesPlist: printedText.includes(expectedCommand) };
+}
+
+/** `launchctl print`: the domain answered and holds no such service. */
+const LAUNCHCTL_NO_SUCH_SERVICE = 113;
+/** `launchctl print`: that domain does not exist at all (label-independent). */
+const LAUNCHCTL_NO_SUCH_DOMAIN = 112;
+/** `launchctl bootstrap`: something is already bootstrapped under that label. */
+const LAUNCHCTL_BOOTSTRAP_BUSY = 5;
+/** `launchctl bootout`: nothing was loaded under that label, i.e. already stopped. */
+const LAUNCHCTL_BOOTOUT_NO_SUCH_PROCESS = 3;
+
+/**
+ * Four states, because three of them used to collapse into one bit.
+ *
+ * - `loaded-current` — a domain answers 0 and runs the command we expect.
+ * - `loaded-stale` — a domain answers 0 but runs a different command (an older plist).
+ * - `not-loaded` — every domain answered 112/113, which is proof of absence.
+ * - `unknown` — launchctl could not be asked, or answered something undocumented. NOT
+ *   evidence of a problem, and deliberately not a reason to recommend `ocx service
+ *   repair`: that command evicts the job, so recommending it on a failed probe is how
+ *   #4236 turned a healthy hub into an outage.
+ */
+export type LaunchdLoadState = "loaded-current" | "loaded-stale" | "not-loaded" | "unknown";
+
+export interface LaunchdLoadProbe {
+  state: LaunchdLoadState;
+  /** The domain that answered, when one did. */
+  domain?: string;
+  /** Why the probe is `unknown`. Never carries plist contents or credentials. */
+  detail?: string;
+}
+
+/**
+ * Whether launchd is running our job, and from which plist — asked with `launchctl print`
+ * in BOTH user domains.
+ *
+ * Replaces `launchctl list | grep <label>`, which enumerated the CALLER's bootstrap domain
+ * (so a healthy `gui/$uid` job was invisible from ssh/cron), swallowed every exit code
+ * through `|| true`, and matched the label unanchored anywhere on a line (so
+ * `com.opencodex.proxy.helper` read as ours). `gui/` and `user/` are independent and hold
+ * separate service sets — measured on macOS 27.0: the shipped agent answers 0 under
+ * `gui/<uid>` and 113 under `user/<uid>` — so asking one leaves the other free to hold a
+ * job this probe would then call absent (same reasoning as `inspectLaunchd`).
+ */
+export function probeLaunchdLoadState(deps: {
+  launchctl?: typeof runLaunchctl;
+  expectedCommand?: () => string;
+  uid?: number;
+} = {}): LaunchdLoadProbe {
+  const run = deps.launchctl ?? runLaunchctl;
+  const uid = deps.uid ?? process.getuid?.() ?? 0;
+  for (const domain of [`gui/${uid}`, `user/${uid}`]) {
+    const printed = run(["print", `${domain}/${LABEL}`]);
+    if (printed.status === 0) {
+      const expected = (deps.expectedCommand
+        ?? (() => expectedLaunchdCommand(installedServiceListenPort())))();
+      const printedText = `${printed.stdout}\n${printed.stderr}`;
+      return {
+        state: printedText.includes(expected) ? "loaded-current" : "loaded-stale",
+        domain,
+      };
+    }
+    if (printed.status === LAUNCHCTL_NO_SUCH_SERVICE) continue;
+    // 112 is an answer ABOUT THE DOMAIN and is label-independent, so an unreachable
+    // domain cannot be hiding a job of ours. A headless Mac has no GUI domain and no
+    // installation either; calling that `unknown` would refuse every verdict on it.
+    if (printed.status === LAUNCHCTL_NO_SUCH_DOMAIN) continue;
+    return {
+      state: "unknown",
+      detail: printed.status === null
+        ? `launchctl could not be run: ${printed.stderr || "spawn failed"}`
+        : `launchctl print ${domain}/${LABEL} exited ${String(printed.status)}`,
+    };
+  }
+  return { state: "not-loaded" };
+}
+
+/** Up to ~5 × 200 ms, the launchd twin of the Windows scheduler settle delays. */
+const LAUNCHD_SETTLE_ATTEMPTS = 5;
+const LAUNCHD_SETTLE_DELAY_MS = 200;
+
+/**
+ * Wait for a `bootout` to finish.
+ *
+ * `bootout` is asynchronous: it returns before the job has exited, so an immediate
+ * re-registration races it and gets "Bootstrap failed: 5: Input/output error" — which is
+ * exactly what made the old back-to-back retry useless (#4236, defect 1d). Bounded on
+ * purpose: a genuinely wedged domain must reach the diagnosable throw rather than hang.
+ *
+ * Synchronous because `installLaunchd` is (`ServiceOps.install` / `repairLaunchd` are
+ * `() => void`), so this uses `Bun.sleepSync` and exposes the seam for tests.
+ */
+function settleLaunchdEviction(
+  run: typeof runLaunchctl,
+  target: string,
+  sleepSync: (ms: number) => void,
+): void {
+  for (let attempt = 0; attempt < LAUNCHD_SETTLE_ATTEMPTS; attempt += 1) {
+    if (!run(["print", target]).ok) return;
+    sleepSync(LAUNCHD_SETTLE_DELAY_MS);
+  }
 }
 
 /**
@@ -2338,9 +2477,18 @@ export function readWindowsSchedulerXmlState(
 }
 
 // ── macOS (launchd) ──
+/** Read a file as UTF-8, or null when it is absent/unreadable. */
+function readTextOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Deps follow {@link startLaunchd}: `launchctl` replaces the LAYER, returning a
- * {@link runLaunchctl} result, not a spawnSync result. It is optional so this stays
+ * {@link runLaunchctl} result, not a spawnSync result. Every one is optional so this stays
  * assignable to `ServiceOps.install` and `RepairServiceDeps.repairLaunchd`
  * (`() => void`), and so `platformOps` wires the same function the tests exercise.
  *
@@ -2349,60 +2497,173 @@ export function readWindowsSchedulerXmlState(
  * its read-only list, so a test reaching the real runner would fail closed on the guard
  * instead of exercising the sequence.
  *
- * No `matches` dep: unlike `startLaunchd`, this function never consults
- * {@link launchdJobMatchesPlist}. It has just rewritten the plist, so a live job is stale
- * by construction and there is nothing to compare against.
+ * `matches` is a {@link launchdJobMatchesPlist} result, used TWICE and for opposite
+ * reasons: once before touching launchd, to prove a repair has nothing to do, and once
+ * after, because stderr cannot prove a load took.
+ *
+ * Protocol (#4236, defect 1). `ocx service repair` on darwin IS this function, and it
+ * evicts the running job — a public proxy, a management ingress and a loopback listener on
+ * a hub. So:
+ *
+ *  1. Render the plist first and compare it to the live job. Identical plist + unchanged
+ *     token file + a job loaded from exactly that command means there is nothing to
+ *     repair, and a repair of a healthy service must never cause an outage.
+ *  2. Keep the previous plist bytes (in memory and at `<plist>.prev`) before overwriting.
+ *  3. `bootout`, settle, then `bootstrap gui/$uid <plist>` — the verb that PAIRS with the
+ *     bootout target. Legacy `load -w` is domain-implicit: it acts on the caller's own
+ *     bootstrap domain, so from ssh/cron it deleted the gui-domain job and registered
+ *     nothing (defect 1a).
+ *  4. Success is `launchctl print` agreeing, never a stderr regex: measured on macOS 27.0,
+ *     `load -w` over a bootstrapped job exits 0 with "Load failed: 5" and does nothing,
+ *     and `bootstrap` exits 5 with "Bootstrap failed: 5" for the same condition.
+ *  5. On terminal failure restore the previous plist, try to bootstrap it back, and throw
+ *     an error that says the job is DOWN and names the manual remedy.
  */
-export function installLaunchd(deps: { launchctl?: typeof runLaunchctl } = {}): void {
+export function installLaunchd(deps: {
+  launchctl?: typeof runLaunchctl;
+  matches?: typeof launchdJobMatchesPlist;
+  sleepSync?: (ms: number) => void;
+  /**
+   * Where to write the plist. Only tests pass it: `os.homedir()` reads the password
+   * database rather than `$HOME`, so the suite's HOME sandbox does NOT move
+   * `plistPath()`, and a case without this seam rewrites the developer's live
+   * `com.opencodex.proxy.plist`. `assertNotRealLaunchAgentsUnderTest` below makes that
+   * refusal mechanical rather than a convention.
+   */
+  plistPath?: string;
+} = {}): void {
   const run = deps.launchctl ?? runLaunchctl;
-  const dir = join(homedir(), "Library", "LaunchAgents");
+  const matches = deps.matches ?? launchdJobMatchesPlist;
+  const sleepSync = deps.sleepSync ?? ((ms: number) => { Bun.sleepSync(ms); });
+  const p = deps.plistPath ?? plistPath();
+  const dir = dirname(p);
+  assertNotRealLaunchAgentsUnderTest(dir);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   recordOwnedConfigPath(getConfigDir(), serviceStatePath());
   if (!existsSync(getConfigDir())) mkdirSync(getConfigDir(), { recursive: true });
-  writeServiceApiTokenFile();
-  const p = plistPath();
   // Capture this BEFORE writing: the write below makes the plist exist unconditionally,
   // so a post-write existsSync would call every fresh install an "installed" service.
   const wasInstalled = existsSync(p);
+  // The previous definition, kept for rollback. An eviction whose bootstrap fails used to
+  // end with the new plist on disk, nothing in launchd, and nothing listening.
+  const previousPlist = wasInstalled ? readTextOrNull(p) : null;
+  const tokenFile = serviceApiTokenFilePath();
+  const previousToken = readTextOrNull(tokenFile);
+  writeServiceApiTokenFile();
+  // A rotated data token only reaches the job through a restart, so it is part of "is this
+  // repair a no-op?" — the plist `cat`s this file at launch.
+  const tokenUnchanged = readTextOrNull(tokenFile) === previousToken;
   // Resolve the launcher ONCE and hand the same value to the plist and to install state,
   // so the staleness diagnostic judges exactly what launchd runs.
   const launcher = stableLauncherEntry();
-  writeServiceDefinitionFile(p, buildPlist(resolvedProxyEnv(), { launcher }), "utf8");
-  // `unload` is the legacy verb and it does not evict a job bootstrapped into the GUI
-  // domain — which is precisely the state that could not repair itself. Modern launchd
-  // answers `load -w` for an already-bootstrapped job with "Load failed: 5:
-  // Input/output error" AND exits 0, so `ocx update` replaced the binary, ran repair,
-  // and left launchd running the PREVIOUS job while the fresh plist sat unused (#4141).
-  //
-  // This EVICTS the running job. That is the repair being asked for, and it is why it
-  // lives here and nowhere else: `installLaunchd` has already rewritten the plist, so
-  // whatever is loaded is stale by construction. `ocx service start` must never do
-  // this, and `startLaunchd` accordingly still refuses to.
-  //
-  // Absence is fine: booting out a job that is not there is a no-op, and a real failure
-  // is reported by the load verification below with a better message than a raw
-  // eviction error would carry.
+  const rendered = buildPlist(resolvedProxyEnv(), { launcher });
+  // The command THIS install bakes, not the one install state remembers: on a fresh
+  // install there is no state yet, and after a lost state file `expectedLaunchdCommand`
+  // falls back to the Bun + CLI pair and would call a correct launcher job stale (#3464).
+  const expectedCommand = launchdServiceCommand(launcher);
   const bootoutTarget = `${launchdGuiDomain()}/${LABEL}`;
-  run(["bootout", bootoutTarget]);
-  let loaded = run(["load", "-w", p]);
-  if (launchctlLoadFailed(loaded.stderr)) {
-    // Still bootstrapped after an eviction: the job re-registered between the two calls,
-    // or the first `bootout` raced a job that had not finished exiting. Evict and load
-    // once more — ONCE. A bounded retry recovers the race; a loop would turn a genuinely
-    // wedged domain into a hang instead of the diagnosable throw below.
-    run(["bootout", bootoutTarget]);
-    loaded = run(["load", "-w", p]);
+
+  if (previousPlist === rendered && tokenUnchanged) {
+    const live = matches(expectedCommand);
+    if (live.loaded && live.matchesPlist) {
+      // The plist is not rewritten and launchd is not touched; only the owner-only mode
+      // is re-asserted, for a definition an older version may have left at 0644.
+      try { chmodSync(p, 0o600); } catch { /* best-effort */ }
+      // Install state is refreshed because it is what `expectedLaunchdCommand` reads, and
+      // a repair that leaves it stale re-creates the false "OLDER plist" report.
+      writeServiceInstallState("scheduler", launcher);
+      console.log("ℹ️  service is already loaded from the current plist; nothing to do.");
+      return;
+    }
   }
-  if (!loaded.ok || launchctlLoadFailed(loaded.stderr)) {
-    // Do NOT write install state for a load that did not take: state describing an
-    // unused plist is what made this failure invisible.
+
+  if (previousPlist !== null) {
+    // Best-effort: a backup we could not write must not stop the repair, but it is the
+    // only thing that makes the rollback below able to restore bytes rather than guesses.
+    //
+    // `.plist.prev`, not `.prev.plist`: launchd globs `~/Library/LaunchAgents/*.plist` at
+    // login, so a backup ending in `.plist` would be a second registration of the same
+    // Label fighting the real one for the port.
+    try { writeServiceDefinitionFile(`${p}.prev`, previousPlist, "utf8"); } catch { /* best-effort */ }
+  }
+  writeServiceDefinitionFile(p, rendered, "utf8");
+
+  // This EVICTS the running job, and from here until the verification below nothing is
+  // listening. `unload` is the legacy verb and does not evict a job bootstrapped into the
+  // GUI domain — precisely the state that could not repair itself (#4141).
+  //
+  // Absence is fine: booting out a job that is not there exits 3 ("No such process"), and
+  // a real failure is reported by the verification below with a better message than a raw
+  // eviction error would carry.
+  const evictThenBootstrap = (): { ok: boolean; stdout: string; stderr: string; status: number | null } => {
+    run(["bootout", bootoutTarget]);
+    // `bootout` is asynchronous. Without this the retry raced the same exiting job twice
+    // and added nothing.
+    settleLaunchdEviction(run, bootoutTarget, sleepSync);
+    return run(["bootstrap", launchdGuiDomain(), p]);
+  };
+  const loadTook = (): boolean => {
+    const live = matches(expectedCommand);
+    return live.loaded && live.matchesPlist;
+  };
+
+  let loaded = evictThenBootstrap();
+  if (!loadTook()) {
+    // ONE retry. A bounded retry recovers the race; a loop would turn a wedged domain
+    // into a hang instead of the diagnosable throw below.
+    if (loaded.status === LAUNCHCTL_BOOTSTRAP_BUSY || launchctlLoadFailed(loaded.stderr)) {
+      // "Bootstrap failed: 5: Input/output error" has TWO causes, measured on macOS 27.0
+      // with a throwaway label, and they need opposite remedies:
+      //
+      //  - something is still bootstrapped under our label (the job re-registered, or it
+      //    had not finished exiting). `kickstart -k` restarts whatever the domain holds
+      //    from the plist on disk — which is now ours — without opening a second eviction
+      //    window. On an absent job it exits 113 and changes nothing.
+      //  - the label is in the domain's DISABLED list, so `bootstrap` refuses it while
+      //    `launchctl print` reports 113. This is the one thing the legacy `load -w` did
+      //    that plain `bootstrap` does not: `-w` cleared that flag. `enable` is the modern
+      //    spelling of it, and it is idempotent on a job that was never disabled — but it
+      //    runs only here, so an ordinary repair does not quietly undo a deliberate
+      //    `launchctl disable`.
+      const kicked = run(["kickstart", "-k", bootoutTarget]);
+      if (!kicked.ok || !loadTook()) {
+        run(["enable", bootoutTarget]);
+        loaded = evictThenBootstrap();
+      }
+    } else if (loaded.ok) {
+      // Exit 0 while `print` disagrees: the load silently no-op'd. That IS worth evicting
+      // again. A load that failed for any OTHER reason — a malformed plist, EPERM — is not
+      // fixed by evicting a job, so it falls straight through to the throw and the
+      // operator sees the real stderr instead of a delayed copy of it.
+      loaded = evictThenBootstrap();
+    }
+  }
+
+  if (!loadTook()) {
+    // Do NOT write install state for a load that did not take: state describing an unused
+    // plist is what made this failure invisible.
+    let rolledBack: "restored" | "on-disk-only" | "none" = "none";
+    if (previousPlist !== null) {
+      try {
+        writeServiceDefinitionFile(p, previousPlist, "utf8");
+        run(["bootout", bootoutTarget]);
+        settleLaunchdEviction(run, bootoutTarget, sleepSync);
+        run(["bootstrap", launchdGuiDomain(), p]);
+        rolledBack = run(["print", bootoutTarget]).ok ? "restored" : "on-disk-only";
+      } catch {
+        rolledBack = "on-disk-only";
+      }
+    }
     throw new Error(
-      `launchctl could not load ${p}: ${loaded.stderr || "load reported failure"}\n`
-      // The hint used to tell the operator to run `bootout` by hand. It now runs twice
-      // above, so naming it as an untried remedy would send someone to repeat what just
-      // failed. Report what was attempted instead.
-      + `A previous job is still bootstrapped after two attempts to boot it out of ${launchdGuiDomain()}.\n`
-      + `Inspect it with:\n  launchctl print ${bootoutTarget}\n`
+      `launchctl could not bootstrap ${p}: ${loaded.stderr || "bootstrap reported failure"}\n`
+      + `The ${LABEL} job was evicted from ${launchdGuiDomain()} and ${
+        rolledBack === "restored" ? "the PREVIOUS plist was restored and re-bootstrapped" : "IS NOT RUNNING — nothing is listening"
+      }.\n`
+      + (rolledBack === "on-disk-only"
+        ? "The previous plist was restored on disk but could not be bootstrapped either.\n"
+        : "")
+      + `Recover manually with:\n  launchctl bootstrap ${launchdGuiDomain()} ${p}\n`
+      + `Inspect it with:\n  launchctl print ${bootoutTarget}\n  launchctl print-disabled ${launchdGuiDomain()}\n`
       // macOS `service repair` delegates straight to installLaunchd, so this fires for
       // an already-installed service too; repair reloads it without re-registering.
       + `then re-run '${wasInstalled ? "ocx service repair" : "ocx service install"}'.`,
@@ -2445,12 +2706,52 @@ export function startLaunchd(deps: {
       : "The job is not loaded. Run 'ocx service repair' to reload it."),
   );
 }
-function stopLaunchd(): void { try { sh(`launchctl unload "${plistPath()}"`); } catch { /* not loaded */ } }
-function statusLaunchd(): string { try { return sh(`launchctl list | grep ${LABEL} || true`); } catch { return ""; } }
-function uninstallLaunchd(): void {
+/**
+ * Evict the job with the modern, domain-explicit verb; fall back to legacy `unload` only
+ * when `bootout` could not be run at all.
+ *
+ * `unload` cannot evict a job bootstrapped into the GUI domain (the same reason
+ * `installLaunchd` stopped using it), so a stop built on it reported success while the
+ * proxy kept serving. Exit 3 ("Boot-out failed: 3: No such process") is the not-loaded
+ * case and is not a failure here.
+ */
+function stopLaunchd(deps: { launchctl?: typeof runLaunchctl } = {}): void {
+  const run = deps.launchctl ?? runLaunchctl;
+  try {
+    // Any real exit status is final — including 3, which only means the job was not
+    // loaded. `status: null` is "launchctl could not be spawned at all", and only then is
+    // the legacy verb worth one attempt.
+    if (run(["bootout", `${launchdGuiDomain()}/${LABEL}`]).status !== null) return;
+  } catch {
+    // The armed-test guard refuses mutating verbs; retrying through `sh` would only hit it
+    // again.
+    return;
+  }
+  try { sh(`launchctl unload "${plistPath()}"`); } catch { /* not loaded */ }
+}
+
+/**
+ * Registration for `ocx service stop`'s "is anything installed?" guard, as a human string.
+ * Empty means "no job of ours is loaded"; the tri-state lives in
+ * {@link probeLaunchdLoadState}, which `diagnoseService` uses instead of this.
+ */
+function statusLaunchd(deps: { probe?: typeof probeLaunchdLoadState } = {}): string {
+  const probe = (deps.probe ?? probeLaunchdLoadState)();
+  if (probe.state === "loaded-current") return `${LABEL} loaded in ${probe.domain ?? launchdGuiDomain()}`;
+  if (probe.state === "loaded-stale") return `${LABEL} loaded in ${probe.domain ?? launchdGuiDomain()} from an OLDER plist`;
+  if (probe.state === "unknown") return `${LABEL} state unknown: ${probe.detail ?? "launchctl could not be asked"}`;
+  return "";
+}
+
+function uninstallLaunchd(deps: { launchctl?: typeof runLaunchctl } = {}): void {
   const p = plistPath();
-  try { sh(`launchctl unload "${p}" 2>/dev/null`); } catch { /* not loaded */ }
+  // Same reason as `installLaunchd`: HOME isolation does not move this path, so without
+  // the guard an armed test process deletes the developer's live plist.
+  assertNotRealLaunchAgentsUnderTest(dirname(p));
+  stopLaunchd(deps);
   if (existsSync(p)) unlinkSync(p);
+  // The rollback copy is part of the installation, not a user file.
+  if (existsSync(`${p}.prev`)) { try { unlinkSync(`${p}.prev`); } catch { /* best-effort */ } }
 }
 
 /**
@@ -3628,11 +3929,24 @@ function platformOps(backend: ServiceBackend = "scheduler"): ServiceOps | null {
 function platformServiceInstallCleanupOps(backend: ServiceBackend): ServiceInstallCleanupOps | null {
   if (process.platform === "darwin") {
     return {
+      // Same probe as `diagnoseService`, so the two answers to one question can no longer
+      // have opposite failure semantics: this one used to throw on a launchctl error while
+      // `statusLaunchd` swallowed it into "absent". Installing over an unverifiable
+      // manager is the unsafe case, so `unknown` fails closed here.
       status: () => {
-        const listing = sh("launchctl list");
-        return listing.split("\n").some(line => line.includes(LABEL)) ? listing : null;
+        const probe = probeLaunchdLoadState();
+        if (probe.state === "unknown") {
+          throw new Error(`launchd job status could not be verified: ${probe.detail ?? "launchctl could not be asked"}`);
+        }
+        return probe.state === "not-loaded" ? null : `${LABEL} loaded in ${probe.domain ?? launchdGuiDomain()}`;
       },
-      stop: () => { sh(`launchctl unload "${plistPath()}"`); },
+      // `unload` is legacy and CANNOT evict a gui-domain job, which is what this cleanup
+      // exists to do before new assets are installed.
+      stop: () => {
+        const booted = runLaunchctl(["bootout", `${launchdGuiDomain()}/${LABEL}`]);
+        if (booted.ok || booted.status === LAUNCHCTL_BOOTOUT_NO_SUCH_PROCESS) return;
+        throw new Error(`launchctl bootout failed: ${booted.stderr || `exit ${String(booted.status)}`}`);
+      },
     };
   }
   if (process.platform === "win32") {
@@ -4310,6 +4624,61 @@ export function deriveWindowsServiceDiagnosticForCurrentUser(
   });
 }
 
+export interface LaunchdServiceDiagnosticInputs {
+  installed: boolean;
+  stale: boolean;
+  load: LaunchdLoadProbe;
+  diagnostics: string;
+}
+
+/**
+ * Turn the launchd tri-state into a {@link ServiceDiagnostic}. Pure, so the four states
+ * are testable without a live launchd.
+ *
+ * `unknown` is the one that used to do damage. The old probe collapsed "launchctl could
+ * not be asked" into "not loaded", which printed `installed, not loaded` for a serving hub
+ * and recommended `ocx service repair` — the command that evicts the job (#4236). So:
+ *
+ * - the summary says the state could not be verified and names NO repair command, and
+ * - `viable` stays true, because `isServiceViable() === false` is what makes
+ *   `src/update/index.ts` and `src/update/job.ts` treat a successful repair as a dead
+ *   supervisor and start a competing proxy on the service's own port. A failed probe is
+ *   not evidence against the service; `startable` is likewise left alone so the tray can
+ *   still hand a start to `ocx service start`, which no-ops on an already-loaded job.
+ *
+ * `loaded-stale` keeps the viability the `launchctl list` era gave it (loaded ⇒ viable, so
+ * the update fallback behaves as before), and only the summary is upgraded — the operator
+ * is told the live job came from an older plist, which is the one case where `repair` is
+ * exactly right.
+ */
+export function deriveLaunchdServiceDiagnostic(inputs: LaunchdServiceDiagnosticInputs): ServiceDiagnostic {
+  const { installed, stale, load, diagnostics } = inputs;
+  const loaded = load.state === "loaded-current" || load.state === "loaded-stale";
+  const running = installed && loaded;
+  const verified = load.state !== "unknown";
+  const viable = installed && !stale && (loaded || !verified);
+  const summary = !installed ? `not installed (${diagnostics})`
+    : stale ? `installed, but stale (launchd; ${diagnostics})`
+      : load.state === "loaded-current" ? `installed and loaded (launchd; ${diagnostics})`
+        : load.state === "loaded-stale"
+          ? `installed and loaded from an OLDER plist (launchd; ${diagnostics})`
+          : load.state === "unknown"
+            ? `installed; launchd state could not be verified — ${load.detail ?? "launchctl could not be asked"} (launchd; ${diagnostics})`
+            : `installed, not loaded (launchd; ${diagnostics})`;
+  return {
+    supported: true,
+    installed,
+    enabled: running,
+    running,
+    viable,
+    startable: installed && !stale,
+    stale,
+    conflict: false,
+    backend: "launchd",
+    summary,
+  };
+}
+
 /**
  * Fail-closed restart diagnostic. Presence alone is never enough: conflicting
  * managers, stale baked paths, disabled registrations, and unknown/stopped
@@ -4319,14 +4688,13 @@ export function diagnoseService(): ServiceDiagnostic {
   const diagnostics = serviceDiagnosticsSummary();
   if (process.platform === "darwin") {
     const installed = existsSync(plistPath());
-    const running = installed && Boolean(statusLaunchd());
     const stale = installed && bakedServicePathsDiagnostic() !== null;
-    const viable = installed && running && !stale;
-    const summary = !installed ? `not installed (${diagnostics})`
-      : stale ? `installed, but stale (launchd; ${diagnostics})`
-        : running ? `installed and loaded (launchd; ${diagnostics})`
-          : `installed, not loaded (launchd; ${diagnostics})`;
-    return { supported: true, installed, enabled: running, running, viable, startable: installed && !stale, stale, conflict: false, backend: "launchd", summary };
+    return deriveLaunchdServiceDiagnostic({
+      installed,
+      stale,
+      load: installed ? probeLaunchdLoadState() : { state: "not-loaded" },
+      diagnostics,
+    });
   }
   if (process.platform === "win32") {
     const schedulerXml = statusWindowsXml();
@@ -4582,12 +4950,26 @@ export async function serviceCommand(...args: (string | undefined)[]): Promise<v
   if (command === "repair") {
     assertServiceEnvironmentMatchesInstall();
     assertServiceAuthEnvironment();
-    await repairService();
+    // A throw used to escape straight to the top level, so the one command that can
+    // leave a macOS hub evicted never reached its own serving check (#4236, defect 1f).
+    // Report the failure, then still ask whether anything is listening: on darwin the
+    // rollback inside installLaunchd may have brought the previous job back, and on
+    // Windows the preserve/restart protocol may have done the same. The operator needs
+    // both halves of that answer, and the exit code stays non-zero either way.
+    let repairError: unknown;
+    try {
+      await repairService();
+    } catch (error) {
+      repairError = error;
+      console.error(`❌ Service repair failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    }
     // All three platforms: a repair that reports success while nothing serves is the
     // defect class this unit exists to close. Windows bakes its port into the
     // scheduler wrapper or the WinSW XML, both of which installedServiceListenPort()
     // now reads.
     await reportServiceServing("repaired");
+    if (repairError !== undefined) process.exitCode = 1;
     return;
   }
   // Non-install subcommands follow the backend recorded at install time (state v2).
