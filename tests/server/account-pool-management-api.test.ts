@@ -519,3 +519,87 @@ describe("generic OAuth pool-settings contract (#695)", () => {
     }
   });
 });
+
+describe("legacy pool contract goldens (#wp5)", () => {
+  /**
+   * Exact-body pins for the three pool contracts, written BEFORE anything is shared between
+   * them. The existing coverage could not serve as the compatibility net it was assumed to be:
+   * the Codex and Anthropic assertions use toMatchObject, which passes when extra keys appear,
+   * and PUT /api/codex-auth/auto-switch checked only the status code. A refactor guarded by
+   * those would not have noticed the regression it was supposed to catch.
+   *
+   * GET /api/codex-auth/active is deliberately absent: it already carries a full toEqual in
+   * tests/codex-integration/codex-auth-api.test.ts.
+   */
+  test("PUT /api/codex-auth/auto-switch answers exactly { ok: true }", async () => {
+    const req = new Request("http://localhost/api/codex-auth/auto-switch", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threshold: 70 }),
+    });
+    const resp = await handleCodexAuthAPI(req, new URL(req.url), makeCodexConfig());
+    expect(resp!.status).toBe(200);
+    expect(await resp!.json()).toEqual({ ok: true });
+  });
+
+  test("PUT /api/codex-auth/pool-strategy answers exactly its three keys", async () => {
+    const req = new Request("http://localhost/api/codex-auth/pool-strategy", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strategy: "round-robin", stickyLimit: 5 }),
+    });
+    const resp = await handleCodexAuthAPI(req, new URL(req.url), makeCodexConfig());
+    expect(resp!.status).toBe(200);
+    expect(await resp!.json()).toEqual({
+      ok: true,
+      accountPoolStrategy: "round-robin",
+      accountPoolStickyLimit: 5,
+    });
+  });
+
+  test("GET /api/oauth/accounts/pool answers exactly the anthropic shape", async () => {
+    const server = startServer(0);
+    try {
+      const res = await fetch(new URL("/api/oauth/accounts/pool?provider=anthropic", server.url));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        provider: "anthropic",
+        enabled: false,
+        autoSwitchThreshold: 80,
+        strategy: "quota",
+        stickyLimit: 1,
+        quotaWindow: "five-hour",
+        experimental: true,
+      });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("PUT /api/oauth/accounts/pool answers exactly the anthropic shape", async () => {
+    const server = startServer(0);
+    try {
+      const res = await fetch(new URL("/api/oauth/accounts/pool", server.url), {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          provider: "anthropic", enabled: true, autoSwitchThreshold: 70,
+          strategy: "round-robin", stickyLimit: 4,
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: true,
+        provider: "anthropic",
+        enabled: true,
+        autoSwitchThreshold: 70,
+        strategy: "round-robin",
+        stickyLimit: 4,
+        quotaWindow: "five-hour",
+        experimental: true,
+      });
+    } finally {
+      await server.stop(true);
+    }
+  });
+});
