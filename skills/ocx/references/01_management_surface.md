@@ -394,6 +394,26 @@ JSON mode: `payload`.
 
 - Uses the exact upstream model ID after the first slash. Omitted cache rates default to zero; sibling model prices are preserved.
 
+### `ocx hub invite`
+
+Mint a single-use pairing code on a hub and print the exact `ocx connect` line for one more machine.
+
+Drives no management route.
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit code, expiresAt, dataUrl, managementUrl, and command. |
+| `--data-url` | string | Advertise this data origin instead of hub.dataPublicOrigin or the bind address. |
+| `--management-url` | string | Confirm the management origin; it must equal hub.managementPublicOrigin. |
+| `--clients` | string | Pre-select codex and/or claude in the printed connect command. |
+
+JSON mode: `envelope`.
+
+- Hub only: refuses when runtimeRole is not hub, and requires a running attested proxy.
+- The code is secret, single-use and short-lived; it is bound to hub.managementPublicOrigin and to the connecting machine's loopback browser origin.
+- Prints no data-plane token. Remote machines receive their own revocable per-client key from the exchange.
+- Mints through the attested local pairing-grant route, the same one ocx gui pair uses; no admin token is read.
+
 ### `ocx connect rotate`
 
 Rotate the connected client's data key against the hub, with commit and abort.
@@ -706,6 +726,6 @@ JSON mode: `payload`.
 
 ## Counts
 
-- declared capabilities: 38
-- of those, state-changing: 17
+- declared capabilities: 39
+- of those, state-changing: 18
 - head-resolved invocations: 2
