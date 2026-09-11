@@ -91,7 +91,12 @@ export async function getPoolSettings(
   try {
     const response = await fetchImpl(`${apiBase}/api/pool/settings?provider=${encodeURIComponent(provider)}`, init);
     if (!response.ok) return null;
-    return toDto(await response.json().catch(() => ({})), provider);
+    // No empty-body tolerance on the READ. `toDto` fills defaults, so `{}` would render as a
+    // disabled pool with default values and the panel would treat that as a loaded state --
+    // letting the next save overwrite the real configuration from fabricated input. A read
+    // with no parseable body is a failed read. The write below is the opposite case: there,
+    // an empty 2xx is a real success and the fallback is the settings just sent.
+    return toDto(await response.json(), provider);
   } catch {
     return null;
   }
@@ -141,4 +146,3 @@ export async function putCodexPoolStrategy(
   if (!settings) return { ok: false };
   return { ok: true, strategy: settings.strategy, stickyLimit: settings.stickyLimit };
 }
-

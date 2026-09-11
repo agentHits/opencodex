@@ -29,7 +29,6 @@ import { sidecarEnter } from "../lib/sidecar-tracker";
 import type { OcxConfig } from "../types";
 import { resolveFirstUsableOpenAiSidecar, selectImagesProvider } from "../providers/openai-sidecar";
 import { selectProactiveApiKeyTransport } from "../providers/key-failover";
-import { resolveProviderApiKey } from "../providers/key-store";
 import { getProviderRegistryEntry } from "../providers/registry";
 import { readJsonRequestBody, resolveInboundBodyLimitBytes } from "./request-decompress";
 import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential } from "./auth-cors";
@@ -706,17 +705,27 @@ export async function handleImages(
     //
     // Two things about the placement. It stays INSIDE this branch because higher up it would
     // also run for requests ChatGPT forward goes on to serve, spending a rotation on a path
-    // that never used the key. And the header is rebuilt from the returned clone rather than
+    // that never used the key. And the header is rebuilt from the returned route rather than
     // from candidates.keyed.apiKey, which is a snapshot resolved earlier: reusing it would
     // send the OLD key while the picker had already persisted the new one.
+    //
     // Transport variant: this branch reads `provider.baseUrl` and `provider.headers` to build
-    // the URL and the request, and the persisted row carries neither for a built-in provider
-    // stored in its minimal form.
+    // the URL and the request, and it comes back with the credential already resolved.
     const warmKeyProvider = selectProactiveApiKeyTransport(config, providerName, candidates.keyed.provider);
     const provider = warmKeyProvider ?? candidates.keyed.provider;
-    const apiKey = warmKeyProvider?.apiKey
-      ? (resolveProviderApiKey(warmKeyProvider.apiKey) ?? candidates.keyed.apiKey)
-      : candidates.keyed.apiKey;
+    // No fall back to the earlier snapshot once a pick has happened. The picker COMMITS its
+    // choice before returning, so if the chosen reference will not resolve -- revoked keychain
+    // entry, unset env var -- sending the previous key would authenticate a non-idempotent
+    // POST with a credential the config no longer considers active, and the previous key is
+    // the one that was cooling. Fail loudly instead.
+    if (warmKeyProvider && !warmKeyProvider.apiKey?.trim()) {
+      return formatErrorResponse(
+        500,
+        "configuration_error",
+        `image generation selected an API key for "${providerName}" that cannot be resolved`,
+      );
+    }
+    const apiKey = warmKeyProvider?.apiKey ?? candidates.keyed.apiKey;
     if (provider.headers) Object.assign(headers, provider.headers);
     headers["authorization"] = `Bearer ${apiKey}`;
     logCtx.provider = providerName;

@@ -734,6 +734,56 @@ test("a cooled committed key is replaced before the first keyed image send", asy
   }
 });
 
+/**
+ * The pick COMMITS its choice before returning, so an unresolvable selection is not a reason to
+ * quietly reuse the previous key: that would authenticate a non-idempotent image POST with a
+ * credential the config no longer treats as active, and the previous key is the one that was
+ * cooling. Raised by CodeRabbit on #4292.
+ */
+test("an unresolvable selected key fails the keyed image send instead of reusing the old one", async () => {
+  const captured: CapturedRequest[] = [];
+  const upstream = fakeImagesUpstream(captured);
+  clearKeyCooldowns();
+  delete process.env.OCX_IMAGES_MISSING_KEY;
+  const pooled = {
+    ...keyedProvider(upstream.url.toString().replace(/\/$/, "")),
+    apiKeyPoolStrategy: "round-robin",
+    apiKeyPool: [
+      { id: "first", key: "sk-platform-key" },
+      // An env reference that is deliberately not set: a revoked keychain entry looks the same.
+      { id: "second", key: "\${OCX_IMAGES_MISSING_KEY}" },
+    ],
+  };
+  saveConfig({
+    port: 0,
+    defaultProvider: "openai-apikey",
+    openaiProviderTierVersion: 2,
+    providers: { openai: disabledOpenAiProvider, "openai-apikey": pooled },
+  } as unknown as OcxConfig);
+  const live = loadConfig();
+  rotateKeyOn429(live, "openai-apikey", null, Date.now(), "sk-platform-key");
+  const restored = loadConfig();
+  restored.providers["openai-apikey"]!.apiKey = "sk-platform-key";
+  saveConfig(restored);
+
+  const server = startServer(0);
+  try {
+    const response = await fetch(new URL("/v1/images/generations", server.url), {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${DIRECT_CHATGPT_TOKEN}` },
+      body: JSON.stringify({ prompt: "a cat", model: "gpt-image-2" }),
+    });
+    expect(response.status).toBe(500);
+    // Nothing was sent. Red control: restore the `?? candidates.keyed.apiKey` fallback and this
+    // becomes a 200 carrying Bearer sk-platform-key -- the cooled key the pool had left.
+    expect(captured).toHaveLength(0);
+  } finally {
+    await server.stop(true);
+    await upstream.stop(true);
+    clearKeyCooldowns();
+  }
+});
+
 test("without a configured strategy the keyed image send keeps the cooled key", async () => {
   const captured: CapturedRequest[] = [];
   const upstream = fakeImagesUpstream(captured);
