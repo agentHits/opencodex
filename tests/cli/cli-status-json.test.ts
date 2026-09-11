@@ -396,7 +396,7 @@ describe("CLI status JSON", () => {
       persistEffortClamp({
         runtimePath: fakeCodex,
         runtimeVersion: "0.133.0",
-        removedEfforts: ["max", "ultra"],
+        removedEfforts: ["xhigh"],
         affectedModels: ["gpt-5.6-sol"],
       }, { configDir: opencodexHome });
       resetCodexRuntimeResolveCacheForTests();
@@ -421,7 +421,7 @@ describe("CLI status JSON", () => {
       expect(parsed.codexRuntime?.version).toBe("0.133.0");
       expect(parsed.codexRuntime?.catalogClamp).toEqual({
         active: true,
-        removedEfforts: ["max", "ultra"],
+        removedEfforts: ["xhigh"],
         runtimeVersion: "0.133.0",
       });
     } finally {

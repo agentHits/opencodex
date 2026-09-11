@@ -46,6 +46,7 @@ import {
   displayCodexRuntimePath,
   persistEffortClamp,
   resolveAndPersistCodexRuntime,
+  UNCLAMPABLE_REASONING_EFFORTS,
   type EffortClampDiagnostic,
 } from "../runtime";
 
@@ -354,7 +355,13 @@ export function clampEntryToCodexSupportedEfforts(
     ? entry.supported_reasoning_levels as Array<{ effort?: string }>
     : null;
   if (levels && levels.length > 0) {
-    const kept = levels.filter(level => typeof level?.effort === "string" && supported.has(level.effort));
+    // A rung survives when the observed runtime offers it OR when it is one of the rungs the
+    // clamp no longer removes (max/ultra, per the unconditional-emission ruling): CLI versions
+    // that genuinely lack them are out of support, and hiding them from current clients costs
+    // more than it buys. Hub admission is a different question and stays fail-closed in
+    // `catalogEffortCompatibility` below.
+    const kept = levels.filter(level => typeof level?.effort === "string"
+      && (supported.has(level.effort) || UNCLAMPABLE_REASONING_EFFORTS.has(level.effort)));
     if (requiresExactReserveEfforts(entry)) {
       entry.supported_reasoning_levels = kept;
       if (kept.length === 0) {
@@ -375,12 +382,19 @@ export function clampEntryToCodexSupportedEfforts(
         .map(level => ({ ...level }));
   }
   const currentDefault = entry.default_reasoning_level;
-  if (typeof currentDefault === "string" && !supported.has(currentDefault)) {
-    const surviving = (Array.isArray(entry.supported_reasoning_levels) ? entry.supported_reasoning_levels : [])
-      .flatMap(level => typeof (level as { effort?: string })?.effort === "string"
-        ? [(level as { effort: string }).effort]
-        : []);
-    entry.default_reasoning_level = clampedDefaultEffort(currentDefault, surviving);
+  const surviving = (Array.isArray(entry.supported_reasoning_levels) ? entry.supported_reasoning_levels : [])
+    .flatMap(level => typeof (level as { effort?: string })?.effort === "string"
+      ? [(level as { effort: string }).effort]
+      : []);
+  // An exempt default survives only when the surviving ladder actually advertises it;
+  // otherwise the row would name a default the client cannot select (review: PR #4257).
+  if (typeof currentDefault === "string"
+    && !supported.has(currentDefault)) {
+    const exemptAndAdvertised = UNCLAMPABLE_REASONING_EFFORTS.has(currentDefault)
+      && surviving.includes(currentDefault);
+    if (!exemptAndAdvertised) {
+      entry.default_reasoning_level = clampedDefaultEffort(currentDefault, surviving);
+    }
   }
 }
 
@@ -466,7 +480,11 @@ export function clampCatalogModelsToObservedCodexSupport(
     const omitted = requiresExactReserveEfforts(entry) && hadLadder && after.size === 0;
     if (lost.length > 0 || defaultClamped || omitted) {
       for (const effort of lost) removed.add(effort);
-      if (defaultClamped && beforeDefault) removed.add(beforeDefault);
+      // An orphaned exempt default (ultra with no ultra rung in the ladder) is repaired for
+      // coherence, but nothing was removed from the offering — do not name it in the diagnostic.
+      if (defaultClamped && beforeDefault && !UNCLAMPABLE_REASONING_EFFORTS.has(beforeDefault)) {
+        removed.add(beforeDefault);
+      }
       if (typeof entry.slug === "string") affected.push(entry.slug);
     }
     if (omitted) models.splice(index, 1);
