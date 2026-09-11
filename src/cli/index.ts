@@ -48,7 +48,7 @@ import {
   pendingTeardownPathFor,
   quarantinePendingTeardown,
 } from "../config/pending-teardown";
-import { collectStatus, unusedProxyWarningLines } from "./status";
+import { collectStatus, hubStatusLines, unusedProxyWarningLines } from "./status";
 import { endpointsToProve, everyEndpointProvenDown, sharedTeardownAuthorized, type UninstallObservation } from "./uninstall-plan";
 import { takeFlag } from "./runtime-api";
 
@@ -66,10 +66,11 @@ import { dispatchCommand , decideStartWithLiveOwner } from "./dispatch";
 import { findAvailablePort, isAddrInUse, PortUnavailableError, shouldPersistSelectedPort, waitForPortAvailable } from "../server/ports";
 import { findLiveProxy, probeHostname, type LiveProxy } from "../server/proxy-liveness";
 import { createReadinessGate } from "../server/readiness";
+import { isApiAuthRequired } from "../server/auth-cors";
 import { runReady, type ReadyArgs } from "./ready";
 import { runCli } from "./root";
 import { isProcessAlive, ProxyOwnershipRefusedError, refusalNextStep, stopProxy } from "../lib/process-control";
-import { loadServiceTokenFromFile } from "../lib/service-secrets";
+import { startupDataPlaneToken } from "../lib/service-secrets";
 import { assertNotAdminToken, diagnoseService, isServiceOwnershipError, proxyStillLiveAfterStop, serviceCommand, serviceEnvironmentOwnedHere, serviceStartableFromTray, serviceStatusSummary, stopServiceIfInstalledDetailed, uninstallServiceIfInstalled, uninstallServiceDetailed } from "../service";
 import { formatStartupRoutingDetail, startupHealthSummary } from "../codex/autostart-health";
 import { injectSystemEnv, reconcileShellHook, revertSystemEnv, uninstallShellHook } from "../server/system-env";
@@ -291,10 +292,16 @@ async function findProxyOwnerBeforeJournalRecovery(
 }
 
 async function handleStart(options: { block?: boolean } = {}) {
-  // Native (WinSW) service mode has no batch wrapper to read the service token file
-  // into the environment, so the app loads it here before the server binds. The server
+  // Native (WinSW) service mode has no batch wrapper to read the service token file into
+  // the environment, and a FOREGROUND `ocx start` has no wrapper at all — so the app loads
+  // the token here, before the server binds, with the same precedence the launchd plist and
+  // the systemd unit use when they cat the file into the environment. Without the second
+  // source, `ocx start` refused to bind a non-loopback hostname (assertServerAuthConfig)
+  // that the installed service on the same machine was serving happily (#4236). The server
   // auth path reads OPENCODEX_API_AUTH_TOKEN from the environment.
-  const serviceToken = loadServiceTokenFromFile(process.env);
+  const serviceToken = startupDataPlaneToken(process.env, {
+    authRequired: isApiAuthRequired(loadConfig()),
+  });
   if (serviceToken) process.env.OPENCODEX_API_AUTH_TOKEN = serviceToken;
   // The service wrapper (and WinSW via OCX_API_TOKEN_FILE) can still export a colliding
   // token that install now refuses to write. Refuse it here too, before bind, so an
@@ -1427,6 +1434,11 @@ async function handleStatus() {
   console.log(`   Runtime: ${status.json.paths.runtime}`);
   console.log(`   Runtime source: ${status.json.runtime.source}${status.json.runtime.overrideEnv ? ` (${status.json.runtime.overrideEnv})` : ""}`);
   console.log(`   Default provider: ${status.json.defaultProvider}`);
+  // One block rather than six scattered lines, and only on a hub: `hubStatusLines` owns the
+  // sentences so they are testable without spawning the CLI. It prints no token value.
+  if (status.json.hub) {
+    for (const line of hubStatusLines(status.json.hub)) console.log(`   ${line}`);
+  }
   console.log(`   Remote hub: ${status.json.connection.state}${status.json.connection.serverUrl ? ` (${status.json.connection.serverUrl})` : ""}`);
   if (status.json.connection.state === "invalid" || status.json.connection.state === "mismatched") {
     console.log(`   ⚠️  ${status.json.connection.reason}`);

@@ -18,9 +18,52 @@ import { effectiveLoopbackListenerPort } from "../codex/loopback-target";
 import { claudeDesktopIntegrationEnabled } from "../codex/desired-state";
 import { claudeDesktopPolicyHealth, probeClaudeDesktopPolicy, type ClaudeDesktopPolicyHealth } from "../claude/desktop-policy";
 import { collectClientConnectionStatus } from "./connect";
+import { readServiceApiTokenState, serviceApiTokenFilePath } from "../lib/service-secrets";
+import { tokenCollidesWithAdmin } from "../lib/admin-secrets";
 export { proxyHealthFailureReason, isConnectionRefused, isUncleanExitEvidence, probeUncleanExitState } from "./status-probes";
 export type { ListenTarget } from "./status-probes";
 import { checkProxyHealth, probeUncleanExitState, type ListenTarget } from "./status-probes";
+
+/**
+ * The state of the data-plane admission secret the SERVICE will use. State only -- never the value.
+ *
+ * Always about the file, because the file is what the service reads: the launchd plist and the
+ * systemd unit `cat` it into `OPENCODEX_API_AUTH_TOKEN` before exec, so a token in the CLI's own
+ * shell says nothing about the running hub. `present (env)` used to be reported here and was
+ * simply wrong about whose environment it meant (see `dataTokenEnvInShell`).
+ *
+ * `admin-collision (file)` is the #4236 incident shape: the file holds the MANAGEMENT token, so
+ * the server fences the whole management plane closed at boot and the hub crash-loops. It used
+ * to report `present (file)`, which is how the cause stayed invisible.
+ */
+export type HubDataTokenState =
+  | "present (file)"
+  | "unsafe (file)"
+  | "admin-collision (file)"
+  | "missing";
+
+export type HubStatus = {
+  /** Advertised data origin: hub.dataPublicOrigin, else derived from the bind address. */
+  dataOrigin: string;
+  /** True when dataOrigin came from config rather than being derived from the bind. */
+  dataOriginConfigured: boolean;
+  /**
+   * The unauthenticated loopback listener, in PR2's two forms: `companion` shares the public
+   * port (the one-port hub), `ported` binds its own. `off` means the hub does not serve its
+   * own local clients at all.
+   */
+  loopbackListener: { state: "off" | "companion" | "ported"; port: number | null };
+  managementIngress: { enabled: boolean; port: number | null };
+  managementPublicOrigin: string | null;
+  dataToken: HubDataTokenState;
+  dataTokenPath: string;
+  /**
+   * `OPENCODEX_API_AUTH_TOKEN` is set in the shell that ran `ocx status` — which is NOT the
+   * environment the installed service runs in. Reported separately, and honestly, because it
+   * does decide what a FOREGROUND `ocx start` in this same shell would admit.
+   */
+  dataTokenEnvInShell: boolean;
+};
 
 export type CliStatusJson = {
   schemaVersion: 1;
@@ -90,6 +133,18 @@ export type CliStatusJson = {
     policy: ClaudeDesktopPolicyHealth;
   };
   /**
+   * The hub-only facts an operator needs in one place, or null on a standalone/client machine.
+   *
+   * Scattered across the report they were unusable: the public data origin came from `listen`,
+   * the management origin was folded into `dashboard.url`, the loopback companion appeared
+   * nowhere, and the data-plane token appeared nowhere at all -- so the one question a hub
+   * operator actually asks ("is this reachable, and can another machine join?") took four other
+   * commands to answer. Additive and nullable, so `schemaVersion` stays 1.
+   *
+   * Never carries a token value; only which source holds one.
+   */
+  hub: HubStatus | null;
+  /**
    * This CLI's version against the running proxy's (#2701).
    *
    * Additive and optional-by-value, so `schemaVersion` stays 1: an existing consumer that
@@ -118,6 +173,86 @@ function statusDashboardUrl(config: StatusListenConfig, hostname: string | undef
     ? "localhost"
     : reachableHostname;
   return `http://${dashboardHostname}:${port}/`;
+}
+
+/**
+ * The hub block, or null when this machine is not a hub.
+ *
+ * The token line is about the FILE, not this shell. `ocx status` used to print `present (env)`
+ * whenever the calling shell happened to export `OPENCODEX_API_AUTH_TOKEN`, but the service
+ * wrapper overwrites that variable from the token file before exec — so the label described the
+ * operator's terminal and not the hub. The shell's variable is reported as its own flag instead.
+ *
+ * The token VALUE is never read into the report. `readServiceApiTokenState` returns it; the only
+ * things derived from it are `kind` and the admin-token comparison, neither of which can carry
+ * bytes of the secret.
+ */
+export function collectHubStatus(
+  config: Pick<OcxConfig, "runtimeRole" | "hostname" | "port" | "hub" | "unauthenticatedLoopbackListener">,
+  listen: { port: number; hostname?: string | null },
+  env: NodeJS.ProcessEnv = process.env,
+): HubStatus | null {
+  if (config.runtimeRole !== "hub") return null;
+  const listener = config.unauthenticatedLoopbackListener;
+  const loopbackPort = effectiveLoopbackListenerPort(config, listen.port);
+  const ingress = config.hub?.managementIngress;
+  const configuredDataOrigin = config.hub?.dataPublicOrigin;
+  const host = probeHostname(listen.hostname ?? config.hostname);
+  const tokenState = ((): HubDataTokenState => {
+    const state = readServiceApiTokenState();
+    if (state.kind === "unsafe") return "unsafe (file)";
+    if (state.kind !== "present") return "missing";
+    return tokenCollidesWithAdmin(state.token, env) ? "admin-collision (file)" : "present (file)";
+  })();
+  return {
+    dataOrigin: configuredDataOrigin
+      ?? `http://${host === "127.0.0.1" ? "localhost" : host}:${listen.port}`,
+    dataOriginConfigured: Boolean(configuredDataOrigin),
+    loopbackListener: loopbackPort === null
+      ? { state: "off", port: null }
+      : { state: listener?.enabled && listener.port === undefined ? "companion" : "ported", port: loopbackPort },
+    managementIngress: {
+      enabled: ingress?.enabled === true,
+      port: ingress?.enabled === true ? ingress.port : null,
+    },
+    managementPublicOrigin: config.hub?.managementPublicOrigin ?? null,
+    dataToken: tokenState,
+    dataTokenPath: serviceApiTokenFilePath(),
+    dataTokenEnvInShell: Boolean(env.OPENCODEX_API_AUTH_TOKEN?.trim()),
+  };
+}
+
+/**
+ * The human rendering of the hub block, owned here rather than in the `ocx status` printer so
+ * the sentences are testable without spawning the CLI. Indentation is the caller's.
+ */
+export function hubStatusLines(hub: HubStatus): string[] {
+  const listener = hub.loopbackListener.state === "off"
+    ? "off — this hub does not route its own local Codex/Claude clients"
+    : hub.loopbackListener.state === "companion"
+      ? `companion on http://127.0.0.1:${hub.loopbackListener.port} — same port as the public listener, no credential needed locally`
+      : `ported on http://127.0.0.1:${hub.loopbackListener.port} — a second port local clients must be pointed at`;
+  const tokenLines = [`  Data token: ${hub.dataToken}${hub.dataToken === "missing" ? "" : ` at ${hub.dataTokenPath}`}`];
+  if (hub.dataToken === "admin-collision (file)") {
+    // Naming the consequence matters more than naming the state: this is what a crash-looping
+    // hub looks like from `ocx status`, and nothing else in the report says so (#4236).
+    tokenLines.push(
+      "    that file holds the MANAGEMENT token, so the hub fences its management API closed at boot —",
+      "    delete it and run 'ocx service repair' to generate a data-plane token",
+    );
+  }
+  if (hub.dataTokenEnvInShell) {
+    tokenLines.push("    OPENCODEX_API_AUTH_TOKEN is also set in this shell; the installed service reads the file, not this");
+  }
+  return [
+    "Hub:",
+    `  Data origin: ${hub.dataOrigin}${hub.dataOriginConfigured ? " (hub.dataPublicOrigin)" : " (derived from the bind address)"}`,
+    `  Loopback listener: ${listener}`,
+    `  Management ingress: ${hub.managementIngress.enabled ? `http://127.0.0.1:${hub.managementIngress.port}` : "disabled"}`,
+    `  Management origin: ${hub.managementPublicOrigin ?? "unset — remote pairing and the remote dashboard need hub.managementPublicOrigin"}`,
+    ...tokenLines,
+    "  Invite a machine: ocx hub invite",
+  ];
 }
 
 export function selectListenTarget(
@@ -357,6 +492,7 @@ export async function collectStatus(): Promise<CliStatusView> {
         source: bunRuntime.source,
         ...(bunRuntime.source === "override" ? { overrideEnv: bunRuntime.overrideEnv } : {}),
       },
+      hub: collectHubStatus(config, listen),
       codexAutostart: codexAutoStartEnabled(config),
       startup,
       defaultProvider: typeof config.defaultProvider === "string" ? config.defaultProvider : null,
