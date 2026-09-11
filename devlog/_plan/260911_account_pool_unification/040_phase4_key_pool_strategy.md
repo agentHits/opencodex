@@ -300,3 +300,57 @@ required — kept, and labelled as such.
 **Deliberate:** a `quota` pick still records `keyRotationCursor`. The cursor is where the pool
 last was, not a round-robin private; leaving it accurate means switching an operator to
 `round-robin` later resumes from the key actually in use instead of the start of the ring.
+
+## wp4c plan — the two first-send paths that never enter core.ts
+
+wp4b wired `selectProactiveApiKey` into the Responses core and native chat. The audit that
+produced it named two dispatch paths those two call sites do not cover, and they became this
+unit rather than riding along untested.
+
+| Seam | File | Line | Shape |
+|---|---|---|---|
+| native compact | `src/server/responses/compact.ts` | 745-746 | `compactProvider` object; key applied as a header |
+| keyed images | `src/server/images.ts` | 701-703 | `candidates.keyed` destructured to `{ provider, apiKey, providerName }` |
+
+Both are genuinely independent: native compact runs only when
+`supportsNativeResponsesCompactEndpoint` accepts the destination and never reaches
+`handleResponses`, and the keyed image path builds its own URL and Authorization header
+without a route object at all.
+
+### One seam per file, and only first sends
+
+`compact.ts`:745 is the native-compact branch:
+
+```
+if (compactProvider.authMode !== "forward" && compactProvider.apiKey) {
+  headers.set("authorization", `Bearer ${resolveProviderApiKey(compactProvider.apiKey)}`);
+```
+
+The pick goes immediately above it, reassigning `compactProvider` from the returned clone —
+the same assign-then-use shape wp4b established, and for the same reason: the picker returns a
+clone and never mutates its argument.
+
+`images.ts`:701 destructures `{ provider, apiKey, providerName }`. The pick runs before the
+destructure so the header below is built from the chosen key.
+
+**Explicitly NOT a seam:** `compact.ts`:446 sits inside `resolveAlternateCompactContext`, which
+runs after a failure. It is the compact analogue of the 429 rotation loops and must stay
+reactive; putting a proactive pick there would move a retry off the account the retry exists to
+replace.
+
+### What stays out
+
+No change to `selectProactiveApiKey`, to the reactive rotation, or to the strategies. The picker
+already returns null unless a strategy is configured AND the committed key is cooling, so an
+install that never set `apiKeyPoolStrategy` evaluates one predicate on each of these paths and
+stops — including the persisted-write path, which is never reached.
+
+### Acceptance
+
+- A cooled committed key with a configured strategy is replaced on the FIRST native-compact send
+  and on the FIRST keyed image send, proven end to end rather than by unit-calling the picker.
+- Without a configured strategy both paths still use the committed key, so rotation stays
+  reactive-only for an install that never asked otherwise.
+- Red control: with each call site removed, its case must fail with the cooled key on the wire.
+- The Lab boundary suite runs, because `compact.ts` imports from the same module family the core
+  path does.
