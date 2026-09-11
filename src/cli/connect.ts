@@ -109,6 +109,17 @@ function observeLocalCodexEffortLadder(): ReadonlySet<string> | null {
   return codexSupportedReasoningEfforts({ commandCandidates: () => [command] });
 }
 
+/**
+ * One observer per command, for the write-time gate and the readiness check alike. Built even
+ * when nothing was injected, so production does not silently fall back to the default inside
+ * {@link assertClientCatalogCompatible} — that default persists runtime selection state and
+ * would run its own probe, which is how the two checks could disagree about the ladder within
+ * a single `ocx connect`.
+ */
+function catalogObserver(deps: ClientCatalogProbeDeps | undefined): CatalogCompatibilityDeps {
+  return { supportedEfforts: deps?.supportedEfforts ?? observeLocalCodexEffortLadder };
+}
+
 /** The stat half of the catalog verdict, shared by the status collector and `ocx connect`. */
 function installedCatalogFileState(): ClientCatalogFileState {
   if (!existsSync(DEFAULT_CATALOG_PATH)) return "missing";
@@ -134,9 +145,7 @@ function inspectInstalledCatalogReadiness(
 ): ClientCatalogReadiness {
   try {
     const read = deps.readCatalogBody ?? readInstalledCatalogBody;
-    return inspectClientCatalogReadiness(file, file === "present" ? read() : null, {
-      supportedEfforts: deps.supportedEfforts ?? observeLocalCodexEffortLadder,
-    });
+    return inspectClientCatalogReadiness(file, file === "present" ? read() : null, catalogObserver(deps));
   } catch {
     return { kind: "unverified", reason: "the selected local Codex runtime could not be inspected" };
   }
@@ -331,10 +340,10 @@ async function runConnect(argv: string[], deps: ClientCommandDeps): Promise<void
   }, {
     fetchImpl: deps.fetchImpl,
     lifecycleLockDeps: deps.lifecycleLockDeps,
-    // Same observer for the write-time gate and the readiness check below. Two independent
-    // defaults would each run their own `codex debug models`, and could disagree about the
-    // ladder within a single command.
-    ...(deps.catalogProbeDeps ? { catalogCompatibility: deps.catalogProbeDeps } : {}),
+    // Same observer the readiness check below uses. Passed unconditionally: leaving it out in
+    // production would let the gate fall back to its own probing, persisting default, so one
+    // command could run two probes and act on two different ladders.
+    catalogCompatibility: catalogObserver(deps.catalogProbeDeps),
   });
   // The hub and the credential are proven at this point; the local runtime is not. Reporting
   // only the first half is what #4207 was filed for, so the catalog now on disk is checked
