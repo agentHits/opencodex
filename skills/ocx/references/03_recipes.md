@@ -261,6 +261,34 @@ provider sets `liveModels: false` deliberately — its authenticated roster incl
 models this Responses-agent provider cannot drive — so the absence of a live probe is a design
 decision, not a broken connection.
 
+## 10. Invite one more machine onto a hub
+
+Run on the **hub**. This is the whole flow; do not assemble an `ocx connect` line by hand.
+
+```bash
+ocx status                 # read the Hub: block first -- origins, listener, token source
+ocx hub invite --json
+```
+
+`--json` gives `{ code, expiresAt, dataUrl, managementUrl, command }`. Hand the operator
+`command` to run on the other machine; it already carries the data origin, the management
+origin and `--pairing-code-stdin`. The code is a secret with a five-minute TTL and one use:
+do not persist it, do not put it in a file, and prefer letting the operator copy it rather
+than keeping it in a transcript.
+
+Two refusals are normal and neither burns a code:
+
+- `No loopback browser origin is admitted for pairing` — run the
+  `ocx config set corsAllowOrigins '["http://localhost:10100"]'` line the error prints, using
+  the **joining** machine's proxy port, then invite again. Grants are origin-bound and
+  `ocx connect` presents its own `http://localhost:<port>`.
+- A rejected `--management-url` — on `invite` that flag confirms
+  `hub.managementPublicOrigin` rather than overriding it. Drop the flag, or change the config.
+
+If `hub.dataPublicOrigin` is unset, `invite` falls back to `http://<bind>:<port>`, which a
+remote machine behind a TLS frontend usually cannot reach. Check that before handing the
+command over. Full context: [05_remote_hub.md](05_remote_hub.md#inviting-a-machine-ocx-hub-invite).
+
 ## Aside profiles
 
 These commands and the Aside refresh in `ocx sync` require a compatible running ocx proxy.
