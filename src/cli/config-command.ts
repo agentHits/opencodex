@@ -26,8 +26,36 @@ const USAGE = `Usage:
 const SECRET_KEYS = /^(apiKey|key|accessToken|refreshToken|idToken|token|password|clientSecret|webhookUrl)$/i;
 const BLOCKED_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
 
+/**
+ * The synthetic `_remoteHub` note printed by `ocx config show` on a client (#4236).
+ *
+ * `runtimeRole: "client"` and the `client` block were already printed, and were already ignored:
+ * an agent read a client's `config.json`, saw an empty `providers` map and no grok, and concluded
+ * the hub could not serve grok. Naming the situation in the config output costs one key.
+ *
+ * Synthetic and NOT persisted, for two reasons. `clientConnectionSchema` is `.strict()`, so a
+ * `client.note` field would not validate; and persisted prose drifts from the behaviour it
+ * describes. The leading underscore marks it as an annotation rather than a setting, and
+ * `config export` emits the real config untouched so round-trips still validate.
+ */
+export function remoteHubConfigNote(config: OcxConfig): { connected: boolean; origin: string; note: string } | null {
+  if (config.runtimeRole !== "client" || !config.client) return null;
+  return {
+    connected: true,
+    origin: config.client.serverUrl,
+    note: "provider credentials and model availability live on the hub; run ocx status",
+  };
+}
+
 function redact(value: unknown, key = ""): unknown {
   if (SECRET_KEYS.test(key) && typeof value === "string") return value ? "********" : value;
+  // `client.priorCatalog` is the base64 catalog snapshot connect took before overwriting the
+  // local one — up to 64 MB of it (src/config.ts). Printed in full it buried `runtimeRole` and
+  // the `client` block under a wall of base64, which is how a reader came to miss that this
+  // machine is a client at all. Size only, mirroring sanitizeModelCostsForDisplay.
+  if (key === "priorCatalog" && typeof value === "string") {
+    return value ? `<omitted: ${Buffer.byteLength(value)} bytes>` : value;
+  }
   // modelCosts rows are keyed by model id; a pasted API key in a key position
   // must not be echoed back by config show/get (values are already redacted).
   if (key === "modelCosts") return sanitizeModelCostsForDisplay(value);
@@ -119,7 +147,13 @@ export async function handleConfigCommand(argv: string[]): Promise<number> {
       const source = takeFlag(args, "--source");
       rejectArgs(args, USAGE);
       const diagnostics = readConfigDiagnostics();
-      const config = redact(diagnostics.config);
+      const redacted = redact(diagnostics.config);
+      const note = remoteHubConfigNote(diagnostics.config);
+      // First key, not last: it has to be read before the empty `providers` map that misled a
+      // reader into concluding nothing was configured anywhere.
+      const config = note && redacted && typeof redacted === "object" && !Array.isArray(redacted)
+        ? { _remoteHub: note, ...redacted as Record<string, unknown> }
+        : redacted;
       const result = source ? { config, source: diagnostics.source, error: diagnostics.error, warnings: diagnostics.warnings ?? [] } : config;
       printData(result, true);
       return;
