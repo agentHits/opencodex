@@ -502,9 +502,31 @@ export function serviceRetryCommand(
  * installing shell. This function is the chokepoint that should refuse it rather than
  * writing a file that produces a broken service. Comparison is the same helper doctor
  * uses: minted `ocx_admin_…` prefix, or byte-equal to configuredAdminToken (env or file).
+ *
+ * `source` selects the remedy, not the rule. The token can also arrive from an EXISTING
+ * `service-api-token` that install/repair reuses, and there `unset` is meaningless advice —
+ * the fix is to delete the file so a data-plane token is generated.
  */
-export function assertNotAdminToken(token: string, env: NodeJS.ProcessEnv = process.env): void {
+export function assertNotAdminToken(
+  token: string,
+  env: NodeJS.ProcessEnv = process.env,
+  source: "env" | "file" = "env",
+): void {
   if (!tokenCollidesWithAdmin(token, env)) return;
+  if (source === "file") {
+    // The file branch of `writeServiceApiTokenFile` used to skip this check entirely, so a
+    // hand-pasted admin token already on disk (pre-#2696, or the exact #4236 incident) was
+    // silently reused: `ocx status` said `present (file)` and the hub crash-looped at boot.
+    // The remedy is NOT `unset` -- there is nothing in the environment to unset.
+    throw new Error(
+      `${serviceApiTokenFilePath()} holds a management (admin) token, not a data-plane token. `
+        + "The service exports that file as the data-plane secret, which fences the whole management "
+        + "API closed and makes every ocx management command fail with 503, so the hub crash-loops at "
+        + `boot. Delete the file (rm ${serviceApiTokenFilePath()}), then rerun \`ocx service repair\` `
+        + "(or `ocx service install` when the service is not installed yet): a fresh owner-only "
+        + "data-plane token is generated and nothing needs to be exported by hand.",
+    );
+  }
   throw new Error(
     "OPENCODEX_API_AUTH_TOKEN holds a management (admin) token. The service exports it "
       + "as the data-plane secret, which fences the whole management API closed and makes "
@@ -530,17 +552,25 @@ export function assertNotAdminToken(token: string, env: NodeJS.ProcessEnv = proc
  */
 export function assertServiceAuthEnvironment(): void {
   const config = loadConfig();
-  // Check the collision before the loopback short-circuit: a loopback install writes
-  // the token file too, so returning early here is what let the broken state through.
+  // Both collision checks come BEFORE the loopback short-circuit, because the launch wrapper
+  // exports the token file unconditionally (`buildServiceShellCommand` cats it whenever it
+  // exists, whatever the hostname): a management token in either source fences the whole
+  // management plane closed at boot, even on a loopback install that needs no admission
+  // secret. Returning early is what let that broken state through.
   const present = process.env.OPENCODEX_API_AUTH_TOKEN?.trim();
   if (present) assertNotAdminToken(present);
+  const state = readServiceApiTokenState();
+  // An existing FILE holding the admin token is the incident shape itself, and the first round
+  // only checked the env var — so install/repair reused it and the hub crash-looped at boot.
+  // On a machine connected to a hub this same file holds that hub's issued client key, which
+  // is never a management token, so the check is a no-op there.
+  if (state.kind === "present") assertNotAdminToken(state.token, process.env, "file");
   if (isLoopbackHostname(config.hostname)) return;
   if (present) return;
   // Absent is fine — install/repair generates one below. `unsafe` is not: the writer refuses
   // to replace a path it cannot vouch for, so say so here, where the operator can still act,
   // instead of failing mid-install. Reached from `service repair` as well as `install`, so
   // name a command that can actually succeed (see serviceRetryCommand).
-  const state = readServiceApiTokenState();
   if (state.kind !== "unsafe") return;
   const diag = diagnoseService();
   throw new Error(
@@ -608,9 +638,21 @@ export function writeServiceApiTokenFile(): ProvisionedServiceApiToken | null {
   if (isLoopbackHostname(loadConfig().hostname)) return null;
   const existing = readServiceApiTokenState();
   if (existing.kind === "present") {
+    // The collision check is NOT only for the env branch. A file that already holds the admin
+    // token -- hand-pasted before #2696, or written by the very incident this unit closes --
+    // was silently accepted here, so `ocx status` reported `present (file)` and the hub
+    // crash-looped at boot with no command pointing at the cause.
+    const path = serviceApiTokenFilePath();
+    assertNotAdminToken(existing.token, process.env, "file");
+    // `readServiceApiTokenState` accepts any bounded regular file, so a reused token may well
+    // be group- or world-readable. Tighten it on the way through rather than claiming
+    // "owner-only" about a mode nobody checked; best-effort, since a non-owner cannot chmod
+    // and failing the install over it would be worse than the loose mode.
+    try { chmodSync(path, 0o600); } catch { /* best-effort */ }
+    if (process.platform === "win32") hardenSecretPath(path, { required: false });
     // No log line: repair/restart hit this on every run and an unconditional notice about a
     // credential file trains operators to ignore the one that matters.
-    return { path: serviceApiTokenFilePath(), origin: "file" };
+    return { path, origin: "file" };
   }
   if (existing.kind === "unsafe") throw new Error(`${existing.reason}: ${serviceApiTokenFilePath()}`);
   const path = persistServiceApiToken(randomBytes(32).toString("hex"));
