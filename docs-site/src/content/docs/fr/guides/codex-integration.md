@@ -389,6 +389,18 @@ Lorsqu'un compte quitte la sélection du pool, la raison accompagne la décision
 
 Un renouvellement du compte principal qui n'aboutit pas répond toujours `503` avec `Retry-After`, car une nouvelle tentative peut réussir. Le message précise désormais qu'un échec persistant signifie que le compte principal doit être réauthentifié, au lieu de demander seulement de réessayer.
 
+### Écarter de la rotation un compte rétrogradé
+
+`codexPool.excludedPlans` liste les clés de forfait que la sélection automatique du pool ignore, comparées sans tenir compte de la casse au forfait enregistré sur chaque compte. Absent par défaut : une installation existante effectue exactement la même rotation qu'avant.
+
+```bash
+ocx config set codexPool '{"excludedPlans":["free"]}'
+```
+
+C'est une politique de sélection, pas un blocage. Un compte écarté conserve ses identifiants, son historique de quota et son affinité de thread, reste visible dans la liste des comptes et demeure joignable par sélection explicite comme `work/gpt-5.4`. Seule la rotation automatique cesse de le choisir, y compris lorsqu'il est déjà le compte actif ou déjà lié à un thread — l'état exact que laisse un abonnement expiré.
+
+Deux limites volontaires. Le compte Codex principal n'est jamais écarté par forfait, car le routage en mode sélection seule ne lit pas son forfait dans les identifiants natifs protégés ; une règle le couvrant se contredirait. Et lorsqu'il ne reste aucun compte non écarté, le compte écarté répond quand même au lieu d'échouer : mettre tous les comptes en pause reste le moyen d'arrêter complètement le service. Il n'existe pas de `minimumPlan`, car classer les forfaits ChatGPT entre eux exige un ordre total qui n'existe pas ici.
+
 ## Restauration de Codex natif
 
 `ocx stop` arrête le proxy et le service d'arrière-plan installé, puis tente de restaurer Codex natif. OpenCodex retire les éléments de routage dont il peut vérifier la propriété et signale une restauration incomplète si les fichiers de configuration ne peuvent pas être récupérés en toute sécurité.
