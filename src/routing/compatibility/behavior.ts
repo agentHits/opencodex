@@ -14,6 +14,8 @@ export function upstreamProtocolForAdapter(adapter: string): string {
     case "openai-chat":
     case "command-code":
     case "cursor":
+    case "devin-cli":
+    case "devin":
     case "azure":
     case "azure-openai":
     case "kiro":
