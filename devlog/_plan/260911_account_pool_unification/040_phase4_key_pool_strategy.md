@@ -250,3 +250,53 @@ otherwise untestable without a live probe.
 - `apiKeyPoolStrategy` is currently undocumented in `docs-site` — no row exists anywhere. It
   gains one in `reference/configuration/providers.md` describing all three values, since shipping
   a third undocumented value is how the generic pool ended up inert and unexplained.
+
+### wp4 plan audit — FAIL, folded
+
+**Blocker 1 — a cache hit is not evidence.** `readEntry` stores `{ unavailable: true, quota:
+lastGood }` for up to `LAST_GOOD_MS` (30 minutes) when a probe fails, so the row survives with a
+stale measurement attached. A reader that returns `entry.quota` on any hit would rank on a
+number taken up to half an hour ago from a probe that has since been failing — and rank it
+ABOVE a key with no row at all. `cachedApiKeyQuota` returns null whenever `entry.unavailable`
+is set or `entry.quota` is null. Last-good is a display value; it is not a selection input.
+
+**Blocker 2 — the ranking was not specified, and the obvious formula does not work.**
+"Remaining headroom" is undefined for `ProviderQuota`, which carries `fiveHourPercent`,
+`weeklyPercent`, `monthlyPercent`, `customWindows[].percent` and `creditsUsd`. The definition
+this unit uses, matching `headroomOf` on the OAuth side so the two pools cannot disagree:
+
+`headroom = 100 - max(fiveHourPercent, weeklyPercent, monthlyPercent, ...customWindows.percent)`,
+and null when none of those is a number. `creditsUsd` is deliberately excluded: it is a
+currency amount, not a percentage, and mixing the two scales produces an ordering that means
+nothing.
+
+**Mixed evidence needs a rule and now has one**, borrowed from
+`rankAccountsByHeadroom`'s three buckets rather than invented: measured-with-headroom first
+(most headroom wins), then unmeasured, then measured-and-exhausted, with the stable roster order
+breaking ties. An unmeasured key is not assumed spent, and it is not assumed fresh either.
+
+**Recorded, not fixed — providers whose rows cannot discriminate.** DeepSeek reports every key
+at `customWindows.percent: 0`, so all headrooms tie at 100 and the pick falls through to the
+stable order, which is exactly today's behaviour. That is the correct outcome for a provider
+that publishes no per-key differentiation, and it is why the fallback has to be a real ordering
+rather than an error.
+
+**Major 1 — "unknown strategy is a no-op" was wrong.** Today any truthy value that is not
+`round-robin` takes the `eligible[0]` default, which IS fill-first; zod is the only thing
+rejecting junk. So the new branch is `else if (strategy === "quota")` placed after the
+round-robin block and BEFORE that default. Replacing the default would silently retarget
+fill-first. The acceptance bullet claiming a no-op is struck.
+
+**Major 2 — the test seam cannot mirror the account-side signature.** The key cache is keyed on
+`identity(name, provider, id, resolvedKey)`, so the seam takes the provider name, the provider
+config, the key id and the raw key, not `(provider, accountId, quota)`.
+
+**Minors folded.** `keyQuotaReaderForProvider` is at `quota.ts`:2898, not :2897. The e2e helper
+added in wp4b types its strategy parameter as `"round-robin" | "fill-first"` and widens with the
+union. The provider count is approximate and the claim is dropped. `resolveProviderApiKey` is
+synchronous and swallows its own failures, so the try/catch is belt-and-braces rather than
+required — kept, and labelled as such.
+
+**Deliberate:** a `quota` pick still records `keyRotationCursor`. The cursor is where the pool
+last was, not a round-robin private; leaving it accurate means switching an operator to
+`round-robin` later resumes from the key actually in use instead of the start of the ring.
