@@ -339,3 +339,54 @@ right discriminator; the unified GET must NOT copy the mixed pin+failover+pool D
 `GET /api/codex-auth/active` returns; and CORS, the Vite `/api` proxy, OpenAPI and the
 management-auth enumeration are not gates for a new path.
 
+## wp5b plan — one GUI pool client
+
+The last phase. wp5c gave the server one contract; this points the dashboard at it.
+
+### What "two surfaces" means in the GUI
+
+Not two screens. Two independent client implementations of the same idea:
+
+| Surface | File | Talks to | Reads |
+|---|---|---|---|
+| Codex threshold | `gui/src/codex-auto-switch.ts` | `PUT /api/codex-auth/auto-switch` | bare `{ threshold }` |
+| Codex strategy/sticky | `gui/src/account-pool-strategy.ts` | `PUT /api/codex-auth/pool-strategy` | `accountPoolStrategy`, `accountPoolStickyLimit` |
+| Anthropic pool | `gui/src/components/provider-workspace/AnthropicAccountPoolSettings.tsx` | `GET`/`PUT /api/oauth/accounts/pool` | `strategy`, `stickyLimit`, `quotaWindow` |
+
+Three fetchers, three response shapes, two prefix conventions for the same two fields. The
+components on top are legitimately different — a Codex pool card is not an Anthropic pool card —
+so this phase merges the CLIENT, not the presentation. Merging the rendering would be a visual
+redesign nobody asked for; merging the transport is the duplication the objective names.
+
+### Change surface
+
+NEW `gui/src/pool-settings.ts` — one client for `/api/pool/settings`:
+`getPoolSettings(apiBase, provider)` and `putPoolSettings(apiBase, provider, fields)`, both
+returning the unified DTO with its `supported` list. The existing normalizers in
+`account-pool-strategy.ts` stay where they are and are reused; this adds a transport, not a
+second copy of the value rules.
+
+MODIFY `codex-auto-switch.ts` `putAutoSwitchThreshold` and `account-pool-strategy.ts`
+`putCodexPoolStrategy` to delegate, keeping their exported signatures so no component changes
+shape. The `accountPoolStrategy`/`accountPoolStickyLimit` response handling disappears with the
+prefixed keys — the unified DTO is neutral for every kind.
+
+MODIFY `AnthropicAccountPoolSettings.tsx` to read and write through the same client.
+
+### The screenshot
+
+`enforce-target` requires a screenshot embed in the description of any PR whose title or
+description mentions `gui`, waivable only by a maintainer label. So: `bun run build:gui`, start
+the proxy, open the dashboard, capture the pool settings, and commit the PNG under the plan unit
+so the description can embed it from the branch. A committed asset is the only route that does
+not depend on a browser drag-and-drop.
+
+### Acceptance
+
+- No GUI file references `/api/codex-auth/auto-switch`, `/api/codex-auth/pool-strategy` or
+  `/api/oauth/accounts/pool` any more; one grep proves the consolidation rather than an
+  argument about it.
+- `bun run lint:gui` passes and the GUI suites covering these modules pass.
+- The three server routes still work — they have their own goldens and are not touched.
+- The PR description embeds a real screenshot of the rendered pool settings.
+
