@@ -602,6 +602,7 @@ const providerConfigSchema = z.object({
   mcpMaxResultBytes: z.number().int().positive().optional(),
   apiKeyTransport: z.enum(["x-api-key", "bearer"]).optional(),
   responsesPath: z.string().min(1).optional(),
+  chatCompletionsPath: z.string().min(1).optional(),
   statelessResponses: z.boolean().optional(),
   requiresAdjacentResponsesToolResults: z.boolean().optional(),
   annotateEmptyToolOutputs: z.boolean().optional(),
@@ -674,14 +675,18 @@ export {
   upstreamHttpVersionConfigError,
 } from "./config/provider-validation";
 
-function providerResponsesPathConfigError(responsesPath: string | undefined): string | null {
-  if (responsesPath === undefined) return null;
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(responsesPath) || responsesPath.includes("://")) {
-    return "responsesPath must be a relative path without a URL scheme";
+/**
+ * Shared shape check for the two relative send-path overrides. `field` names the
+ * offending key so the message stays specific to what the user actually wrote.
+ */
+function providerRelativeSendPathConfigError(field: string, value: string | undefined): string | null {
+  if (value === undefined) return null;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || value.includes("://")) {
+    return `${field} must be a relative path without a URL scheme`;
   }
-  if (!responsesPath.startsWith("/")) return "responsesPath must start with /";
-  if (responsesPath.includes("?") || responsesPath.includes("#")) {
-    return "responsesPath must not include query strings or fragments";
+  if (!value.startsWith("/")) return `${field} must start with /`;
+  if (value.includes("?") || value.includes("#")) {
+    return `${field} must not include query strings or fragments`;
   }
   return null;
 }
@@ -1450,13 +1455,15 @@ const configSchema = z.object({
         });
       }
     }
-    const responsesPathError = providerResponsesPathConfigError(provider.responsesPath);
-    if (responsesPathError) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["providers", redactSecretString(name), "responsesPath"],
-        message: responsesPathError,
-      });
+    for (const field of ["responsesPath", "chatCompletionsPath"] as const) {
+      const sendPathError = providerRelativeSendPathConfigError(field, provider[field]);
+      if (sendPathError) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["providers", redactSecretString(name), field],
+          message: sendPathError,
+        });
+      }
     }
     const headersError = providerHeadersConfigError((provider as { headers?: unknown }).headers);
     if (headersError) {

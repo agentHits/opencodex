@@ -14,7 +14,7 @@ import {
   enrichProviderFromRegistry,
   providerConfigSeed,
 } from "../../src/providers/derive";
-import { PROVIDER_REGISTRY } from "../../src/providers/registry";
+import { PROVIDER_REGISTRY, registryEntryForProviderDestination } from "../../src/providers/registry";
 import { FREE_PROVIDER_DIRECTORY } from "../../src/providers/free-directory";
 import { applyProviderConfigHints } from "../../src/codex/catalog";
 import { routeModel } from "../../src/router";
@@ -459,7 +459,9 @@ describe("provider registry parity", () => {
     const optedInProviders = PROVIDER_REGISTRY
       .filter(entry => entry.modelSuffixBracketStrip)
       .map(entry => entry.id);
-    expect(zai?.modelContextWindows).toEqual({ "glm-5.3": 1_000_000, "glm-5.3[1m]": 1_000_000, "glm-5.3-flash": 1_000_000, "glm-5.2": 1_000_000, "glm-5.2[1m]": 1_000_000 });
+    // The 5.3 family carries the number its own catalog reports, 1_048_576, which is what the
+    // domestic Responses row already used. 5.2 keeps the round figure it was seeded with.
+    expect(zai?.modelContextWindows).toEqual({ "glm-5.3": 1_048_576, "glm-5.3[1m]": 1_048_576, "glm-5.3-flash": 1_048_576, "glm-5.2": 1_000_000, "glm-5.2[1m]": 1_000_000 });
     // BUG-R5: glm-5.3-flash is a native VLM (docs.z.ai/guides/vlm/glm-5.3-flash), so it
     // must never sit in noVisionModels - that list routes a model's images through the
     // proxy's vision sidecar, which hands the model a text description of a picture it
@@ -512,6 +514,27 @@ describe("provider registry parity", () => {
       expect(zai?.modelMaxOutputTokens?.[id]).toBe(131_072);
     }
     expect(providerConfigSeed(zai!).modelSuffixBracketStrip).toBe(true);
+    // Responses is the default wire and Chat stays reachable per model. The two live under
+    // different prefixes on one host, so each carries its own relative send path; a wire
+    // override swaps the adapter and leaves baseUrl alone.
+    expect(zai?.adapter).toBe("openai-responses");
+    expect(zai?.baseUrl).toBe("https://api.z.ai");
+    expect(zai?.responsesPath).toBe("/api/v1/responses");
+    expect(zai?.chatCompletionsPath).toBe("/api/coding/paas/v4/chat/completions");
+    expect(providerConfigSeed(zai!).responsesPath).toBe("/api/v1/responses");
+    expect(providerConfigSeed(zai!).chatCompletionsPath).toBe("/api/coding/paas/v4/chat/completions");
+    // A config saved against the address this row used to occupy still resolves to it,
+    // so an existing custom provider does not quietly lose its metadata (#1100).
+    expect(registryEntryForProviderDestination({
+      adapter: "openai-chat",
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
+      authMode: "key",
+    })?.id).toBe("zai");
+    expect(registryEntryForProviderDestination({
+      adapter: "openai-responses",
+      baseUrl: "https://api.z.ai",
+      authMode: "key",
+    })?.id).toBe("zai");
     expect(providerConfigSeed(zai!).modelDefaultReasoningEfforts?.["glm-5.3"]).toBe("max");
     expect(deriveKeyLoginMap().zai.modelMaxOutputTokens?.["glm-5.3[1m]"]).toBe(131_072);
     // `zhipu-bigmodel-coding` opts in for the same reason `zai` does: it serves the same

@@ -83,13 +83,17 @@ responsesPath 가 실제로 흐르는 경로 전체를 대칭으로 따라가야
     src/router.ts:377-378            fill-if-absent 시딩
     src/config.ts                    zod 스키마 + 경로 검증(responsesPath 규칙 재사용)
     src/server/auth-cors.ts:801      필드 권한 맵에 "editor"
-    gui/src/provider-payload.ts:5, :74, :89-90
-    gui/src/components/provider-catalog/provider-presets.ts:18
-    gui/src/components/AddProviderModal.tsx:151
+    (대시보드 배선은 이 유닛에서 제외 — 아래 참고)
     tests/server/config.test.ts:1476  허용/거절 검증 3건의 대칭
 
 openai-chat 쪽 URL 조립은 openAIChatTransport 한 곳(src/adapters/openai-chat.ts:99)이면 된다.
 116행과 1460행은 그 함수를 탄다.
+
+대시보드 payload/preset/모달은 이 변경에서 건드리지 않는다. router 의 fill-if-absent 가 라우팅 시점에
+필드를 채우므로 대시보드로 추가한 프로바이더도 올바른 경로로 나간다. 남는 차이는 손으로 만든 커스텀
+프로바이더의 디스크 설정에 필드가 남지 않는다는 것뿐이다. gui/ 아래 파일을 건드리면 PR 게이트가
+UI 스크린샷을 요구하는데 이 변경에는 보여 줄 시각적 변화가 없다. 에디터에 실제 입력 컨트롤을 붙이는
+후속 작업에서 스크린샷과 함께 가져간다.
 
 ### NEW modelSuffixBracketStrip 을 Responses 어댑터에도 적용
 
@@ -98,12 +102,24 @@ openai-chat 쪽 URL 조립은 openAIChatTransport 한 곳(src/adapters/openai-ch
 상류 실측에서 괄호 id 는 400 model_not_found 였다. 지금 상태로 Responses 를 기본으로 돌리면
 두 별칭이 기본 경로에서 죽는다.
 
-해결책은 둘이다. Responses buildRequest 의 wire model 에 스트립을 넣거나, 로스터에서 별칭을 뺀다.
+해결책은 둘이다. Responses buildRequest 에 스트립을 넣거나, 로스터에서 별칭을 뺀다.
 후자는 zai/glm-5.3[1m] 을 고른 기존 사용자 선택을 깨고 parity 테스트가 고정한 별칭 메타데이터
 (provider-registry-parity.test.ts:462, :490-504)까지 무너뜨린다. 결함 크기에 비해 파괴가 크다.
-전자를 택한다: provider.modelSuffixBracketStrip 이 true 일 때만 wire model 을 정규화하고
-카탈로그 slug 는 그대로 둔다. openai-chat 이 이미 하는 것과 같은 동작이다.
-tests/adapters/openai/openai-chat-model-suffix.test.ts 의 Responses 대칭 테스트를 추가한다.
+전자를 택한다.
+
+삽입 지점은 감사가 정정했다. openai-responses 는 번역 어댑터가 없는 passthrough 라
+(adapters/registry.ts:90-94) body 를 parsed.modelId 로 다시 만들지 않고 parsed._rawBody 를 흘린다
+(openai-responses.ts:2373-2376). 라우터가 네이티브 id 를 _rawBody.model 에 써넣으므로
+(server/responses/core.ts:2492-2497) 괄호 별칭은 그 필드에 남는다. openai-chat 처럼 wire model 만
+건드리면 스트립이 조용히 무효가 된다.
+
+따라서 createResponsesPassthroughAdapter.buildRequest 안, JSON.stringify(finalBody)(:2544) 직전에
+provider.modelSuffixBracketStrip === true 이고 finalBody 가 plain object 이며 model 이 문자열일 때
+stripBracketedModelSuffix 를 적용한다. 이 한 지점이 HTTP 와 WebSocket outbound 를 모두 덮는다 —
+WS 는 어댑터가 URL/body 를 다시 만들지 않고 수송만 바꾼다(server/responses/fetch-helpers.ts:97-104).
+
+테스트는 기존 openai-chat-model-suffix.test.ts 헬퍼를 그대로 쓸 수 없다. 그 헬퍼(:7-14)는 _rawBody 가
+없어서 Responses 대칭 테스트에 넣으면 빈 body 가 된다. passthrough 테스트처럼 _rawBody 를 채운다.
 
 ### MODIFY zai 행
 
@@ -123,10 +139,11 @@ Chat 전용이던 preserveReasoningContentModels 는 유지한다(opt-in 한 사
 opt-in 은 기존 수단을 그대로 쓴다: 사용자가 modelAdapters 에 "openai-chat" 을 적으면
 resolveWireProtocolOverride 가 어댑터를 바꾸고, 새 chatCompletionsPath 가 올바른 경로로 보낸다.
 
-Chat 이 받지 않는 모델은 레지스트리가 Responses 로 고정한다. B 단계에서 coding/paas/v4 chat 경로에
-로스터 전체를 실제로 던져 어떤 모델이 400/403 을 내는지 확인하고, 해당 모델만 modelWireDefaults 에
-wire "openai-responses" 와 inbound ["responses", "chat", "anthropic"] 로 선언한다.
-grok-4.20-multi-agent 행의 주석이 같은 상황을 같은 방식으로 처리한 선례다.
+Chat 이 받지 않는 모델은 레지스트리가 Responses 로 고정한다 — 다만 실측 결과 그런 모델이 없다.
+2026-09-12 에 coding/paas/v4 chat 경로로 로스터 전체를 던졌더니 glm-5.3 / glm-5.3-flash / glm-5.2 /
+glm-5.1 / glm-5 / glm-4.6 / glm-5-turbo 가 모두 200 이었다. 그래서 이번 변경에 modelWireDefaults 는
+넣지 않는다. 나중에 어느 모델이 Chat 에서 거절되면 그때 wire "openai-responses" 와
+inbound ["responses", "chat", "anthropic"] 로 선언하면 된다. grok-4.20-multi-agent 행 주석이 그 선례다.
 
 ### 감사에서 정리된 사항
 
@@ -137,21 +154,35 @@ grok-4.20-multi-agent 행의 주석이 같은 상황을 같은 방식으로 처�
   OpenAI /models(data[] + id) 계약을 기대한다. 확인되지 않은 라이브 주장은 빈 피커를 만든다.
 - free-directory 의 glm id 는 별개다(src/providers/free-directory.ts:112). 계속
   https://api.z.ai/api/coding/paas/v4 + openai-chat 에 남고 zai 전환을 따라가지 않는다.
-- structure 문서 의무: src/adapters/ 와 src/config.ts 와 src/providers/ 가 소유 문서를 갖는다.
-  structure/transports/responses.md:253 의 responsesPath 서술에 chatCompletionsPath 대칭 문장을 넣고
-  bun run structure:check 를 wp4 검증에 포함한다.
+- Lab behavior fingerprint: behavior.ts 에 wire 키를 넣으려면 src/lab/subject/behavior-fingerprint.ts 의
+  CLOSED_KEYS(:5-6)에 같은 키를 등록해야 한다. 미분류 키는 normalizeBehaviorValues 가 런타임에 던지고
+  (:60) LabBehaviorValues 가 Record<string, ...> 라 typecheck 로는 안 잡힌다. wire.chatCompletionsPath 를
+  wire.responsesPath 와 나란히 등록한다.
+- #1100 destination 매칭: registryEntryForProviderDestination(registry.ts:3513-3524)은 adapter 와
+  정규화된 baseUrl 로 행을 찾는다. zai 를 openai-responses + https://api.z.ai 로 옮기면 구 Chat URL 을
+  가리키는 커스텀 프로바이더(예: 이름 "GLM")가 zai 메타데이터를 잃는다
+  (tests/codex-integration/codex-catalog.test.ts:6068-6075 가 그 계약을 고정한다).
+  구 Chat 엔드포인트를 destination alias 로 남겨서 기존 동작을 보존한다.
+- structure 문서 의무: 감사가 정정한 대로 structure/transports/responses.md:253 은 OpenCode Go URL 매처
+  문단이라 넣을 자리가 아니다. 갱신 대상은 같은 문서의 responsesPath 일반 계약 문단,
+  structure/data-planes/inbound-compat.md:8-10(현재 openaiChatCompletionsUrl 만 적혀 있다),
+  structure/config.md, structure/runtime.md:143-144. docs-site 는 guides/providers.md:457 의 zai baseUrl 과
+  reference/configuration/providers.md:144, reference/adapters.md:181 의 responsesPath 서술이 대상이다.
 - 이 변경은 020 이 넣는 ZAI_GLM_5X_INPUT_MODALITIES 상수를 쓴다. wp3 가 dev 에 들어간 뒤 올린다.
 
 ## 테스트
 
-갱신이 필요한 기존 고정 테스트. 감사가 열거한 목록이다.
+갱신이 필요한 기존 고정 테스트. 두 번째 감사가 좁혀 준 목록이다 — 초안은 과했다.
 
-    tests/providers/provider-registry-parity.test.ts:281, :313, :462, :512
-      (:462 는 modelContextWindows 를 1_000_000 으로 고정한다 -> 1_048_576)
-    tests/providers/zhipu-bigmodel-provider.test.ts:86
-      (glm free-directory 는 coding/paas/v4 에 남는다. zai 와 섞지 말 것)
-    tests/adapters/openai/openai-chat-model-suffix.test.ts:31
-    quota / catalog / reasoning 테스트 중 zai Chat URL 을 fixture 로 쓰는 것들
+    tests/providers/provider-registry-parity.test.ts:462   modelContextWindows 1_000_000 -> 1_048_576
+    tests/codex-integration/codex-catalog.test.ts:6068-6075  #1100 destination 계약
+    tests/server/config.test.ts:1476-1505                  responsesPath 검증의 대칭 3건 추가
+    tests/adapters/openai/openai-chat-model-suffix.test.ts:116-118  routed zai 스트립을 Responses 로
+    tests/gui/provider-payload.test.ts:195                 GUI 라운드트립 toEqual
+
+건드리지 않는다: parity :281 / :313 / :527 은 구 Chat URL 을 '낡은 저장 설정' 픽스처로 쓸 뿐 adapter/baseUrl 을
+단언하지 않는다. :512 는 131_072 라 무관하다. quota 테스트의 구 URL 은 매핑이 남아 있어 유효하다.
+zhipu-bigmodel-provider.test.ts:86/:91 은 glm 이 coding/paas/v4 에 남는다는 단언이라 그대로 둔다.
 
 MODIFY tests/providers/provider-registry-parity.test.ts
 
