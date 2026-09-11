@@ -33,7 +33,7 @@ import {
 } from "../lib/translator-budget";
 import {
   hasKeyPoolFailover,
-  selectProactiveApiKey,
+  selectProactiveApiKeyTransport,
   rateLimitRetryDelayMs,
   rateLimitRetryPolicyFor,
   rotateProviderTransportOn429,
@@ -240,7 +240,9 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
   // through the Responses core -- so the pre-dispatch key preference is applied again here
   // rather than inherited. Assigned before the adapter binds below, for the same reason it is
   // assigned before the transport pin in core.ts.
-  const proactiveKeyProvider = selectProactiveApiKey(config, route.providerName);
+  // Transport variant: the bare picker answers with the persisted row, which for a built-in
+  // provider carries no adapter id or base URL until routedProviderConfig backfills it.
+  const proactiveKeyProvider = selectProactiveApiKeyTransport(config, route.providerName, route.provider);
   if (proactiveKeyProvider) route.provider = proactiveKeyProvider;
   let activeProvider: OcxProviderConfig = route.provider;
   let activeAdapter: ProviderAdapter = createOpenAIChatAdapter(activeProvider);

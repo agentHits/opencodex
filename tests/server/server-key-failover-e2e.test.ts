@@ -729,3 +729,58 @@ describe("server 429 key failover (end-to-end)", () => {
       await server.stop(true);
     }
   });
+
+  /**
+   * The two cases above pin the behaviour but not the PATH: an `openai-chat` provider sends
+   * /v1/chat/completions through `handleNativeChatCompletions`, so the independently changed
+   * pick in `responses/core.ts` never runs. This one goes through /v1/responses.
+   *
+   * It also pins what a naive pick gets wrong. The picker answers with the PERSISTED row,
+   * which carries none of the backfills `routedProviderConfig` merges in at request time --
+   * and one of those is the API key itself: a stored `\${VAR}` reference is resolved there and
+   * nowhere in the adapter. Assigning the picked row to `route.provider` wholesale therefore
+   * sends the literal reference as the bearer token. `adapter` and `baseUrl` are not the
+   * demonstrable half of this, because the config schema requires both on a stored row; the
+   * resolved credential is.
+   *
+   * Red control: swap `selectProactiveApiKeyTransport` back for `selectProactiveApiKey` in
+   * core.ts and the upstream sees `Bearer \${OCX_KEYFAIL_WARM}` verbatim.
+   */
+  test("the Responses core pick keeps the route's resolved credential", async () => {
+    const seen: string[] = [];
+    upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+      seen.push(req.headers.get("authorization") ?? "");
+      return Response.json({ id: "chatcmpl-warm", object: "chat.completion",
+        choices: [{ index: 0, message: { role: "assistant", content: "warm" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    } });
+    process.env.OCX_KEYFAIL_COOLED = "resolved-cooled";
+    process.env.OCX_KEYFAIL_WARM = "resolved-warm";
+    saveConfig({ port: 0, hostname: "127.0.0.1", defaultProvider: "env-pooled", providers: { "env-pooled": {
+      adapter: "openai-chat", baseUrl: `http://127.0.0.1:${upstream.port}/v1`, allowPrivateNetwork: true,
+      authMode: "key", apiKey: "\${OCX_KEYFAIL_COOLED}", apiKeyPoolStrategy: "round-robin",
+      apiKeyPool: [
+        { id: "cooled", key: "\${OCX_KEYFAIL_COOLED}" },
+        { id: "warm", key: "\${OCX_KEYFAIL_WARM}" },
+      ],
+    } } } as OcxConfig);
+    const live = loadConfig();
+    rotateKeyOn429(live, "env-pooled", null, Date.now(), "\${OCX_KEYFAIL_COOLED}");
+    const restored = loadConfig();
+    restored.providers["env-pooled"]!.apiKey = "\${OCX_KEYFAIL_COOLED}";
+    saveConfig(restored);
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/v1/responses", server.url), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "env-pooled/test", input: "hi", stream: false }),
+      });
+      expect(response.status).toBe(200);
+      expect(seen).toEqual(["Bearer resolved-warm"]);
+    } finally {
+      await server.stop(true);
+      delete process.env.OCX_KEYFAIL_COOLED;
+      delete process.env.OCX_KEYFAIL_WARM;
+    }
+  });

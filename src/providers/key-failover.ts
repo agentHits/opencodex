@@ -178,6 +178,14 @@ function rankKeysByHeadroom(
  *
  * Returning null is the common path, so the persisted-selection transaction is not on
  * the per-request hot path.
+ *
+ * Like `rotateKeyAfterFailure`, the returned object is a snapshot of the PERSISTED config
+ * and carries none of the registry backfills `routedProviderConfig` merges in at request
+ * time. A request path must not assign it to an active route wholesale -- for a built-in
+ * provider stored in its valid minimal form that would drop the adapter id, the base URL and
+ * the static headers, so `resolveAdapter()` throws `Unknown adapter: undefined` and a
+ * hand-built URL dereferences a missing `baseUrl`. Use
+ * `selectProactiveApiKeyTransport`, the pre-dispatch twin of `rotateProviderTransportOn429`.
  */
 export function selectProactiveApiKey(
   config: OcxConfig,
@@ -234,6 +242,27 @@ export function selectProactiveApiKey(
   const committed = structuredClone(outcome.provider);
   config.providers[providerName] = committed;
   return structuredClone(committed);
+}
+
+/**
+ * Pre-dispatch twin of `rotateProviderTransportOn429`: pick a warm key, then rebuild the
+ * active route from the committed row through the same seam the 429 path uses, so the
+ * registry backfills survive and only explicit runtime transport state (`fetch` and a
+ * generated OpenCode session header) is carried over from the route being replaced.
+ *
+ * Every request path that assigns the result to a live route must call THIS, not
+ * `selectProactiveApiKey`, which answers with a persisted snapshot.
+ */
+export function selectProactiveApiKeyTransport(
+  config: OcxConfig,
+  providerName: string,
+  routedProvider: OcxProviderTransport,
+  promptCacheKey?: string,
+  now = Date.now(),
+): OcxProviderTransport | null {
+  const committed = selectProactiveApiKey(config, providerName, now);
+  if (!committed) return null;
+  return applyRotatedTransport(providerName, routedProvider, committed, promptCacheKey);
 }
 
 /**

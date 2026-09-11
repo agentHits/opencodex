@@ -28,7 +28,7 @@ import { readBoundedResponseBytes, type BoundedBytesResult } from "../lib/bounde
 import { sidecarEnter } from "../lib/sidecar-tracker";
 import type { OcxConfig } from "../types";
 import { resolveFirstUsableOpenAiSidecar, selectImagesProvider } from "../providers/openai-sidecar";
-import { selectProactiveApiKey } from "../providers/key-failover";
+import { selectProactiveApiKeyTransport } from "../providers/key-failover";
 import { resolveProviderApiKey } from "../providers/key-store";
 import { getProviderRegistryEntry } from "../providers/registry";
 import { readJsonRequestBody, resolveInboundBodyLimitBytes } from "./request-decompress";
@@ -709,7 +709,10 @@ export async function handleImages(
     // that never used the key. And the header is rebuilt from the returned clone rather than
     // from candidates.keyed.apiKey, which is a snapshot resolved earlier: reusing it would
     // send the OLD key while the picker had already persisted the new one.
-    const warmKeyProvider = selectProactiveApiKey(config, providerName);
+    // Transport variant: this branch reads `provider.baseUrl` and `provider.headers` to build
+    // the URL and the request, and the persisted row carries neither for a built-in provider
+    // stored in its minimal form.
+    const warmKeyProvider = selectProactiveApiKeyTransport(config, providerName, candidates.keyed.provider);
     const provider = warmKeyProvider ?? candidates.keyed.provider;
     const apiKey = warmKeyProvider?.apiKey
       ? (resolveProviderApiKey(warmKeyProvider.apiKey) ?? candidates.keyed.apiKey)
