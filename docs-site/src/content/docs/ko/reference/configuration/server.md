@@ -38,7 +38,9 @@ description: 리스너, 원격 접근, admission 키, 타임아웃, 저장소, �
 
 토큰을 직접 만들 필요는 없습니다. 루프백이 아닌 바인드에서 `ocx service install`이 다음 순서로 토큰을 준비합니다: 설치하는 셸의 `OPENCODEX_API_AUTH_TOKEN` → 기존 owner-only `service-api-token` 파일 → 무작위 32바이트 새 값. 결과는 `0600`으로 기록되고 실행 래퍼(launchd plist, systemd unit, Windows 래퍼)가 시작할 때 그 파일을 읽으므로, 값이 서비스 정의나 argv에 들어가지 않습니다. 포그라운드 `ocx start`도 같은 우선순위(환경 변수 → `OCX_API_TOKEN_FILE` → 설치된 `service-api-token`)를 적용하므로 토큰을 내보내지 않아도 루프백이 아닌 hostname에 바인드합니다.
 
-`OPENCODEX_API_AUTH_TOKEN`에 **관리자 토큰**이 들어 있으면 거부합니다. 두 평면은 서로 다른 자격 증명이며, 거부 메시지는 대체 값을 제안하는 대신 `unset OPENCODEX_API_AUTH_TOKEN` 후 다시 실행하라고 알려 줍니다. 값을 직접 관리하려는 운영자는 여전히 변수를 설정할 수 있습니다:
+**관리자 토큰**은 나타날 수 있는 두 곳 모두에서 거부합니다. 환경 변수이거나 재사용하는 `service-api-token` 파일이며, 메시지는 그 자리에 맞는 해결책을 알려 줍니다. 변수를 unset하거나, 파일을 삭제하고 `ocx service repair`를 실행하세요. 두 검사는 루프백 단축 경로보다 앞에서 실행됩니다. 실행 래퍼가 hostname과 무관하게 파일을 `OPENCODEX_API_AUTH_TOKEN`으로 읽기 때문에, 관리자 토큰이 든 파일은 루프백 바인드에서도 관리 API를 닫아 버립니다. 허브에서는 `ocx status`가 이 상태를 `admin-collision (file)`로 보고합니다.
+
+값을 직접 관리하려는 운영자는 여전히 변수를 설정할 수 있습니다:
 
 ```bash
 export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
@@ -219,7 +221,7 @@ Anthropic OAuth 사이드카는 opencodex의 기존 Claude Code OAuth fingerprin
 | `hub.managementIngress` | `{enabled:false}` 또는 `{enabled:true, port}` | `{enabled:false}` | 로컬 HTTPS 프런트엔드용 관리 전용 리스너입니다. hostname은 설정할 수 없고, 켜면 항상 `127.0.0.1`에 바인드하며 GUI·세션 부트스트랩·관리 API 경로만 허용합니다. 데이터 플레인 경로는 dispatch 전에 거부합니다. |
 | `remoteGui.allowedTailscaleUsers` | string[] | `[]`(아무도 없음) | 자동 원격 GUI 세션을 발급받을 수 있는 정확한 Tailscale 로그인 ID입니다. `Tailscale-User-Login` 헤더는 별도 관리 인그레스에서**만** 신뢰합니다. 빈 목록은 실수가 아니라 안전한 기본값입니다. 정확히 비교하므로 오타는 조용히 거부됩니다. |
 
-`dataPublicOrigin`과 `managementPublicOrigin`은 서로 독립적인 광고이며, 실제 배포에서는 서로 다른 소켓입니다. 관리는 443에 공개하는 루프백 전용 인그레스이고, 데이터는 자체 HTTPS 포트에 공개하는 tailnet 바인드입니다. 둘은 `ocx hub invite`가 출력하는 명령의 두 조각이고, 그중 `managementPublicOrigin`이 더 엄격합니다. pairing grant가 이 값을 grant 자신의 server origin으로 기록하고 교환 시 비교하므로, `ocx hub invite --management-url`은 설정값을 *확인*할 수만 있고 다른 값은 거부합니다. `--data-url`은 아무것도 바인드되어 있지 않으므로 실제로 덮어쓰기입니다.
+`dataPublicOrigin`과 `managementPublicOrigin`은 서로 독립적인 광고이며, 실제 배포에서는 서로 다른 소켓입니다. 관리는 443에 공개하는 루프백 전용 인그레스이고, 데이터는 자체 HTTPS 포트에 공개하는 tailnet 바인드입니다. 둘은 `ocx hub invite`가 출력하는 명령의 두 조각이고, 그중 `managementPublicOrigin`이 더 엄격합니다. pairing grant가 이 값을 grant 자신의 server origin으로 기록하고 교환 시 비교하므로, `ocx hub invite --management-url`은 설정값을 *확인*할 수만 있고 다른 값은 거부합니다. `--data-url`은 아무것도 바인드되어 있지 않으므로 실제로 덮어쓰기입니다. `dataPublicOrigin`과 `--data-url`이 모두 없으면 `invite`는 바인드 주소로 대체하는데, 루프백이나 와일드카드 바인드에서는 그것이 이 컴퓨터 자신의 루프백이 되므로 상대가 쓸 수 없는 주소를 광고하는 대신 거부합니다.
 
 허브가 자기 로컬 클라이언트까지 서비스하려면 [`unauthenticatedLoopbackListener`](#토큰을-받을-수-없는-로컬-클라이언트)도 설정합니다. `port` 없는 companion 형태가 허브를 단일 포트 배포로 만들어 주며, 공개 리스너가 이미 `127.0.0.1:<port>`를 쓰는 루프백·와일드카드 `hostname`에서는 거부됩니다.
 

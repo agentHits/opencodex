@@ -1,12 +1,23 @@
 # 050 — PR5: docs (en + ko), the `ocx` skill, and the help copy
 
 Unit: `devlog/_plan/260911_hub_single_port`. Stack position 5 of 5. Branch
-`codex/260911-l7-hub-docs-skill`, based on `codex/260911-l4-hub-token-ux` = `fb1898e19`
-(`test(service): drop the installLaunchd import the restack left unused`), which carries PR1
-(launchd repair), PR2 (loopback companion), PR3 (hub local clients) and PR4 (hub token UX) in its
-ancestry — verified with `git log --oneline -12` before the first edit. Issue:
-lidge-jun/opencodex#4236. The four devlogs `010`–`040` in this directory are the source of truth
-for what the code does; nothing here was copied from the plan without checking it against `src/`.
+`codex/260911-l7-hub-docs-skill`, on `codex/260911-l4-hub-token-ux` = `b26eee311`
+(`docs(devlog): record the PR4 review round`), which carries PR1 (launchd repair), PR2 (loopback
+companion), PR3 (hub local clients) and PR4 (hub token UX). Issue: lidge-jun/opencodex#4236. The
+four devlogs `010`–`040` in this directory are the source of truth for what the code does; nothing
+here was copied from the plan without checking it against `src/`.
+
+**Restacked mid-work, and it changed the copy.** The branch was cut from `fb1898e19`, the base tip
+at the time. While this unit was being written the base was rebased onto PR1 and then grew a
+four-commit review round (`1211759bf`, `0cfcfd284`, `75d4c5a5b`, `b26eee311`), so `fb1898e19` left
+its history entirely. The rebase onto `b26eee311` had one conflict, in `src/cli/registry.ts`'s `hub`
+details — both sides had edited the `--data-url` paragraph — resolved by keeping the base's new
+refusal text and appending this unit's `--management-url` / `--clients` lines.
+
+The review round was not only a text change, and four of its findings made sentences in this unit's
+first draft false. All four were reconciled across all six pages (see
+"Reconciled with PR4's review round" below). Every count in the Verification section is from the
+rebased, reconciled tree.
 
 No runtime behaviour changes. The only `src/` edits are help/registry copy.
 
@@ -153,6 +164,40 @@ locale-independent:
 
 No new test file, so no `scripts/test-layout/layout.json` registration was needed.
 
+## Reconciled with PR4's review round
+
+The base's review round changed four behaviours this unit had already documented. Reading `src/` at
+the new base rather than trusting the first draft is what caught them.
+
+1. **`ocx hub invite` now refuses a loopback- or wildcard-derived data origin** instead of
+   advertising `http://localhost:<port>` (which would tell the other machine to dial itself and
+   spend the single-use code). The resolution order is `--data-url` → `hub.dataPublicOrigin` → the
+   bind address, and the last step only works when the bind is an address another machine can dial.
+   An explicit override is never second-guessed, because a loopback data origin is legitimate over
+   an SSH tunnel. Documented in the invite section, the reference table, the skill, and as a
+   troubleshooting row in both locales. The first draft's "…or `http://<bind>:<port>` as a last
+   resort" would have sent an operator on a loopback-bound hub straight into the refusal with no
+   idea why.
+2. **The reused `service-api-token` file is re-checked for the admin token**, with a *different*
+   remedy: delete the file and run `ocx service repair`, because `unset OPENCODEX_API_AUTH_TOKEN`
+   says nothing about a file. Both collision checks now run ahead of the loopback short-circuit,
+   since the launch wrapper reads that file into the variable whatever the hostname. Every page that
+   said "the existing file is reused" now says it is re-checked, not trusted.
+3. **The `ocx status` token states changed.** `present (env)` no longer exists — the state is always
+   about the file (`present (file)`, `unsafe (file)`, `admin-collision (file)`, `missing`), and the
+   shell's variable is a separate sub-line. The first draft listed `present (env)` as a state, which
+   is exactly the honesty defect the review round fixed in the code. Both guides, the reference
+   pages and the skill now list the four real states and explain why the file wins.
+4. **Every successful invite prints a `Bound browser origin:` line on stderr**, and it is not in the
+   `--json` envelope. It matters because a grant is bound to one origin while a remote `ocx connect`
+   presents `Origin: http://localhost:<its own port>`, so a non-default bound origin means the other
+   machine must already be on that port. The skill's recipe now says to relay that line, which an
+   agent reading only `--json` would otherwise drop.
+
+One smaller correction rode along: the `corsAllowOrigins` fix command now preserves the hub's
+existing entries, so all three places that quote it say to run the line `invite` prints rather than
+a hand-written one-element array.
+
 ## Findings while writing this
 
 Two corrections that the code supports and the plan's own wording did not.
@@ -224,7 +269,9 @@ bun run skill:surface:check                                    # 01_management_s
 cd docs-site && bun install --frozen-lockfile && bun run build # 425 pages built, Complete!
 ```
 
-`docs-site/AGENTS.md` requires that build for any `docs-site/` change, and it passed. On top of it,
+Every command above was re-run after the restack and the four reconciliations; the counts are from
+the final tree. `docs-site/AGENTS.md` requires that build for any `docs-site/` change, and it
+passed (twice: once before the restack, once after). On top of it,
 every in-page anchor was checked against the generated HTML rather than by eye: all six new English
 ids exist in `dist/guides/remote-hub/index.html`, and a script compared every `href="#…"` against
 every `id="…"` in `dist/ko/guides/remote-hub/index.html` and both `server/index.html` pages —

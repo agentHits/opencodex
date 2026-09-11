@@ -70,7 +70,10 @@ Three consequences for an agent:
 - **Never tell an operator to export a token before installing.** There is no such step, and
   the one time it was recommended, a *management admin* token went into
   `OPENCODEX_API_AUTH_TOKEN` and crash-looped the hub. The installer refuses an admin token
-  there and says to `unset OPENCODEX_API_AUTH_TOKEN` and rerun.
+  in either place it can appear — the variable, or a reused `service-api-token` file — and
+  the remedy differs: unset the variable, or delete the file and run `ocx service repair`.
+  Both checks run even on a loopback bind, because the wrapper reads that file into the
+  variable whatever the hostname.
 - **Never suggest regenerating it to fix something.** An existing file is reused on purpose;
   replacing it invalidates every per-client key already exchanged. Rotation is
   `ocx connect rotate`'s job, on the client.
@@ -86,9 +89,16 @@ rewrite the file.
 On a hub, `ocx status` prints a `Hub:` block: the advertised data origin and whether it
 came from `hub.dataPublicOrigin` or the bind address, the loopback listener's state
 (`companion` / `ported` / `off`) and port, the management ingress, the management origin,
-the data token's **source** (`present (env)`, `present (file)`, `unsafe (file)`,
+the data token's state (`present (file)`, `unsafe (file)`, `admin-collision (file)`,
 `missing` — never its value), and the invite hint. Read it before asking an operator about
 ports or tokens.
+
+The token state is always about the **file**, because the launch wrapper overwrites the
+environment from it before exec. A separate sub-line reports `OPENCODEX_API_AUTH_TOKEN`
+being set in the invoking shell, which decides only what a foreground `ocx start` in that
+shell would admit. `admin-collision (file)` is the incident shape: that file holds the
+management token, the hub fences its management API closed at boot, and the fix is to
+delete the file and run `ocx service repair` — **not** to unset anything.
 
 ## Which parts need pairing (the common misconception)
 
@@ -198,12 +208,23 @@ ocx hub invite
 echo '<code>' | ocx connect https://host.ts.net:8443 --management-url https://host.ts.net --pairing-code-stdin
 ```
 
-Origins: data from `hub.dataPublicOrigin`, `--data-url`, or `http://<bind>:<port>` as a
-last resort; management from `hub.managementPublicOrigin`. **`--management-url` is a
-confirmation, not an override** — the grant records the configured management origin as its
-own server origin and the exchange compares against it, so a differing value is refused with
-both origins named rather than printed. `--data-url` really is an override, because nothing
-is bound to it.
+Origins: data from `--data-url`, then `hub.dataPublicOrigin`, then the bind address;
+management from `hub.managementPublicOrigin`. **`--management-url` is a confirmation, not an
+override** — the grant records the configured management origin as its own server origin and
+the exchange compares against it, so a differing value is refused with both origins named
+rather than printed. `--data-url` really is an override, because nothing is bound to it.
+
+The bind-address fallback only works when the bind is an address another machine can dial. On
+a loopback or wildcard bind it would resolve to `http://localhost:<port>`, which tells the
+other machine to dial itself and spends the code for nothing, so `invite` refuses and prints
+the `hub.dataPublicOrigin` fix. An explicit override is never second-guessed: a loopback data
+origin is legitimate over an SSH tunnel.
+
+Every successful invite prints a `Bound browser origin:` line on stderr. A grant is bound to
+one origin and a remote `ocx connect` presents `Origin: http://localhost:<its own configured
+port>`, so when the bound origin is not the default the other machine must already be running
+on that port. Relay that line; it is the difference between a working exchange and a spent
+code.
 
 `invite` needs no admin token and nothing exported into the shell: it drives the same
 attested local route `ocx gui pair` uses, authorized by the running proxy's own attestation
@@ -214,7 +235,9 @@ It refuses **before** minting anything when the setup cannot work: `runtimeRole`
 plaintext, `--data-url` is malformed, there is no running attested proxy, or — the
 non-obvious one — the hub admits no loopback browser origin.
 
-That last one is the refusal you will actually hit:
+Two of those are the refusals you will actually hit. The data-origin one names which shape
+the hub has (wildcard, or loopback-only) and prints both the persistent and the per-invite
+fix. The browser-origin one looks like this:
 
 ```text
 No loopback browser origin is admitted for pairing. Add the connecting machine's local origin:
@@ -223,8 +246,10 @@ ocx config set corsAllowOrigins '["http://localhost:10100"]'
 
 `ocx connect` sends `Origin: http://localhost:<its own proxy port>` when it exchanges the
 grant, and grants are origin-bound, so only `hub.managementPublicOrigin` itself or a
-loopback entry of `corsAllowOrigins` can ever match. Run the command it prints, with the
-**joining** machine's proxy port. Nothing was minted, so there is no burned code to clean up.
+loopback entry of `corsAllowOrigins` can ever match. Run the command it prints rather than a
+hand-written one: a whole-array set replaces the array, so the printed line carries the hub's
+existing entries plus the new origin. Nothing was minted, so there is no burned code to clean
+up.
 
 `--json` emits `{ code, expiresAt, dataUrl, managementUrl, command }` with `expiresAt` as
 ISO 8601; `--clients codex,claude` chooses which client configs the printed command points

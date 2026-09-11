@@ -136,7 +136,8 @@ the owner-only `service-api-token` file, mode `0600`:
    own that value keeps owning it.
 2. **The existing `service-api-token` file.** Reusing it is what makes `ocx service install`,
    `ocx service repair` and a restart idempotent; regenerating would silently invalidate every
-   per-client key already exchanged against the old value.
+   per-client key already exchanged against the old value. A reused file is re-checked, not
+   trusted — see the admin-token paragraph below.
 3. **32 fresh random bytes, hex.** This is the branch that removes the manual step.
 
 The command prints the **path**, never the value. The launchd plist and the systemd user unit read
@@ -145,16 +146,25 @@ value into `ocx config show`, unit/plist output, screenshots, or support bundles
 `ocx start` on the hub reads the same file, so it binds the non-loopback hostname without an
 exported token either.
 
-A **management admin token** in `OPENCODEX_API_AUTH_TOKEN` is refused, and the refusal names the
-fix: `unset OPENCODEX_API_AUTH_TOKEN` and rerun. They are different credentials — the data token
-admits `/v1/*` callers and administers nothing — and exporting the admin token as the data token
-fails the hub's own admission check at every start. Since the service provisions its own token,
-there is no reason to export either one. `ocx service repair` never demands the variable again once
-the file exists.
+A **management admin token** is refused wherever it turns up, and the refusal names the remedy for
+that place. In `OPENCODEX_API_AUTH_TOKEN`: `unset OPENCODEX_API_AUTH_TOKEN` and rerun. In the
+reused `service-api-token` file — the shape of the original incident, and still reachable on a
+machine where the admin token was once pasted there by hand — delete the file and run
+`ocx service repair`, because unsetting a variable says nothing about a file. Both checks run
+ahead of the loopback short-circuit, so a loopback install is checked too: the launch wrapper
+reads that file into `OPENCODEX_API_AUTH_TOKEN` whatever the hostname, which is what fences the
+management API closed at boot.
 
-`ocx status` reports the token's source without its value: `present (env)`, `present (file)`,
-`unsafe (file)` (the file exists but is not owner-only — fix the permissions; install refuses it),
-or `missing`.
+The two planes are different credentials — the data token admits `/v1/*` callers and administers
+nothing. Since the service provisions its own token, there is no reason to export either one.
+`ocx service repair` never demands the variable again once the file exists.
+
+`ocx status` reports the token's state without its value: `present (file)`, `unsafe (file)` (it
+exists but is not owner-only — fix the permissions), `admin-collision (file)` (the incident shape;
+the block adds the consequence and the fix), or `missing`. The state is always about the **file**,
+because the launch wrapper overwrites the environment from it before exec — a separate sub-line
+reports `OPENCODEX_API_AUTH_TOKEN` being set in your shell, since that is what a foreground
+`ocx start` in that shell would use.
 
 ### One port, and the ported alternative
 
@@ -361,15 +371,29 @@ It mints a single-use, short-lived pairing code and prints the command to run on
 echo '<code>' | ocx connect https://hub-name.tailnet-name.ts.net:8443 --management-url https://hub-name.tailnet-name.ts.net --pairing-code-stdin
 ```
 
-The data origin comes from `hub.dataPublicOrigin`, or `--data-url`, or `http://<bind>:<port>` as a
-last resort. The management origin is `hub.managementPublicOrigin`, and on `invite` the
-`--management-url` flag is a **confirmation, not an override**: the grant is bound to the configured
-origin and the exchange compares against it, so a value that differs is refused with both origins
-named rather than printing a code the hub would then reject.
+The data origin comes from `--data-url`, then `hub.dataPublicOrigin`, then the bind address. That
+last fallback only works when the bind **is** an address another machine can dial: on a loopback or
+wildcard bind it would resolve to `http://localhost:<port>`, which tells the other machine to dial
+itself and spends the single-use code for nothing, so `invite` refuses instead and prints the
+`ocx config set hub.dataPublicOrigin` line (plus the per-invite `--data-url` form). An explicit
+`--data-url` or `hub.dataPublicOrigin` is never second-guessed — a loopback data origin is
+legitimate over an SSH tunnel.
+
+The management origin is `hub.managementPublicOrigin`, and on `invite` the `--management-url` flag
+is a **confirmation, not an override**: the grant is bound to the configured origin and the
+exchange compares against it, so a value that differs is refused with both origins named rather
+than printing a code the hub would then reject.
+
+Every successful invite also prints the **bound browser origin** on stderr. A grant is bound to one
+origin, and a remote `ocx connect` presents `Origin: http://localhost:<its own configured port>`,
+so if the bound origin is not the default `http://localhost:10100` the other machine has to already
+be running on that port before it runs the line — otherwise the hub refuses the exchange and the
+code is spent. The note says which port, and offers admitting the default origin instead.
 
 `invite` refuses *before* minting anything when the setup cannot work — a `runtimeRole` that is not
 `hub`, a missing `hub.managementPublicOrigin`, a plaintext non-loopback management origin, a
-malformed `--data-url`, or no running attested proxy. One precondition deserves its own paragraph.
+malformed `--data-url`, a data origin that would be this machine's own loopback, or no running
+attested proxy. One precondition deserves its own paragraph.
 
 **`corsAllowOrigins` has to name the joining machine's local browser origin.** `ocx connect` sends
 `Origin: http://localhost:<its own proxy port>` when it exchanges the grant, and grants are
@@ -382,7 +406,9 @@ ocx config set corsAllowOrigins '["http://localhost:10100"]'
 ```
 
 Use the port the **joining** machine's proxy listens on; `10100` is the default. The setup block
-above already sets it.
+above already sets it. A whole-array set replaces the array, so when the hub already has entries
+run the line `invite` prints — it carries the existing ones plus the new origin. `ocx config get
+corsAllowOrigins` shows what is there now.
 
 `ocx hub invite --json` emits `{ code, expiresAt, dataUrl, managementUrl, command }` with `expiresAt`
 as ISO 8601. The code is a secret: single-use, five-minute lifetime, rate-limited at the hub, and not
@@ -627,6 +653,14 @@ For a service rollback, stop the branch service and repair the prior release aga
   loopback browser origin, so an origin-bound grant could never match. Nothing was minted. Run the
   `ocx config set corsAllowOrigins` line the error prints, with the joining machine's proxy port.
   See [Inviting another machine](#inviting-another-machine).
+- **`ocx hub invite` says the advertised data origin would be this machine's own loopback:** the
+  bind is loopback-only or a wildcard and `hub.dataPublicOrigin` is unset, so there is no address
+  to advertise and nothing guesses a tailnet or LAN one. Nothing was minted. Set
+  `hub.dataPublicOrigin`, or pass `--data-url` for this invite only.
+- **The joining machine's exchange is refused and the code is spent:** the grant was bound to an
+  origin that machine does not present. Re-read the `Bound browser origin:` line from the invite —
+  it names the port the other machine must be running on, or offers admitting
+  `http://localhost:10100` on the hub instead.
 - **`ocx hub invite` refuses a `--management-url`:** on a hub that flag confirms
   `hub.managementPublicOrigin` rather than overriding it, because the grant is bound to the
   configured value. Change the config, or drop the flag.
@@ -642,6 +676,10 @@ For a service rollback, stop the branch service and repair the prior release aga
 - **`ocx service install` refuses `OPENCODEX_API_AUTH_TOKEN`:** that value is a management admin
   token. `unset OPENCODEX_API_AUTH_TOKEN` and rerun; the service provisions its own data-plane
   token. See [The data-plane token provisions itself](#the-data-plane-token-provisions-itself).
+- **The hub crash-loops at boot and `ocx status` shows `admin-collision (file)`:** the
+  `service-api-token` file holds the management token, so the hub fences its management API closed.
+  Delete the file and run `ocx service repair` to provision a data-plane token. Unsetting the
+  environment variable does not help here — the file is the source.
 - **Plain HTTP refused:** pairing over non-loopback HTTP is refused outright, and there is no flag
   that opts out of it. Put the management origin behind HTTPS, or pair over loopback. Admin tokens
   are never sent over HTTP.

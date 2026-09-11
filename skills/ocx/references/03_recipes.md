@@ -270,24 +270,30 @@ ocx status                 # read the Hub: block first -- origins, listener, tok
 ocx hub invite --json
 ```
 
-`--json` gives `{ code, expiresAt, dataUrl, managementUrl, command }`. Hand the operator
-`command` to run on the other machine; it already carries the data origin, the management
-origin and `--pairing-code-stdin`. The code is a secret with a five-minute TTL and one use:
-do not persist it, do not put it in a file, and prefer letting the operator copy it rather
-than keeping it in a transcript.
+`--json` gives `{ code, expiresAt, dataUrl, managementUrl, command }` on stdout. Hand the
+operator `command` to run on the other machine; it already carries the data origin, the
+management origin and `--pairing-code-stdin`. The code is a secret with a five-minute TTL and
+one use: do not persist it, do not put it in a file, and prefer letting the operator copy it
+rather than keeping it in a transcript.
 
-Two refusals are normal and neither burns a code:
+**Also relay the `Bound browser origin:` line from stderr.** It is not in the JSON envelope,
+and when the bound origin is not `http://localhost:10100` the joining machine has to already
+be running on that port or the exchange is refused and the code is spent.
+
+Three refusals are normal and none of them burns a code:
 
 - `No loopback browser origin is admitted for pairing` — run the
-  `ocx config set corsAllowOrigins '["http://localhost:10100"]'` line the error prints, using
-  the **joining** machine's proxy port, then invite again. Grants are origin-bound and
-  `ocx connect` presents its own `http://localhost:<port>`.
+  `ocx config set corsAllowOrigins '["http://localhost:10100"]'` line the error prints, as
+  printed (it preserves the hub's existing entries) and with the **joining** machine's proxy
+  port. Grants are origin-bound and `ocx connect` presents its own `http://localhost:<port>`.
+- A data origin that would be this machine's own loopback — the bind is loopback-only or a
+  wildcard and `hub.dataPublicOrigin` is unset, so there is nothing honest to advertise. Set
+  `hub.dataPublicOrigin`, or pass `--data-url` for one invite. Do not work around it by
+  sending `http://localhost:<port>`; that is the thing it is refusing.
 - A rejected `--management-url` — on `invite` that flag confirms
   `hub.managementPublicOrigin` rather than overriding it. Drop the flag, or change the config.
 
-If `hub.dataPublicOrigin` is unset, `invite` falls back to `http://<bind>:<port>`, which a
-remote machine behind a TLS frontend usually cannot reach. Check that before handing the
-command over. Full context: [05_remote_hub.md](05_remote_hub.md#inviting-a-machine-ocx-hub-invite).
+Full context: [05_remote_hub.md](05_remote_hub.md#inviting-a-machine-ocx-hub-invite).
 
 ## Aside profiles
 

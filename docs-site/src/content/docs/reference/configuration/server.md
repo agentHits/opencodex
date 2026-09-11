@@ -125,10 +125,14 @@ enters a service definition or argv. A foreground `ocx start` applies the same p
 environment, then `OCX_API_TOKEN_FILE`, then the installed `service-api-token` — so it binds a
 non-loopback hostname without an exported token too.
 
-A **management admin token** in `OPENCODEX_API_AUTH_TOKEN` is refused: the two planes are different
-credentials, and the refusal says to `unset OPENCODEX_API_AUTH_TOKEN` and rerun rather than
-suggesting a substitute value. Setting the variable yourself is still supported for an operator who
-wants to own the value:
+A **management admin token** is refused in either place it can appear — the environment variable or
+a reused `service-api-token` file — and the message names the remedy for that place: unset the
+variable, or delete the file and run `ocx service repair`. Both checks run before the loopback
+short-circuit, because the launch wrapper reads the file into `OPENCODEX_API_AUTH_TOKEN` whatever
+the hostname, so an admin-token file fences the management API closed even on a loopback bind.
+`ocx status` reports that state as `admin-collision (file)` on a hub.
+
+Setting the variable yourself is still supported for an operator who wants to own the value:
 
 ```bash
 export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
@@ -539,7 +543,10 @@ data is the tailnet bind published on its own HTTPS port. They are the two halve
 `ocx hub invite` prints, and `managementPublicOrigin` is the stricter of the two — a pairing grant
 records it as the grant's own server origin and the exchange compares against it, which is why
 `ocx hub invite --management-url` can only *confirm* the configured value and refuses one that
-differs. `--data-url` really is an override, because nothing is bound to it.
+differs. `--data-url` really is an override, because nothing is bound to it. With neither
+`dataPublicOrigin` nor `--data-url` set, `invite` falls back to the bind address — and on a
+loopback or wildcard bind, where that would resolve to this machine's own loopback, it refuses
+rather than advertising an address the other machine cannot use.
 
 A hub that serves its own local clients also sets
 [`unauthenticatedLoopbackListener`](#local-clients-that-cannot-receive-the-token). Its port-less

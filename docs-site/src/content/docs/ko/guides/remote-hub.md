@@ -81,14 +81,16 @@ ocx config set remoteGui '{"allowedTailscaleUsers":["operator@example.com"]}'
 `ocx service install` 앞에 `export OPENCODEX_API_AUTH_TOKEN=…` 단계는 없습니다. 루프백이 아닌 바인드에서 설치 과정이 다음 우선순위로 데이터 admission 토큰을 결정하고, 결과를 owner-only `service-api-token` 파일(모드 `0600`)에 기록합니다.
 
 1. **`OPENCODEX_API_AUTH_TOKEN`** — 설치하는 셸이 내보낸 값이 있을 때. 값을 직접 관리하고 싶은 운영자는 계속 직접 관리할 수 있습니다.
-2. **기존 `service-api-token` 파일.** 이 재사용이 `ocx service install`, `ocx service repair`, 재시작을 멱등하게 만듭니다. 새로 만들면 이미 교환된 클라이언트 키가 모두 조용히 무효가 됩니다.
+2. **기존 `service-api-token` 파일.** 이 재사용이 `ocx service install`, `ocx service repair`, 재시작을 멱등하게 만듭니다. 새로 만들면 이미 교환된 클라이언트 키가 모두 조용히 무효가 됩니다. 재사용하는 파일도 그냥 믿지 않고 다시 검사합니다. 아래 관리자 토큰 단락을 보세요.
 3. **무작위 32바이트(hex) 새 값.** 손으로 하던 단계를 없애는 분기입니다.
 
 명령은 **경로**만 출력하고 값은 절대 출력하지 않습니다. launchd plist와 systemd user unit은 프로세스가 시작할 때 그 보호된 파일을 읽으며, 토큰 문자열이 정의 파일에 들어가지 않습니다. 값을 `ocx config show`, unit/plist 출력, 스크린샷, 지원 번들에 붙여 넣지 마세요. 포그라운드 `ocx start`도 같은 파일을 읽으므로, 토큰을 내보내지 않아도 루프백이 아닌 hostname에 바인드합니다.
 
-`OPENCODEX_API_AUTH_TOKEN`에 **관리자 토큰**이 들어 있으면 거부하며, 해결책을 함께 알려 줍니다: `unset OPENCODEX_API_AUTH_TOKEN` 후 다시 실행하세요. 둘은 다른 자격 증명입니다. 데이터 토큰은 `/v1/*` 호출자를 허용할 뿐 관리 권한이 없고, 관리자 토큰을 데이터 토큰으로 내보내면 시작할 때마다 허브 자신의 admission 검사에서 실패합니다. 서비스가 토큰을 직접 준비하므로 어느 쪽도 내보낼 이유가 없습니다. 파일이 한 번 만들어진 뒤에는 `ocx service repair`가 환경 변수를 다시 요구하지 않습니다.
+**관리자 토큰**은 어디에서 발견되든 거부하며, 그 자리에 맞는 해결책을 알려 줍니다. `OPENCODEX_API_AUTH_TOKEN`에 있으면 `unset OPENCODEX_API_AUTH_TOKEN` 후 다시 실행하세요. 재사용하는 `service-api-token` 파일에 있으면(원래 사고의 형태이고, 과거에 관리자 토큰을 그 파일에 손으로 붙여 넣은 컴퓨터에서는 여전히 나타날 수 있습니다) 파일을 삭제하고 `ocx service repair`를 실행하세요. 변수를 unset하는 것은 파일에 대해 아무 의미가 없습니다. 두 검사는 루프백 단축 경로보다 앞에서 실행되므로 루프백 설치도 검사합니다. 실행 래퍼는 hostname과 무관하게 그 파일을 `OPENCODEX_API_AUTH_TOKEN`으로 읽어 들이고, 그것이 부팅 시 관리 API를 닫아 버리는 원인입니다.
 
-`ocx status`는 값 없이 출처만 보고합니다: `present (env)`, `present (file)`, `unsafe (file)`(파일은 있지만 권한이 owner-only가 아님 — 권한을 고치세요. 설치는 이 상태를 거부합니다), `missing`.
+두 평면은 서로 다른 자격 증명입니다. 데이터 토큰은 `/v1/*` 호출자를 허용할 뿐 관리 권한이 없습니다. 서비스가 토큰을 직접 준비하므로 어느 쪽도 내보낼 이유가 없습니다. 파일이 한 번 만들어진 뒤에는 `ocx service repair`가 환경 변수를 다시 요구하지 않습니다.
+
+`ocx status`는 값 없이 상태만 보고합니다: `present (file)`, `unsafe (file)`(파일은 있지만 owner-only가 아님 — 권한을 고치세요), `admin-collision (file)`(사고의 형태이며, 블록이 결과와 해결책을 함께 출력합니다), `missing`. 상태는 항상 **파일**에 관한 것입니다. 실행 래퍼가 exec 전에 파일로 환경 변수를 덮어쓰기 때문입니다. 현재 셸에 `OPENCODEX_API_AUTH_TOKEN`이 설정되어 있는지는 별도 하위 줄로 보고합니다. 그 값은 같은 셸에서 포그라운드 `ocx start`가 쓰게 되는 값이기 때문입니다.
 
 ### 한 포트, 그리고 포트를 지정하는 대안
 
@@ -199,9 +201,13 @@ ocx hub invite
 echo '<code>' | ocx connect https://hub-name.tailnet-name.ts.net:8443 --management-url https://hub-name.tailnet-name.ts.net --pairing-code-stdin
 ```
 
-데이터 Origin은 `hub.dataPublicOrigin`, 또는 `--data-url`, 마지막 수단으로 `http://<bind>:<port>`에서 옵니다. 관리 Origin은 `hub.managementPublicOrigin`이며, `invite`에서 `--management-url`은 **덮어쓰기가 아니라 확인**입니다. grant는 설정된 Origin에 묶이고 교환 시 그 값과 비교하므로, 다른 값을 주면 허브가 거부할 코드를 출력하는 대신 두 Origin을 모두 지목하며 거부합니다.
+데이터 Origin은 `--data-url` → `hub.dataPublicOrigin` → 바인드 주소 순서로 결정됩니다. 마지막 대체는 바인드가 다른 컴퓨터가 실제로 호출할 수 있는 주소일 때만 쓸 수 있습니다. 루프백이나 와일드카드 바인드에서는 `http://localhost:<port>`가 되어 상대 컴퓨터가 자기 자신을 호출하게 되고 일회용 코드가 헛되게 소모되므로, `invite`는 대신 거부하고 `ocx config set hub.dataPublicOrigin` 줄(그리고 이번 초대에만 적용하는 `--data-url` 형태)을 출력합니다. 명시한 `--data-url`이나 `hub.dataPublicOrigin`은 되묻지 않습니다. SSH 터널에서는 루프백 데이터 Origin이 정당합니다.
 
-동작할 수 없는 상태라면 `invite`는 코드를 만들기 **전에** 거부합니다: `runtimeRole`이 `hub`가 아님, `hub.managementPublicOrigin` 없음, 루프백이 아닌 평문 관리 Origin, 잘못된 `--data-url`, attested 프록시가 실행 중이 아님. 전제 조건 하나는 따로 적을 만합니다.
+관리 Origin은 `hub.managementPublicOrigin`이며, `invite`에서 `--management-url`은 **덮어쓰기가 아니라 확인**입니다. grant는 설정된 Origin에 묶이고 교환 시 그 값과 비교하므로, 다른 값을 주면 허브가 거부할 코드를 출력하는 대신 두 Origin을 모두 지목하며 거부합니다.
+
+초대가 성공할 때마다 **묶인 브라우저 Origin**도 stderr에 출력합니다. grant는 Origin 하나에 묶이고 원격 `ocx connect`는 `Origin: http://localhost:<자기 설정 포트>`를 보내므로, 묶인 Origin이 기본값 `http://localhost:10100`이 아니면 상대 컴퓨터가 그 포트에서 이미 실행 중이어야 합니다. 그렇지 않으면 허브가 교환을 거부하고 코드가 소모됩니다. 출력되는 안내가 어떤 포트인지 알려 주고, 대신 기본 Origin을 허용하는 방법도 제시합니다.
+
+동작할 수 없는 상태라면 `invite`는 코드를 만들기 **전에** 거부합니다: `runtimeRole`이 `hub`가 아님, `hub.managementPublicOrigin` 없음, 루프백이 아닌 평문 관리 Origin, 잘못된 `--data-url`, 데이터 Origin이 이 컴퓨터의 루프백이 될 상황, attested 프록시가 실행 중이 아님. 전제 조건 하나는 따로 적을 만합니다.
 
 **`corsAllowOrigins`에 참가할 컴퓨터의 로컬 브라우저 Origin이 있어야 합니다.** `ocx connect`는 grant를 교환할 때 `Origin: http://localhost:<자기 프록시 포트>`를 보내고 grant는 Origin에 묶이므로, `hub.managementPublicOrigin` 자신이나 `corsAllowOrigins`의 루프백 항목만 일치할 수 있습니다. 둘 다 없으면 `invite`는 0이 아닌 코드로 끝나고 아무것도 발급하지 않으며 정확한 명령을 알려 줍니다.
 
@@ -209,7 +215,7 @@ echo '<code>' | ocx connect https://hub-name.tailnet-name.ts.net:8443 --manageme
 ocx config set corsAllowOrigins '["http://localhost:10100"]'
 ```
 
-**참가하는** 컴퓨터의 프록시 포트를 쓰세요. 기본값은 `10100`입니다. 위의 설치 블록에 이미 들어 있습니다.
+**참가하는** 컴퓨터의 프록시 포트를 쓰세요. 기본값은 `10100`입니다. 위의 설치 블록에 이미 들어 있습니다. 배열 전체를 설정하면 기존 배열을 교체하므로, 허브에 이미 항목이 있다면 `invite`가 출력하는 줄을 그대로 실행하세요. 그 줄에는 기존 항목과 새 Origin이 함께 들어 있습니다. 현재 값은 `ocx config get corsAllowOrigins`로 확인합니다.
 
 `ocx hub invite --json`은 `{ code, expiresAt, dataUrl, managementUrl, command }`를 출력하며 `expiresAt`은 ISO 8601입니다. 코드는 비밀입니다. 일회용이고 수명은 5분이며 허브에서 요청 수를 제한하고, 저장하거나 로그·이슈에 붙여 넣으면 안 됩니다. `--clients codex,claude`로 출력된 명령이 어떤 클라이언트 설정을 허브로 향하게 할지 고릅니다.
 
@@ -311,11 +317,14 @@ docker compose up -d
 - `hub-too-new` 또는 `hub-too-old`가 나오면 메시지가 가리키는 오래된 쪽을 업그레이드하세요. 불일치는 로컬 파일을 쓰기 전에 차단됩니다.
 - pairing 코드를 잃었거나 소진했다면 `ocx hub invite`를 다시 실행하세요. grant는 일회용이고 반복 실패는 코드 존재 여부를 드러내지 않는 방식으로 제한됩니다.
 - `ocx hub invite`가 `No loopback browser origin is admitted for pairing`이라고 하면 허브가 허용하는 루프백 브라우저 Origin이 없다는 뜻이며 아무것도 발급되지 않았습니다. 오류가 출력한 `ocx config set corsAllowOrigins` 줄을 참가할 컴퓨터의 프록시 포트로 실행하세요.
+- `ocx hub invite`가 광고할 데이터 Origin이 이 컴퓨터의 루프백이 된다고 하면, 바인드가 루프백 전용이거나 와일드카드이고 `hub.dataPublicOrigin`이 설정되지 않은 상태입니다. 광고할 주소가 없고 tailnet/LAN 주소를 추측하지도 않습니다. 아무것도 발급되지 않았습니다. `hub.dataPublicOrigin`을 설정하거나 이번 초대에만 `--data-url`을 주세요.
+- 참가하는 컴퓨터의 교환이 거부되고 코드가 소모되면, grant가 그 컴퓨터가 보내지 않는 Origin에 묶였던 것입니다. 초대 출력의 `Bound browser origin:` 줄을 다시 보세요. 상대 컴퓨터가 실행해야 하는 포트를 알려 주거나, 허브에서 `http://localhost:10100`을 허용하는 방법을 제시합니다.
 - `ocx hub invite`가 `--management-url`을 거부하면, 허브에서 그 플래그는 `hub.managementPublicOrigin`을 덮어쓰는 것이 아니라 확인하는 것입니다. 설정을 바꾸거나 플래그를 빼세요.
 - 허브에서 `ocx claude`가 native로 실행되거나 허브가 자기 클라이언트 설정을 쓰지 않으면 `unauthenticatedLoopbackListener`가 꺼져 있습니다. 건너뛴 메시지가 게이트를 지목합니다. 리스너를 켜고 프록시를 재시작하세요.
 - 허브에서 `ocx claude`가 리스너로부터 `404`를 받으면, 리스너 경로가 생기기 전이나 포트가 바뀌기 전에 시작된 프로세스가 아직 돌고 있는 것입니다. [macOS 서비스 운영](#macos-서비스-운영)을 보고 재시작하세요.
 - macOS에서 `ocx service restart`가 `nothing to do`를 출력하고 프로세스가 바뀌지 않는 것은 정상입니다. `restart`는 `repair`의 별칭이고 정상 작업의 repair는 의도적으로 no-op입니다. `launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy`를 쓰세요.
 - `ocx service install`이 `OPENCODEX_API_AUTH_TOKEN`을 거부하면 그 값은 관리자 토큰입니다. `unset OPENCODEX_API_AUTH_TOKEN` 후 다시 실행하세요. 서비스가 데이터 플레인 토큰을 직접 준비합니다.
+- 허브가 부팅에서 계속 죽고 `ocx status`가 `admin-collision (file)`을 보이면, `service-api-token` 파일에 관리자 토큰이 들어 있어서 허브가 관리 API를 닫은 상태입니다. 파일을 삭제하고 `ocx service repair`를 실행해 데이터 플레인 토큰을 준비하세요. 이 경우 환경 변수를 unset해도 해결되지 않습니다. 원인은 파일입니다.
 - 루프백이 아닌 평문 HTTP로는 pairing을 할 수 없고, 이를 우회하는 플래그도 없습니다. 관리 Origin을 HTTPS 뒤에 두거나 루프백에서 pairing하세요. 관리자 토큰은 HTTP로 보내지 않습니다.
 - `/v1/catalog`가 `403 origin_rejected`인데 `/readyz`가 `200`이면 데이터 리스너가 TLS 프런트엔드 뒤에서 루프백에 바인드되어 있습니다. [데이터 리스너에 TLS 붙이기](#데이터-리스너에-tls-붙이기)를 보세요.
 - 브라우저 로그아웃/만료는 해당 원격 세션만 끊습니다. 데이터 키와는 별개입니다.
