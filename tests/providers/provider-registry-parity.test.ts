@@ -482,6 +482,21 @@ describe("provider registry parity", () => {
     // The sibling it is most often confused with stays text-only, so the assertion above
     // cannot pass by making every GLM row a VLM.
     expect(zai?.noVisionModels ?? []).toContain("glm-5.3");
+    // The global loop above accepts an ABSENT declaration, which is exactly how the Chat
+    // rows shipped: Flash was kept out of the sidecar but never told the catalog it could
+    // read an image, so `configuredInputModalities` returned undefined and every client
+    // export listed a native VLM as text-only. Pin the positive declaration so the two
+    // Chat rows cannot drift back to describing Flash only by what it is not.
+    for (const id of ["zai", "zhipu-bigmodel-coding"] as const) {
+      const row = PROVIDER_REGISTRY.find(entry => entry.id === id);
+      expect(row?.modelInputModalities?.["glm-5.3-flash"]).toEqual(["text", "image"]);
+      expect(row?.modelInputModalities?.["glm-5.3"]).toEqual(["text"]);
+      // The bracketed aliases are looked up by their exact catalog id, not a stripped one,
+      // so they need their own text-only entries.
+      expect(row?.modelInputModalities?.["glm-5.3[1m]"]).toEqual(["text"]);
+      expect(row?.modelInputModalities?.["glm-5.2[1m]"]).toEqual(["text"]);
+      expect(row?.noVisionModels ?? []).not.toContain("glm-5.3-flash");
+    }
     // `glm-5.3-flash` belongs in all three maps. It was seeded into the model list
     // and the context map alone, so it advertised a 1M window with no effort ladder,
     // no default effort and no output cap - and this assertion pinned that gap in
