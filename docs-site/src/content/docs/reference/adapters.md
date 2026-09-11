@@ -422,6 +422,35 @@ bare `exec_command` and `shell_command` names are reserved for non-freeform shel
 bridges. Namespace a custom freeform tool that uses either name. These schema
 declarations do not grant approval or change execution policy.
 
+## `devin`
+
+**Targets:** Cognition's `exa.api_server_pb.ApiServerService/GetChatMessage` over HTTPS Connect
+streaming at `server.codeium.com`.
+**Auth:** Devin/Cognition API key from `provider.apiKey` or the forwarded authorization header.
+Login opens Auth0 browser sign-in, then exchanges the Firebase ID token via
+`SeatManagementService.RegisterUser` for a long-lived API key.
+
+- Uses `runTurn` rather than the ordinary fetch/parse path. Requests and server events are encoded
+  with manual protobuf framing in `devin/cloud-direct/wire.ts`; the ordinary `buildRequest` /
+  `parseStream` path is disabled.
+- Live model discovery via `GetCascadeModelConfigs`; the static seed is filtered against the
+  account's live roster so models not on the plan drop out instead of failing at request time.
+- Tool definitions are encoded in the request and tool-call events are decoded from the response
+  stream. Cognition enforces a per-tool-description length limit (6,998 chars) and an exact-phrase
+  blocklist; the adapter sanitizes known triggers and truncates over-long descriptions before
+  encoding.
+- Devin/Cognition API keys do not refresh. Run `ocx login devin` again when the key expires or is
+  revoked.
+- The chat request is calibrated, not guessed. Three things gate it together: the credential is the
+  session token doubled and dash-joined in an `Authorization: Basic` header while the protobuf body
+  keeps one copy, the request envelope goes up uncompressed, and `Metadata` #31 carries a
+  732-character device fingerprint whose length — not value — the service checks. Inside
+  `CompletionConfiguration`, #2 is the output cap and #3 is the context window; swapping those two
+  makes every turn fail with an opaque `invalid_argument`. A temperature of exactly 0 is refused, so
+  it is clamped to the smallest accepted value.
+- Experimental unofficial bridge; not shown in the dashboard preset by default. See the
+  [provider guide](/guides/providers/) for login instructions.
+
 ## `devin-cli`
 
 **Targets:** the locally installed Devin CLI, over the Agent Client Protocol — `devin acp` speaking

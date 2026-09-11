@@ -420,9 +420,10 @@ describe("registry-derived routed tool conformance", () => {
   });
 
   const TOOL_LESS_ADAPTERS = new Set(["codebuddy", "qoder"]);
-  // devin-cli drives a local CLI over ACP stdio: buildRequest returns a
-  // placeholder and tools never travel the wire path.
-  const RUN_TURN_ONLY_WIRES = new Set(["devin-cli"]);
+  // Both Devin providers are runTurn-only: devin-cli drives a local CLI over ACP
+  // stdio and devin streams Connect-RPC from runTurn, so for both of them
+  // buildRequest returns a placeholder and tools never travel the wire path.
+  const RUN_TURN_ONLY_WIRES = new Set(["devin-cli", "devin"]);
 
   test("every registered adapter keeps the nested apply_patch helper in its final request", async () => {
     for (const [adapterId] of adapterDefinitions()) {
@@ -457,10 +458,10 @@ describe("registry-derived routed tool conformance", () => {
       if (RUN_TURN_ONLY_WIRES.has(effectiveAdapterContract(adapterId).wire)) continue;
       const contract = effectiveAdapterContract(adapterId);
       const driver = TOOL_WIRE_DRIVERS[contract.wire];
-      if (!driver.streamingToolCall) {
+      if (!driver?.streamingToolCall) {
         // OpenAI Responses is a normal passthrough here and only parses routed compaction;
         // Cursor's proprietary runTurn stream has focused parser coverage elsewhere.
-        expect(["openai-responses", "cursor", "devin-cli"]).toContain(contract.wire);
+        expect(["openai-responses", "cursor"]).toContain(contract.wire);
         continue;
       }
       expect(await restoredStreamInput(adapterId, contract.wire), adapterId).toBe(PATCH);
@@ -472,7 +473,7 @@ describe("registry-derived routed tool conformance", () => {
       if (TOOL_LESS_ADAPTERS.has(adapterId)) continue;
       if (RUN_TURN_ONLY_WIRES.has(effectiveAdapterContract(adapterId).wire)) continue;
       const contract = effectiveAdapterContract(adapterId);
-      if (contract.wire === "openai-responses" || contract.wire === "cursor" || contract.wire === "devin-cli") {
+      if (contract.wire === "openai-responses" || contract.wire === "cursor") {
         // Native Responses passthrough and Cursor's protobuf transport do not use the routed
         // adapter tool declaration surface exercised by this registry-wide check.
         continue;
@@ -488,7 +489,7 @@ describe("registry-derived routed tool conformance", () => {
       if (TOOL_LESS_ADAPTERS.has(adapterId)) continue;
       if (RUN_TURN_ONLY_WIRES.has(effectiveAdapterContract(adapterId).wire)) continue;
       const contract = effectiveAdapterContract(adapterId);
-      if (contract.wire === "openai-responses" || contract.wire === "cursor" || contract.wire === "devin-cli") continue;
+      if (contract.wire === "openai-responses" || contract.wire === "cursor") continue;
       const parsed = namespacedCollisionParsed(contract.wire);
       // parseRequest rejects this shape for real inbound traffic; keeping the policy mutation here
       // also proves each adapter remains fail-closed when a caller reaches it with a prebuilt AST.
@@ -516,8 +517,8 @@ describe("registry-derived routed tool conformance", () => {
       if (RUN_TURN_ONLY_WIRES.has(effectiveAdapterContract(adapterId).wire)) continue;
       const contract = effectiveAdapterContract(adapterId);
       const driver = TOOL_WIRE_DRIVERS[contract.wire];
-      if (!driver.streamingToolCall || !driver.extractWireToolName) {
-        expect(["openai-responses", "cursor", "devin-cli"]).toContain(contract.wire);
+      if (!driver?.streamingToolCall || !driver?.extractWireToolName) {
+        expect(["openai-responses", "cursor"]).toContain(contract.wire);
         continue;
       }
 
@@ -559,6 +560,7 @@ describe("registry-derived routed tool conformance", () => {
       if (TOOL_LESS_ADAPTERS.has(adapterId)) continue;
       if (RUN_TURN_ONLY_WIRES.has(effectiveAdapterContract(adapterId).wire)) continue;
       const contract = effectiveAdapterContract(adapterId);
+      // Devin is a runTurn-only adapter; continuation replay is not expressed on buildRequest.
       const body = await outbound(adapterId, continuationParsed(contract.wire));
       expect(continuationInput(contract.wire, body), adapterId).toBe(PATCH);
     }
