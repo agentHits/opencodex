@@ -22,7 +22,7 @@
  * `~/Library/LaunchAgents`, and a case without that seam rewrites the developer's own live
  * `com.opencodex.proxy.plist`.
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,11 +30,14 @@ import {
   buildPlist,
   deriveLaunchdServiceDiagnostic,
   installLaunchd,
+  launchdEvictionTargets,
   probeLaunchdLoadState,
   resolvedProxyEnv,
+  reusePreviousPlistPathVariable,
   runLaunchctl,
   stableLauncherEntry,
 } from "../../src/service";
+import type { LaunchdLoadProbe, LaunchdLoadState } from "../../src/service";
 import { protectedLaunchAgentsDirForTests } from "../../src/lib/test-home-guard";
 import { repoPath } from "../helpers/repo-root";
 
@@ -44,11 +47,20 @@ import { repoPath } from "../helpers/repo-root";
  * one, because `os.homedir()` ignores `$HOME`. A sibling file in the same Bun worker that
  * clears or restores the variable would otherwise make these cases fail on the real-home
  * guard instead of on anything they assert.
+ *
+ * Captured and RESTORED, because the pollution runs both ways: the test preload hands every
+ * worker a sandbox home, and a file that leaves its own temp directory in the variable makes
+ * the next file in the same worker read a home this one deleted.
  */
+const previousOpenCodexHome = process.env.OPENCODEX_HOME;
 beforeEach(() => {
   const home = mkdtempSync(join(tmpdir(), "ocx-launchd-home-"));
   mkdirSync(join(home, ".opencodex"), { recursive: true });
   process.env.OPENCODEX_HOME = join(home, ".opencodex");
+});
+afterEach(() => {
+  if (previousOpenCodexHome === undefined) delete process.env.OPENCODEX_HOME;
+  else process.env.OPENCODEX_HOME = previousOpenCodexHome;
 });
 
 type LaunchctlResult = { ok: boolean; stdout: string; stderr: string; status: number | null };
@@ -91,6 +103,31 @@ function recordingLaunchctl(script: {
 
 const verbs = (argv: string[][]): string[] => argv.map(args => args[0] ?? "");
 
+/**
+ * A {@link probeLaunchdLoadState} stand-in answering from a queue, the LAST entry repeating.
+ *
+ * `installLaunchd` asks the tri-state probe rather than the two-state
+ * `launchdJobMatchesPlist` precisely so `unknown` can be distinguished from absence, so the
+ * fixture has to be able to say all four things.
+ */
+function scriptedProbe(...states: Array<LaunchdLoadState | LaunchdLoadProbe>) {
+  const seen: LaunchdLoadState[] = [];
+  let call = 0;
+  const probe = ((): LaunchdLoadProbe => {
+    const next = states[Math.min(call++, states.length - 1)] ?? "not-loaded";
+    const answer: LaunchdLoadProbe = typeof next === "string"
+      ? { state: next, ...(next.startsWith("loaded") ? { domain: "gui/501" } : {}) }
+      : next;
+    seen.push(answer.state);
+    return answer;
+  }) as typeof probeLaunchdLoadState;
+  return { seen, probe };
+}
+
+/** The tri-state answer a healthy hub gives, for the cases that only need one. */
+const loadedCurrent = (): { seen: LaunchdLoadState[]; probe: typeof probeLaunchdLoadState } =>
+  scriptedProbe("loaded-current");
+
 /** A fixture LaunchAgents directory plus the plist path inside it. */
 function fixturePlist(): string {
   return join(mkdtempSync(join(tmpdir(), "ocx-launchd-repair-")), "com.opencodex.proxy.plist");
@@ -107,12 +144,7 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     writeFileSync(plistPath, renderedPlist(), "utf8");
     const { argv, launchctl } = recordingLaunchctl({});
 
-    installLaunchd({
-      launchctl,
-      plistPath,
-      matches: () => ({ loaded: true, matchesPlist: true }),
-      sleepSync: () => {},
-    });
+    installLaunchd({ launchctl, plistPath, probe: loadedCurrent().probe, sleepSync: () => {} });
 
     // THE regression: no bootout, no bootstrap, no kickstart. Repairing a serving hub
     // used to evict it unconditionally.
@@ -121,32 +153,74 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     expect(existsSync(`${plistPath}.prev`)).toBe(false);
   });
 
+  /**
+   * Review finding 2. `buildPlist` bakes `process.env.PATH`, so the byte comparison above
+   * only holds for a repair run from the same shell that installed the service. From a tray
+   * helper, `ocx update`'s child or an ssh session the PATH line differs, every other byte
+   * is identical, and the healthy hub was evicted anyway — with its PATH rewritten to the
+   * narrower one.
+   */
+  test("a plist that differs ONLY in the baked PATH is still a no-op, and keeps the installed PATH", () => {
+    const plistPath = fixturePlist();
+    const previousPath = process.env.PATH;
+    try {
+      // The login shell that installed the service. The extra entry is deliberately a
+      // directory that cannot exist, so both PATHs resolve the SAME launcher (none) and the
+      // exec line is identical on every host.
+      process.env.PATH = "/opt/ocx-login-shell-only/bin:/usr/bin:/bin";
+      const installedPlist = renderedPlist();
+      // The tray helper / cron context that runs the repair.
+      process.env.PATH = "/usr/bin:/bin";
+      const repairPlist = renderedPlist();
+      // Precondition of the case: PATH is the ONLY difference (neither PATH resolves an
+      // `ocx`, so the exec line is identical).
+      expect(repairPlist).not.toBe(installedPlist);
+      expect(repairPlist.replace(/<key>PATH<\/key><string>[^\n]*<\/string>/, "P"))
+        .toBe(installedPlist.replace(/<key>PATH<\/key><string>[^\n]*<\/string>/, "P"));
+
+      writeFileSync(plistPath, installedPlist, "utf8");
+      const { argv, launchctl } = recordingLaunchctl({});
+
+      installLaunchd({ launchctl, plistPath, probe: loadedCurrent().probe, sleepSync: () => {} });
+
+      expect(argv).toEqual([]);
+      // The installed PATH survived: a repair must not narrow the environment the service
+      // runs in just because of who invoked it.
+      expect(readFileSync(plistPath, "utf8")).toBe(installedPlist);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+  });
+
   test("an identical plist whose job is loaded from an OLDER command still reloads", () => {
     const plistPath = fixturePlist();
     writeFileSync(plistPath, renderedPlist(), "utf8");
-    let matchCalls = 0;
     const { argv, launchctl } = recordingLaunchctl({ bootstrap: [ok()] });
 
     installLaunchd({
       launchctl,
       plistPath,
-      // First call is the no-op pre-check (stale ⇒ do the repair); the second is the
+      // First answer is the no-op pre-check (stale ⇒ do the repair); the second is the
       // post-bootstrap verification.
-      matches: () => ({ loaded: true, matchesPlist: matchCalls++ > 0 }),
+      probe: scriptedProbe("loaded-stale", "loaded-current").probe,
       sleepSync: () => {},
     });
 
     expect(verbs(argv)).toContain("bootstrap");
+    // Review nit 7: the rollback copy is removed once the new job is verified, so the next
+    // repair's backup cannot be mistaken for this one's.
+    expect(existsSync(`${plistPath}.prev`)).toBe(false);
   });
 
-  test("the reload is domain-explicit bootstrap, not legacy load -w", () => {
+  test("the reload is domain-explicit bootstrap in BOTH domains, not legacy load -w", () => {
     const plistPath = fixturePlist();
     const { argv, launchctl } = recordingLaunchctl({ bootstrap: [ok()] });
 
     installLaunchd({
       launchctl,
       plistPath,
-      matches: () => ({ loaded: true, matchesPlist: true }),
+      probe: scriptedProbe("not-loaded", "loaded-current").probe,
       sleepSync: () => {},
     });
 
@@ -157,8 +231,13 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     const bootstrap = argv.find(args => args[0] === "bootstrap");
     expect(bootstrap?.[1]).toMatch(/^gui\/\d+$/);
     expect(bootstrap?.[2]).toBe(plistPath);
-    const bootout = argv.find(args => args[0] === "bootout");
-    expect(bootout?.[1]).toMatch(/^gui\/\d+\/com\.opencodex\.proxy$/);
+    // Review finding 4: the probe reports `user/<uid>` too, so the eviction covers it.
+    // Evicting gui alone left a user-domain registration of the same Label alive and then
+    // bootstrapped a SECOND one into gui — two KeepAlive jobs for one port.
+    const bootouts = argv.filter(args => args[0] === "bootout").map(args => args[1] ?? "");
+    expect(bootouts).toEqual(launchdEvictionTargets());
+    expect(bootouts[0]).toMatch(/^gui\/\d+\/com\.opencodex\.proxy$/);
+    expect(bootouts[1]).toMatch(/^user\/\d+\/com\.opencodex\.proxy$/);
     // bootout before bootstrap, with the settle probe in between.
     expect(verbs(argv).indexOf("bootout")).toBeLessThan(verbs(argv).indexOf("bootstrap"));
   });
@@ -172,14 +251,35 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     installLaunchd({
       launchctl,
       plistPath,
-      matches: () => ({ loaded: true, matchesPlist: true }),
+      probe: scriptedProbe("not-loaded", "loaded-current").probe,
       sleepSync: ms => { delays.push(ms); },
     });
 
-    // 5 × 200 ms, then give up and try the bootstrap anyway — a wedged domain must reach
-    // the diagnosable throw rather than hang.
-    expect(delays).toEqual([200, 200, 200, 200, 200]);
-    expect(verbs(argv).filter(v => v === "print")).toHaveLength(5);
+    // 5 × 200 ms per evicted domain, then give up and try the bootstrap anyway — a wedged
+    // domain must reach the diagnosable throw rather than hang.
+    expect(delays).toEqual(Array.from({ length: 10 }, () => 200));
+    expect(verbs(argv).filter(v => v === "print")).toHaveLength(10);
+  });
+
+  test("a bootout that evicted nothing is not settled", () => {
+    const plistPath = fixturePlist();
+    const delays: number[] = [];
+    // Exit 3 in both domains: nothing was loaded, so nothing is exiting to wait for.
+    const { argv, launchctl } = recordingLaunchctl({
+      bootstrap: [ok()],
+      bootout: fail(3, "Boot-out failed: 3: No such process"),
+      print: ok("live"),
+    });
+
+    installLaunchd({
+      launchctl,
+      plistPath,
+      probe: scriptedProbe("not-loaded", "loaded-current").probe,
+      sleepSync: ms => { delays.push(ms); },
+    });
+
+    expect(delays).toEqual([]);
+    expect(verbs(argv)).toEqual(["bootout", "bootout", "bootstrap"]);
   });
 
   test("a clean bootstrap that did not take is a FAILURE, whatever stderr says", () => {
@@ -190,7 +290,7 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     expect(() => installLaunchd({
       launchctl,
       plistPath,
-      matches: () => ({ loaded: false, matchesPlist: false }),
+      probe: scriptedProbe("not-loaded").probe,
       sleepSync: () => {},
     })).toThrow(/could not bootstrap/);
 
@@ -200,7 +300,10 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
 
   test("'Bootstrap failed: 5' tries kickstart -k before a second eviction", () => {
     const plistPath = fixturePlist();
-    let matchCalls = 0;
+    // Byte-identical bytes are what makes `kickstart` legitimate here: it restarts the
+    // definition launchd has CACHED, so it can only be trusted when the plist on disk is
+    // unchanged. (The next case covers the other half.)
+    writeFileSync(plistPath, renderedPlist(), "utf8");
     const { argv, launchctl } = recordingLaunchctl({
       bootstrap: [fail(5, "Bootstrap failed: 5: Input/output error")],
     });
@@ -208,12 +311,9 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     installLaunchd({
       launchctl,
       plistPath,
-      // First verification (right after the refused bootstrap) fails; the one after
-      // `kickstart -k` succeeds.
-      matches: () => {
-        const loaded = matchCalls++ >= 1;
-        return { loaded, matchesPlist: loaded };
-      },
+      // Pre-check says the job is gone, the verification right after the refused bootstrap
+      // agrees, and the one after `kickstart -k` finds it.
+      probe: scriptedProbe("not-loaded", "not-loaded", "loaded-current").probe,
       sleepSync: () => {},
     });
 
@@ -226,6 +326,45 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
   });
 
   /**
+   * Review finding 3. `launchctl kickstart -k` restarts the definition launchd has CACHED;
+   * it does NOT re-read the plist. When only `EnvironmentVariables` changed, the exec line
+   * is identical, so the verification agrees, install state is written, repair reports
+   * success — and launchd keeps serving with the OLD environment. New bytes therefore have
+   * to go through the eviction, which is the only way to hand launchd a new definition.
+   */
+  test("new bytes never trust kickstart: an env-only change still takes the eviction", () => {
+    const plistPath = fixturePlist();
+    const rendered = renderedPlist();
+    const sandboxHome = process.env.OPENCODEX_HOME ?? "";
+    expect(rendered).toContain(sandboxHome);
+    // Differs from the rendered plist in ONE EnvironmentVariables value; the exec line and
+    // every other byte are identical, which is exactly the case kickstart would paper over.
+    const installedPlist = rendered.replace(sandboxHome, join(sandboxHome, "moved"));
+    expect(installedPlist).not.toBe(rendered);
+    writeFileSync(plistPath, installedPlist, "utf8");
+    const { argv, launchctl } = recordingLaunchctl({
+      bootstrap: [fail(5, "Bootstrap failed: 5: Input/output error"), ok()],
+      // Would succeed if it were asked — the point is that it is not.
+      kickstart: ok(),
+    });
+
+    installLaunchd({
+      launchctl,
+      plistPath,
+      // The live job runs the command this install bakes (only the env moved), so the
+      // pre-check is `loaded-current` — and must still reload, because PATH is the only
+      // difference a repair is allowed to treat as "nothing to do".
+      probe: scriptedProbe("loaded-current", "not-loaded", "loaded-current").probe,
+      sleepSync: () => {},
+    });
+
+    expect(verbs(argv)).not.toContain("kickstart");
+    expect(verbs(argv).filter(v => v === "bootstrap")).toHaveLength(2);
+    // The new definition is what is on disk for launchd to read.
+    expect(readFileSync(plistPath, "utf8")).toBe(rendered);
+  });
+
+  /**
    * The second meaning of exit 5. Measured on macOS 27.0: `launchctl disable gui/$uid/<label>`
    * makes `bootstrap` fail with the SAME "Bootstrap failed: 5: Input/output error" while
    * `print` reports 113 and `kickstart -k` reports 113. Legacy `load -w` cleared that flag —
@@ -234,7 +373,7 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
    */
   test("a DISABLED job is enabled and bootstrapped, the modern spelling of load -w", () => {
     const plistPath = fixturePlist();
-    let matchCalls = 0;
+    writeFileSync(plistPath, renderedPlist(), "utf8");
     const { argv, launchctl } = recordingLaunchctl({
       bootstrap: [fail(5, "Bootstrap failed: 5: Input/output error"), ok()],
       kickstart: fail(113, 'Could not find service "com.opencodex.proxy" in domain for user gui: 501'),
@@ -243,16 +382,17 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     installLaunchd({
       launchctl,
       plistPath,
-      // Loaded only after the enable + second bootstrap. `kickstart` failing
-      // short-circuits its own verification, so this is asked exactly twice.
-      matches: () => {
-        const loaded = matchCalls++ >= 1;
-        return { loaded, matchesPlist: loaded };
-      },
+      // Loaded only after the enable + second bootstrap. A failed `kickstart` skips its own
+      // verification, so the probe is asked exactly three times.
+      probe: scriptedProbe("not-loaded", "not-loaded", "loaded-current").probe,
       sleepSync: () => {},
     });
 
-    expect(verbs(argv)).toEqual(["bootout", "print", "bootstrap", "kickstart", "enable", "bootout", "print", "bootstrap"]);
+    expect(verbs(argv)).toEqual([
+      "bootout", "print", "bootout", "print", "bootstrap",
+      "kickstart", "enable",
+      "bootout", "print", "bootout", "print", "bootstrap",
+    ]);
     const enable = argv.find(args => args[0] === "enable");
     expect(enable?.[1]).toMatch(/^gui\/\d+\/com\.opencodex\.proxy$/);
   });
@@ -264,7 +404,7 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     installLaunchd({
       launchctl,
       plistPath,
-      matches: () => ({ loaded: true, matchesPlist: true }),
+      probe: scriptedProbe("not-loaded", "loaded-current").probe,
       sleepSync: () => {},
     });
 
@@ -280,7 +420,7 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     expect(() => installLaunchd({
       launchctl,
       plistPath,
-      matches: () => ({ loaded: false, matchesPlist: false }),
+      probe: scriptedProbe("not-loaded").probe,
       sleepSync: () => {},
     })).toThrow(/invalid XML/);
 
@@ -299,7 +439,7 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
       installLaunchd({
         launchctl,
         plistPath,
-        matches: () => ({ loaded: false, matchesPlist: false }),
+        probe: scriptedProbe("not-loaded").probe,
         sleepSync: () => {},
       });
     } catch (error) {
@@ -321,6 +461,24 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     expect(verbs(argv).filter(v => v === "bootstrap")).toHaveLength(3);
   });
 
+  /**
+   * A job that comes back under a DIFFERENT command is running. Telling its operator
+   * "nothing is listening" sends them to fix the wrong thing — and the two-state
+   * `launchdJobMatchesPlist` this function used could not tell the two apart at all.
+   */
+  test("a job that reloaded from a different command is reported as loaded, not as down", () => {
+    const plistPath = fixturePlist();
+    writeFileSync(plistPath, "<plist>previous</plist>\n", "utf8");
+    const { launchctl } = recordingLaunchctl({ bootstrap: [ok(), ok(), ok()] });
+
+    expect(() => installLaunchd({
+      launchctl,
+      plistPath,
+      probe: scriptedProbe("not-loaded", "loaded-stale").probe,
+      sleepSync: () => {},
+    })).toThrow(/is still loaded in gui\/501 from a DIFFERENT command/);
+  });
+
   test("a fresh install has nothing to restore and says so without inventing a rollback", () => {
     const plistPath = fixturePlist();
     const { argv, launchctl } = recordingLaunchctl({ bootstrap: [ok(), ok()] });
@@ -328,7 +486,7 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     expect(() => installLaunchd({
       launchctl,
       plistPath,
-      matches: () => ({ loaded: false, matchesPlist: false }),
+      probe: scriptedProbe("not-loaded").probe,
       sleepSync: () => {},
     })).toThrow(/ocx service install/);
 
@@ -336,14 +494,141 @@ describe("installLaunchd: repair must not be an outage (#4236 defect 1)", () => 
     expect(verbs(argv).filter(v => v === "bootstrap")).toHaveLength(2);
   });
 
+  /**
+   * Review finding 1. `launchdJobMatchesPlist` reports `loaded: false` for EVERY non-zero
+   * `launchctl print` — EPERM from a non-Aqua ssh/cron context, an unspawnable launchctl, an
+   * undocumented status. Routed through that, a healthy serving hub failed the pre-check
+   * (evict), failed the verification the same way (evict again, roll back) and was finally
+   * declared "IS NOT RUNNING" while it was up. A probe that could not answer is not evidence.
+   */
+  test("an unverifiable launchd state refuses to evict and changes nothing", () => {
+    const plistPath = fixturePlist();
+    const installedPlist = "<plist>the definition that is serving</plist>\n";
+    writeFileSync(plistPath, installedPlist, "utf8");
+    const { argv, launchctl } = recordingLaunchctl({});
+
+    let thrown: unknown;
+    try {
+      installLaunchd({
+        launchctl,
+        plistPath,
+        probe: scriptedProbe({
+          state: "unknown",
+          detail: "launchctl print gui/501/com.opencodex.proxy exited 1",
+        }).probe,
+        sleepSync: () => {},
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    expect(message).toContain("could not be verified");
+    expect(message).toContain("nothing was changed");
+    // Never the claim that made the outage undiagnosable.
+    expect(message).not.toContain("IS NOT RUNNING");
+    // Named so the operator can ask the question themselves, in both domains.
+    expect(message).toMatch(/launchctl print gui\/\d+\/com\.opencodex\.proxy/);
+    expect(message).toMatch(/launchctl print user\/\d+\/com\.opencodex\.proxy/);
+    // No launchctl verb ran, and the plist on disk is untouched.
+    expect(argv).toEqual([]);
+    expect(readFileSync(plistPath, "utf8")).toBe(installedPlist);
+    expect(existsSync(`${plistPath}.prev`)).toBe(false);
+  });
+
+  test("a state that stops answering AFTER an accepted bootstrap is not evicted again", () => {
+    const plistPath = fixturePlist();
+    writeFileSync(plistPath, "<plist>previous</plist>\n", "utf8");
+    const { argv, launchctl } = recordingLaunchctl({ bootstrap: [ok()] });
+
+    installLaunchd({
+      launchctl,
+      plistPath,
+      probe: scriptedProbe("not-loaded", { state: "unknown", detail: "launchctl could not be run: EPERM" }).probe,
+      sleepSync: () => {},
+    });
+
+    // One bootstrap, no retry and no rollback: a retry is another eviction, and the rollback
+    // would evict a job we cannot prove is down.
+    expect(verbs(argv).filter(v => v === "bootstrap")).toHaveLength(1);
+    expect(readFileSync(plistPath, "utf8")).toBe(renderedPlist());
+  });
+
+  test("a bootstrap that FAILED under an unverifiable state throws without claiming the job is down", () => {
+    const plistPath = fixturePlist();
+    writeFileSync(plistPath, "<plist>previous</plist>\n", "utf8");
+    const { argv, launchctl } = recordingLaunchctl({
+      bootstrap: [fail(1, "Bootstrap failed: 1: Operation not permitted")],
+    });
+
+    let thrown: unknown;
+    try {
+      installLaunchd({
+        launchctl,
+        plistPath,
+        probe: scriptedProbe("not-loaded", { state: "unknown", detail: "launchctl could not be run: EPERM" }).probe,
+        sleepSync: () => {},
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    expect(message).toContain("Operation not permitted");
+    expect(message).toContain("could not be verified");
+    expect(message).not.toContain("IS NOT RUNNING");
+    // No rollback bootstrap: restoring means evicting, and nothing here proves the job is
+    // down.
+    expect(verbs(argv).filter(v => v === "bootstrap")).toHaveLength(1);
+  });
+
   test("the armed test guard refuses the developer's real LaunchAgents directory", () => {
     // Without the seam above, every case in this file rewrote the live plist.
     expect(() => installLaunchd({
       plistPath: join(protectedLaunchAgentsDirForTests(), "com.opencodex.proxy.plist"),
       launchctl: recordingLaunchctl({}).launchctl,
-      matches: () => ({ loaded: true, matchesPlist: true }),
+      probe: loadedCurrent().probe,
       sleepSync: () => {},
     })).toThrow(/real LaunchAgents directory/);
+  });
+});
+
+describe("reusePreviousPlistPathVariable: PATH is the one difference repair may ignore", () => {
+  const plist = (path: string, port = 10100): string =>
+    `<dict>\n  <key>PATH</key><string>${path}</string>\n  <key>Port</key><string>${port}</string>\n</dict>\n`;
+
+  test("a PATH-only difference yields the previous definition verbatim", () => {
+    const previous = plist("/opt/homebrew/bin:/usr/bin");
+    const adopted = reusePreviousPlistPathVariable(previous, plist("/usr/bin"));
+    expect(adopted).toBe(previous);
+  });
+
+  test("any other difference refuses — the plist must be rewritten in full", () => {
+    // A repair that also changes the port is a real rewrite, and PATH goes with it.
+    expect(reusePreviousPlistPathVariable(plist("/a", 10100), plist("/b", 10101))).toBe(null);
+  });
+
+  test("an identical PATH is not a difference to reuse", () => {
+    expect(reusePreviousPlistPathVariable(plist("/a"), plist("/a"))).toBe(null);
+  });
+
+  test("a PATH holding regex replacement syntax survives verbatim", () => {
+    // A function replacer, not `$1`: `$&` in the previous PATH would otherwise be expanded.
+    const previous = plist("/opt/$&/bin:/usr/bin");
+    expect(reusePreviousPlistPathVariable(previous, plist("/usr/bin"))).toBe(previous);
+  });
+
+  test("a definition with no PATH entry refuses rather than guessing", () => {
+    expect(reusePreviousPlistPathVariable("<dict/>\n", plist("/usr/bin"))).toBe(null);
+  });
+});
+
+describe("launchdEvictionTargets: an eviction covers every domain the probe reports", () => {
+  test("both user domains, in probe order", () => {
+    expect(launchdEvictionTargets(501)).toEqual([
+      "gui/501/com.opencodex.proxy",
+      "user/501/com.opencodex.proxy",
+    ]);
   });
 });
 
@@ -519,6 +804,45 @@ describe("the surfaces around the repair (#4236 defects 1f, 1h, 2)", () => {
     // Installing over a manager we could not query is the unsafe direction, so this probe
     // keeps failing closed on `unknown` even though `diagnoseService` does not.
     expect(ops).toContain('probe.state === "unknown"');
+    // Review finding 4: the probe answers for `user/<uid>` as well, so a gui-only eviction
+    // exited 3 in the wrong domain and installed new assets over a live job.
+    expect(ops).toContain("for (const target of launchdEvictionTargets())");
+    expect(ops).toContain("launchctlBootoutBenign(booted.status)");
+  });
+
+  /**
+   * Review finding 1. The pre-check and the verification are the two places a two-state
+   * "loaded / not loaded" answer turned one unreadable `launchctl print` into an eviction.
+   */
+  test("installLaunchd asks the tri-state probe, never launchdJobMatchesPlist", () => {
+    const fn = slice("export function installLaunchd(", " * Deps are named for the layer they replace");
+    expect(fn).toContain("probe?: typeof probeLaunchdLoadState;");
+    expect(fn).not.toContain("launchdJobMatchesPlist");
+    // Refuse before any write, and again before any retry or rollback.
+    expect(fn).toContain('if (verdict.state === "unknown") {');
+    expect(fn).toContain("refusing to ${wasInstalled ? \"repair\" : \"install\"}");
+    expect(fn).toContain('verdict.state === "not-loaded" || verdict.state === "loaded-stale"');
+    // `startLaunchd` keeps the two-state helper deliberately: it does not evict anything.
+    expect(slice("export function startLaunchd(", "function stopLaunchd(")).toContain("launchdJobMatchesPlist");
+  });
+
+  test("the no-op pre-check treats a PATH-only difference as identical (finding 2)", () => {
+    const fn = slice("export function installLaunchd(", " * Deps are named for the layer they replace");
+    expect(fn).toContain("reusePreviousPlistPathVariable(previousPlist, rendered)");
+    // Only against a job proven to run the exec line this install baked.
+    expect(fn).toContain('verdict.state === "loaded-current"');
+  });
+
+  test("install state fails loudly instead of writing nowhere (nit 6)", () => {
+    const filter = slice("function serviceStatePaths()", "function currentCodexHome(");
+    expect(filter).toContain("isTestHomeGuardArmed()");
+    // One canonicalization, the guard's own: `resolve()` alone calls /var/... and
+    // /private/var/... different paths on macOS.
+    expect(filter).toContain("isProtectedHomeUnderTest(dirname(path))");
+    expect(filter).toContain("paths.filter(");
+    expect(filter).toContain("refusing to write service install state");
+    expect(slice("function writeServiceInstallState(", "function readServiceInstallState("))
+      .toContain("serviceStateWritePaths()");
   });
 
   test("diagnoseService no longer grep-matches launchctl list (2)", () => {
@@ -537,22 +861,33 @@ describe("the surfaces around the repair (#4236 defects 1f, 1h, 2)", () => {
    * entry is the developer's LIVE record — one case replaced its codexHome and
    * opencodexHome with temp-directory paths before this filter existed.
    */
-  test("install state never reaches the real home from a test process", () => {
-    const fn = slice("function serviceStatePaths()", "function currentCodexHome(");
-    expect(fn).toContain("isTestHomeGuardArmed()");
-    expect(fn).toContain("protectedHomeForTests()");
-    expect(fn).toContain("paths.filter(");
-  });
-
-  test("stop and uninstall prefer bootout and keep unload only as a fallback (D)", () => {
+  test("stop and uninstall prefer bootout, in both domains, and keep unload only as a fallback (D)", () => {
     const stop = slice("function stopLaunchd(", "function statusLaunchd(");
     expect(stop).toContain('run(["bootout"');
+    // Review finding 4: gui-only, a `user/<uid>` job made `ocx service stop` a silent no-op
+    // — `bootout gui/<uid>/<label>` exits 3 in a domain that never held it.
+    expect(stop).toContain("for (const target of launchdEvictionTargets())");
     // The legacy verb survives for exactly one case: launchctl could not be spawned at
     // all (`status === null`), which is the only state a second attempt can improve.
     expect(stop).toContain("launchctl unload");
     expect(stop.indexOf('run(["bootout"')).toBeLessThan(stop.indexOf("launchctl unload"));
     const uninstall = slice("function uninstallLaunchd(", "/**");
+    // Uninstall inherits both domains by routing through stopLaunchd.
     expect(uninstall).toContain("stopLaunchd(deps)");
     expect(uninstall).not.toContain("launchctl unload");
+  });
+
+  /**
+   * Review nit 8. `stableLauncherEntry` is shared with `installSystemd`, so "the recorded
+   * launcher wins over a fresh PATH walk" changed Linux too. The behavioural half lives in
+   * `tests/service/service.test.ts`; this pins that the two installers really do call the
+   * same resolver, which is what makes that coverage transferable.
+   */
+  test("the recorded-launcher preference is shared with the systemd installer (nit 8)", () => {
+    const systemd = slice("function installSystemd()", "function startSystemd(");
+    expect(systemd).toContain("stableLauncherEntry()");
+    expect(systemd).toContain("buildUnit(resolvedProxyEnv(), { launcher })");
+    expect(slice("export function installLaunchd(", " * Deps are named for the layer they replace"))
+      .toContain("stableLauncherEntry()");
   });
 });

@@ -208,6 +208,38 @@ describe("systemd service unit", () => {
     })).toBe(null);
   });
 
+  /**
+   * Review nit 8. `stableLauncherEntry` is shared: `installSystemd` resolves it too, so
+   * "the recorded launcher wins over a fresh PATH walk" is a LINUX change as well as a macOS
+   * one. The unit keeps the `ExecStart` the install recorded instead of rewriting it to the
+   * version-pinned Bun + CLI pair — the #2898 shape launcher mode exists to avoid — when a
+   * repair runs from a context without `ocx` on PATH.
+   */
+  test("a repair without ocx on PATH keeps the recorded launcher in the systemd unit too", async () => {
+    const recorded = join(TEST_DIR, "recorded-systemd", "ocx");
+    const launcher = stableLauncherEntry({
+      state: { version: 2, backend: "scheduler", launcherPath: recorded } as never,
+      env: { PATH: "" },
+      isExecutableFile: candidate => candidate === recorded,
+    });
+    expect(launcher).toBe(recorded);
+
+    const unit = buildUnit(resolvedProxyEnv(), { launcher });
+    expectTextToContainPath(unit, recorded);
+    // Launcher mode means the unit must NOT pin the package-local Bun + CLI pair.
+    expect(unit).not.toContain("OCX_BUN_RUNTIME_PATH");
+
+    // And the installer feeds exactly this resolver into exactly that builder, so the
+    // preference above is the one Linux gets.
+    const service = await readText("src/service.ts");
+    const installSystemd = service.slice(
+      service.indexOf("function installSystemd()"),
+      service.indexOf("function startSystemd()"),
+    );
+    expect(installSystemd).toContain("const launcher = stableLauncherEntry();");
+    expect(installSystemd).toContain("buildUnit(resolvedProxyEnv(), { launcher })");
+  });
+
   test("bare service installs only when absent and otherwise selects no-admin repair", async () => {
     expect(normalizeServiceSubcommand()).toBe("install");
     expect(normalizeServiceSubcommand("restart")).toBe("repair");
