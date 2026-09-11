@@ -87,6 +87,23 @@ export function isTestHomeGuardArmed(): boolean {
 }
 
 /**
+ * Whether `dir` IS the protected production home, decided with the SAME canonicalization as
+ * {@link assertNotRealHomeUnderTest}.
+ *
+ * For the caller that must FILTER the real home out of a candidate list instead of refusing
+ * one write: `serviceStatePaths()` in `src/service.ts` keeps a legacy
+ * `~/.opencodex/service-state.json` entry so an install made before OPENCODEX_HOME existed
+ * can still be found, and under an armed test process that entry is the developer's live
+ * record. Exported so that filter cannot drift onto a weaker comparison — `resolve()` alone
+ * calls `/var/folders/...` and `/private/var/folders/...` different paths, which is exactly
+ * how a macOS sandbox path slips past a string compare.
+ */
+export function isProtectedHomeUnderTest(dir: string): boolean {
+  if (!isTestHomeGuardArmed()) return false;
+  return canonicalize(dir) === PROTECTED_HOME;
+}
+
+/**
  * Throw when an armed test process is about to write the real OpenCodex home.
  *
  * Call FIRST inside a writer, before any mkdir/chmod/write, so a rejected write leaves
