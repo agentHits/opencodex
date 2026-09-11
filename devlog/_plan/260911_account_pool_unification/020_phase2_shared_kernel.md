@@ -365,3 +365,57 @@ branch and is re-run at Check.
 `set.accounts` order from the store and filters out reauth-flagged and cooled accounts. That
 is the order the 429 ring already walks, so fill-first advances through the same sequence
 rather than inventing a second one.
+
+### Plan audit round 2 — FAIL, three blockers folded
+
+A dispatched reviewer returned FAIL on the plan above. All three blockers are real and two of
+them contradict what this document said one revision earlier. Recorded rather than quietly
+edited, because the corrections are the useful part.
+
+**Blocker 1 — fill-first must walk the SORTED FULL roster, not the eligible subset.**
+The "A-phase findings" note above claimed `eligibleFailoverAccounts`:164 is the order
+fill-first advances through. That is wrong, and it is the exact bug 020's own earlier audit
+already rejected when it added the `stableAll` argument to `pickFillFirst`. Both shipped
+copies walk a stable roster sorted with `localeCompare` — `src/codex/routing.ts`:1443 and
+`src/oauth/anthropic-routing.ts`:427 — and dropping to the eligible subset changes the wrap
+order whenever an ineligible id sits between two eligible ones. The generic roster is worse
+than unsorted-by-accident: `getAccountSet().accounts` is in LOGIN order, so two operators who
+added the same accounts in a different sequence would get different rotation. The generic
+fill-first sorts the full roster the same way, then skips ineligible ids while walking it.
+Supersedes the paragraph above.
+
+**Blocker 2 — the commit site fires on every generic dispatch, so it must gate on
+round-robin specifically.** `core.ts`:4407 is reached on every generic first dispatch,
+including the preferred-null quota path and the fallback after a preferred account is dropped
+at :4368-4388. The plan said `noteGenericPoolSelection` "does the flag read and the strategy
+read" without saying what it does with them, which is not precise enough to implement: an
+ungated call would advance round-robin sticky state for quota and fill-first pools too.
+It returns immediately unless `pool.kernel` is on AND the resolved strategy is
+`round-robin`. Anthropic already draws exactly this line — `anthropic-routing.ts`:791 notes
+rotation only on its round-robin branch — so this is matching an existing contract, not
+inventing one.
+
+**Blocker 3 — the CLI has three states, not two.** `src/cli/account-extended.ts`:402-409
+prints "unavailable" and "threshold support is unknown" whenever `inert !== true`, so a
+kernel-on `inert: false` would render the live feature as an unknown capability — the
+opposite of the truth. `tests/cli/cli-account-pool-verbs.test.ts`:393-403 also feeds
+`inert: false` through a malformed-capability loop that expects `enabled: false`. The CLI
+needs `true` (stored, not applied), `false` (applied) and `null`/absent (unknown) as three
+distinct renderings, and that test's fixture must stop conflating the middle one with
+malformed input.
+
+**Major folded — an exact-equality DTO assertion.**
+`tests/server/account-pool-management-api.test.ts`:477 asserts the generic GET body with
+`toEqual`, so adding `stickyLimit` breaks it. :484 uses `toMatchObject` and is safe. The PUT
+round-trip at :486 breaks only once PUT actually persists the field. All three move with the
+change.
+
+**Major folded — `src/cli/capabilities.ts`:331** also publishes the inert contract, alongside
+the docs-site pages already listed.
+
+**Correction — anchor.** This document cited `hasHeadroomEvidence` at :267; that is where its
+comment begins. The call is at :272. The anchor table itself was verified correct.
+
+**Confirmed, no action —** the reviewer independently reached the same conclusion on the Lab
+boundary: `core.ts` already imports `generic-account-failover`, and `pool-kernel.ts` is
+`import type` only, which the boundary walker skips. No new edge.
