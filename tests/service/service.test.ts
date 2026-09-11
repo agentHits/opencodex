@@ -9,7 +9,7 @@ import { saveConfig } from "../../src/config";
 import { windowsEnvIndirectBatchValue } from "../../src/lib/win-paths";
 import { assertServiceAuthEnvironment, assertServiceEnvironmentMatchesInstall, bakedServicePathsDiagnostic, confirmServiceServing, launchdListenPort, systemdListenPort, buildPlist, buildUnit, buildWindowsLauncherVbs, buildWindowsSchtasksCreateArgs, buildWindowsSchtasksCreateArgsForXml, buildWindowsServiceScript, buildWindowsTaskXml as buildWindowsTaskXmlProduction, buildWindowsTaskXmlDocument, deriveWindowsServiceDiagnostic, deriveWindowsServiceDiagnosticForCurrentUser, expectedLaunchdCommand, installFreshWindowsSchedulerSafely, installServiceSafely, launchctlLoadFailed, launchdJobMatchesPlist, normalizeServiceSubcommand, parseServiceArgs, parseServiceInstallState, planServiceCommand, prepareServiceInstall, probeServiceInstallation, readWindowsSchedulerXmlState, registerFreshWindowsSchedulerTask, removeNativeWindowsServiceForScheduler, repairService, reportServiceServing, resolveServiceListenPort, runLaunchctl, selectServiceSubcommand, SERVICE_INSTALL_HEALTH_MS, SERVICE_INSTALL_HEALTH_WINDOWS_MS, serviceInstallHealthMs, serviceLogPath, serviceStartableFromTray, serviceStatusReport, serviceRetryCommand, serviceStatusSummary, stableLauncherEntry, systemdNeedsDaemonReload, systemdServiceInstallCleanupOps, uninstallSystemd, windowsListenPort, winswListenPort, startLaunchd, windowsTaskRegistrationHealthy as windowsTaskRegistrationHealthyProduction } from "../../src/service";
 import type { ServiceDiagnostic } from "../../src/service";
-import { definitionCarriesCredential, resolvedProxyEnv, writeServiceDefinitionFile } from "../../src/service";
+import { definitionCarriesCredential, installLaunchd, resolvedProxyEnv, writeServiceApiTokenFile, writeServiceDefinitionFile } from "../../src/service";
 import { buildWinswXml } from "../../src/lib/winsw";
 import { CONFIG_OWNER_FILE, CONFIG_UNINSTALL_MANIFEST, recordOwnedConfigPath, removeOwnedConfigState } from "../../src/lib/config-ownership";
 import { serviceApiTokenFilePath } from "../../src/lib/service-secrets";
@@ -490,7 +490,12 @@ describe("systemd service unit", () => {
 });
 
 describe("service install auth preflight", () => {
-  test("rejects non-loopback service install without a persisted API token", () => {
+  /**
+   * #4236. The preflight used to DEMAND OPENCODEX_API_AUTH_TOKEN here, which is what taught an
+   * operator to export the ADMIN token to make `install` proceed -- and then `repair` demanded it
+   * again. Nobody should have to export a token by hand to run a hub, so install provisions one.
+   */
+  test("a non-loopback install no longer demands the env token", () => {
     if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
@@ -502,7 +507,101 @@ describe("service install auth preflight", () => {
       defaultProvider: "openai",
     } as OcxConfig);
 
-    expect(() => assertServiceAuthEnvironment()).toThrow("OPENCODEX_API_AUTH_TOKEN");
+    expect(() => assertServiceAuthEnvironment()).not.toThrow();
+  });
+
+  test("provisioning generates an owner-only token, then reuses it on repair and reinstall", () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    delete process.env.OPENCODEX_API_AUTH_TOKEN;
+    saveConfig({
+      port: 10100,
+      hostname: "0.0.0.0",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+
+    const first = writeServiceApiTokenFile();
+    expect(first).toEqual({ path: serviceApiTokenFilePath(), origin: "generated" });
+    const token = readFileSync(serviceApiTokenFilePath(), "utf8").trim();
+    // 32 random bytes, hex.
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    if (process.platform !== "win32") {
+      expect(statSync(serviceApiTokenFilePath()).mode & 0o777).toBe(0o600);
+    }
+
+    // Repair/reinstall must be idempotent: regenerating would silently invalidate every
+    // client key exchange already performed against the old value.
+    expect(writeServiceApiTokenFile()).toEqual({ path: serviceApiTokenFilePath(), origin: "file" });
+    expect(readFileSync(serviceApiTokenFilePath(), "utf8").trim()).toBe(token);
+    expect(() => assertServiceAuthEnvironment()).not.toThrow();
+  });
+
+  test("an env token still wins, and a loopback install generates nothing", () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    process.env.OPENCODEX_API_AUTH_TOKEN = "operator-chosen-data-key";
+    saveConfig({
+      port: 10100,
+      hostname: "0.0.0.0",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+    expect(writeServiceApiTokenFile()).toEqual({ path: serviceApiTokenFilePath(), origin: "env" });
+    expect(readFileSync(serviceApiTokenFilePath(), "utf8").trim()).toBe("operator-chosen-data-key");
+
+    // Loopback needs no data-plane credential, and on a machine connected to a hub the same
+    // file holds that hub's issued client key: a local install must not invent or clobber one.
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    delete process.env.OPENCODEX_API_AUTH_TOKEN;
+    saveConfig({
+      port: 10100,
+      hostname: "127.0.0.1",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+    expect(writeServiceApiTokenFile()).toBeNull();
+    expect(existsSync(serviceApiTokenFilePath())).toBe(false);
+  });
+
+  test("an unusable token file is reported by the preflight instead of failing mid-install", () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    delete process.env.OPENCODEX_API_AUTH_TOKEN;
+    saveConfig({
+      port: 10100,
+      hostname: "0.0.0.0",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+    writeFileSync(serviceApiTokenFilePath(), "\n", "utf8");
+
+    expect(() => assertServiceAuthEnvironment()).toThrow(/cannot be used/);
+    expect(() => assertServiceAuthEnvironment()).toThrow(/ocx service/);
+    expect(() => writeServiceApiTokenFile()).toThrow(/empty/);
+  });
+
+  test("the admin-token refusal tells the operator to unset, not to invent a key", () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    process.env.OPENCODEX_API_AUTH_TOKEN = `ocx_admin_${"f".repeat(40)}`;
+    saveConfig({
+      port: 10100,
+      hostname: "0.0.0.0",
+      providers: { openai: { adapter: "openai-chat", baseUrl: "https://api.example.test/v1" } },
+      defaultProvider: "openai",
+    } as OcxConfig);
+
+    expect(() => assertServiceAuthEnvironment()).toThrow(/unset OPENCODEX_API_AUTH_TOKEN/);
+    expect(() => assertServiceAuthEnvironment()).toThrow(/provisions/);
+    // The chokepoint refuses it too, so no caller can write the broken state (#2696).
+    expect(() => writeServiceApiTokenFile()).toThrow(/management \(admin\) token/);
+    expect(existsSync(serviceApiTokenFilePath())).toBe(false);
   });
 
   test("allows non-loopback service install when the API token is in the service environment", () => {

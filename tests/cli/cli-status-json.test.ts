@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isConnectionRefused, isUncleanExitEvidence, proxyHealthFailureReason, resolveStatusPid, selectListenTarget } from "../../src/cli/status";
+import { collectHubStatus, hubStatusLines, isConnectionRefused, isUncleanExitEvidence, proxyHealthFailureReason, resolveStatusPid, selectListenTarget } from "../../src/cli/status";
 import * as statusFacade from "../../src/cli/status";
 import * as statusProbes from "../../src/cli/status-probes";
 import { packageVersion } from "../../src/cli/help";
@@ -604,6 +604,129 @@ describe("CLI status JSON", () => {
  * it. These cases pin the predicate, including the two false-positive shapes that a
  * naive implementation gets wrong.
  */
+/**
+ * The hub block (#4236).
+ *
+ * A hub operator's first question is "is this reachable, and can another machine join?", and the
+ * report used to answer it in four places and not at all for the data token. These tests pin the
+ * projection and the sentences, and -- the one that matters for a security boundary -- that no
+ * token VALUE is ever in either.
+ */
+describe("status hub block", () => {
+  const TOKEN = "b".repeat(64);
+
+  function withHome<T>(setup: (home: string) => void, body: () => T): T {
+    const home = mkdtempSync(join(tmpdir(), "ocx-status-hub-"));
+    const previous = process.env.OPENCODEX_HOME;
+    const previousToken = process.env.OPENCODEX_API_AUTH_TOKEN;
+    process.env.OPENCODEX_HOME = home;
+    delete process.env.OPENCODEX_API_AUTH_TOKEN;
+    try {
+      mkdirSync(join(home), { recursive: true });
+      setup(home);
+      return body();
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = previous;
+      if (previousToken === undefined) delete process.env.OPENCODEX_API_AUTH_TOKEN;
+      else process.env.OPENCODEX_API_AUTH_TOKEN = previousToken;
+      removeTreeWithRetry(home);
+    }
+  }
+
+  const hub = (overrides: Record<string, unknown> = {}) => ({
+    port: 10100,
+    hostname: "100.64.0.10",
+    runtimeRole: "hub" as const,
+    hub: { managementPublicOrigin: "https://hub.tailnet.ts.net", managementIngress: { enabled: true as const, port: 10101 } },
+    unauthenticatedLoopbackListener: { enabled: true as const },
+    ...overrides,
+  });
+
+  test("there is no hub block on a standalone or client machine", () => {
+    for (const role of [undefined, "standalone", "client"] as const) {
+      const config = { ...hub(), runtimeRole: role } as Parameters<typeof collectHubStatus>[0];
+      expect(collectHubStatus(config, { port: 10100, hostname: "127.0.0.1" }, {})).toBeNull();
+    }
+  });
+
+  test("the companion form is named as sharing the public port; a ported one is not", () => {
+    const companion = collectHubStatus(hub() as Parameters<typeof collectHubStatus>[0], { port: 10100, hostname: "100.64.0.10" }, {});
+    expect(companion?.loopbackListener).toEqual({ state: "companion", port: 10100 });
+    expect(hubStatusLines(companion!).join("\n")).toContain("same port as the public listener");
+
+    const ported = collectHubStatus(
+      hub({ unauthenticatedLoopbackListener: { enabled: true, port: 10104 } }) as Parameters<typeof collectHubStatus>[0],
+      { port: 10100, hostname: "100.64.0.10" },
+      {},
+    );
+    expect(ported?.loopbackListener).toEqual({ state: "ported", port: 10104 });
+    expect(hubStatusLines(ported!).join("\n")).toContain("http://127.0.0.1:10104");
+
+    const off = collectHubStatus(
+      hub({ unauthenticatedLoopbackListener: { enabled: false } }) as Parameters<typeof collectHubStatus>[0],
+      { port: 10100, hostname: "100.64.0.10" },
+      {},
+    );
+    expect(off?.loopbackListener).toEqual({ state: "off", port: null });
+    expect(hubStatusLines(off!).join("\n")).toContain("does not route its own local");
+  });
+
+  test("the data origin prefers hub.dataPublicOrigin and says which it used", () => {
+    const derived = collectHubStatus(hub() as Parameters<typeof collectHubStatus>[0], { port: 10100, hostname: "100.64.0.10" }, {});
+    expect(derived?.dataOrigin).toBe("http://100.64.0.10:10100");
+    expect(derived?.dataOriginConfigured).toBe(false);
+    expect(hubStatusLines(derived!).join("\n")).toContain("derived from the bind address");
+
+    const configured = collectHubStatus(
+      hub({ hub: { managementPublicOrigin: "https://hub.tailnet.ts.net", dataPublicOrigin: "https://hub.tailnet.ts.net:8443" } }) as Parameters<typeof collectHubStatus>[0],
+      { port: 10100, hostname: "100.64.0.10" },
+      {},
+    );
+    expect(configured?.dataOrigin).toBe("https://hub.tailnet.ts.net:8443");
+    expect(hubStatusLines(configured!).join("\n")).toContain("hub.dataPublicOrigin");
+  });
+
+  test("the token source is reported, never the token, and env wins over the file", () => {
+    withHome(home => writeFileSync(join(home, "service-api-token"), `${TOKEN}\n`, "utf8"), () => {
+      const fromFile = collectHubStatus(hub() as Parameters<typeof collectHubStatus>[0], { port: 10100 }, {});
+      expect(fromFile?.dataToken).toBe("present (file)");
+      // Service precedence: the launch wrapper exports the file only when the environment
+      // has nothing, so an env token is what the running process is actually using.
+      const fromEnv = collectHubStatus(
+        hub() as Parameters<typeof collectHubStatus>[0],
+        { port: 10100 },
+        { OPENCODEX_API_AUTH_TOKEN: "from-the-shell" },
+      );
+      expect(fromEnv?.dataToken).toBe("present (env)");
+      for (const status of [fromFile!, fromEnv!]) {
+        const rendered = [JSON.stringify(status), ...hubStatusLines(status)].join("\n");
+        expect(rendered).not.toContain(TOKEN);
+        expect(rendered).not.toContain("from-the-shell");
+      }
+    });
+  });
+
+  test("a missing and an unusable token file are distinguished", () => {
+    withHome(() => {}, () => {
+      expect(collectHubStatus(hub() as Parameters<typeof collectHubStatus>[0], { port: 10100 }, {})?.dataToken).toBe("missing");
+    });
+    withHome(home => writeFileSync(join(home, "service-api-token"), "\n", "utf8"), () => {
+      const status = collectHubStatus(hub() as Parameters<typeof collectHubStatus>[0], { port: 10100 }, {});
+      expect(status?.dataToken).toBe("unsafe (file)");
+      expect(hubStatusLines(status!).join("\n")).toContain(status!.dataTokenPath);
+    });
+  });
+
+  test("the block always ends with the invite hint", () => {
+    withHome(() => {}, () => {
+      const lines = hubStatusLines(collectHubStatus(hub() as Parameters<typeof collectHubStatus>[0], { port: 10100 }, {})!);
+      expect(lines[0]).toBe("Hub:");
+      expect(lines.at(-1)).toBe("  Invite a machine: ocx hub invite");
+    });
+  });
+});
+
 describe("unclean prior exit evidence", () => {
   const base = {
     live: false,

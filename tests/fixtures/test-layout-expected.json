@@ -539,6 +539,7 @@
   "history-ocx-compaction-recovery.test.ts": "codex-integration",
   "hyperbolic-provider.test.ts": "providers",
   "hub-gated-local-clients.test.ts": "cli",
+  "hub-invite.test.ts": "cli",
   "identity-neutralize.test.ts": "adapters",
   "init-backup-cleanup.test.ts": "service",
   "init-eof.test.ts": "service",
