@@ -66,6 +66,21 @@ the hub. `ocx connect revoke --admin-token-stdin` is available only while still 
 the persisted `apiKeyId`; it accepts no id override. Browser session logout/expiry is separate from
 data-key rotation, revocation, and disconnect.
 
+### What a connected client shows
+
+A client stores no provider credentials and no catalog of its own, so its local config and
+credential store are empty by design — and reading them as the truth produces a confident, wrong
+answer about what the hub can serve. On a connected client `ocx status` therefore leads with
+`State from hub <origin>` and sources the OAuth-logins, providers and delegable-models lines from
+the hub over the data plane, tagging the lines that really describe this machine `(local)`: the
+proxy, the service, the Codex binary and shim, and the local ports. `ocx status --json` carries the
+same answer as `runtimeRole` plus a `remoteHub` block whose `stateSource` is `hub`, `cache`, or
+`unavailable` — never the client's own state. An older hub that does not serve `/v1/hub-state`
+reports `unavailable` with an instruction to upgrade the hub rather than silently falling back to
+local login state, and `ocx config show` on a client prints a `_remoteHub` note saying the
+credentials and model availability live on the hub. The hub read uses the per-client data key
+only; no admin token and no provider secret ever reaches a client.
+
 ## Linux systemd or macOS launchd
 
 Choose the hub's Tailscale address for the data listener and the exact browser-visible HTTPS origin
