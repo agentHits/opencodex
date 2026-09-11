@@ -833,6 +833,14 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
    * adds a wire, not a trust level. `/api/*` is deliberately still absent: local management
    * discovery goes to the authenticated management surface, never to this listener.
    *
+   * `POST /v1/messages/count_tokens` completes that Anthropic wire. It is admitted on a
+   * narrower argument than the other two rather than on symmetry: it spends no provider quota,
+   * reaches no stored credential, and returns a token count computed from the request body the
+   * caller already holds. Withholding it bought no confinement — the same caller may POST the
+   * whole conversation to `/v1/messages` on this socket — and cost Claude Code its server-side
+   * count, which it then silently replaces with a local estimate. `/api/*`, `/healthz`,
+   * `/readyz` and the GUI remain 404 here, which is the boundary that actually matters.
+   *
    * `GET /v1/models` is on the list for a reason that is easy to miss. When catalog
    * materialization fails or finds no source, `syncCodex` warns and injects with
    * `catalogPath: null`; Codex then builds an ONLINE model manager and `model/list` refreshes
@@ -846,6 +854,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
     }
     if (path === "/v1/responses/compact") return req.method === "POST";
     if (path === "/v1/messages" || path === "/v1/chat/completions") return req.method === "POST";
+    if (path === "/v1/messages/count_tokens") return req.method === "POST";
     if (path === "/v1/alpha/search") return req.method === "POST";
     if (path === "/v1/images/generations" || path === "/v1/images/edits") {
       return req.method === "POST";

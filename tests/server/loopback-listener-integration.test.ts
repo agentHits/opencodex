@@ -291,10 +291,10 @@ describe("unauthenticated loopback listener", () => {
         { method: "GET", path: "/healthz" },
         { method: "GET", path: "/readyz" },
         { method: "GET", path: "/v1/opencodex/artifacts/x" },
-        // The two inference wires are admitted as POST only (see the dedicated test below).
+        // The inference wires are admitted as POST only (see the dedicated test below).
         { method: "GET", path: "/v1/messages" },
         { method: "GET", path: "/v1/chat/completions" },
-        { method: "POST", path: "/v1/messages/count_tokens", body: '{"model":"x","messages":[]}' },
+        { method: "GET", path: "/v1/messages/count_tokens" },
         // Voice call-create is admitted only as POST; the keyed sideband join only as an upgrade.
         { method: "GET", path: "/v1/live/rtc_x" },
         { method: "GET", path: "/v1/realtime/calls/rtc_x" },
@@ -466,18 +466,23 @@ describe("unauthenticated loopback listener", () => {
     }
   });
 
-  test("admits the two local client inference wires, and still refuses /api/* (#4236)", async () => {
+  test("admits the local client inference wires, and still refuses /api/* (#4236)", async () => {
     // The hub's own local clients do not speak Responses: `ocx claude`, the system-env
     // injection and Claude Desktop speak the Anthropic wire, Cursor / the vision helper /
     // aside speak OpenAI chat. On a tailnet-bound hub this listener is their only local
     // socket, so a 404 here is the whole "Codex works but nothing else does" defect.
+    //
+    // `count_tokens` completes the Anthropic wire. It spends no provider quota and reaches no
+    // stored credential, so withholding it bought no confinement — the same caller may POST the
+    // entire conversation to `/v1/messages` on this socket — while costing Claude Code its
+    // server-side count.
     const loopbackPort = await freePort();
     saveConfig(baseConfig(loopbackPort));
     const server = await startLoopbackTestServer(loopbackPort);
     const base = `http://127.0.0.1:${loopbackPort}`;
     const publicBase = `http://127.0.0.1:${server.port}`;
     try {
-      for (const path of ["/v1/messages", "/v1/chat/completions"]) {
+      for (const path of ["/v1/messages", "/v1/messages/count_tokens", "/v1/chat/completions"]) {
         const viaPublic = await fetch(`${publicBase}${path}`, {
           method: "POST",
           headers: { "content-type": "application/json" },

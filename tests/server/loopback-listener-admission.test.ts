@@ -87,12 +87,18 @@ describe("loopback listener policy view", () => {
 describe("local client inference wires on the loopback listener (#4236)", () => {
   const source = readFileSync(new URL("../../src/server/index.ts", import.meta.url), "utf8");
 
-  test("the allowlist admits both wires as POST and nothing else about them", () => {
+  test("the allowlist admits all three wires as POST and nothing else about them", () => {
     // The allowlist is a closure inside startServer, so this reads the entry itself. The
     // integration file proves the socket behaviour; this pins the SHAPE, because "admit the
     // path" and "admit the path for any method" are one character apart.
     expect(source).toContain(
       'if (path === "/v1/messages" || path === "/v1/chat/completions") return req.method === "POST";',
+    );
+    // `count_tokens` completes the Anthropic wire: no provider quota, no stored credential, and
+    // a count the caller could compute from the body it already holds. Withholding it only cost
+    // Claude Code its server-side count; the boundary that matters is `/api/*` below.
+    expect(source).toContain(
+      'if (path === "/v1/messages/count_tokens") return req.method === "POST";',
     );
   });
 
