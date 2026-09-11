@@ -88,6 +88,62 @@ describe("QoderScaffoldFilter", () => {
     expect(result.fail).toContain("<functions.");
   });
 
+  test("unwinds a nested reminder instead of ending at the inner closer", () => {
+    // Ending at the first closer handed the outer block's remaining body to the client as
+    // the model's answer, with a successful terminal and no signal that anything was wrong.
+    const filter = new QoderScaffoldFilter();
+    const result = filter.push(
+      "<system-reminder>outer<system-reminder>inner</system-reminder>\n## Connected MCP servers\n- deploy-keys",
+    );
+    expect(result.text).toBe("");
+    const flushed = filter.flush();
+    expect(flushed.text).not.toContain("deploy-keys");
+    expect(flushed.fail).toContain("unterminated");
+  });
+
+  test("keeps the answer after a nested reminder that does close", () => {
+    const filter = new QoderScaffoldFilter();
+    const result = filter.push(
+      "<system-reminder>o<system-reminder>i</system-reminder>- deploy-keys</system-reminder> Done.",
+    );
+    expect(result.text).toBe(" Done.");
+    expect(result.fail).toBeNull();
+  });
+
+  test("counts nesting even when the tags are split across deltas", () => {
+    const filter = new QoderScaffoldFilter();
+    const parts = ["<system-reminder>o<system-remin", "der>i</system-reminder>- deploy-keys</system-rem", "inder> Done."];
+    const out = parts.map(part => filter.push(part));
+    expect(out.map(result => result.text).join("")).toBe(" Done.");
+    expect(out.every(result => result.fail === null)).toBe(true);
+  });
+
+  test("a closer with no opener forwards nothing ahead of it", () => {
+    // The prefix of a stray closer is the lost block's body, not an answer that preceded it.
+    const filter = new QoderScaffoldFilter();
+    const result = filter.push("## Connected MCP servers\n- deploy-keys</system-reminder>");
+    expect(result.text).toBe("");
+    expect(result.fail).toContain("</system-reminder>");
+    expect(new QoderScaffoldFilter().push("cd /srv/private && git status</invoke>").text).toBe("");
+  });
+
+  test("catches an invoke block that carries no attributes", () => {
+    // "<invoke name=" alone missed "<invoke>", so the command shipped ahead of the refusal.
+    const filter = new QoderScaffoldFilter();
+    const result = filter.push("Checking.\n<invoke>\ncd /srv/private && git status\n</invoke>");
+    expect(result.text).toBe("Checking.\n");
+    expect(result.text).not.toContain("git status");
+    expect(result.fail).toContain("<invoke>");
+  });
+
+  test("does not open a block on a word that merely starts with the tag name", () => {
+    // The opener is matched without its ">", so it needs a token boundary of its own.
+    const filter = new QoderScaffoldFilter();
+    const result = filter.push("the <system-reminders> are documented");
+    expect(result.text + filter.flush().text).toBe("the <system-reminders> are documented");
+    expect(result.fail).toBeNull();
+  });
+
   test("fails closed when a reminder is never terminated", () => {
     const filter = new QoderScaffoldFilter();
     expect(filter.push("ok <system-reminder>listing servers").fail).toBeNull();

@@ -36,12 +36,28 @@ const REMINDER_CLOSE = "</system-reminder>";
  * text is not possible. A stray `</system-reminder>` with no opener is in the same class:
  * the block it belonged to was already partly forwarded, or never existed.
  */
-const UNREPAIRABLE_MARKERS = ["<functions.", "<invoke name=", "</invoke>", REMINDER_CLOSE] as const;
+const UNREPAIRABLE_MARKERS = ["<functions.", "<invoke name=", "<invoke>", "</invoke>", REMINDER_CLOSE] as const;
+
+/** Markers that end a block rather than start one; their prefix is never an answer. */
+const CLOSING_MARKERS = new Set<string>(["</invoke>", REMINDER_CLOSE]);
 
 /** Every marker the scanner must be able to recognize mid-split. */
 const ALL_MARKERS = [REMINDER_OPEN, ...UNREPAIRABLE_MARKERS] as const;
 
 const MAX_MARKER_LENGTH = Math.max(...ALL_MARKERS.map(marker => marker.length));
+
+/**
+ * True when `<system-reminder` at `at` is the tag rather than the start of a longer word.
+ *
+ * The opener is matched without its `>` so a truncated or self-closed tag still suppresses,
+ * which means `<system-reminders>` in an ordinary answer would otherwise open a block and
+ * refuse the turn. A stem running to the end of the buffer still counts: more text may be
+ * arriving, and reading it as prose is the one reading that could release the block body.
+ */
+function reminderOpensHere(lowered: string, at: number): boolean {
+  const after = lowered[at + REMINDER_OPEN.length];
+  return after === undefined || /[\s/>]/.test(after);
+}
 
 /**
  * Ceiling on a suppressed block before it is treated as unterminated.
@@ -86,6 +102,8 @@ export class QoderScaffoldFilter {
   private failed = false;
   /** True once a reminder block has been suppressed on this channel. */
   private suppressedBlock = false;
+  /** Open reminder blocks; only the closer that unwinds the last one ends suppression. */
+  private suppressDepth = 0;
 
   push(chunk: string): ScaffoldFilterResult {
     if (this.failed || !chunk) return { text: "", fail: null };
@@ -96,14 +114,40 @@ export class QoderScaffoldFilter {
     for (;;) {
       if (this.mode === "suppress") {
         const scan = this.suppressedTail + buffer;
-        const close = scan.toLowerCase().indexOf(REMINDER_CLOSE);
+        const scanned = scan.toLowerCase();
+        // Unwind nesting rather than ending at the first closer. A reminder containing another
+        // reminder would otherwise hand the outer block's remaining body — the MCP server list
+        // in the reported leak — to the client as the model's answer, with a successful
+        // terminal and nothing to signal that anything had gone wrong.
+        let cursor = 0;
+        let close = -1;
+        for (;;) {
+          const nextClose = scanned.indexOf(REMINDER_CLOSE, cursor);
+          if (nextClose < 0) break;
+          let nextOpen = scanned.indexOf(REMINDER_OPEN, cursor);
+          while (nextOpen >= 0 && !reminderOpensHere(scanned, nextOpen)) {
+            nextOpen = scanned.indexOf(REMINDER_OPEN, nextOpen + 1);
+          }
+          if (nextOpen >= 0 && nextOpen < nextClose) {
+            this.suppressDepth += 1;
+            cursor = nextOpen + REMINDER_OPEN.length;
+            continue;
+          }
+          this.suppressDepth -= 1;
+          cursor = nextClose + REMINDER_CLOSE.length;
+          if (this.suppressDepth === 0) {
+            close = nextClose;
+            break;
+          }
+        }
         if (close < 0) {
           this.suppressedChars += buffer.length;
           if (this.suppressedChars > MAX_SUPPRESSED_CHARS) {
             return this.fail(cleared, `an unterminated ${REMINDER_OPEN}> block`);
           }
           // The block is discarded as it arrives; only enough tail to spot a split closer is kept.
-          this.suppressedTail = scan.slice(Math.max(0, scan.length - (REMINDER_CLOSE.length - 1)));
+          // The tail must cover a split opener too, now that nesting is counted.
+          this.suppressedTail = scan.slice(Math.max(0, scan.length - (MAX_MARKER_LENGTH - 1)));
           return { text: cleared, fail: null };
         }
         buffer = scan.slice(close + REMINDER_CLOSE.length);
@@ -117,7 +161,10 @@ export class QoderScaffoldFilter {
       let found = "";
       const lowered = buffer.toLowerCase();
       for (const marker of ALL_MARKERS) {
-        const at = lowered.indexOf(marker);
+        let at = lowered.indexOf(marker);
+        while (at >= 0 && marker === REMINDER_OPEN && !reminderOpensHere(lowered, at)) {
+          at = lowered.indexOf(marker, at + 1);
+        }
         if (at < 0) continue;
         // A closer sitting exactly where an opener starts cannot happen, so ties are impossible.
         if (earliest < 0 || at < earliest) {
@@ -139,10 +186,15 @@ export class QoderScaffoldFilter {
       // precede a leak; it is the region the vendor was narrating in, and in the reported
       // case it carries the MCP server list. Forwarding it on the way to a refusal would
       // publish exactly what the refusal exists to contain.
-      if (found === REMINDER_OPEN || !this.suppressedBlock) cleared += buffer.slice(0, earliest);
+      // A closer with no opener never keeps its prefix either: the block it belonged to was
+      // already partly forwarded or never existed, so the text ahead of it is that body.
+      if (!CLOSING_MARKERS.has(found) && (found === REMINDER_OPEN || !this.suppressedBlock)) {
+        cleared += buffer.slice(0, earliest);
+      }
       if (found !== REMINDER_OPEN) return this.fail(cleared, `vendor tool-call markup (${found})`);
       this.suppressedBlock = true;
       this.mode = "suppress";
+      this.suppressDepth = 1;
       this.suppressedTail = "";
       this.suppressedChars = 0;
       buffer = buffer.slice(earliest + REMINDER_OPEN.length);
