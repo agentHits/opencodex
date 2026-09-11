@@ -130,3 +130,66 @@ behind it.
   change and must not be edited.
 - Red control: each new shared-validator case must fail if the shared bound is loosened.
 
+### wp5 plan audit — FAIL, folded
+
+**Blocker 1 — the compatibility guard this plan leans on does not exist.** "Byte-identical,
+proven by tests that predate this change and must not be edited" is false. The Codex and
+Anthropic assertions use `toMatchObject`, which passes when extra keys appear, and the Codex
+`PUT /api/codex-auth/auto-switch` test checks only status 200, never the body
+(`tests/server/account-pool-management-api.test.ts`:42, :187, :266;
+`tests/codex-integration/codex-auth-api.test.ts`:3645). Only the generic GET uses a full
+`toEqual` (:483). So the refactor would have been guarded by tests that cannot detect the
+regression they were cited for.
+
+The unit therefore starts by WRITING that guard: exact-body assertions for all three legacy
+responses, committed and green BEFORE any shared module exists. A characterization test written
+after the change proves nothing about what the change did.
+
+**Blocker 2 — "delegating to the same module" skipped the adapter.** The three routes do not
+merely differ in shape, they disagree on every axis: Codex auto-switch takes `{threshold}` and
+answers `{ok:true}`; Codex pool-strategy takes `{strategy, stickyLimit}` and answers
+`{ok, accountPoolStrategy, accountPoolStickyLimit}`; the OAuth route takes `{provider, ...}`
+and answers with different key names again. A shared handler would 400 live CLI and GUI writes.
+
+What is actually shared is narrower and still worth it: the shared module owns VALUE validation —
+the strategy names, the 1..100 sticky bound, the 0..100 threshold bound — while each route keeps
+its own request parsing and response shaping as an explicit adapter. "One validator, three
+adapters", not "one handler".
+
+**Major — a new management route is not a one-line registration.** It must appear in
+`route-registry.ts` (`tests/server/management-route-registry.test.ts` compares source and
+registry as exact pairs), AND in `src/cli/capabilities.ts` or one of the two exemption lists in
+`tests/cli/cli-capabilities.test.ts`:174/:344, AND — if capabilities change — the generated
+`skills/ocx/references/01_management_surface.md` must be regenerated, which is the gate that
+went red on #4289 this session. Also `PATCH` exists on both legacy writes while the proposed
+route was `GET|PUT` only.
+
+**Major — a fourth storage location the plan missed.** Top-level
+`config.oauthAccountFailover.enabled` (`src/types/config.ts`:917) participates in generic
+activation through `isProactivePreferenceEnabled`, but the generic DTO reads only
+`providers.<name>.oauthAccountFailover`. So `enabled: null` currently means "nothing stored
+here" while the effective answer may be `true` from the global. That is a reporting defect in
+its own right and belongs in this unit, since honest per-kind field reporting is the point.
+
+**Major — more clients than the plan named:** `gui/src/account-pool-strategy.ts`,
+`gui/src/components/.../CodexPoolStrategySetting.tsx` and `gui/src/hooks/useCodexAccountPool.ts`
+join `codex-auto-switch.ts`, and `cmdAutoSwitch` sends `threshold` where the OAuth route expects
+`autoSwitchThreshold`.
+
+**Recorded:** `docs-site/src/content/docs/reference/management-api.md`:332 already claims the
+pool route 400s for non-Anthropic providers, which stopped being true when the generic contract
+shipped. Stale before this unit; fixed by it.
+
+**Minors.** The anchor `pool-settings-capability.ts`:57 points at a comment; the kinds are
+:23-28 and `inert` is :63. The kind table omits `provider`/`kind` from the DTO rows. Codex and
+Anthropic already share `parseAccountPoolStrategy` from `pool-kernel.ts` while the generic kind
+keeps a private copy — that duplication is the smallest true instance of the problem this unit
+exists to fix, and is the natural first thing to collapse.
+
+### Status
+
+Planned and audited, NOT implemented. The audit turned a one-route consolidation into a
+four-part unit: write the missing exact-body guard first, collapse the duplicate validators,
+add the route with all four registrations, then fix the `enabled` reporting defect. That is a
+larger cycle than it looked, and the sequencing above is the deliverable of this A phase.
+
