@@ -300,3 +300,42 @@ extended deliberately — that is the tripwire firing exactly as intended, not a
 - Registry, capabilities, regenerated surface map and docs all move in the same commit.
 - Red control: each new assertion must fail with its production branch removed.
 
+### wp5c plan audit — PASS-WITH-FINDINGS, folded
+
+**Major 1 — the acceptance contradicted itself, and the resolution is the safer one.**
+Adding `enabledEffective` to `genericPoolSettingsDto` would change the LEGACY
+`GET /api/oauth/accounts/pool` too, so the part-1 golden at :483 would have to move — while the
+same section promised the goldens stay unedited. Resolution: the new field appears ONLY on
+`/api/pool/settings`. The legacy DTO is not touched, every part-1 golden stays byte-identical
+and unedited, and the reporting defect is fixed on the surface that is meant to be canonical.
+Choosing the other branch would have spent the tripwire on the first cycle that met it.
+
+**Major 2 — the CLI switch orphans a route's coverage.** Once `account strategy` and
+`account sticky` stop driving `PUT /api/codex-auth/pool-strategy`, that route has no capability
+declaring it and cannot enter the ratchet, which only shrinks. It gets a registry
+`exempt: { reason: "compatibility-alias" }` naming the unified route as its replacement — an
+honest description of what it becomes, rather than a capability entry claiming a CLI path that
+no longer exists. `GET`/`PUT /api/oauth/accounts/pool` keep their declarations because
+`cmdAutoSwitch` still uses them; the transport table this cycle collapses is strategy and sticky
+only.
+
+**Major 3 — `PATCH /api/pool/settings` needs its own answer.** The CLI only PUTs, so the PATCH
+verb is declared through the same capability entry as the PUT rather than left to a ratchet that
+cannot take it.
+
+**Major 4 — do not reuse `isProactivePreferenceEnabled` for `enabledEffective`.** It is
+unexported, and it additionally requires `hasFailoverAccountQuorum` — two or more eligible
+accounts. Folding a roster condition into a settings field would make the DTO answer a different
+question than the one it asks: the defect is stored-versus-global CONFIG, so the field resolves
+exactly that and nothing else. Confirmed by the audit that no GUI or CLI consumer already
+derives effective enablement: the CLI's `poolEnabled` is stored-only and the Anthropic GUI reads
+`enabled === true`.
+
+**Minor 6 — two more locales.** `ko` and `ru` carry the same stale "400 for non-Anthropic" pool
+row as the English `reference/management-api.md`. They move with it.
+
+**Confirmed by the audit, no action:** `poolSettingsCapability("openai") === "codex"` is the
+right discriminator; the unified GET must NOT copy the mixed pin+failover+pool DTO that
+`GET /api/codex-auth/active` returns; and CORS, the Vite `/api` proxy, OpenAPI and the
+management-auth enumeration are not gates for a new path.
+
