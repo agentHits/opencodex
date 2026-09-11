@@ -195,12 +195,21 @@ already holds that loopback address, so OpenCodex refuses the pair at write time
 rather than failing the second bind. On those binds you do not need the listener at all — a
 loopback bind already admits local callers.
 
+With a `port` set, the local integrations follow the listener: `ocx claude`, the `system-env`
+injection, the Claude Desktop profile, the Cursor gateway value and the routed vision helper all
+write `http://127.0.0.1:<listener port>`, the same port `ocx sync` writes into Codex. Restart the
+proxy after changing this field so those values are rewritten.
+
 The listener serves only `POST /v1/responses`, its WebSocket upgrade, `POST /v1/responses/compact`,
+`POST /v1/messages` (the Anthropic wire Claude Code and Claude Desktop speak),
+`POST /v1/chat/completions` (the OpenAI chat wire Cursor and the vision helper speak),
 `POST /v1/alpha/search` (the native Codex web-search relay), `GET /v1/models`, and the realtime
 voice surface: the standalone WebSocket upgrades, WebRTC call creation (`POST /v1/live`,
 `POST /v1/realtime/calls`), and the keyed sideband join upgrades (`/v1/live/{callId}`,
-`/v1/realtime/calls/{callId}`, `/v1/realtime?call_id=`). Everything else, including `/api/*` and
-the dashboard, returns `404`.
+`/v1/realtime/calls/{callId}`, `/v1/realtime?call_id=`). Everything else, including `/api/*`,
+`/healthz`, `/readyz` and the dashboard, returns `404` — local management reads such as
+`ocx claude`'s discovery call go to the authenticated management surface with a management
+credential, never here.
 
 :::danger[This is an unauthenticated surface]
 Every process on the machine can use this listener. It spends account quota and paid provider

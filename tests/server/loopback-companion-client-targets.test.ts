@@ -67,19 +67,43 @@ describe("companion hub: sync-managed and hardcoded clients agree", () => {
       .toBe(`${hardcodedLocalOrigin(HUB_PORT)}/v1`);
   });
 
-  test("the ported form still splits the two, which is why the companion exists", () => {
-    // Kept as a regression witness for the issue's table: with a distinct port the sync
-    // writers move and the hardcoded callers do not, so they disagree by construction.
+  test("the ported form now agrees too: both writers land on the listener's port", () => {
+    // PR2 left these two disagreeing here on purpose (the companion form was the answer, and
+    // the call sites were untouched). #4236's local-client unit closed the gap: `ocx claude`
+    // resolves the listener's EFFECTIVE port, so a 10104-style hub no longer sends Claude to
+    // the public port while Codex goes to the listener.
     const config = hubConfig({ enabled: true, port: 10_104 });
     const codexOrigin = new URL(standaloneCodexRoutingTarget(HUB_PORT, config).baseUrl).origin;
     expect(codexOrigin).toBe(hardcodedLocalOrigin(10_104));
-    expect(buildClaudeEnv(config, HUB_PORT, {}).ANTHROPIC_BASE_URL).toBe(hardcodedLocalOrigin(HUB_PORT));
-    expect(codexOrigin).not.toBe(hardcodedLocalOrigin(HUB_PORT));
+    expect(buildClaudeEnv(config, HUB_PORT, {}).ANTHROPIC_BASE_URL).toBe(hardcodedLocalOrigin(10_104));
+    expect(buildClaudeEnv(config, HUB_PORT, {}).ANTHROPIC_BASE_URL).toBe(codexOrigin);
   });
 
   test("with no listener a hub keeps demanding admission on its public address", () => {
     const target = standaloneCodexRoutingTarget(HUB_PORT, hubConfig(undefined));
     expect(target.baseUrl).toBe(`http://${TAILNET_ADDRESS}:${HUB_PORT}/v1`);
     expect(target.requiresAdmissionToken).toBe(true);
+  });
+
+  test("with no listener EVERY local writer agrees on that address, Claude included", () => {
+    // This is the case the first round of the local-clients fix got wrong. `ocx sync` already
+    // wrote the bind address here, while the hardcoded callers wrote `127.0.0.1:10100` — a
+    // closed port — so the two destination contracts disagreed on exactly the topology the
+    // issue is about. They resolve through the same rule now.
+    const config = { ...hubConfig(undefined), apiKeys: [
+      { id: "k1", name: "local", key: "ocx_data_this_proxy_key", createdAt: "2026-01-01T00:00:00Z" },
+    ] } as OcxConfig;
+    const expected = `http://${TAILNET_ADDRESS}:${HUB_PORT}`;
+
+    const codexTarget = standaloneCodexRoutingTarget(HUB_PORT, config);
+    expect(new URL(codexTarget.baseUrl).origin).toBe(expected);
+    expect(opencodeProxyBaseUrl(HUB_PORT, config.hostname, config)).toBe(`${expected}/v1`);
+
+    const env = buildClaudeEnv({ ...config, claudeCode: { authMode: "proxy" } } as OcxConfig, HUB_PORT, {});
+    expect(env.ANTHROPIC_BASE_URL).toBe(expected);
+    // And the credential is the same DATA-plane one Codex is told to send, never the admin
+    // token: `tokenEnv` on the Codex side, the configured `apiKeys` entry on this side.
+    expect(codexTarget.tokenEnv).toBe("OPENCODEX_API_AUTH_TOKEN");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("ocx_data_this_proxy_key");
   });
 });
