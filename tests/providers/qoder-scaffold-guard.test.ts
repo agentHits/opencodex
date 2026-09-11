@@ -67,6 +67,27 @@ describe("QoderScaffoldFilter", () => {
     expect(new QoderScaffoldFilter().push("tail</system-reminder>").fail).toContain("</system-reminder>");
   });
 
+  test("does not forward the region between a suppressed block and a refusal", () => {
+    // The text before the FIRST marker is the model's answer and is kept. The text after a
+    // block this filter already swallowed is the vendor's own narration, and in the reported
+    // leak that region is the MCP server list itself.
+    const filter = new QoderScaffoldFilter();
+    const result = filter.push(
+      `<system-reminder>a</system-reminder>\n## Connected MCP servers\n- deploy-keys</system-reminder>`,
+    );
+    expect(result.text).toBe("");
+    expect(result.text).not.toContain("deploy-keys");
+    expect(result.fail).toContain("</system-reminder>");
+  });
+
+  test("does not forward vendor narration that sits between a reminder and tool markup", () => {
+    const filter = new QoderScaffoldFilter();
+    const result = filter.push(`Status.${REMINDER}\n- deploy-keys\n${TOOL_MARKUP}`);
+    expect(result.text).toBe("Status.");
+    expect(result.text).not.toContain("deploy-keys");
+    expect(result.fail).toContain("<functions.");
+  });
+
   test("fails closed when a reminder is never terminated", () => {
     const filter = new QoderScaffoldFilter();
     expect(filter.push("ok <system-reminder>listing servers").fail).toBeNull();

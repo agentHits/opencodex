@@ -84,6 +84,8 @@ export class QoderScaffoldFilter {
   private suppressedTail = "";
   private suppressedChars = 0;
   private failed = false;
+  /** True once a reminder block has been suppressed on this channel. */
+  private suppressedBlock = false;
 
   push(chunk: string): ScaffoldFilterResult {
     if (this.failed || !chunk) return { text: "", fail: null };
@@ -131,9 +133,15 @@ export class QoderScaffoldFilter {
         return { text: cleared, fail: null };
       }
 
-      // Text produced before the scaffolding is the model's own answer; it is kept either way.
-      cleared += buffer.slice(0, earliest);
+      // Text produced before the scaffolding is the model's own answer, and it is kept — but
+      // only while this channel has not already suppressed a block. Once it has, the text
+      // between that block and an unrepairable marker is not an answer that happens to
+      // precede a leak; it is the region the vendor was narrating in, and in the reported
+      // case it carries the MCP server list. Forwarding it on the way to a refusal would
+      // publish exactly what the refusal exists to contain.
+      if (found === REMINDER_OPEN || !this.suppressedBlock) cleared += buffer.slice(0, earliest);
       if (found !== REMINDER_OPEN) return this.fail(cleared, `vendor tool-call markup (${found})`);
+      this.suppressedBlock = true;
       this.mode = "suppress";
       this.suppressedTail = "";
       this.suppressedChars = 0;
