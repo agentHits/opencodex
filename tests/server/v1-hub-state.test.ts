@@ -24,7 +24,9 @@ import type { OcxConfig } from "../../src/types";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const DATA_KEY = "ocx_data_hubstatereader";
-const PROVIDER_KEY = "sk-hub-state-provider-secret-9e1f";
+// Deliberately NOT an `sk-…` shape: the privacy scan refuses one in a tracked file, and the
+// assertion below only needs a distinctive string to hunt for in the response bytes.
+const PROVIDER_KEY = "provider-credential-hub-state-9e1f";
 const OAUTH_ACCESS = "oauth-access-hub-state-7c2a";
 const OAUTH_REFRESH = "oauth-refresh-hub-state-4b8d";
 const OAUTH_EMAIL = "hub-operator@example.test";
