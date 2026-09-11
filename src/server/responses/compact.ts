@@ -111,7 +111,7 @@ import {
   UnsupportedContentEncodingError,
 } from "../request-decompress";
 import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
-import { hasKeyPoolFailover, rotateProviderTransportOn429 } from "../../providers/key-failover";
+import { hasKeyPoolFailover, rotateProviderTransportOn429, selectProactiveApiKey } from "../../providers/key-failover";
 import { shouldAttemptImageTierRetry } from "../image-retry";
 import { resolveProviderTransport } from "../../providers/xai-transport";
 import type { WsData } from "../ws-bridge";
@@ -743,6 +743,11 @@ export async function handleResponsesCompact(
       ? CODEX_FORWARD_BASE_URL
       : (compactProvider.baseUrl ?? "").replace(/\/+$/, "");
     if (compactProvider.authMode !== "forward" && compactProvider.apiKey) {
+      // Native compact never enters handleResponses, so it needs its own pre-dispatch key
+      // pick. Kept inside this branch on purpose: the overlay above owns the forward and
+      // codexAccountMode cases, and the picker returns null for them anyway.
+      const warmKeyProvider = selectProactiveApiKey(config, route.providerName);
+      if (warmKeyProvider?.apiKey) compactProvider = warmKeyProvider;
       headers.set("authorization", `Bearer ${resolveProviderApiKey(compactProvider.apiKey)}`);
     }
     const { reasoning: _reasoning, ...compactBodyRaw } = raw as typeof raw & { reasoning?: unknown };

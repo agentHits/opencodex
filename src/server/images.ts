@@ -28,6 +28,8 @@ import { readBoundedResponseBytes, type BoundedBytesResult } from "../lib/bounde
 import { sidecarEnter } from "../lib/sidecar-tracker";
 import type { OcxConfig } from "../types";
 import { resolveFirstUsableOpenAiSidecar, selectImagesProvider } from "../providers/openai-sidecar";
+import { selectProactiveApiKey } from "../providers/key-failover";
+import { resolveProviderApiKey } from "../providers/key-store";
 import { getProviderRegistryEntry } from "../providers/registry";
 import { readJsonRequestBody, resolveInboundBodyLimitBytes } from "./request-decompress";
 import { ForwardAdmissionCredentialError, validateForwardAdmissionCredential } from "./auth-cors";
@@ -698,7 +700,20 @@ export async function handleImages(
     // Do not hide a broken/expired pool behind separately billed API-key image generation.
     return forwardAuthError;
   } else if (candidates.keyed) {
-    const { provider, apiKey, providerName } = candidates.keyed;
+    const { providerName } = candidates.keyed;
+    // The keyed image path builds its own URL and Authorization header and never enters
+    // handleResponses, so the pre-dispatch key pick happens here.
+    //
+    // Two things about the placement. It stays INSIDE this branch because higher up it would
+    // also run for requests ChatGPT forward goes on to serve, spending a rotation on a path
+    // that never used the key. And the header is rebuilt from the returned clone rather than
+    // from candidates.keyed.apiKey, which is a snapshot resolved earlier: reusing it would
+    // send the OLD key while the picker had already persisted the new one.
+    const warmKeyProvider = selectProactiveApiKey(config, providerName);
+    const provider = warmKeyProvider ?? candidates.keyed.provider;
+    const apiKey = warmKeyProvider?.apiKey
+      ? (resolveProviderApiKey(warmKeyProvider.apiKey) ?? candidates.keyed.apiKey)
+      : candidates.keyed.apiKey;
     if (provider.headers) Object.assign(headers, provider.headers);
     headers["authorization"] = `Bearer ${apiKey}`;
     logCtx.provider = providerName;
