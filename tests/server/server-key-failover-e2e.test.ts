@@ -3,7 +3,7 @@ import { mkdtempSync} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, saveConfig } from "../../src/config";
-import { clearKeyCooldowns } from "../../src/providers/key-failover";
+import { clearKeyCooldowns, rotateKeyOn429 } from "../../src/providers/key-failover";
 import { deriveXaiConvId } from "../../src/providers/xai-transport";
 import { clearReasoningReplayCacheForTests } from "../../src/responses/reasoning-replay-cache";
 import { startServer } from "../../src/server";
@@ -664,3 +664,68 @@ describe("server 429 key failover (end-to-end)", () => {
     }
   });
 });
+
+  /**
+   * Both cases land on the same state: the committed key is already cooling when a request
+   * arrives. That is not exotic -- it is what an operator has after the pool rotated and a
+   * restart, a manual edit or a config reload pointed `apiKey` back at the spent key.
+   */
+  async function cooledCommittedKeySetup(strategy?: "round-robin" | "fill-first") {
+    const seen: string[] = [];
+    upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+      seen.push(req.headers.get("authorization") ?? "");
+      return Response.json({ id: "chatcmpl-warm", object: "chat.completion",
+        choices: [{ index: 0, message: { role: "assistant", content: "warm" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    } });
+    saveConfig({ port: 0, hostname: "127.0.0.1", defaultProvider: "pooled", providers: { pooled: {
+      adapter: "openai-chat", baseUrl: `http://127.0.0.1:${upstream.port}/v1`, allowPrivateNetwork: true,
+      authMode: "key", apiKey: "synthetic-first",
+      ...(strategy ? { apiKeyPoolStrategy: strategy } : {}),
+      apiKeyPool: [{ id: "first", key: "synthetic-first" }, { id: "second", key: "synthetic-second" }],
+    } } } as OcxConfig);
+    // Cool the committed key exactly the way a real 429 does, then point the stored selection
+    // back at it. Cooldowns are process-local, so the server started below shares this state.
+    const live = loadConfig();
+    rotateKeyOn429(live, "pooled", null, Date.now(), "synthetic-first");
+    const restored = loadConfig();
+    restored.providers.pooled!.apiKey = "synthetic-first";
+    saveConfig(restored);
+    return seen;
+  }
+
+  test("a cooled committed key is replaced before the first attempt", async () => {
+    const seen = await cooledCommittedKeySetup("round-robin");
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/v1/chat/completions", server.url), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "pooled/test", stream: false, messages: [{ role: "user", content: "hello" }] }),
+      });
+      expect(response.status).toBe(200);
+      // ONE attempt, on the warm key. Reactive rotation alone cannot produce this: it needs a
+      // 429 first, so without the pre-dispatch pick the upstream would see the cooled key here
+      // and the request would be spent earning a refusal the runtime could already predict.
+      expect(seen).toEqual(["Bearer synthetic-second"]);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("without a configured strategy the cooled key is still used", async () => {
+    const seen = await cooledCommittedKeySetup();
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/v1/chat/completions", server.url), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "pooled/test", stream: false, messages: [{ role: "user", content: "hello" }] }),
+      });
+      expect(response.status).toBe(200);
+      // The other half of the contract: rotation stays reactive-only for an install that never
+      // asked for a strategy, so the committed key is honoured even when it is cooling.
+      expect(seen).toEqual(["Bearer synthetic-first"]);
+    } finally {
+      await server.stop(true);
+    }
+  });
