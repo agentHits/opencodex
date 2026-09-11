@@ -219,3 +219,26 @@ Splitting here is not scope avoidance: part 1 is the precondition for parts 3 an
 checkable at all, and shipping it separately means the guard exists in `dev` before the risky
 change is written rather than alongside it.
 
+### Residuals from the re-audit, folded
+
+**The three guard targets, named exactly.** Not all four responses are unguarded. Codex
+`GET /api/codex-auth/active` already pins its pool fields with a full `toEqual`
+(`tests/codex-integration/codex-auth-api.test.ts`:1575). The live holes are precisely:
+`PUT /api/codex-auth/auto-switch` (status-only, :3645), `PUT /api/codex-auth/pool-strategy` and
+the Anthropic `PUT /api/oauth/accounts/pool` (both `toMatchObject`), and the Anthropic
+`GET /api/oauth/accounts/pool` (`toMatchObject`). Those four assertions are the deliverable;
+the Codex GET needs nothing.
+
+**The section above is superseded where it disagrees.** "## The unit" and its Acceptance list
+still describe the pre-audit shape — one new route, the CLI transport collapse, and
+"pre-existing tests must not be edited". The cycle scope below overrides all three: the route
+and the CLI collapse move to wp5c, and writing the guard IS editing the test files, which is the
+point rather than a violation. The original text stays as the record of what was planned before
+the audit rather than being rewritten to look prescient.
+
+**Part 1 does not make part 4 checkable by itself.** The generic GET golden already pins
+`enabled: null` (`tests/server/account-pool-management-api.test.ts`:483), so wp5c's reporting
+fix has to change that assertion deliberately. The guard is an alias-safety net for the route
+change in part 3 and only a tripwire for part 4 — it tells wp5c that it is changing a published
+answer, which is exactly what a golden should do, but it does not prove the new answer correct.
+
