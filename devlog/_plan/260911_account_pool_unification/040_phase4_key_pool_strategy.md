@@ -354,3 +354,42 @@ stops — including the persisted-write path, which is never reached.
 - Red control: with each call site removed, its case must fail with the cooled key on the wire.
 - The Lab boundary suite runs, because `compact.ts` imports from the same module family the core
   path does.
+
+### wp4c plan audit — PASS-WITH-FINDINGS, folded
+
+**Major 1 — the images seam carries a resolved SNAPSHOT, not a live field.**
+`candidates.keyed.apiKey` is built once by `selectImagesProvider` (`src/server/openai-sidecar.ts`:237-238,
+:282), so the literal "pick, then destructure" would set the Authorization header from the OLD
+key while the picker had already persisted the new one — a request on a cooled key plus a config
+write, which is strictly worse than doing nothing. The header is rebuilt from the returned clone
+through `resolveProviderApiKey` instead.
+
+This is the same class of mistake wp4b's blocker caught: the picker returns a clone and mutates
+nothing, so every seam has to be asked "what does the send actually read?" rather than "did I
+call it".
+
+The call also stays INSIDE the `candidates.keyed` branch rather than moving up next to
+`selectImagesProvider`. Higher up it would run — and write config — even on requests that
+ChatGPT forward goes on to serve, spending a rotation on a path that never used the key.
+
+**Minor 2 — gate the compact reassignment.** `compactProvider` starts as `route.provider` and is
+overlaid only for `codexAccountMode` or custom reserve-forward. The picker returns null for
+forward providers, so an ungated assign would be harmless today, but it stays inside the
+existing `authMode !== "forward" && apiKey` branch so a future overlay cannot be clobbered by
+accident. The provider name to pass is `route.providerName`.
+
+**Minor 3 — my lease concern was overstated, corrected.** Key-auth native compact does not hold
+host-circuit admission at all: `preAuthUpstreamHostCircuitKey` requires
+`codexAccountMode === "pool"` with `authMode === "forward"`. Turn admission is a counter and the
+config write is SQLite, so there is no shared mutex to deadlock on and the lease stays valid —
+the same situation wp4b already ships at the core seam. The plan's caution was unfounded and is
+struck rather than left standing as a vague worry.
+
+**Minor 4 — confirmed there are no other first-send key applications in either file.**
+`compact.ts`:289 and :380 are 401 refresh paths, and :446 is the 429/402 pool alternate.
+
+**Both paths are e2e-testable**, which is what lets the acceptance claim an end-to-end proof
+rather than a unit call: native compact through the openai-apikey harness in
+`tests/adapters/openai/openai-api-virtual-models.test.ts`, and the keyed image path through
+`tests/server/server-images.test.ts`, whose keyed fallback already asserts a specific Bearer.
+The cooled-committed-key setup is the one wp4b built in `server-key-failover-e2e.test.ts`.
