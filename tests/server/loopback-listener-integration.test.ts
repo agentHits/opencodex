@@ -323,6 +323,33 @@ describe("unauthenticated loopback listener", () => {
     }
   });
 
+  test("a hub's /v1/hub-state stays off this listener (#4236)", async () => {
+    // The route is reachable with a data key on the PUBLIC listener, by design. It must not be
+    // reachable with no credential at all: it names the hub's providers and which of them are
+    // logged in, and the unauthenticated listener exists for the inference wires a directly
+    // spawned `codex app-server` speaks — not for discovery. A hub reads its own config.
+    const loopbackPort = await freePort();
+    saveConfig({ ...baseConfig(loopbackPort), runtimeRole: "hub" } as OcxConfig);
+    const server = await startLoopbackTestServer(loopbackPort);
+    try {
+      const viaLoopback = await fetch(`http://127.0.0.1:${loopbackPort}/v1/hub-state`);
+      expect(viaLoopback.status).toBe(404);
+      // The LISTENER's 404, not the route's. `hub_state_not_a_hub` would prove the request
+      // reached the handler and was merely turned away for the role; `not_found` proves the
+      // allowlist refused it first — and this host IS a hub, so the role gate would have passed.
+      expect(await viaLoopback.json()).toMatchObject({ error: { code: "not_found" } });
+      // And the route genuinely exists on this build and on this host, so the 404 above is the
+      // allowlist rather than a missing route passing vacuously.
+      const viaPublic = await fetch(`http://127.0.0.1:${server.port}/v1/hub-state`, {
+        headers: { "x-opencodex-api-key": "public-secret" },
+      });
+      expect(viaPublic.status).toBe(200);
+      expect(await viaPublic.json()).toMatchObject({ runtimeRole: "hub" });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("admits POST /v1/alpha/search so native web search reaches the relay (#3192)", async () => {
     const loopbackPort = await freePort();
     saveConfig(baseConfig(loopbackPort));
