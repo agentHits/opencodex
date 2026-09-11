@@ -54,6 +54,24 @@ export interface CliDispatchDeps {
 
 type CommandRunner = (deps: CliDispatchDeps) => Promise<number>;
 
+/**
+ * The hub's management ingress is deliberately loopback-only. Prefer it for
+ * a browser opened on the hub itself: the proxy listener may be restricted to
+ * a Tailscale address, while the ingress is the local authenticated dashboard.
+ */
+export function selectDefaultGuiUrl(
+  config: Pick<OcxConfig, "port" | "hostname" | "runtimeRole" | "hub">,
+  live: Pick<LiveProxy, "port" | "hostname"> | null,
+  probeHostname: (hostname: string | undefined) => string,
+): string {
+  const ingress = config.runtimeRole === "hub" ? config.hub?.managementIngress : undefined;
+  if (ingress?.enabled) return `http://localhost:${ingress.port}`;
+
+  const guiHost = probeHostname(live?.hostname ?? config.hostname);
+  const hostname = guiHost === "127.0.0.1" ? "localhost" : guiHost;
+  return `http://${hostname}:${live?.port ?? config.port ?? 10100}`;
+}
+
 const commandRunners: Record<string, CommandRunner> = {
   init: async () => {
     const { runInit } = await import("./init");
@@ -535,10 +553,7 @@ const commandRunners: Record<string, CommandRunner> = {
             return 1;
           }
         }
-        // Open the host the proxy actually binds — `localhost` only answers for
-        // loopback/wildcard binds, not a concrete LAN/IPv6 hostname.
-        const guiHost = deps.probeHostname(live?.hostname ?? config.hostname);
-        const guiUrl = `http://${guiHost === "127.0.0.1" ? "localhost" : guiHost}:${live?.port ?? config.port}`;
+        const guiUrl = selectDefaultGuiUrl(config, live, deps.probeHostname);
         console.log(`Opening ${guiUrl}`);
         const { openUrl } = await import("../lib/open-url");
         openUrl(guiUrl);
