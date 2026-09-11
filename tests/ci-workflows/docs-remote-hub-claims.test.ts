@@ -14,11 +14,17 @@
  *
  * These assertions are cheap and the guide is edited often, which is the whole reason the first
  * defect survived to a public URL.
+ *
+ * The third group (#4236) pins the one-port recipe. The manual
+ * `export OPENCODEX_API_AUTH_TOKEN=…` step is the one that has to stay gone: it is how the
+ * maintainer's hub ended up with a management admin token in the data-plane variable, and the
+ * service now provisions its own token, so re-adding the line would re-teach the incident.
  */
 import { describe, expect, test } from "bun:test";
 import { repoPath } from "../helpers/repo-root";
 
 const GUIDE = repoPath("docs-site/src/content/docs/guides/remote-hub.md");
+const KO_GUIDE = repoPath("docs-site/src/content/docs/ko/guides/remote-hub.md");
 
 describe("remote hub guide", () => {
   test("no nested config set runs before its parent object exists", async () => {
@@ -84,5 +90,65 @@ describe("remote hub guide", () => {
     // remoteGui.allowInsecureHttp is a retired no-op. Offering it sends an operator to an error.
     const source = await Bun.file(GUIDE).text();
     expect(source).not.toContain("--allow-insecure-http");
+  });
+});
+
+/**
+ * The one-port recipe (#4236). Both locales are in scope: Korean is the only translation this
+ * unit rewrote, and a translation that still tells the reader to export a token is worse than a
+ * missing one because it contradicts the English page it claims to mirror.
+ */
+describe("the one-port hub recipe", () => {
+  const LOCALES = [["en", GUIDE], ["ko", KO_GUIDE]] as const;
+
+  test("both locales teach the port-less companion form", async () => {
+    for (const [locale, file] of LOCALES) {
+      const source = await Bun.file(file).text();
+      // The companion form IS the recipe: `{"enabled":true}` with no port binds 127.0.0.1 on the
+      // proxy port, which is the address every local integration already writes.
+      expect(source, locale).toContain(`ocx config set unauthenticatedLoopbackListener '{"enabled":true}'`);
+      // The ported form stays documented as the alternative, because existing hubs run it.
+      expect(source, locale).toContain(`{"enabled":true,"port":10104}`);
+    }
+  });
+
+  test("no locale tells the operator to export a data-plane token by hand", async () => {
+    for (const [locale, file] of LOCALES) {
+      const source = await Bun.file(file).text();
+      // Line-anchored, because that is the SHELL STEP the guide used to carry. Prose is still
+      // free to name the variable -- it has to, to say the step is gone and why the admin token
+      // is refused there. What must not come back is a line telling the reader to export it.
+      expect(source, locale).not.toMatch(/^\s*export\s+OPENCODEX_API_AUTH_TOKEN/m);
+      // Precedence has to be stated, or the reader cannot tell what an existing file will do.
+      expect(source, locale).toContain("service-api-token");
+    }
+  });
+
+  test("both locales route a new machine through ocx hub invite", async () => {
+    for (const [locale, file] of LOCALES) {
+      const source = await Bun.file(file).text();
+      expect(source, locale).toContain("ocx hub invite");
+      // `invite` mints nothing until a loopback browser origin is admitted, and the fix is this
+      // exact command. Naming the flag without the precondition sends the operator to a refusal.
+      expect(source, locale).toContain(`ocx config set corsAllowOrigins '["http://localhost:10100"]'`);
+      expect(source, locale).toContain("--pairing-code-stdin");
+    }
+  });
+
+  test("the English page keeps the macOS launchd semantics a repair changed", async () => {
+    const source = await Bun.file(GUIDE).text();
+    // `restart` aliases `repair`, and a repair of a healthy job is now a no-op, so the kickstart
+    // line is the only way to actually bounce a launchd hub.
+    expect(source).toContain("launchctl kickstart -k gui/$(id -u)/com.opencodex.proxy");
+    // The fourth status state is the one that used to be reported as "not loaded" and sent
+    // operators to repair a serving hub.
+    expect(source).toContain("launchd state could not be verified");
+  });
+
+  test("the English page says the companion listener is not a TLS target", async () => {
+    // It is a real socket on 127.0.0.1, so Serve will happily create the mapping -- and then the
+    // loopback Host check rejects the forwarded Host exactly as the plain-loopback trap does.
+    const source = await Bun.file(GUIDE).text();
+    expect(source).toContain("Do not point Serve at the loopback companion listener");
   });
 });

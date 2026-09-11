@@ -11,7 +11,7 @@ runs helper features around provider requests.
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `port` | `number` | `10100` | Proxy listen port. |
-| `hostname?` | `string` | `"127.0.0.1"` | Bind address. Non-loopback binds require `OPENCODEX_API_AUTH_TOKEN`. |
+| `hostname?` | `string` | `"127.0.0.1"` | Bind address. A non-loopback bind requires a data-admission token, resolved from `OPENCODEX_API_AUTH_TOKEN`, then `OCX_API_TOKEN_FILE`, then the installed owner-only `service-api-token` — nothing has to be exported by hand. See [Remote access](#remote-access). |
 | `proxy?` | `string` | — | Outbound HTTP(S) proxy URL, `${ENV_VAR}`, or `"auto"`. Applied to `HTTP_PROXY` / `HTTPS_PROXY` only when those variables are unset; loopback remains in `NO_PROXY`. `"auto"` reads the Windows system proxy (WinINET `ProxyEnable`/`ProxyServer`, `https=` then `http=` entry) once at process start and logs the host it chose. On other platforms, or when the system proxy is off, SOCKS-only, or unreadable, it uses direct egress and says so. PAC/WPAD and live proxy changes are not followed; restart the service after changing the system proxy. |
 | `noProxy?` | `string \| string[]` | — | Hosts that bypass `proxy`, merged with inherited `NO_PROXY` and loopback entries. A string may use comma-separated `NO_PROXY` syntax or `${ENV_VAR}`. |
 | `emptyCompletionRetry?` | `boolean` | `false` | Opt in to one identical Responses retry when a turn has no text or tool call, including a stream that ends before a terminal event. The retry may be billable. `OCX_EMPTY_COMPLETION_RETRY=0` disables it without changing config; combo and routed-compaction turns remain excluded. |
@@ -114,16 +114,28 @@ path failed, and does not establish a general fix.
 
 ## Remote access
 
-The default `127.0.0.1` bind is loopback-only. A non-loopback address such as `0.0.0.0` requires
-token authentication on both `/api/*` and the data plane. Export the token before starting:
+The default `127.0.0.1` bind is loopback-only. A non-loopback address such as `0.0.0.0` or a tailnet
+IP requires token authentication on both `/api/*` and the data plane.
+
+You do not have to produce that token. `ocx service install` provisions one on a non-loopback bind,
+in this order: `OPENCODEX_API_AUTH_TOKEN` from the installing shell, then an existing owner-only
+`service-api-token` file, then 32 fresh random bytes. The result is written `0600` and the launch
+wrapper (launchd plist, systemd unit, Windows wrapper) reads the file at start, so the value never
+enters a service definition or argv. A foreground `ocx start` applies the same precedence —
+environment, then `OCX_API_TOKEN_FILE`, then the installed `service-api-token` — so it binds a
+non-loopback hostname without an exported token too.
+
+A **management admin token** in `OPENCODEX_API_AUTH_TOKEN` is refused: the two planes are different
+credentials, and the refusal says to `unset OPENCODEX_API_AUTH_TOKEN` and rerun rather than
+suggesting a substitute value. Setting the variable yourself is still supported for an operator who
+wants to own the value:
 
 ```bash
 export OPENCODEX_API_AUTH_TOKEN="your-secret-token"
 ocx start
 ```
 
-The proxy refuses a remote bind without this variable. For a background service, export it before
-`ocx service install` so launchd, systemd, or Task Scheduler receives it. Clients should send:
+Clients should send:
 
 ```text
 x-opencodex-api-key: your-secret-token
@@ -197,8 +209,19 @@ loopback bind already admits local callers.
 
 With a `port` set, the local integrations follow the listener: `ocx claude`, the `system-env`
 injection, the Claude Desktop profile, the Cursor gateway value and the routed vision helper all
-write `http://127.0.0.1:<listener port>`, the same port `ocx sync` writes into Codex. Restart the
-proxy after changing this field so those values are rewritten.
+write `http://127.0.0.1:<listener port>`, the same port `ocx sync` writes into Codex. In the
+companion form those same integrations keep writing the proxy port, which is where the companion
+socket is.
+
+**Restart the proxy after changing this field, in either form.** The sockets are bound once at
+startup and the exported client values are written from the resolved port, so a running proxy keeps
+its previous answer — on a ported listener that is the difference between a served request and a
+`404` from the listener.
+
+On a `runtimeRole: "hub"`, this field is also the gate on whether the hub rewrites **its own** local
+client configuration. With the listener off, `ocx sync`, `ocx ensure` and `ocx restore back` skip the
+hub's own Codex/Grok/Claude writes and say so, naming
+`unauthenticatedLoopbackListener` rather than the `clientIntegrations` toggle.
 
 The listener serves only `POST /v1/responses`, its WebSocket upgrade, `POST /v1/responses/compact`,
 `POST /v1/messages` (the Anthropic wire Claude Code and Claude Desktop speak),
@@ -500,6 +523,7 @@ intended account and workload.
 | Key | Type | Default when absent | What it does |
 | --- | --- | --- | --- |
 | `hub.managementPublicOrigin` | string | unset | The canonical browser-reachable management origin a hub advertises, for example the HTTPS origin Tailscale Serve prints. It is what `/readyz` reports as `managementUrl` while `runtimeRole` is `hub`; with it unset the hub falls back to whatever origin each request arrived on, so a client behind a different frontend can be handed an address it cannot reach. |
+| `hub.dataPublicOrigin` | string | unset | The canonical origin a remote client should dial for the **data** plane, for example the HTTPS origin a TLS frontend publishes in front of the tailnet bind. Advisory only: it is never a bind address and changing it moves no socket. `ocx hub invite` prints it as the positional URL of the `ocx connect` line, falling back to `http://<hostname>:<port>` — which is a LAN/tailnet address a remote machine may not be able to reach over TLS, so set this on any hub with a frontend. Unlike most optional keys it is **not** silently dropped when malformed: a typo is rejected at write time, because falling back to the bind address is exactly what the field exists to avoid. |
 | `hub.managementIngress` | `{enabled:false}` or `{enabled:true, port}` | `{enabled:false}` | An extra management-only listener for a local HTTPS frontend. The hostname is not configurable: when enabled the socket always binds `127.0.0.1`, and only GUI, session-bootstrap, and management API routes are admitted. Data-plane routes are rejected before dispatch. |
 | `remoteGui.allowedTailscaleUsers` | string[] | `[]` (empty — nobody) | Exact Tailscale login identities allowed to be issued an automatic remote GUI session. The `Tailscale-User-Login` header is trusted **only** on the separate management ingress; an empty list means no remote identity can mint a session, which is the safe default rather than an oversight. Identities are compared exactly, so a typo silently denies access. |
 | `remoteGui.allowInsecureHttp` | boolean | unset | **Retired — has no effect.** It once permitted a one-time pairing exchange over non-loopback plaintext HTTP. A pairing grant now crosses loopback or authenticated HTTPS only. The key is still parsed so an existing `config.json` keeps loading (the schema is strict, and dropping the key outright would make an older config fail to load entirely); a persisted `true` is reported once and then ignored. Remove it from your config. |
@@ -508,3 +532,16 @@ A hub that is reachable from a browser needs `hub.managementPublicOrigin` and at
 in `remoteGui.allowedTailscaleUsers`. Setting the origin without the user list produces a hub that
 advertises itself correctly and then refuses every session; setting the user list without the
 origin produces sessions pointed at whichever origin the request happened to use.
+
+`dataPublicOrigin` and `managementPublicOrigin` are two independent advertisements, and on a real
+deployment they are two different sockets: management is the loopback-only ingress published on 443,
+data is the tailnet bind published on its own HTTPS port. They are the two halves of what
+`ocx hub invite` prints, and `managementPublicOrigin` is the stricter of the two — a pairing grant
+records it as the grant's own server origin and the exchange compares against it, which is why
+`ocx hub invite --management-url` can only *confirm* the configured value and refuses one that
+differs. `--data-url` really is an override, because nothing is bound to it.
+
+A hub that serves its own local clients also sets
+[`unauthenticatedLoopbackListener`](#local-clients-that-cannot-receive-the-token). Its port-less
+companion form is what makes a hub a single-port deployment, and it is refused on a loopback or
+wildcard `hostname`, where the public listener already holds `127.0.0.1:<port>`.
