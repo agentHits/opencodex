@@ -242,3 +242,61 @@ fix has to change that assertion deliberately. The guard is an alias-safety net 
 change in part 3 and only a tripwire for part 4 — it tells wp5c that it is changing a published
 answer, which is exactly what a golden should do, but it does not prove the new answer correct.
 
+## wp5c plan — the unified route and the enabled reporting defect
+
+Part 3 and part 4 of the unit the wp5 audit resized. Parts 1 and 2 shipped: the exact-body
+goldens for the three legacy responses, and one validator for strategy and sticky.
+
+### The route
+
+NEW `GET | PUT | PATCH /api/pool/settings?provider=<name>` in
+`src/server/management/oauth-account-routes.ts`, serving all three kinds through
+`poolSettingsCapability`. The three legacy paths keep working unchanged — the goldens from
+part 1 are what proves that, and they were written before any of this precisely so they could.
+
+**Four registration surfaces, each of which fails CI on its own.** This is the part that went
+red on #4289 and is worth stating as a list rather than a sentence:
+
+1. `src/server/management/route-registry.ts` — `tests/server/management-route-registry.test.ts`
+   compares source and registry as exact pairs.
+2. `src/cli/capabilities.ts` — `tests/cli/cli-capabilities.test.ts` fails on any registry route
+   that is neither declared, `exempt`, nor in the dated ratchet. The ratchet is NOT an option:
+   a sibling test asserts it only ever shrinks.
+3. `skills/ocx/references/01_management_surface.md` — generated; `bun run skill:surface` must
+   run and the result must be committed, or `tests/ci-workflows/skill-ocx.test.ts` fails.
+4. `docs-site` — `reference/management-api.md`:332 still claims the pool route 400s for
+   non-Anthropic providers, which stopped being true when the generic contract shipped. Stale
+   before this unit and fixed by it.
+
+Declaring the route in `capabilities.ts` rather than exempting it is the honest option only if
+the CLI actually uses it, so `src/cli/account-extended.ts` switches its transport table to the
+single path. That table exists today only because the two contracts disagreed.
+
+`PATCH` is included because both legacy writes accept it; a unified route that dropped it would
+be a narrower contract wearing a wider name.
+
+### The enabled reporting defect
+
+`isProactivePreferenceEnabled` reads the per-provider `enabled` when it is a boolean and falls
+back to the global `config.oauthAccountFailover.enabled`. The generic DTO reports only the
+per-provider value, so `enabled: null` means "nothing stored here" while the effective answer
+may be `true` from the global — a dashboard cannot tell a disabled pool from an inherited one.
+
+The fix ADDS `enabledEffective: boolean` rather than changing `enabled`. `enabled` is published
+as "the stored provider override, `null` means unspecified, not inherited effective state" in
+`docs-site/reference/cli/providers-accounts.md` and the CLI surfaces it as `poolEnabled`;
+redefining it would break a documented field to fix a missing one. The generic GET golden at
+`tests/server/account-pool-management-api.test.ts`:483 pins `enabled: null` and must be
+extended deliberately — that is the tripwire firing exactly as intended, not a test to silence.
+
+### Acceptance
+
+- `GET /api/pool/settings?provider=` answers for Codex, Anthropic and a generic provider, each
+  declaring which fields its kind supports.
+- The three legacy paths still return byte-identical bodies, proven by the part-1 goldens, which
+  are not edited.
+- `enabledEffective` is true for a provider with no stored override under a global `true`, and
+  false under a global `false` or absence.
+- Registry, capabilities, regenerated surface map and docs all move in the same commit.
+- Red control: each new assertion must fail with its production branch removed.
+
