@@ -48,7 +48,7 @@ import {
   pendingTeardownPathFor,
   quarantinePendingTeardown,
 } from "../config/pending-teardown";
-import { collectStatus, hubStatusLines, unusedProxyWarningLines } from "./status";
+import { collectStatus, hubStatusLines, remoteHubBannerLine, remoteHubStatusLines, unusedProxyWarningLines } from "./status";
 import { endpointsToProve, everyEndpointProvenDown, sharedTeardownAuthorized, type UninstallObservation } from "./uninstall-plan";
 import { takeFlag } from "./runtime-api";
 
@@ -1383,12 +1383,22 @@ async function handleStatus() {
     return;
   }
 
+  // First line of the report, above the proxy line, deliberately (#4236): on a connected client
+  // the provider/login/model lines describe the HUB, and the lines that describe this machine
+  // are tagged `(local)`. A reader who sees neither draws the wrong conclusion from a correct
+  // report — an agent read `xai ✗ not logged in` off a client and decided the hub could not
+  // serve grok.
+  const remoteHubBanner = remoteHubBannerLine(status.json.remoteHub);
+  if (remoteHubBanner) console.log(remoteHubBanner);
+  // `(local)` only while connected: on a standalone install every line is local, and tagging
+  // them all would be noise that trains the reader to skip the tag.
+  const local = status.json.remoteHub.connected ? " (local)" : "";
   if (status.json.proxy.pid || status.json.proxy.health.ok) {
-    console.log(`✅ Proxy: ${status.proxyLabel}`);
+    console.log(`✅ Proxy: ${status.proxyLabel}${local}`);
   } else {
-    console.log(`❌ Proxy: ${status.proxyLabel}`);
+    console.log(`❌ Proxy: ${status.proxyLabel}${local}`);
   }
-  console.log(`   Health: ${status.healthLabel}`);
+  console.log(`   Health: ${status.healthLabel}${local}`);
   if (status.json.claudeDesktop.desiredEnabled && !status.json.claudeDesktop.policy.ok) {
     console.log(`   ⚠️  Claude Desktop 3P health: ${status.json.claudeDesktop.policy.status}`);
     console.log(`      ${status.json.claudeDesktop.policy.message}`);
@@ -1428,12 +1438,13 @@ async function handleStatus() {
       ? "     Restart with 'ocx start', or refresh the installed service: 'ocx service repair'."
       : "     Restart with 'ocx start', or install the persistent service: 'ocx service install'.");
   }
-  console.log(`   Dashboard: ${status.json.dashboard.url}`);
-  console.log(`   Config: ${status.json.paths.config}`);
-  console.log(`   PID file: ${status.json.paths.pid}`);
-  console.log(`   Runtime: ${status.json.paths.runtime}`);
-  console.log(`   Runtime source: ${status.json.runtime.source}${status.json.runtime.overrideEnv ? ` (${status.json.runtime.overrideEnv})` : ""}`);
-  console.log(`   Default provider: ${status.json.defaultProvider}`);
+  console.log(`   Dashboard: ${status.json.dashboard.url}${local}`);
+  console.log(`   Config: ${status.json.paths.config}${local}`);
+  console.log(`   PID file: ${status.json.paths.pid}${local}`);
+  console.log(`   Runtime: ${status.json.paths.runtime}${local}`);
+  console.log(`   Runtime source: ${status.json.runtime.source}${status.json.runtime.overrideEnv ? ` (${status.json.runtime.overrideEnv})` : ""}${local}`);
+  // On a client this is the local default, which routing does not use — the hub applies its own.
+  console.log(`   Default provider: ${status.json.defaultProvider}${local}`);
   // One block rather than six scattered lines, and only on a hub: `hubStatusLines` owns the
   // sentences so they are testable without spawning the CLI. It prints no token value.
   if (status.json.hub) {
@@ -1443,15 +1454,15 @@ async function handleStatus() {
   if (status.json.connection.state === "invalid" || status.json.connection.state === "mismatched") {
     console.log(`   ⚠️  ${status.json.connection.reason}`);
   }
-  console.log(`   Codex autostart: ${status.json.codexAutostart ? "enabled" : "disabled"}`);
-  console.log(`   Restart safety: ${startupHealthSummary(status.json.startup)}`);
-  console.log(`   ${formatStartupRoutingDetail(status.json.startup)}`);
-  console.log(`   Service: ${status.json.service.summary}`);
-  console.log(`   ${status.json.codexShim.summary}`);
-  console.log(`   Codex runtime: ${status.json.codexRuntime.path}`);
-  console.log(`   Codex version: ${status.json.codexRuntime.version ?? "unknown"}`);
-  console.log(`   Codex source: ${status.json.codexRuntime.source}`);
-  console.log(`   Codex home: ${status.json.codexHome.effectiveCodexHome}`);
+  console.log(`   Codex autostart: ${status.json.codexAutostart ? "enabled" : "disabled"}${local}`);
+  console.log(`   Restart safety: ${startupHealthSummary(status.json.startup)}${local}`);
+  console.log(`   ${formatStartupRoutingDetail(status.json.startup)}${local}`);
+  console.log(`   Service: ${status.json.service.summary}${local}`);
+  console.log(`   ${status.json.codexShim.summary}${local}`);
+  console.log(`   Codex runtime: ${status.json.codexRuntime.path}${local}`);
+  console.log(`   Codex version: ${status.json.codexRuntime.version ?? "unknown"}${local}`);
+  console.log(`   Codex source: ${status.json.codexRuntime.source}${local}`);
+  console.log(`   Codex home: ${status.json.codexHome.effectiveCodexHome}${local}`);
   if (status.json.codexHome.warning) {
     console.log(`   ⚠️  ${status.json.codexHome.warning}`);
     console.log(`      Action: ${status.json.codexHome.action}`);
@@ -1473,7 +1484,17 @@ async function handleStatus() {
   const { collectOAuthHealthEntriesForCli, oauthLoginSummary } = await import("../oauth");
   const { emailMaskingEnabled } = await import("../lib/privacy");
   const { formatOAuthHealthForStatus } = await import("./status-oauth");
-  console.log(`   OAuth logins:`);
+  // On a connected client the HUB's providers and logins come first, because they are the ones
+  // that decide what a request can route to. The local block still prints — an operator debugging
+  // a half-migrated machine needs to see it — but under a heading that says it is not in use, and
+  // below the hub's, so the hub's is what a reader (or an agent) encounters first (#4236).
+  for (const line of remoteHubStatusLines(status.json.remoteHub)) console.log(`   ${line}`);
+  if (status.json.remoteHub.connected) {
+    console.log(status.json.remoteHub.stateSource === "unavailable"
+      ? "   Local-only credential state (this is NOT the hub's; the hub's state could not be read):"
+      : "   Local-only (not used for routing while connected):");
+  }
+  console.log(`   OAuth logins${local}:`);
   // The operator's own `privacy.maskEmails` decision applies to the CLI too: `ocx status` is not
   // the dashboard, but it reads the same stored addresses, and a flag that only moved one of the
   // two would leave the operator unable to tell which surface they had configured.

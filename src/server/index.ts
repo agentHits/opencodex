@@ -1401,6 +1401,83 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         );
       }
 
+      if (url.pathname === "/v1/hub-state" && (req.method === "GET" || req.method === "HEAD")) {
+        // #4236: a connected client had no way to learn which providers this hub can actually
+        // serve, so `ocx status` on the client reported the CLIENT's empty credential store as
+        // if it were the truth — "xai ✗ not logged in" on a machine whose hub has xAI logged
+        // in. The fix is one least-privilege data-plane read, in the /v1/catalog (#809)
+        // tradition: same admission resolver, same origin check, no parameters, no caller
+        // credential forwarded upstream, and a body of booleans plus model ids. Widening
+        // `/api/*` or handing the client an admin token to read `GET /api/providers` would
+        // have traded a reporting defect for a credential one.
+        //
+        // What it discloses beyond /v1/catalog and /v1/models, exactly: `hasCredential`,
+        // `loggedIn`, `authMode`, the featured roster, and the NAME and adapter of an ENABLED
+        // provider those routes omit for want of a usable credential — which is the point of
+        // the route. A `disabled` provider is NOT exported (`buildHubState` drops it), because
+        // the catalog filters it out too and naming it here would be the only place a data key
+        // learns of it.
+        //
+        // Placed between /v1/catalog and /v1/models so all three least-privilege client reads
+        // stay in sight of each other.
+        const admission = resolveApiAuth(req, policy);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, policy);
+        if (!isAllowedRequestOrigin(req, policy)) {
+          return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, policy);
+        }
+        // Role gate AFTER admission, deliberately: answering an unauthenticated caller would
+        // turn this into a free "is that machine a hub?" probe. A standalone or client install
+        // gains no surface at all — the route simply does not exist there.
+        //
+        // Built, not formatErrorResponse'd, for the same reason /v1/catalog builds its 404: the
+        // code has to distinguish "this route exists and this host is not a hub" from "this
+        // build has no such route", which is the difference between admission proof and a
+        // vacuous pass in tests/server/api-key-attribution.test.ts.
+        if (config.runtimeRole !== "hub") {
+          return withCors(
+            new Response(JSON.stringify({
+              error: {
+                type: "invalid_request_error",
+                code: "hub_state_not_a_hub",
+                message: "hub state is served only by a host whose runtimeRole is hub",
+              },
+            }), { status: 404, headers: { "content-type": "application/json" } }),
+            req,
+            policy,
+          );
+        }
+        const { buildHubState } = await import("./hub-state");
+        const { MAX_HUB_STATE_BYTES } = await import("../remote/hub-state");
+        const { oauthLoginSummary } = await import("../oauth");
+        // `true` masks emails, but the projection drops the field entirely; passing the mask
+        // anyway means a future refactor that starts copying fields cannot leak a raw address.
+        const body = JSON.stringify(buildHubState(config, oauthLoginSummary(true), VERSION));
+        const bytes = Buffer.byteLength(body);
+        if (bytes > MAX_HUB_STATE_BYTES) {
+          return withCors(
+            new Response(JSON.stringify({
+              error: { type: "server_error", code: "hub_state_too_large", message: "hub state exceeds the maximum served size" },
+            }), { status: 507, headers: { "content-type": "application/json" } }),
+            req,
+            policy,
+          );
+        }
+        return withCors(
+          new Response(req.method === "HEAD" ? null : body, {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              // Varies by credential-bearing identity and by live login state: never cached,
+              // and no validator to revalidate with (same rule as /v1/catalog).
+              "cache-control": "no-store",
+              "content-length": String(bytes),
+            },
+          }),
+          req,
+          policy,
+        );
+      }
+
       if (url.pathname === "/v1/models" && req.method === "GET") {
         // #809: the catalog read sits immediately before model discovery because it shares
         // that route's admission rationale exactly. Keep them adjacent so a future change to
