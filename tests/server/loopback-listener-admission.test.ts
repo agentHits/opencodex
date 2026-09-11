@@ -19,6 +19,7 @@ import {
   resolveResponsesApiAuth,
 } from "../../src/server/auth-cors";
 import { buildProviderTableBlock, shouldInjectApiAuthHeader } from "../../src/codex/inject";
+import { effectiveLoopbackListenerPort, loopbackCompanionAllowed } from "../../src/codex/loopback-target";
 import { validateConfigCandidate } from "../../src/config";
 import type { OcxConfig } from "../../src/types";
 
@@ -133,9 +134,11 @@ describe("loopback listener configuration", () => {
     if (!result.ok) expect(result.error).toContain("must differ from the proxy port");
   });
 
-  test("an enabled listener without a port is rejected", () => {
-    // An OS-assigned port would change across restarts and strand app-servers holding the
-    // previous base_url — the symptom #1102 reported and we disproved for token rotation.
+  test("an enabled listener without a port is rejected on a loopback bind", () => {
+    // The port-less form means "same port, on 127.0.0.1". With the public listener already on
+    // 127.0.0.1 there is no such address to take, and an OS-assigned port is not the fallback:
+    // it would change across restarts and strand app-servers holding the previous base_url —
+    // the symptom #1102 reported and we disproved for token rotation.
     const result = validateConfigCandidate({
       port: 10100,
       providers: { openai: { adapter: "openai", baseUrl: "https://chatgpt.com/backend-api/codex" } },
@@ -165,6 +168,98 @@ describe("loopback listener configuration", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.config.unauthenticatedLoopbackListener).toEqual({ enabled: true, port: 10200 });
+    }
+  });
+});
+
+/**
+ * The one-port hub (#4236). `{ enabled: true }` with no port binds 127.0.0.1:<proxy port>, so a
+ * tailnet-bound hub serves remote clients on its public address and its own local processes on
+ * loopback — including every integration that hardcodes `http://127.0.0.1:<proxy port>`.
+ */
+describe("loopback companion listener configuration", () => {
+  const candidate = (overrides: Record<string, unknown> = {}) => ({
+    port: 10100,
+    providers: { openai: { adapter: "openai", baseUrl: "https://chatgpt.com/backend-api/codex" } },
+    defaultProvider: "openai",
+    unauthenticatedLoopbackListener: { enabled: true },
+    ...overrides,
+  });
+
+  test("a port-less listener is accepted on a specific non-loopback bind and survives the parse", () => {
+    for (const hostname of ["100.76.170.81", "192.168.1.40", "fd7a:115c:a1e0::1", "macmini.tail19a2d7.ts.net"]) {
+      const result = validateConfigCandidate(candidate({ hostname }));
+      expect({ hostname, ok: result.ok }).toEqual({ hostname, ok: true });
+      // The absent port must SURVIVE. A schema that helpfully filled in the proxy port would
+      // make the pair look like the #1102 collision on the next write.
+      if (result.ok) {
+        expect(result.config.unauthenticatedLoopbackListener).toEqual({ enabled: true });
+      }
+    }
+  });
+
+  test("a port-less listener is refused wherever the public listener already holds loopback", () => {
+    // Wildcards included: 0.0.0.0 answers on 127.0.0.1 too, so the companion would collide
+    // there just as surely as on an explicit loopback bind.
+    for (const hostname of [undefined, "127.0.0.1", "localhost", "::1", "0.0.0.0", "::", "[::]"]) {
+      const result = validateConfigCandidate(candidate(hostname === undefined ? {} : { hostname }));
+      expect({ hostname, ok: result.ok }).toEqual({ hostname, ok: false });
+      if (!result.ok) {
+        // The message has to name the collision AND both ways out, because an operator who
+        // only hears "invalid" will try the other illegal shape next.
+        expect(result.error).toContain("127.0.0.1:10100");
+        expect(result.error).toContain("set a distinct unauthenticatedLoopbackListener.port");
+        expect(result.error).toContain("remove the listener");
+      }
+    }
+  });
+
+  test("the proxy port named in the refusal is the configured one", () => {
+    const result = validateConfigCandidate(candidate({ port: 8080, hostname: "0.0.0.0" }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("127.0.0.1:8080");
+  });
+
+  test("pointing hostname back at loopback is refused by the same check, not by the next start", () => {
+    // `ocx config set hostname 127.0.0.1` on a host whose listener is already the companion
+    // form writes a candidate carrying BOTH keys. Validating only the key being written would
+    // let this through and turn the next `ocx start` into an EADDRINUSE rollback.
+    const enabled = validateConfigCandidate(candidate({ hostname: "100.76.170.81" }));
+    expect(enabled.ok).toBe(true);
+    const reverted = validateConfigCandidate(candidate({ hostname: "127.0.0.1" }));
+    expect(reverted.ok).toBe(false);
+    if (!reverted.ok) expect(reverted.error).toContain("127.0.0.1:10100");
+  });
+
+  test("an explicit port is still required to differ, and still wins over the companion form", () => {
+    const collision = validateConfigCandidate(candidate({
+      hostname: "100.76.170.81",
+      unauthenticatedLoopbackListener: { enabled: true, port: 10100 },
+    }));
+    expect(collision.ok).toBe(false);
+    if (!collision.ok) expect(collision.error).toContain("must differ from the proxy port");
+
+    const ported = validateConfigCandidate(candidate({
+      hostname: "100.76.170.81",
+      unauthenticatedLoopbackListener: { enabled: true, port: 10104 },
+    }));
+    expect(ported.ok).toBe(true);
+  });
+
+  test("effectiveLoopbackListenerPort is the single answer to \"where do local callers dial\"", () => {
+    expect(effectiveLoopbackListenerPort({ unauthenticatedLoopbackListener: { enabled: true } }, 10100)).toBe(10100);
+    expect(effectiveLoopbackListenerPort({ unauthenticatedLoopbackListener: { enabled: true, port: 10104 } }, 10100)).toBe(10104);
+    expect(effectiveLoopbackListenerPort({ unauthenticatedLoopbackListener: { enabled: false } }, 10100)).toBeNull();
+    expect(effectiveLoopbackListenerPort({}, 10100)).toBeNull();
+    expect(effectiveLoopbackListenerPort(undefined, 10100)).toBeNull();
+  });
+
+  test("loopbackCompanionAllowed is the bind-scope half of that decision", () => {
+    for (const hostname of ["100.76.170.81", "10.0.0.5", "hub.example.test"]) {
+      expect({ hostname, allowed: loopbackCompanionAllowed(hostname) }).toEqual({ hostname, allowed: true });
+    }
+    for (const hostname of [undefined, "", "localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "::", "[::]", "*"]) {
+      expect({ hostname, allowed: loopbackCompanionAllowed(hostname) }).toEqual({ hostname, allowed: false });
     }
   });
 });
