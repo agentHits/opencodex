@@ -325,3 +325,43 @@ the DTO stops reporting `inert` once the flag is on.
 `pool.kernel` defaults off, and off means the pre-kernel code path byte for byte: the guards
 stay, the DTO still says `inert: true`, and `noteGenericPoolSelection` returns before touching
 the ring. No migration writes on upgrade; the kernel reads keys that are already persisted.
+
+### A-phase findings folded into this plan
+
+Verified while auditing the plan above, before any code was written.
+
+**The `inert` contract is published, in seven languages.** Turning `inert` into a computed
+field makes live documentation false, and AGENTS.md requires docs-site to stay in sync and
+translated locales not to contradict the English source. The statements that change:
+`docs-site/src/content/docs/reference/configuration/providers.md` :568 ("the generic selector
+does not act on it yet, so omitted and set behave the same today"), :569 ("inert until the
+selector consumes it") and :590 ("`inert: true` for those two fields only"); and
+`reference/cli/providers-accounts.md` :351 ("Generic pool thresholds are currently inert") and
+:355, whose signature literally reads `inert: true | null`. The same page exists under
+`ko`, `ja`, `fr`, `ru`, `tr`, `zh-cn` and `zh-tw`. All of it moves in this PR: a flag-gated
+feature still has to describe both states, not the old one.
+
+**The DTO marker test fails OPEN, which is worse than failing.**
+`tests/server/account-pool-management-api.test.ts:435` locates its slice with
+`source.indexOf("inert: true;", start)`. Once the type reads `inert: boolean;` that returns
+`-1`, and `source.slice(start, -1)` happily returns almost the whole file — which still
+contains "strategy", "autoSwitchThreshold" and "enabled", so all three assertions pass while
+the test has stopped checking anything. It must be rewritten against the new literal, not
+merely allowed to keep passing. This is the same failure mode wp1b was built on, so it gets
+named rather than discovered later.
+
+**`src/server/management/provider-routes.ts`:1023-1024 is a reader the plan did not name.**
+It carries `oauthAccountFailover` forward when a provider is overwritten, to stop an edit
+silently enabling rotation. It copies the whole object, so a new `stickyLimit` rides along
+with no change — verified, listed here so the next reader does not have to re-derive it.
+
+**The core-path import edge is already there.** `src/server/responses/core.ts` imports from
+`../../oauth/generic-account-failover` at :150, so adding `noteGenericPoolSelection` to that
+existing import creates no new module edge at all, and `pool-kernel.ts` imports only two
+types. `bun test tests/lab/core-lab-boundary.test.ts` is green at 17 pass / 0 fail on this
+branch and is re-run at Check.
+
+**Fill-first's stable order is `eligibleFailoverAccounts`:164**, which preserves
+`set.accounts` order from the store and filters out reauth-flagged and cooled accounts. That
+is the order the 429 ring already walks, so fill-first advances through the same sequence
+rather than inventing a second one.
