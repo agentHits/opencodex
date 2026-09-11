@@ -14,6 +14,7 @@ import { cursorLastSeen, type CursorSeen } from "../../integrations/cursor-seen"
 import { detectCursorInstalls, type CursorInstall } from "../../integrations/cursor-detect";
 import { loadCursorEffortTable } from "../../integrations/cursor-effort-table";
 import { configuredApiAuthToken, isApiAuthRequired, jsonResponse } from "../auth-cors";
+import { localInferencePort } from "../../lib/local-destinations";
 import { fetchAllModels } from "../management-api";
 import { predictCursorEffort } from "../models-capabilities";
 import { expandCursorEffortRow, knownEffortRowIds } from "../effort-row";
@@ -54,8 +55,13 @@ export async function buildCursorIntegrationStatus(
   // The port the browser reached is the one Cursor on the same machine will reach too; the
   // runtime record and config.port are fallbacks for a request that carries no port.
   const port = runtime?.port ?? (Number(ctx.url?.port) || config.port);
-  // Describes the public bind. A second unauthenticated loopback listener may exist, but the
-  // value a user pastes into Cursor must work against the bind they will actually reach.
+  // Cursor runs on this machine, so the gateway URL it is told to paste is the LOCAL one: the
+  // unauthenticated loopback listener when one is enabled (on a tailnet-bound hub there is no
+  // other local socket), otherwise 127.0.0.1 on the public port exactly as before (#4236).
+  const gatewayPort = localInferencePort(config, port ?? 10100);
+  // apiKeyMode still describes the public bind's admission rule: a key is never required by the
+  // loopback listener, but pasting one there is harmless, while omitting one on a bind that
+  // demands it is not.
   const credentialConfigured = !!configuredApiAuthToken(config)
     || (config.apiKeys ?? []).some(entry => !!entry.key.trim());
   const apiKeyMode = isApiAuthRequired(config) || credentialConfigured ? "credential" : "placeholder";
@@ -107,7 +113,7 @@ export async function buildCursorIntegrationStatus(
     },
     regularCursor: { installed: regular !== undefined, path: regular?.path ?? null },
     gateway: {
-      baseUrl: `http://127.0.0.1:${port}/v1`,
+      baseUrl: `http://127.0.0.1:${gatewayPort}/v1`,
       apiKeyMode,
       placeholder: CURSOR_GATEWAY_PLACEHOLDER_KEY,
     },

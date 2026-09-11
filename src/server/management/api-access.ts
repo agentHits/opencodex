@@ -1,4 +1,5 @@
 import type { OcxConfig } from "../../types";
+import { localInferenceOrigin } from "../../lib/local-destinations";
 import { probeHostname } from "../proxy-liveness";
 
 export interface ApiAccessEndpoints {
@@ -66,7 +67,7 @@ function originBaseUrl(raw: string): string | null {
  * Falls back to loopback only when no usable request context is available.
  */
 export function resolveApiAccessBaseUrl(
-  config: Pick<OcxConfig, "hostname" | "port">,
+  config: Pick<OcxConfig, "hostname" | "port" | "unauthenticatedLoopbackListener">,
   opts: BuildApiAccessEndpointsOptions = {},
 ): string {
   const port = config.port ?? 10100;
@@ -104,7 +105,11 @@ export function resolveApiAccessBaseUrl(
     }
   }
 
-  return `http://127.0.0.1:${port}/v1`;
+  // Last resort: a wildcard bind with no usable request context, so the only address we can
+  // name is loopback — and on that address the unauthenticated loopback listener, when one is
+  // enabled, is the port a local caller should use (#4236). The branches above are unchanged:
+  // a specific bind or a real request host still describes the address the CLIENT reached.
+  return `${localInferenceOrigin(config, port)}/v1`;
 }
 
 /** @deprecated Prefer resolveApiAccessBaseUrl; retained for focused host-format tests. */

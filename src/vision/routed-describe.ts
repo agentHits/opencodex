@@ -21,9 +21,11 @@
  *
  * Known limitation (recorded in roadmap 170): a bindHost where 127.0.0.1
  * does not answer cannot reach its own loopback — same latent limitation
- * gateway-cache has.
+ * gateway-cache has. #4236 closes it for the case that actually occurs: a hub
+ * with an unauthenticated loopback listener, which this helper now dials.
  */
 import type { OcxConfig } from "../types";
+import { localInferenceOrigin } from "../lib/local-destinations";
 import { signalWithTimeout, cancelBodyOnAbort } from "../lib/abort";
 import { redactSecretString } from "../lib/redact";
 import { sidecarEnter } from "../lib/sidecar-tracker";
@@ -71,12 +73,17 @@ export function routedDescribeAdmissionToken(config: Pick<OcxConfig, "apiKeys">)
 }
 
 /** Base URL seam for tests; production always self-fetches loopback. */
-export function routedDescribeBaseUrl(config: Pick<OcxConfig, "port">): string {
+export function routedDescribeBaseUrl(
+  config: Pick<OcxConfig, "port" | "unauthenticatedLoopbackListener">,
+): string {
   // config.port can be 0 (ephemeral bind, tests) or stale after a live port
   // override; the server records its ACTUAL bound port via setCorsOrigin at
   // startup, so prefer that when config carries no positive port.
-  const port = config.port && config.port > 0 ? String(config.port) : configuredPort();
-  return `http://127.0.0.1:${port}`;
+  const port = config.port && config.port > 0 ? config.port : Number(configuredPort());
+  // This self-fetch is a local client like any other: on a hub bound to a tailnet address the
+  // only socket on 127.0.0.1 is the unauthenticated loopback listener (#4236). The helper sends
+  // the OpenAI chat wire, which that listener now admits.
+  return localInferenceOrigin(config, port);
 }
 
 export async function describeImageRouted(
@@ -84,7 +91,7 @@ export async function describeImageRouted(
   _detail: string | undefined,
   contextText: string,
   routedModel: string,
-  config: Pick<OcxConfig, "port" | "apiKeys">,
+  config: Pick<OcxConfig, "port" | "apiKeys" | "unauthenticatedLoopbackListener">,
   settings: VisionSettings,
   abortSignal?: AbortSignal,
   baseUrlOverride?: string,

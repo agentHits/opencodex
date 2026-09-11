@@ -110,8 +110,8 @@ export interface VisionPlan {
   anthropicSidecar?: AnthropicVisionProvider;
   /** Namespaced "provider/model" describer for the routed backend (roadmap 180). */
   routedModel?: string;
-  /** Loopback dispatch inputs for the routed backend. */
-  routedConfig?: Pick<OcxConfig, "port" | "apiKeys">;
+  /** Loopback dispatch inputs for the routed backend (the listener decides WHICH local port). */
+  routedConfig?: Pick<OcxConfig, "port" | "apiKeys" | "unauthenticatedLoopbackListener">;
   settings: VisionSettings;
   maxDescriptionsPerTurn: number;
 }
@@ -153,7 +153,14 @@ export function planVisionSidecar(
         return {
           backend: "routed",
           routedModel,
-          routedConfig: { port: config.port, ...(config.apiKeys ? { apiKeys: config.apiKeys } : {}) },
+          routedConfig: {
+            port: config.port,
+            ...(config.apiKeys ? { apiKeys: config.apiKeys } : {}),
+            // The self-fetch has to honor the unauthenticated loopback listener (#4236).
+            ...(config.unauthenticatedLoopbackListener
+              ? { unauthenticatedLoopbackListener: config.unauthenticatedLoopbackListener }
+              : {}),
+          },
           settings: {
             model: routedModel,
             reasoning: DEFAULT_REASONING,

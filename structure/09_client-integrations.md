@@ -149,6 +149,21 @@ fingerprint-only tests are supplementary; they cannot prove the status and write
 
 Remote clients journal and restore native integrations locally while model traffic travels directly to the hub. Catalog writes occur only after protocol negotiation and full remote schema validation. The management relay is launcher-scoped and fixed to the connection's management origin. Claude/Codex launch behavior remains integration-scoped. Key rotation and recovery align both the local connection credential and the connection-owned Desktop profile before reporting completion. Disconnect restores owned Desktop settings and native integrations locally without automatic hub-key revocation or usage mirroring. Interrupted cleanup remains recoverable for the same connection; conflicts prevent a full-cleanup claim.
 
+## Local destinations on a hub
+
+A client running on the proxy's own machine has two destinations, and they are resolved
+separately by `src/lib/local-destinations.ts`. Inference (`localInferenceOrigin`) is
+`127.0.0.1` on the unauthenticated loopback listener's effective port when that listener is
+enabled, otherwise the public port; a hub bound to a tailnet or LAN address has no other local
+data socket, so `ocx claude`, the `system-env` injection, the Claude Desktop profile, the Cursor
+gateway value, the gateway-model cache, the routed vision self-fetch and the API-access loopback
+fallback all go through that resolver rather than composing the port themselves. Management
+(`localManagementOrigin`) is the hub's loopback `hub.managementIngress` when enabled, otherwise
+the public bind address, and the caller supplies the management credential. Management
+authentication has no loopback bypass and the data-loopback listener serves no `/api/*`, so these
+two must never be collapsed into one base URL, and an admin credential must never be written into
+an exported client configuration.
+
 ## Connected Claude Desktop profiles
 
 Connected `ocx claude desktop apply` reads the hub's Desktop snapshot and writes the hub origin

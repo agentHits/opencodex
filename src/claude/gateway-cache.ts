@@ -13,6 +13,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { localInferenceOrigin } from "../lib/local-destinations";
 import { loadServiceTokenFromFile, serviceApiTokenFilePath } from "../lib/service-secrets";
 import type { OcxConfig } from "../types";
 
@@ -24,7 +25,12 @@ export interface GatewayModelRow {
 export interface GatewayModelCacheRefreshOptions {
   timeoutMs?: number;
   configDir?: string;
-  admissionConfig?: Pick<OcxConfig, "apiKeys">;
+  /**
+   * Admission credential source AND local destination source: the cache file's `baseUrl` must
+   * equal the `ANTHROPIC_BASE_URL` the CLI is launched with or Claude Code ignores the whole
+   * cache, so this has to resolve the same loopback listener `buildClaudeEnv` resolves (#4236).
+   */
+  admissionConfig?: Pick<OcxConfig, "apiKeys" | "unauthenticatedLoopbackListener">;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }
@@ -102,7 +108,7 @@ export async function refreshGatewayModelCacheFromProxy(
     if (admissionToken) headers.set("x-opencodex-api-key", admissionToken);
 
     const baseUrl = typeof portOrTarget === "number"
-      ? `http://127.0.0.1:${portOrTarget}`
+      ? localInferenceOrigin(options.admissionConfig, portOrTarget)
       : new URL(portOrTarget.baseUrl).origin;
 
     // ?ids=cli pins the readable claude-ocx id family deterministically (audit 051

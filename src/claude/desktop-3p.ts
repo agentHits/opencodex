@@ -22,6 +22,7 @@ import {
   type DesktopProfileModel,
 } from "./desktop-profile";
 import { nativeOpenAiContextWindow, type NativeContextLimitsInput } from "../codex/catalog";
+import { localInferencePort } from "../lib/local-destinations";
 import { assertDesktop3pModelsValid } from "./desktop-3p-guard";
 
 export interface Desktop3pModelEntry {
@@ -322,6 +323,9 @@ export function activeDesktop3pAlias(provider: string, modelId: string): string 
  * channel for supports1m/tier pins and it overrides discovery anyway (no merge), so
  * discovery stays off for determinism. supports1m makes Desktop offer a separate 1M
  * row; selecting it sends the bare id + `anthropic-beta: context-1m-2025-08-07`.
+ *
+ * `port` is the LOCAL port Desktop should dial, already resolved by the caller (see
+ * `writeDesktop3pConfig`): on a hub that is the unauthenticated loopback listener's port.
  */
 export function generateDesktop3pConfig(
   port: number,
@@ -620,8 +624,13 @@ export function writeDesktop3pConfig(
       if (connection.kind === "connected" || inspectRemoteDesktopCleanup().kind !== "absent") {
         return { written: false, path: resolveDesktop3pConfigLibraryPath(), reason: "desktop_remote_store_active" };
       }
+      // Claude Desktop runs on this machine, so it dials the unauthenticated loopback listener
+      // when one is enabled — on a tailnet-bound hub that is the only local socket (#4236).
+      // Resolved here, from the config this write already re-read, rather than in the pure
+      // generator: `latest.config` is the freshest answer any caller could pass in.
+      const localPort = localInferencePort(latest.config, port);
       return writeDesktop3pConfigWithGenerator(() => (
-        generateDesktop3pConfig(port, nativeSlugs, routedModels, apiKey, mode, profile, nativeContextCap)
+        generateDesktop3pConfig(localPort, nativeSlugs, routedModels, apiKey, mode, profile, nativeContextCap)
       ));
     }), lifecycleLockDeps);
   } catch { return { written: false, path: resolveDesktop3pConfigLibraryPath(), reason: "desktop_lifecycle_busy_or_unsafe" }; }

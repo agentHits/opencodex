@@ -18,6 +18,7 @@ import { isProxyAdmissionSecret } from "../server/auth-cors";
 import { findLiveProxy } from "../server/proxy-liveness";
 import type { OcxConfig } from "../types";
 import { configuredAdminToken } from "../lib/admin-secrets";
+import { localInferenceOrigin, localInferencePort, localManagementOrigin } from "../lib/local-destinations";
 import { PROXY_MARKER, ownAdmissionTokens, defaultAuthDetectDeps, detectClaudeAuth, type AuthDetectDeps } from "../claude/auth-detect";
 import { resolveClaudeAuthMode } from "../claude/auth-mode";
 import { withProcessRuntimeProvenance } from "../lib/bun-runtime";
@@ -102,14 +103,22 @@ function isClaudeLoopbackHostname(hostname: string): boolean {
     || normalized === "[::1]";
 }
 
-function targetsLocalClaudeProxy(value: string | undefined, port: number): boolean {
+/**
+ * Is this loopback base URL one of OURS?
+ *
+ * "Ours" is a SET of ports, not one port (#4236): on a hub with an unauthenticated loopback
+ * listener the public port and the listener's port are both local addresses this proxy answers
+ * on, so a URL naming either of them was written by us. Treating the one this launch did not
+ * pick as a foreign proxy would strip our own admission token out of the environment.
+ */
+function targetsLocalClaudeProxy(value: string | undefined, ports: readonly number[]): boolean {
   if (!value) return false;
   try {
     const parsed = new URL(value);
     const effectivePort = parsed.port === "" ? 80 : Number(parsed.port);
     return parsed.protocol === "http:"
       && isClaudeLoopbackHostname(parsed.hostname)
-      && effectivePort === port
+      && ports.includes(effectivePort)
       && parsed.username === ""
       && parsed.password === "";
   } catch {
@@ -147,7 +156,13 @@ export function buildClaudeEnv(
 ): ClaudeLaunchEnv {
   const explicitTarget = typeof portOrTarget === "number" ? null : portOrTarget;
   const port = typeof portOrTarget === "number" ? portOrTarget : null;
-  const managedBaseUrl = explicitTarget ? new URL(explicitTarget.baseUrl).origin : `http://127.0.0.1:${port}`;
+  // A local launch dials the unauthenticated loopback listener whenever one is enabled — the
+  // only local socket a tailnet-bound hub has (#4236). Unchanged on every other topology.
+  const managedBaseUrl = explicitTarget
+    ? new URL(explicitTarget.baseUrl).origin
+    : localInferenceOrigin(config, port!);
+  // Every local port this proxy answers on, so a base URL naming either one is still ours.
+  const ownLocalPorts = port === null ? [] : [...new Set([port, localInferencePort(config, port)])];
   const env: ClaudeLaunchEnv = { ...base };
   // Step 1 — strip OUR OWN dummy from the inherited environment before anything reads
   // or writes the token slot. setDefault below preserves any non-empty value, so a
@@ -188,10 +203,13 @@ export function buildClaudeEnv(
     try {
       const parsed = new URL(existingBaseUrl);
       const effectivePort = parsed.port === "" ? 80 : Number(parsed.port);
+      // Stale means "a port no live local listener of ours owns". With a loopback listener
+      // enabled that is two ports, and rewriting one of them into the other would reject a
+      // destination we wrote ourselves.
       if (parsed.protocol === "http:"
         && isClaudeLoopbackHostname(parsed.hostname)
-        && effectivePort !== port) {
-        const replacement = `http://127.0.0.1:${port}`;
+        && !ownLocalPorts.includes(effectivePort)) {
+        const replacement = managedBaseUrl;
         console.error(`⚠ Replacing stale opencodex ANTHROPIC_BASE_URL ${parsed.origin} with ${replacement}.`);
         env.ANTHROPIC_BASE_URL = replacement;
         // The credentials in this environment were paired with the destination we just
@@ -219,7 +237,7 @@ export function buildClaudeEnv(
   const ownTokens = explicitTarget ? [explicitTarget.admissionToken] : ownAdmissionTokens(config);
   const targetsLocalProxy = explicitTarget
     ? targetsClaudeRoutingTarget(env.ANTHROPIC_BASE_URL, explicitTarget)
-    : targetsLocalClaudeProxy(env.ANTHROPIC_BASE_URL, port!);
+    : targetsLocalClaudeProxy(env.ANTHROPIC_BASE_URL, ownLocalPorts);
   const isOwnAdmissionToken = (value: string): boolean =>
     ownTokens.includes(value) || isProxyAdmissionSecret(value, config);
   const inheritedApiKey = env.ANTHROPIC_API_KEY;
@@ -335,6 +353,12 @@ export function buildClaudeEnv(
  * Context-window map from the RUNNING proxy's management API (warm TTL cache; the
  * daemon registers every selector form — audit R3#1). 3s bound + management auth header.
  * (no [1m] marking, conservative).
+ *
+ * This is the MANAGEMENT destination, not the inference one (#4236): `/api/claude-code` is
+ * never served by the unauthenticated loopback listener, so it resolves through
+ * `localManagementOrigin` — a hub's loopback management ingress when it has one, otherwise the
+ * public bind — and keeps sending the local admin token. `enabled: false` is how `ocx claude`
+ * decides to launch natively, so a wrong destination here silently downgrades every launch.
  */
 export interface ClaudeCodeLiveState {
   contextWindows: Record<string, number>;
@@ -346,7 +370,7 @@ export async function fetchClaudeCodeState(config: OcxConfig, port: number, time
     const headers = new Headers();
     const token = configuredAdminToken();
     if (token) headers.set("x-opencodex-api-key", token);
-    const res = await fetch(`http://127.0.0.1:${port}/api/claude-code`, {
+    const res = await fetch(`${localManagementOrigin(config, port)}/api/claude-code`, {
       headers,
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -525,7 +549,10 @@ export function buildNativeClaudeEnv(
     return Boolean(value && (value === PROXY_MARKER || isProxyAdmissionSecret(value, config)));
   });
   const baseUrl = env.ANTHROPIC_BASE_URL;
-  if (hasOwnedAdmission && targetsLocalClaudeProxy(baseUrl, config.port)) {
+  // Both local ports count as ours here too: a native launch must shed the managed destination
+  // whichever of them this machine's last proxy launch wrote (#4236).
+  const nativeLocalPorts = [...new Set([config.port, localInferencePort(config, config.port)])];
+  if (hasOwnedAdmission && targetsLocalClaudeProxy(baseUrl, nativeLocalPorts)) {
     delete env.ANTHROPIC_BASE_URL;
   }
   for (const name of admissionSlots) {

@@ -7,6 +7,7 @@ import { PROXY_MARKER } from "../claude/auth-detect";
 import { isProxyAdmissionSecret } from "./auth-cors";
 import type { OcxConfig } from "../types";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
+import { localInferencePort } from "../lib/local-destinations";
 import { providerContextCap } from "../providers/context-cap";
 import { OPENAI_CODEX_PROVIDER_ID } from "../providers/openai-tiers";
 export { getShellEnvFilePath, installShellHook, uninstallShellHook, claudeCodeCliInstalled, reconcileShellHook } from "./system-env-shell";
@@ -35,7 +36,18 @@ const MANAGED_SYSTEM_ENV_NAMES = new Set<string>([
 
 interface SystemEnvTracking {
   pid: number;
+  /** The PUBLIC port of the owning proxy: its instance identity and its /healthz address. */
   port: number;
+  /**
+   * The loopback port the injected ANTHROPIC_BASE_URL names, when it is not `port` (#4236).
+   *
+   * These two separated the day local clients started honoring the unauthenticated loopback
+   * listener. Ownership is proven against THIS port (it is what was injected), while liveness
+   * is still probed on `port` — the listener serves no `/healthz`, so probing it would declare
+   * a perfectly live proxy stale and revert its environment. Absent in records written before
+   * this field existed, where the two were by definition the same.
+   */
+  clientPort?: number;
   injectedAt: string;
   /** Keys that were actually set by injection (revert only unsets these). */
   injectedKeys?: string[];
@@ -70,7 +82,8 @@ function readTracking(): SystemEnvTracking | undefined {
         (name): name is string => typeof name === "string" && MANAGED_SYSTEM_ENV_NAMES.has(name),
       ))]
       : undefined;
-    return { ...tracking, injectedKeys } as SystemEnvTracking;
+    const clientPort = Number.isInteger(tracking.clientPort) ? tracking.clientPort : undefined;
+    return { ...tracking, clientPort, injectedKeys } as SystemEnvTracking;
   } catch {
     return undefined;
   }
@@ -88,18 +101,24 @@ function ownedBaseUrl(port: number): string {
   return `http://127.0.0.1:${port}`;
 }
 
-function writeTracking(port: number, injectedKeys: string[]): void {
+function writeTracking(port: number, injectedKeys: string[], clientPort: number = port): void {
   recordOwnedConfigPath(getConfigDir(), getSystemEnvTrackingPath());
   mkdirSync(getConfigDir(), { recursive: true, mode: 0o700 });
   writeFileSync(getSystemEnvTrackingPath(), JSON.stringify({
     pid: process.pid,
     port,
+    ...(clientPort === port ? {} : { clientPort }),
     injectedAt: new Date().toISOString(),
     injectedKeys,
   }), { encoding: "utf8", mode: 0o600 });
 }
 
-function rollbackInjectedKeys(port: number, injectedKeys: string[]): void {
+/** The base URL that was injected: the loopback listener's port when one is in play (#4236). */
+function trackedBaseUrl(tracking: Pick<SystemEnvTracking, "port" | "clientPort">): string {
+  return ownedBaseUrl(tracking.clientPort ?? tracking.port);
+}
+
+function rollbackInjectedKeys(port: number, injectedKeys: string[], clientPort: number = port): void {
   const rollbackFailed: string[] = [];
   for (const name of [...injectedKeys].reverse()) {
     try {
@@ -110,7 +129,7 @@ function rollbackInjectedKeys(port: number, injectedKeys: string[]): void {
   }
 
   if (rollbackFailed.length > 0) {
-    writeTracking(port, rollbackFailed);
+    writeTracking(port, rollbackFailed, clientPort);
     return;
   }
 
@@ -164,14 +183,18 @@ export async function injectSystemEnv(
   const injectedKeys: string[] = existingTracking
     ? [...(existingTracking.injectedKeys ?? SYSTEM_ENV_NAMES)]
     : [];
+  // A launchd-started `claude` is a LOCAL client: it dials the unauthenticated loopback
+  // listener when one is enabled, because on a tailnet-bound hub nothing answers on
+  // 127.0.0.1:<public port> (#4236). `port` stays the instance identity and /healthz address.
+  const clientPort = localInferencePort(config, port);
   const inject = (name: string, value: string) => {
     setLaunchctlEnv(name, value);
     if (!injectedKeys.includes(name)) injectedKeys.push(name);
-    writeTracking(port, injectedKeys);
+    writeTracking(port, injectedKeys, clientPort);
   };
 
   try {
-    inject("ANTHROPIC_BASE_URL", ownedBaseUrl(port));
+    inject("ANTHROPIC_BASE_URL", ownedBaseUrl(clientPort));
     inject("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1");
     const markerMode = systemEnvMarkerMode(config, deps);
     if (markerMode === "proxy") {
@@ -190,7 +213,7 @@ export async function injectSystemEnv(
         unsetLaunchctlEnv("ANTHROPIC_AUTH_TOKEN");
         const tokenIdx = injectedKeys.indexOf("ANTHROPIC_AUTH_TOKEN");
         if (tokenIdx >= 0) injectedKeys.splice(tokenIdx, 1);
-        writeTracking(port, injectedKeys);
+        writeTracking(port, injectedKeys, clientPort);
       }
     }
     // Lever keys (devlog 136 B6): user-wins — skip any key the user already set in the
@@ -242,9 +265,9 @@ export async function injectSystemEnv(
       injectClaudeAgentDefs(config, windows);
     } catch { /* best-effort */ }
 
-    writeTracking(port, injectedKeys);
+    writeTracking(port, injectedKeys, clientPort);
   } catch (error) {
-    rollbackInjectedKeys(port, injectedKeys);
+    rollbackInjectedKeys(port, injectedKeys, clientPort);
     removeShellEnvFile();
     console.error("Failed to inject system environment; rolled back launchctl changes:", error);
     throw error;
@@ -266,7 +289,7 @@ export function revertSystemEnv(): RevertResult {
 
   try {
     const tracksBaseUrl = tracking.injectedKeys?.includes("ANTHROPIC_BASE_URL") ?? true;
-    if (tracksBaseUrl && launchctlGetenv("ANTHROPIC_BASE_URL") !== ownedBaseUrl(tracking.port)) {
+    if (tracksBaseUrl && launchctlGetenv("ANTHROPIC_BASE_URL") !== trackedBaseUrl(tracking)) {
       return { reverted: false, reason: "ownership mismatch" };
     }
 
@@ -296,6 +319,9 @@ export async function cleanStaleSystemEnv(): Promise<CleanupResult> {
   if (!tracking) return { cleaned: false, reason: "no tracking file" };
 
   try {
+    // `tracking.port`, never the injected client port: `/healthz` is not on the
+    // unauthenticated loopback listener's allowlist, so probing that port would 404 and
+    // revert a live proxy's environment (#4236).
     const response = await fetch(`${ownedBaseUrl(tracking.port)}/healthz`, {
       signal: AbortSignal.timeout(1_000),
     });
