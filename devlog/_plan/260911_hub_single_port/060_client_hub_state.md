@@ -50,8 +50,13 @@ Body:
   "providers": [{ "name": "", "adapter": "", "authMode": "key|forward|oauth|local|null",
                   "hasCredential": false, "disabled": false }],
   "oauth": [{ "provider": "", "loggedIn": false }],
-  "subagentModels": [], "claudeCode": { "enabled": true } }
+  "subagentModels": [], "truncated": false, "claudeCode": { "enabled": true } }
 ```
+
+A provider the operator marked `disabled` is **not exported at all** (review round, below), so
+`disabled` is always `false` from a hub of this version; the field stays in the contract because an
+older hub does send `true` and a client reading one must still label the row. `truncated` says out
+loud that a cap was hit, so a prefix is never presented as the whole list.
 
 `hasCredential` is the `!!p.apiKey` presence projection `GET /api/providers` already ships.
 `loggedIn` is `oauthLoginSummary`'s boolean with the **email and account id dropped, not masked**.
@@ -95,7 +100,7 @@ oversized cache files are refused rather than followed.
 
 `CliStatusJson` gains `runtimeRole` and an always-present `remoteHub` block —
 `{ connected, origin, stateSource, reason?, fetchedAt?, ageSeconds?, hubVersion, providers, oauth,
-subagentModels, claudeCodeEnabled }`. `schemaVersion` stays 1 (additive, same rule as
+subagentModels, truncated, claudeCodeEnabled }`. `schemaVersion` stays 1 (additive, same rule as
 `versionSkew`), and `connection` is untouched: it describes the **link**, `remoteHub` describes
 what is on the other end of it.
 
@@ -152,7 +157,9 @@ no hub round trip, so an offline hub cannot stand between an operator and a loca
 `_remoteHub` is the **first** key on a client:
 `{ connected, origin, note: "provider credentials and model availability live on the hub; run ocx
 status" }`. It must be read before the empty `providers` map, not after it. `client.priorCatalog`
-prints as `<omitted: N bytes>`, mirroring `sanitizeModelCostsForDisplay`.
+prints as `<omitted: N bytes>`, mirroring `sanitizeModelCostsForDisplay`. `connected` is observed
+from `collectClientConnectionStatus()`, not assumed from the presence of a `client` block (review
+round, finding 3), and when it is false the note names what is wrong instead.
 
 Both are display-only. `config export` emits the real config untouched, so round trips still
 validate; a persisted `client.note` was rejected because `clientConnectionSchema` is `.strict()`
@@ -165,9 +172,12 @@ and persisted prose drifts.
   forwards whatever hub key the browser supplies — so it is not a CLI channel. Ingwannu's review
   note forbids adding `/api/*` to the unauthenticated listener or copying an admin credential into
   exported client configuration, and this does neither.
-- **Booleans only, forever.** Provider *names* already leak through `/v1/catalog` slugs, so the
-  delta this route adds is `hasCredential` and `loggedIn`. Emails, account ids, quotas and usage
-  must never be added: a data key opens this.
+- **Booleans only, forever.** Emails, account ids, quotas and usage must never be added: a data
+  key opens this. The disclosure delta over `/v1/catalog` and `/v1/models`, stated exactly (the
+  first draft said "only two booleans", which was wrong — see the review round): `hasCredential`,
+  `loggedIn`, `authMode`, the featured roster, and the NAME and adapter of an **enabled** provider
+  those routes omit for want of a usable credential. That last one is the point of the route, and
+  it is the whole widening. A `disabled` provider is not exported at all.
 - **`authMode` is included** even though it was not in the original sketch. Without it
   `hasCredential: false` on an OAuth provider reads as "not configured" — the precise inference
   that went wrong. It is shape, not secret.
@@ -244,6 +254,120 @@ disconnect` and `launchctl` were **not** run, and the real `~/.opencodex`, `~/.c
 `~/.claude/agents` and `~/Library/LaunchAgents` were not touched. Every test sets
 `OPENCODEX_HOME` to a `mkdtemp` directory; `tests/preload.ts` arms `OCX_TEST_HOME_GUARD=1` for
 every invocation including a bare `bun test <file>`.
+
+## Review round (PR #4255)
+
+Seven findings, all accepted. The two that mattered are the same mistake the PR itself is about,
+committed by the PR: a boundary comment that claimed less disclosure than the code performed, and a
+`connected: true` inferred from configuration rather than observed. The rest are honesty gaps —
+a reason string that printed a raw error code, a silent truncation, a cache outliving its
+connection, an untested 404, and two docs claims.
+
+### 1. The projection exported every provider row, and three comments said otherwise (should-fix)
+
+`buildHubState` mapped **all** of `config.providers`, including rows with `disabled: true`.
+`/v1/catalog` and `/v1/models` both filter a disabled provider out (`src/router.ts:490`,
+`src/codex/catalog/provider-fetch.ts:512`), so this route was the only data-plane surface that
+named one — while `src/remote/hub-state.ts`, the route comment in `src/server/index.ts` and this
+devlog all asserted the delta over `/v1/catalog` was "only the two booleans". A wrong boundary
+claim is worse than no claim: it is what a future reviewer checks the code against.
+
+Fixed on both sides. `buildHubState` drops a disabled provider entirely — a client cannot route to
+it, so absence is the truthful report, and `authMode` already explains a present-but-keyless row
+without it. The three comments and the devlog now state the delta exactly: `hasCredential`,
+`loggedIn`, `authMode`, the featured roster, and the **name and adapter of an enabled provider the
+catalog omits for want of a usable credential**. That last item is the point of the route and the
+whole widening.
+
+`HubStateProvider.disabled` stays in the contract, always `false` from a hub of this version. An
+older hub does send `true`, and a client reading one must still be able to label the row rather
+than present it as routable; dropping the field would have made a new client quietly promote an
+old hub's disabled providers.
+
+### 2. `hub_state_http_<status>` and the content-type code printed as bare codes (should-fix)
+
+`fetchHubState` throws `hub_state_content_type_invalid` and `hub_state_http_<status>`
+(`src/client/hub-client.ts:497,502`); `hubStateFailureReason` had a case for neither, so the
+`ocx status` banner could read `state unavailable (hub_state_http_507)`. That sends an operator
+hunting for a client bug when the hub has in fact answered and said something — 507 is the hub's
+own `hub_state_too_large`.
+
+Both render as sentences now: "the hub's state response was not JSON" (captive portal, TLS
+terminator, error page) and "the hub answered HTTP N to the state request". The prefix branch
+validates the suffix is numeric, so a non-numeric code still falls back to the code rather than
+printing `HTTP oops`.
+
+### 3. `_remoteHub.connected` was hardcoded `true` (should-fix)
+
+Any config with `runtimeRole: "client"` and a `client` block got `connected: true` — including a
+machine whose data key was revoked at the hub, rotated away, or whose token file was deleted. The
+presence of configuration is not evidence the connection works, which is #4236 in miniature.
+
+`remoteHubConfigNote` now takes the connection status and requires both halves —
+`state === "connected"` **and** `token === "owned"`, the comparison of the token file's
+fingerprint against the connection record that only `collectClientConnectionStatus()` performs.
+When either fails the note says which (`…its hub data-plane token is missing; run ocx connect
+status`) instead of claiming a working link. The parameter is a thunk, so the guard returns first
+on a standalone or hub install and the probe never runs; the call site imports `./connect`
+dynamically so `ocx config get/set` does not drag the client lifecycle in.
+
+### 4. `.slice(0, MAX_HUB_STATE_PROVIDERS)` truncated silently (nit)
+
+A hub with 240 providers served 200 and said nothing, so a client would have told its reader the
+other 40 do not exist. `truncated: boolean` is now part of the contract, set when the provider,
+oauth or roster cap is hit, and `remoteHubStatusLines` appends "(the hub truncated this state to
+fit its response caps; some rows are not listed)". The parser treats an absent `truncated` as
+`false` (an older hub sends no such key) but still refuses a present non-boolean.
+
+### 5. The hub-state cache outlived the connection (nit)
+
+`disconnectClient` removed the token, the catalog and the connection record but left
+`<OPENCODEX_HOME>/hub-state.json` naming the former hub's providers and logins. It is owner-stamped
+so a reader would reject it, but it is the wrong artifact to leave where someone might read it.
+Unlinked after `connection_cleared`, best effort: the disconnect has already succeeded by then and
+a stubborn cache file must not fail it or block a retry.
+
+### 6. The loopback 404 was asserted nowhere, and the PR body named the wrong file (nit)
+
+The decision "no `loopbackRouteAllowed` entry" had no test. Now
+`tests/server/loopback-listener-integration.test.ts` starts a real hub with the unauthenticated
+loopback listener, asks it for `GET /v1/hub-state`, and asserts a 404 whose code is `not_found` —
+the **listener's** refusal, not the route's `hub_state_not_a_hub`, which would have proved the
+request reached the handler. The same run then reads the route successfully on the public listener
+with a data key, so the 404 cannot pass vacuously through a missing route.
+
+The PR body claimed `v1-hub-state.test.ts` pins the standalone 404. It does pin a standalone 404 of
+its own, but the admission-matrix proof lives in `tests/server/api-key-attribution.test.ts`;
+the body now says so.
+
+### 7. `structure/01_runtime.md` did not mention hub-state (nit)
+
+"Remote Hub hardening ownership" named `src/remote/protocol.ts`, `src/client/hub-client.ts` and
+`src/client/hub-relay.ts`. It now also names `src/remote/hub-state.ts` (contract, caps, shared
+parser) and `src/client/hub-state.ts` (resolution, owner-stamped 0600 cache, and the rule that a
+failed read reports "unavailable" rather than degrading to local state).
+
+### Verification (review round, this machine)
+
+```
+bun run typecheck                                           # clean
+bun run privacy:scan                                        # Privacy scan passed
+bun test tests/server/v1-hub-state.test.ts                  #  9 pass (was 8)
+bun test tests/clients/client-hub-state.test.ts             # 26 pass (was 20)
+bun test tests/cli/cli-config-show-client.test.ts           #  9 pass (was 6)
+bun test tests/cli/cli-status-hub-state.test.ts             # 13 pass (was 12)
+bun test tests/cli/cli-status-json.test.ts                  # 54 pass
+bun test tests/server/api-key-attribution.test.ts           # 25 pass
+bun test tests/server/loopback-listener-admission.test.ts   # 31 pass
+bun test tests/server/loopback-listener-integration.test.ts # 36 pass (was 35)
+bun test tests/clients/client-connect.test.ts               # 49 pass (cache-removal assertion)
+bun test tests/test-layout.test.ts tests/test-layout-tooling.test.ts   # 17 pass
+```
+
+No new test files, so `layout.json` and `tests/fixtures/test-layout-expected.json` are unchanged.
+No repository-wide suite (operator instruction); no `ocx service …`, `ocx start/stop/ensure/sync/
+connect/disconnect/status` or `launchctl` was run, and every test kept `OPENCODEX_HOME` in a
+`mkdtemp` directory.
 
 ## Left undone
 
