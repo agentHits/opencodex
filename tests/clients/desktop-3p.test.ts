@@ -397,14 +397,17 @@ describe("Claude Desktop 3P models", () => {
   /**
    * Claude Desktop is a LOCAL client (#4236): the gateway base URL it is given must be the
    * unauthenticated loopback listener when one is enabled, because on a hub bound to a tailnet
-   * address `127.0.0.1:<public port>` is a closed port. Resolved inside `writeDesktop3pConfig`
-   * from the config it already re-reads, so every caller gets the same answer.
+   * address `127.0.0.1:<public port>` is a closed port — and with NO listener it must be the
+   * bind address, which is the case the first round of this change still wrote as loopback.
+   * Resolved inside `writeDesktop3pConfig` from the config it already re-reads, so every caller
+   * gets the same answer.
    */
   test("the written gateway base URL follows the unauthenticated loopback listener", () => {
     const cases = [
       { listener: { enabled: true, port: 10104 }, expected: "http://127.0.0.1:10104" },
       { listener: { enabled: true }, expected: "http://127.0.0.1:4096" },
-      { listener: undefined, expected: "http://127.0.0.1:4096" },
+      // No listener on a tailnet-bound hub: the bind address, not a closed loopback port.
+      { listener: undefined, expected: "http://100.76.170.81:4096" },
     ] as const;
     for (const { listener, expected } of cases) {
       const dir = mkdtempSync(join(tmpdir(), "ocx-desktop-listener-"));
@@ -433,6 +436,12 @@ describe("Claude Desktop 3P models", () => {
           ? profile.inferenceGatewayBaseUrl
           : applied?.inferenceGatewayBaseUrl;
         expect({ listener, baseUrl }).toEqual({ listener, baseUrl: expected });
+        // The exported profile carries the DATA-PLANE key it was handed and nothing more: a
+        // management credential must never enter a client configuration (review on #4236).
+        const apiKey = typeof profile.inferenceGatewayApiKey === "string"
+          ? profile.inferenceGatewayApiKey
+          : applied?.inferenceGatewayApiKey;
+        expect({ listener, apiKey }).toEqual({ listener, apiKey: "k" });
       } finally {
         if (previous === undefined) delete process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR;
         else process.env.OPENCODEX_CLAUDE_DESKTOP_CONFIG_DIR = previous;
@@ -441,6 +450,16 @@ describe("Claude Desktop 3P models", () => {
         removeTreeWithRetry(dir);
       }
     }
+  });
+
+  test("generateDesktop3pConfig accepts a resolved origin as well as a bare port", () => {
+    // The pure generator gained the origin form because a bind-address destination is not
+    // expressible as a port. A bare port still means `http://127.0.0.1:<port>`, so every other
+    // caller and every existing expectation is unchanged.
+    const byPort = generateDesktop3pConfig(4096, ["gpt-5.6-sol"], [], "k") as Record<string, unknown>;
+    const byOrigin = generateDesktop3pConfig("http://100.76.170.81:4096", ["gpt-5.6-sol"], [], "k") as Record<string, unknown>;
+    expect(byPort.inferenceGatewayBaseUrl).toBe("http://127.0.0.1:4096");
+    expect(byOrigin.inferenceGatewayBaseUrl).toBe("http://100.76.170.81:4096");
   });
 
   test("re-applying an owned profile preserves foreign profile keys", () => {

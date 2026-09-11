@@ -3,6 +3,7 @@ import { mkdtempSync} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../../src/config";
+import { configuredPort, setCorsOrigin } from "../../src/server/auth-cors";
 import { parseRequest } from "../../src/responses/parser";
 import { startServer } from "../../src/server";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
@@ -92,23 +93,49 @@ describe("describeImageRouted unit", () => {
 
   /**
    * The self-fetch is a local client too (#4236): on a hub bound to a tailnet address the only
-   * socket on 127.0.0.1 is the unauthenticated loopback listener, which now admits the chat
-   * wire this helper speaks. Three topologies, one destination each.
+   * credential-free socket is the unauthenticated loopback listener, which now admits the chat
+   * wire this helper speaks — and with no listener the destination is the bind address, because
+   * nothing answers on loopback at all. One destination per topology.
    */
   test("the self-fetch base URL follows the unauthenticated loopback listener", () => {
     expect(routedDescribeBaseUrl({
       port: 10100,
+      hostname: "100.76.170.81",
       unauthenticatedLoopbackListener: { enabled: true, port: 10104 },
     })).toBe("http://127.0.0.1:10104");
     expect(routedDescribeBaseUrl({
       port: 10100,
+      hostname: "100.76.170.81",
       unauthenticatedLoopbackListener: { enabled: true },
     })).toBe("http://127.0.0.1:10100");
+    // Listener off on a tailnet bind: the bind address, not a closed loopback port.
     expect(routedDescribeBaseUrl({
       port: 10100,
+      hostname: "100.76.170.81",
       unauthenticatedLoopbackListener: { enabled: false },
-    })).toBe("http://127.0.0.1:10100");
+    })).toBe("http://100.76.170.81:10100");
     expect(routedDescribeBaseUrl({ port: 10100 })).toBe("http://127.0.0.1:10100");
+  });
+
+  test("a config with no usable port falls back to the default, never to port 0", () => {
+    // `_corsOrigin` carries no explicit port until the server records one, so `configuredPort()`
+    // returns "" and an unguarded `Number(configuredPort())` composed `http://127.0.0.1:0` — a
+    // URL that connects to nothing. Pin that exact state rather than whatever a sibling test's
+    // server left behind in this module-level global.
+    const restore = configuredPort();
+    try {
+      // A recorded port is used as-is.
+      setCorsOrigin(4321);
+      expect(routedDescribeBaseUrl({ port: 0 })).toBe("http://127.0.0.1:4321");
+      // An ephemeral bind that has not recorded one yet yields "0", whose Number() is 0.
+      setCorsOrigin(0);
+      expect(Number(configuredPort())).toBe(0);
+      const url = new URL(routedDescribeBaseUrl({ port: 0 }));
+      expect(url.port).not.toBe("0");
+      expect(url.href).toBe("http://127.0.0.1:10100/");
+    } finally {
+      setCorsOrigin(Number(restore) || 10_100);
+    }
   });
 
   test("the vision plan carries the listener through to the self-fetch", () => {
@@ -143,7 +170,12 @@ describe("describeImageRouted unit", () => {
     } as unknown as OcxConfig, routed, "text-model", request);
     expect(plan?.backend).toBe("routed");
     expect(plan?.routedConfig?.unauthenticatedLoopbackListener).toEqual({ enabled: true, port: 10104 });
+    // `hostname` has to survive the narrowing for the same reason: with no listener it is the
+    // ONLY field that distinguishes a reachable destination from a closed loopback port.
+    expect(plan?.routedConfig?.hostname).toBe("100.76.170.81");
     expect(routedDescribeBaseUrl(plan!.routedConfig!)).toBe("http://127.0.0.1:10104");
+    expect(routedDescribeBaseUrl({ ...plan!.routedConfig!, unauthenticatedLoopbackListener: undefined }))
+      .toBe("http://100.76.170.81:10100");
   });
 
   test("admission ladder: env token first, then first apiKeys entry, as x-opencodex-api-key", () => {

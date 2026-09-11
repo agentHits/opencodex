@@ -43,10 +43,13 @@ describe("buildApiAccessEndpoints", () => {
   });
 
   test("wildcard binds fall back to loopback only without request context", () => {
-    expect(buildApiAccessEndpoints({ hostname: "0.0.0.0", port: 10100 }).baseUrl)
-      .toBe("http://127.0.0.1:10100/v1");
-    expect(buildApiAccessEndpoints({ hostname: "::", port: 10100 }).baseUrl)
-      .toBe("http://127.0.0.1:10100/v1");
+    // Every all-zero spelling, not the three this file used to know: `0.0.0.0.`, `::0` and `*`
+    // are wildcard binds the server treats as such, and describing them as literal hostnames
+    // published `http://0.0.0.0.:10100` — a URL that resolves to nothing — to the GUI.
+    for (const hostname of ["0.0.0.0", "0.0.0.0.", "00.0.0.000", "::", "[::]", "::0", "0::", "*", "0", ""]) {
+      expect({ hostname, baseUrl: buildApiAccessEndpoints({ hostname, port: 10100 }).baseUrl })
+        .toEqual({ hostname, baseUrl: "http://127.0.0.1:10100/v1" });
+    }
   });
 
   test("wildcard binds publish the request host instead of 127.0.0.1", () => {

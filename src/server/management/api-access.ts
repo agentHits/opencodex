@@ -1,5 +1,6 @@
 import type { OcxConfig } from "../../types";
-import { localInferenceOrigin } from "../../lib/local-destinations";
+import { isWildcardHostname } from "../../codex/loopback-target";
+import { localInferenceDestination } from "../../lib/local-destinations";
 import { probeHostname } from "../proxy-liveness";
 
 export interface ApiAccessEndpoints {
@@ -22,9 +23,14 @@ export type BuildApiAccessEndpointsOptions = {
   requestOrigin?: string | null;
 };
 
+/**
+ * Wildcard bind scope, shared with `probeHostname` and the loopback-companion gate rather than
+ * re-spelled here: a third list of three spellings is how `0.0.0.0.` and `::0` ended up treated
+ * as specific bind addresses on one side and wildcards on the other.
+ */
 function isWildcardBindHost(hostname: string | undefined): boolean {
   const trimmed = (hostname ?? "").trim();
-  return !trimmed || trimmed === "0.0.0.0" || trimmed === "::" || trimmed === "[::]";
+  return !trimmed || isWildcardHostname(trimmed);
 }
 
 /** Bracket bare IPv6 literals for URL authority composition. */
@@ -109,7 +115,7 @@ export function resolveApiAccessBaseUrl(
   // name is loopback — and on that address the unauthenticated loopback listener, when one is
   // enabled, is the port a local caller should use (#4236). The branches above are unchanged:
   // a specific bind or a real request host still describes the address the CLIENT reached.
-  return `${localInferenceOrigin(config, port)}/v1`;
+  return `${localInferenceDestination(config, port).origin}/v1`;
 }
 
 /** @deprecated Prefer resolveApiAccessBaseUrl; retained for focused host-format tests. */

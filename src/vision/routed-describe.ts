@@ -19,18 +19,18 @@
  * admission secret in a forwardable header is a forwarding hazard). Loopback
  * binds require no token at all (resolveApiAuth admits loopback).
  *
- * Known limitation (recorded in roadmap 170): a bindHost where 127.0.0.1
- * does not answer cannot reach its own loopback — same latent limitation
- * gateway-cache has. #4236 closes it for the case that actually occurs: a hub
- * with an unauthenticated loopback listener, which this helper now dials.
+ * Destination (#4236): the unauthenticated loopback listener when one is
+ * enabled, otherwise the BIND address — the former roadmap-170 limitation
+ * ("a bindHost where 127.0.0.1 does not answer cannot reach its own
+ * loopback") is closed by resolving through `localInferenceDestination`
+ * rather than composing 127.0.0.1 by hand.
  */
 import type { OcxConfig } from "../types";
-import { localInferenceOrigin } from "../lib/local-destinations";
+import { localAdmissionToken, localInferenceDestination } from "../lib/local-destinations";
 import { signalWithTimeout, cancelBodyOnAbort } from "../lib/abort";
 import { redactSecretString } from "../lib/redact";
 import { sidecarEnter } from "../lib/sidecar-tracker";
-import { configuredApiAuthToken, configuredPort } from "../server/auth-cors";
-import { loadServiceTokenFromFile } from "../lib/service-secrets";
+import { configuredPort } from "../server/auth-cors";
 import type { DescribeOutcome, VisionSettings } from "./describe";
 
 export const VISION_DESCRIBE_TERMINAL_HEADER = "x-opencodex-vision-describe";
@@ -62,28 +62,43 @@ function validateImageUrl(url: string): string | null {
   return "unsupported image URL scheme (expected data: or https:)";
 }
 
-/** The admission ladder: env token, service token file, first configured API key. */
+/**
+ * The admission ladder: env token, hardened service token file, first configured API key.
+ *
+ * Shared with every other local client through `localAdmissionToken` so the credential this
+ * self-fetch presents cannot drift from the one the Codex provider table and the Claude launch
+ * env carry. Never the admin token.
+ */
 export function routedDescribeAdmissionToken(config: Pick<OcxConfig, "apiKeys">): string | undefined {
-  const envToken = configuredApiAuthToken();
-  if (envToken) return envToken;
-  const fileToken = loadServiceTokenFromFile(process.env);
-  if (fileToken) return fileToken;
-  const first = config.apiKeys?.[0]?.key?.trim();
-  return first || undefined;
+  return localAdmissionToken(config);
 }
 
-/** Base URL seam for tests; production always self-fetches loopback. */
+/** Base URL seam for tests; production always self-fetches the resolved local destination. */
 export function routedDescribeBaseUrl(
-  config: Pick<OcxConfig, "port" | "unauthenticatedLoopbackListener">,
+  config: Pick<OcxConfig, "port" | "hostname" | "unauthenticatedLoopbackListener">,
 ): string {
-  // config.port can be 0 (ephemeral bind, tests) or stale after a live port
-  // override; the server records its ACTUAL bound port via setCorsOrigin at
-  // startup, so prefer that when config carries no positive port.
-  const port = config.port && config.port > 0 ? config.port : Number(configuredPort());
-  // This self-fetch is a local client like any other: on a hub bound to a tailnet address the
-  // only socket on 127.0.0.1 is the unauthenticated loopback listener (#4236). The helper sends
-  // the OpenAI chat wire, which that listener now admits.
-  return localInferenceOrigin(config, port);
+  return routedDescribeDestination(config).origin;
+}
+
+/**
+ * The local destination this self-fetch dials, and whether it needs a credential.
+ *
+ * This is a local client like any other: the unauthenticated loopback listener when one is
+ * enabled, otherwise the bind address — on a tailnet-bound hub there is no loopback socket at
+ * all (#4236). The helper sends the OpenAI chat wire, which that listener now admits.
+ */
+function routedDescribeDestination(
+  config: Pick<OcxConfig, "port" | "hostname" | "unauthenticatedLoopbackListener">,
+) {
+  // config.port can be 0 (ephemeral bind, tests) or stale after a live port override; the
+  // server records its ACTUAL bound port via setCorsOrigin at startup, so prefer that when
+  // config carries no positive port. `configuredPort()` is itself `0` when `_corsOrigin` has no
+  // explicit port (a default-port origin), so the literal default has to backstop it or the
+  // composed URL names port 0 and the self-fetch cannot connect.
+  const port = config.port && config.port > 0
+    ? config.port
+    : Number(configuredPort()) || 10_100;
+  return localInferenceDestination(config, port);
 }
 
 export async function describeImageRouted(
@@ -91,7 +106,7 @@ export async function describeImageRouted(
   _detail: string | undefined,
   contextText: string,
   routedModel: string,
-  config: Pick<OcxConfig, "port" | "apiKeys" | "unauthenticatedLoopbackListener">,
+  config: Pick<OcxConfig, "port" | "hostname" | "apiKeys" | "unauthenticatedLoopbackListener">,
   settings: VisionSettings,
   abortSignal?: AbortSignal,
   baseUrlOverride?: string,
@@ -105,6 +120,15 @@ export async function describeImageRouted(
   };
   const admission = routedDescribeAdmissionToken(config);
   if (admission) headers["x-opencodex-api-key"] = admission;
+  // A bind that demands admission with no resolvable credential would return 401 with a body
+  // the caller reports as a describe failure; naming the cause once is the difference between
+  // "vision is broken" and a fixable configuration note.
+  if (!admission && !baseUrlOverride && routedDescribeDestination(config).requiresAdmissionToken) {
+    console.warn(
+      "[vision] routed describe has no opencodex data-plane credential for "
+      + `${routedDescribeBaseUrl(config)} — the self-fetch will be refused.`,
+    );
+  }
 
   const requestBody = {
     model: routedModel,

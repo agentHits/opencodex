@@ -547,8 +547,11 @@ describe("ocx claude env assembly", () => {
  * Which local socket `ocx claude` dials (#4236).
  *
  * `ocx claude` is handed the live PUBLIC port. On a hub bound to a tailnet address nothing
- * answers on `127.0.0.1:<public port>`, so the launch has to resolve the unauthenticated
- * loopback listener instead — the same port `ocx sync` already writes into Codex.
+ * answers on `127.0.0.1:<public port>`, so the launch resolves the unauthenticated loopback
+ * listener instead — the same port `ocx sync` already writes into Codex. With NO listener the
+ * destination is the BIND address: reachable, but it demands a data-plane credential, so the
+ * launch has to carry one or say out loud that it cannot. The first round of this change
+ * returned loopback unconditionally and these tests pinned that as intended.
  */
 describe("ocx claude local inference destination", () => {
   const hub = (listener?: { enabled: boolean; port?: number }) => cfg({
@@ -569,14 +572,88 @@ describe("ocx claude local inference destination", () => {
 
   test("a plain loopback install is byte-identical to before", () => {
     expect(buildClaudeEnv(cfg(), 10100, {}).ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:10100");
-    // And a hub that enabled no listener keeps dialing the public port too: this PR changes
-    // where an ENABLED listener sends local clients, not whether one exists.
-    expect(buildClaudeEnv(hub(), 10100, {}).ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:10100");
   });
 
-  test("neither of our own local ports is treated as a stale foreign proxy", () => {
-    // The public port and the listener port are both ours. Rewriting one into the other would
-    // strip the admission token that was minted for it, silently downgrading the launch.
+  test("with the listener OFF the destination is the bind address, not a dead loopback port", () => {
+    // The #4236 topology itself. `127.0.0.1:10100` does not exist on this hub, so returning it
+    // — which the first round of this change did — is a guaranteed connect failure. The bind
+    // address answers, and the admission token the launch carries is what makes it usable.
+    const config = cfg({
+      claudeCode: { authMode: "proxy" },
+      hostname: "100.76.170.81",
+      runtimeRole: "hub",
+      apiKeys: [{ id: "k1", name: "local", key: "ocx_data_this_proxy_key", createdAt: "2026-01-01T00:00:00Z" }],
+    } as Partial<OcxConfig>);
+    const env = buildClaudeEnv(config, 10100, {}, {}, AUTH_PRESENT);
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://100.76.170.81:10100");
+    // `targetsLocalClaudeProxy` has to recognize the value we just wrote, or the launch would
+    // refuse to attach the credential to its own destination one line later.
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("ocx_data_this_proxy_key");
+  });
+
+  test("a wildcard bind keeps loopback but still carries the credential it demands", () => {
+    const config = cfg({
+      claudeCode: { authMode: "proxy" },
+      hostname: "0.0.0.0",
+      apiKeys: [{ id: "k1", name: "local", key: "ocx_data_this_proxy_key", createdAt: "2026-01-01T00:00:00Z" }],
+    } as Partial<OcxConfig>);
+    const env = buildClaudeEnv(config, 10100, {}, {}, AUTH_PRESENT);
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:10100");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("ocx_data_this_proxy_key");
+  });
+
+  test("a subscription launch on a bind that demands admission degrades out loud", () => {
+    // Asserting a host token would log a claude.ai subscriber out (#253), so the launch cannot
+    // carry one — and a silent 401 on the first request is the failure this warning replaces.
+    const config = cfg({
+      claudeCode: { authMode: "subscription" },
+      hostname: "100.76.170.81",
+      runtimeRole: "hub",
+      apiKeys: [{ id: "k1", name: "local", key: "ocx_data_this_proxy_key", createdAt: "2026-01-01T00:00:00Z" }],
+    } as Partial<OcxConfig>);
+    const errors: string[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+    try {
+      const env = buildClaudeEnv(config, 10100, {}, {}, AUTH_PRESENT);
+      expect(env.ANTHROPIC_BASE_URL).toBe("http://100.76.170.81:10100");
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    } finally {
+      console.error = realError;
+    }
+    expect(errors.some(line =>
+      line.includes("http://100.76.170.81:10100") && line.includes("data-plane credential"),
+    )).toBe(true);
+  });
+
+  test("both live local ports are ours; a port nothing answers on is not", () => {
+    // On a LOOPBACK or wildcard bind the public port and the listener port BOTH answer on
+    // 127.0.0.1, so a URL naming either was written by us. Rewriting one into the other would
+    // strip the admission token minted for it and silently downgrade the launch.
+    for (const hostname of ["127.0.0.1", "0.0.0.0"]) {
+      const config = cfg({
+        claudeCode: { authMode: "proxy" },
+        hostname,
+        runtimeRole: "hub",
+        unauthenticatedLoopbackListener: { enabled: true, port: 10104 },
+        apiKeys: [{ id: "k1", name: "local", key: "ocx_data_this_proxy_key", createdAt: "2026-01-01T00:00:00Z" }],
+      } as Partial<OcxConfig>);
+      for (const origin of ["http://127.0.0.1:10100", "http://127.0.0.1:10104"]) {
+        const env = buildClaudeEnv(config, 10100, { ANTHROPIC_BASE_URL: origin }, {}, {
+          ...AUTH_PRESENT,
+          preBunAnthropicSlots: ["ANTHROPIC_BASE_URL"],
+        });
+        expect({ hostname, origin, baseUrl: env.ANTHROPIC_BASE_URL }).toEqual({ hostname, origin, baseUrl: origin });
+        expect({ hostname, origin, token: env.ANTHROPIC_AUTH_TOKEN })
+          .toEqual({ hostname, origin, token: "ocx_data_this_proxy_key" });
+      }
+    }
+  });
+
+  test("on a tailnet bind the public port is NOT ours on loopback, so it is replaced", () => {
+    // The counterpart of the case above, and the reason the set is computed from the bind scope
+    // instead of from "our two port numbers": nothing answers on 127.0.0.1:10100 here, so an
+    // inherited value naming it is stale and must be rewritten to the listener.
     const config = cfg({
       claudeCode: { authMode: "proxy" },
       hostname: "100.76.170.81",
@@ -584,14 +661,17 @@ describe("ocx claude local inference destination", () => {
       unauthenticatedLoopbackListener: { enabled: true, port: 10104 },
       apiKeys: [{ id: "k1", name: "local", key: "ocx_data_this_proxy_key", createdAt: "2026-01-01T00:00:00Z" }],
     } as Partial<OcxConfig>);
-    for (const origin of ["http://127.0.0.1:10100", "http://127.0.0.1:10104"]) {
-      const env = buildClaudeEnv(config, 10100, { ANTHROPIC_BASE_URL: origin }, {}, {
-        ...AUTH_PRESENT,
-        preBunAnthropicSlots: ["ANTHROPIC_BASE_URL"],
-      });
-      expect({ origin, baseUrl: env.ANTHROPIC_BASE_URL }).toEqual({ origin, baseUrl: origin });
-      expect({ origin, token: env.ANTHROPIC_AUTH_TOKEN }).toEqual({ origin, token: "ocx_data_this_proxy_key" });
-    }
+    const env = buildClaudeEnv(config, 10100, { ANTHROPIC_BASE_URL: "http://127.0.0.1:10100" }, {}, {
+      ...AUTH_PRESENT,
+      preBunAnthropicSlots: ["ANTHROPIC_BASE_URL"],
+    });
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:10104");
+    // Still ours: the listener admits without a credential, but the launch keeps the one it has.
+    const ported = buildClaudeEnv(config, 10100, { ANTHROPIC_BASE_URL: "http://127.0.0.1:10104" }, {}, {
+      ...AUTH_PRESENT,
+      preBunAnthropicSlots: ["ANTHROPIC_BASE_URL"],
+    });
+    expect(ported.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:10104");
   });
 
   test("a genuinely foreign loopback port is replaced with the resolved destination", () => {
@@ -606,6 +686,10 @@ describe("ocx claude local inference destination", () => {
   });
 
   test("a native launch sheds the managed destination on either local port", () => {
+    // Shedding asks a WIDER question than replacement: "could we have written this?". The
+    // public port qualifies on every topology, because an earlier config on this machine may
+    // have been loopback-bound — and leaving such a URL behind with its token stripped (which
+    // always happens) would point the native launch at a dead socket with no credential.
     const config = cfg({
       hostname: "100.76.170.81",
       runtimeRole: "hub",

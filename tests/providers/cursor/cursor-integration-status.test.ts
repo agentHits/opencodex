@@ -232,17 +232,20 @@ describe("GET /api/native-integrations/cursor", () => {
   /**
    * The gateway URL is pasted into Cursor on THIS machine, so it is the local destination
    * (#4236): the unauthenticated loopback listener when one is enabled, because on a hub bound
-   * to a tailnet address nothing answers on 127.0.0.1:<public port>. Called directly rather
-   * than through a server so the three topologies are compared without three binds.
+   * to a tailnet address nothing answers on 127.0.0.1:<public port> — and the BIND address when
+   * there is no listener, because then nothing local answers at all. The first round of this
+   * change returned loopback in that case, which is a value the operator would paste and watch
+   * fail to connect. Called directly rather than through a server so the topologies are compared
+   * without one bind each.
    */
   test("the gateway base URL follows the unauthenticated loopback listener", async () => {
     const url = new URL("http://127.0.0.1:10100/api/native-integrations/cursor");
     const cases = [
-      { listener: { enabled: true, port: 10104 } as const, expected: "http://127.0.0.1:10104/v1" },
-      { listener: { enabled: true } as const, expected: "http://127.0.0.1:10100/v1" },
-      { listener: undefined, expected: "http://127.0.0.1:10100/v1" },
+      { listener: { enabled: true, port: 10104 } as const, expected: "http://127.0.0.1:10104/v1", keyMode: "credential" },
+      { listener: { enabled: true } as const, expected: "http://127.0.0.1:10100/v1", keyMode: "credential" },
+      { listener: undefined, expected: "http://100.76.170.81:10100/v1", keyMode: "credential" },
     ];
-    for (const { listener, expected } of cases) {
+    for (const { listener, expected, keyMode } of cases) {
       const config: OcxConfig = {
         ...statusConfig(),
         port: 10100,
@@ -255,9 +258,25 @@ describe("GET /api/native-integrations/cursor", () => {
         [],
       );
       expect({ listener, baseUrl: status.gateway.baseUrl }).toEqual({ listener, baseUrl: expected });
-      // The tailnet address must never reach a value a local app dials.
-      expect(status.gateway.baseUrl).not.toContain("100.76.170.81");
+      // apiKeyMode now describes the admission rule of the destination just resolved, so the
+      // card cannot tell an operator to paste a URL and omit the key that URL requires.
+      expect({ listener, apiKeyMode: status.gateway.apiKeyMode }).toEqual({ listener, apiKeyMode: keyMode });
     }
+  });
+
+  test("a loopback bind with no credential still offers the placeholder", async () => {
+    // The other direction of the same rule: nothing about the destination demands a key here,
+    // so the card must not start asking for one.
+    const url = new URL("http://127.0.0.1:10100/api/native-integrations/cursor");
+    const config: OcxConfig = { ...statusConfig(), port: 10100, hostname: "127.0.0.1", apiKeys: [] };
+    const status = await buildCursorIntegrationStatus(
+      { config, deps: { readRuntimePort: () => undefined }, url },
+      [],
+    );
+    expect(status.gateway).toMatchObject({
+      baseUrl: "http://127.0.0.1:10100/v1",
+      apiKeyMode: "placeholder",
+    });
   });
 
   test("reports bundle effort-table provenance and unmatched model families through the server deps seam", async () => {
