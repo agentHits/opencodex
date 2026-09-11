@@ -193,3 +193,29 @@ four-part unit: write the missing exact-body guard first, collapse the duplicate
 add the route with all four registrations, then fix the `enabled` reporting defect. That is a
 larger cycle than it looked, and the sequencing above is the deliverable of this A phase.
 
+### wp5 cycle scope, after the audit resized it
+
+The audit turned one route change into four parts. This cycle takes the two that stand alone
+and are verifiable on their own; the route and the reporting fix become wp5c, because adding a
+management route touches four registration surfaces and is a different kind of risk from
+deduplicating a validator.
+
+**In this cycle**
+
+1. Write the missing compatibility guard: exact-body assertions for all three legacy pool
+   responses, green BEFORE anything is shared. This is the test the plan wrongly assumed existed.
+2. Collapse the duplicate validators onto one module. Codex and Anthropic already share
+   `parseAccountPoolStrategy` from `pool-kernel.ts`; the generic kind keeps a private copy in
+   `pool-settings-capability.ts`. That is the smallest true instance of the problem this phase
+   exists to fix, and closing it is what makes a bad value behave identically on every kind.
+
+**Deferred to wp5c**
+
+3. `GET|PUT|PATCH /api/pool/settings` with its four registrations.
+4. The `enabled: null` reporting defect, where the generic DTO ignores the top-level
+   `oauthAccountFailover.enabled` that actually participates in activation.
+
+Splitting here is not scope avoidance: part 1 is the precondition for parts 3 and 4 being
+checkable at all, and shipping it separately means the guard exists in `dev` before the risky
+change is written rather than alongside it.
+
