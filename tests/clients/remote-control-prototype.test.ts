@@ -41,6 +41,38 @@ function handshakeFixture() {
 }
 
 describe("Paseo-style remote control prototype", () => {
+  test("rejects a host authenticated with a different pinned device key", () => {
+    const fixture = handshakeFixture();
+    const accepted = acceptRemoteControlClientHello(fixture.client.hello, {
+      expectedSessionId: fixture.sessionId,
+      expectedDeviceId: fixture.deviceId,
+      devicePrivateKey: fixture.device.privateKey,
+      accountPublicKey: fixture.account.publicKey,
+      allowedCapabilities: ["terminal.input"],
+    });
+    const otherDevice = generateRemoteControlIdentityKeyPair();
+    expect(() => fixture.client.complete(accepted.hello, otherDevice.publicKey))
+      .toThrow("host identity verification failed");
+    accepted.cipher.destroy();
+  });
+
+  test("rejects a valid-length corrupted host signature", () => {
+    const fixture = handshakeFixture();
+    const accepted = acceptRemoteControlClientHello(fixture.client.hello, {
+      expectedSessionId: fixture.sessionId,
+      expectedDeviceId: fixture.deviceId,
+      devicePrivateKey: fixture.device.privateKey,
+      accountPublicKey: fixture.account.publicKey,
+      allowedCapabilities: ["terminal.input"],
+    });
+    const signature = Buffer.from(accepted.hello.signature, "base64url");
+    signature[0]! ^= 1;
+    expect(() => fixture.client.complete({
+      ...accepted.hello, signature: signature.toString("base64url"),
+    }, fixture.device.publicKey)).toThrow("host identity verification failed");
+    accepted.cipher.destroy();
+  });
+
   test("authenticates both endpoints, encrypts both directions, and rejects replay", () => {
     const fixture = handshakeFixture();
     const accepted = acceptRemoteControlClientHello(fixture.client.hello, {
