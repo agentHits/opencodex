@@ -960,6 +960,7 @@
     "openai-provider-option.test.ts": "adapters/openai",
     "openai-responses-passthrough.test.ts": "responses",
     "opencode-cli.test.ts": "providers",
+    "opencode-management-transport.test.ts": "providers",
     "opencode-free-provider.test.ts": "providers",
     "opencode-go-deepseek.test.ts": "providers",
     "opencode-go-grok46-responses.test.ts": "providers",

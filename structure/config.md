@@ -207,3 +207,5 @@ The Cline client keeps connection settings and models in a separate native file 
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
 
 The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
+
+The OpenCode launcher resolves the existing local management origin from the live bind and configured hub ingress. Its admin credential comes from the existing admin environment/file policy; an absent credential fails without substituting a data key.

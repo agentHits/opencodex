@@ -93,3 +93,5 @@ The explicit sync coordinator also accepts Cline CLI as a separate file integrat
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
 
 The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
+
+OpenCode is a separate launcher: its management catalog read retains local admin authority in the parent, while generated provider blocks reference only the child admission environment. It does not change Desktop configuration ownership.
