@@ -608,6 +608,7 @@ function restoreToolIdentity(
   value: unknown,
   context: RestoreContext,
   allowNamespaceDeclaration = false,
+  namespaceMember = false,
 ): RestoreOutcome {
   if (!isPlainObject(value)) return unchanged(value);
   if (!reserveIdentities(context, 1)) return { ...unchanged(value), overflow: true };
@@ -618,7 +619,7 @@ function restoreToolIdentity(
     && value.name === PLAINTEXT_V2_COLLABORATION_NAMESPACE
   ) {
     if (value.tools !== undefined && !Array.isArray(value.tools)) return { ...unchanged(value), overflow: true };
-    const children = restoreIdentityList(value.tools, context, false);
+    const children = restoreIdentityList(value.tools, context, false, true);
     if (children.overflow) return { ...unchanged(value), overflow: true };
     return {
       value: {
@@ -665,32 +666,27 @@ function restoreToolIdentity(
     return { ...unchanged(value), overflow: privateIdentity };
   }
 
-  let restored = value;
-  let changed = false;
-  if (value.namespace === PLAINTEXT_V2_COLLABORATION_NAMESPACE) {
-    restored = { ...restored, namespace: COLLABORATION_NAMESPACE };
-    changed = true;
-  }
-  if (allowAgentMessageAlias && PLAINTEXT_V2_AGENT_MESSAGE_TOOL_NAMES.has(value.name as string)) {
-    restored = { ...restored, name: childName };
-    changed = true;
-  } else if (typeof value.name === "string" && value.name.startsWith(PLAINTEXT_V2_COLLABORATION_NAME_PREFIX)) {
-    restored = { ...restored, name: `${COLLABORATION_NAME_PREFIX}${childName}` };
-    changed = true;
-  } else if (
-    typeof value.name === "string"
-    && value.name.startsWith(PLAINTEXT_V2_COLLABORATION_DOTTED_NAME_PREFIX)
-  ) {
-    restored = { ...restored, name: `${COLLABORATION_DOTTED_NAME_PREFIX}${childName}` };
-    changed = true;
-  }
-  return { value: restored, changed, overflow: false };
+  const privateIdentity = value.namespace === PLAINTEXT_V2_COLLABORATION_NAMESPACE
+    || (typeof value.name === "string" && hasPrivateToolName(value.name));
+  if (!privateIdentity) return unchanged(value);
+  // Codex dispatches by the namespace/name pair; qualified names are literal
+  // names there. Only namespace member declarations inherit their container.
+  return {
+    value: {
+      ...value,
+      name: childName,
+      ...(!namespaceMember || value.namespace !== undefined ? { namespace: COLLABORATION_NAMESPACE } : {}),
+    },
+    changed: true,
+    overflow: false,
+  };
 }
 
 function restoreIdentityList(
   values: unknown,
   context: RestoreContext,
   allowNamespaceDeclaration: boolean,
+  namespaceMember = false,
 ): RestoreOutcome {
   if (!Array.isArray(values)) return unchanged(values);
   if (values.length > context.remainingIdentities) {
@@ -698,7 +694,7 @@ function restoreIdentityList(
   }
   let restored: unknown[] | undefined;
   for (let index = 0; index < values.length; index += 1) {
-    const result = restoreToolIdentity(values[index], context, allowNamespaceDeclaration);
+    const result = restoreToolIdentity(values[index], context, allowNamespaceDeclaration, namespaceMember);
     if (result.overflow) return { ...unchanged(values), overflow: true };
     if (!result.changed) continue;
     restored ??= values.slice();

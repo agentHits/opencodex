@@ -571,7 +571,7 @@ describe("plaintext v2 agent message response restoration", () => {
     expect(namespaced!.encrypted_function_args).toEqual([]);
     expect(JSON.parse(namespaced!.arguments as string).message)
       .toBe(PLAINTEXT_V2_COLLABORATION_NAMESPACE);
-    expect(flattened!.name).toBe("collaboration__send_message");
+    expect(flattened!.name).toBe("send_message");
     expect(flattened!.encrypted_function_args).toEqual([]);
     expect(toolOutput!.output).toEqual({ namespace: PLAINTEXT_V2_COLLABORATION_NAMESPACE });
     expect(restored.response.tool_choice.namespace).toBe("collaboration");
@@ -595,7 +595,7 @@ describe("plaintext v2 agent message response restoration", () => {
       restorePlaintextV2AgentMessageCallsInJson(payload, declaredToolNames),
     ) as Record<string, unknown>;
     expect(restored.namespace).toBe("collaboration");
-    expect(restored.name).toBe("collaboration__spawn_agent");
+    expect(restored.name).toBe("spawn_agent");
     expect(JSON.parse(restored.arguments as string).message)
       .toBe(PLAINTEXT_V2_COLLABORATION_NAMESPACE);
     expect(restored.encrypted_function_args).toEqual([]);
@@ -880,4 +880,23 @@ test("namespace refinement follows every bound coordinate", () => {
   expect(() => rewrite(JSON.stringify({ type: "response.completed", response: { output: [{
     type: "function_call", call_id: "c1", namespace: "foreign", name: "spawn_agent", arguments: "{}",
   }] } }))).toThrow(PlaintextV2AgentMessageRestoreOverflowError);
+});
+
+
+test("every generated alias spelling restores the exact native dispatch pair", () => {
+  const names = new Set(["spawn_agent"]);
+  for (const name of ["start_delegated_task", `${PLAINTEXT_V2_COLLABORATION_NAMESPACE}__start_delegated_task`, `${PLAINTEXT_V2_COLLABORATION_NAMESPACE}.start_delegated_task`]) {
+    for (const marker of [undefined, [], ["message"]]) {
+      const value = { type: "function_call", name, arguments: "{}", ...(marker === undefined ? {} : { encrypted_function_args: marker }) };
+      const restored = JSON.parse(restorePlaintextV2AgentMessageCallsInJson(JSON.stringify(value), names));
+      expect(restored).toMatchObject({ namespace: "collaboration", name: "spawn_agent" });
+      expect(restored.encrypted_function_args).toEqual(marker);
+    }
+  }
+  const snapshot = JSON.parse(restorePlaintextV2AgentMessageCallsInJson(JSON.stringify({
+    tools: [{ type: "namespace", name: PLAINTEXT_V2_COLLABORATION_NAMESPACE, tools: [{ type: "function", name: "start_delegated_task", parameters: {} }] }],
+    tool_choice: { type: "function", name: "start_delegated_task" },
+  }), names));
+  expect(snapshot.tools[0].tools[0]).toEqual({ type: "function", name: "spawn_agent", parameters: {} });
+  expect(snapshot.tool_choice).toEqual({ type: "function", namespace: "collaboration", name: "spawn_agent" });
 });

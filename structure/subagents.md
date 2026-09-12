@@ -218,3 +218,8 @@ argument/metadata values remain unchanged; the empty encrypted-function-args mar
 Startup warns that task text can remain in Codex history, selected-provider requests and local
 response/debug state. This is application-level plaintext over HTTPS, depends on undocumented
 upstream behavior, and does not decrypt existing tasks or replace authenticated recovery.
+
+Restored calls and selectors carry an explicit collaboration namespace and unqualified child name.
+Codex treats qualified names literally and defaults absent namespaces to functions. Only child
+declarations inherit their restored namespace container; the compiler never invents an empty
+encryption marker when the upstream omitted it or returned a nonempty marker.

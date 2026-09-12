@@ -498,7 +498,7 @@ describe("handleResponses Codex WS relay selection", () => {
       .find(line => line.includes('"response.function_call_arguments.done"'))!;
     const argumentDone = JSON.parse(argumentDoneLine.replace(/^data: /, "")) as Record<string, unknown>;
     expect(argumentDone.namespace).toBe("collaboration");
-    expect(argumentDone.name).toBe("collaboration__spawn_agent");
+    expect(argumentDone.name).toBe("spawn_agent");
     expect(argumentDone.encrypted_function_args).toEqual([]);
     const completedLine = clientText.split("\n")
       .find(line => line.includes('"response.completed"'))!;

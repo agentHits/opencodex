@@ -183,7 +183,7 @@ describe("plaintext v2 agent messages at the Responses server boundary", () => {
     expect(sentBody.tools[0]!.tools[0]!.parameters.properties.message.encrypted).toBeUndefined();
     expect(clientBody).not.toContain(PLAINTEXT_V2_COLLABORATION_NAMESPACE);
     expect(clientBody).toContain('"namespace":"collaboration"');
-    expect(clientBody).toContain('"name":"collaboration__spawn_agent"');
+    expect(clientBody).toContain('"name":"spawn_agent"');
     expect(clientBody).toContain('"encrypted_function_args":[]');
   });
 

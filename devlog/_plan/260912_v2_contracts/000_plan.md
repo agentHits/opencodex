@@ -9,7 +9,8 @@ Loop: satisfy-spec, triggered by the authorized v2 lane. Goal: scoped carry PRs 
 | wp0 | Docs-only roadmap locked by independent design reflection and A review | this document |
 | wp1 | Exact plaintext request/response contract and regression coverage | [010](010_plaintext.md) |
 | wp2 | Bounded encrypted envelope handling and residual disposition | [020](020_recovery.md) |
-| wp3 | Final cumulative hosted verification and durable handoff | [030](030_verification.md) |
+| wp3 | Restore exact native collaboration dispatch identities | [030](030_native_identity.md) |
+| wp4 | Final cumulative hosted verification and durable handoff | [040](040_verification.md) |
 
 wp1 and wp2 are distinct capabilities; execution order does not itself create a PR dependency. Use independent dev-based PRs if neither consumes the other's changes. A shared final cumulative verification branch may be needed to prove composition; do not silently call intermediate CI final-tip evidence.
 
