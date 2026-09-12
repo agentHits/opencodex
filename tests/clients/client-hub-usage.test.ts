@@ -17,6 +17,7 @@ test("hub usage sends only the data key, preserves query and incomplete metadata
       expect(new Headers(init?.headers).get("x-opencodex-api-key")).toBe("client-data-key");
       expect(new Headers(init?.headers).get("authorization")).toBeNull();
       expect(init?.redirect).toBe("manual");
+      expect(init?.cache).toBe("no-store");
       return Response.json({ ...report(), usageIncomplete: true, usageIncompleteReason: "oversized_rows" });
     }) as typeof fetch,
   });
@@ -78,3 +79,24 @@ test("stalled hub usage body is cancelled at the inactivity deadline", async () 
   })).rejects.toThrow("stalled");
   expect(cancelled).toBe(true);
 });
+
+
+test.each(["http://192.0.2.1", "http://hub.example.test", "https://user:password@hub.example.test"])(
+  "unsafe credential destination %s is refused before transport", async origin => {
+    let calls = 0;
+    await expect(fetchHubUsage(origin, "client-key", new URLSearchParams(), {
+      fetchImpl: (async () => { calls++; return Response.json(report()); }) as typeof fetch,
+    })).rejects.toThrow();
+    expect(calls).toBe(0);
+  },
+);
+
+test.each(["https://hub.example.test", "http://127.0.0.1:12345", "http://[::1]:12345", "http://localhost:12345"])(
+  "supported credential destination %s keeps an uncached read", async origin => {
+    let calls = 0;
+    await fetchHubUsage(origin, "client-key", new URLSearchParams(), {
+      fetchImpl: (async (_input, init) => { calls++; expect(init?.cache).toBe("no-store"); return Response.json(report()); }) as typeof fetch,
+    });
+    expect(calls).toBe(1);
+  },
+);

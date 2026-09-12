@@ -481,8 +481,12 @@ export async function fetchHubUsage(
   options: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
 ): Promise<HubUsageReport> {
   const origin = normalizeHubOrigin(serverUrl);
+  if (!isPairingTransportPermitted(origin)) {
+    throw new HubClientError("insecure_http_refused", "Client usage requires HTTPS or loopback HTTP");
+  }
   const response = await fetchBounded(options.fetchImpl ?? fetch, `${origin}/v1/usage?${query}`, {
     method: "GET",
+    cache: "no-store",
     headers: new Headers({ Accept: "application/json", "x-opencodex-api-key": admissionToken }),
   }, options.timeoutMs);
   if (!response.ok) {

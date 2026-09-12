@@ -25,3 +25,5 @@ Hosted tests: actual server two keysA/B and loopback auth; caller keyID rejected
 Reflection closure: post-read CLI validates both owner triple AND current connection/file token fingerprints; sameClientConnectionOwner alone omits fingerprint. Every nested DTO object strips unknown fields; the1MiB check uses serialized UTF-8 bytes in addition to array/string caps.
 
 B scope refinement: reuse resolveDataPlaneAdmissionSecret directly; no resolver logic change necessary; auth-cors.ts AUTH_MATRIX gets the new endpoint row and tests/server/api-key-attribution.test.ts drives its real GET cells. Client test basename is client-hub-usage.test.ts to avoid the registry basename collision with server/hub-usage.test.ts.
+
+Follow-up100: new fetchHubUsage requires HTTPS or supported loopback HTTP before credential headers, uses request cache:no-store, and retains server cache-control:no-store.

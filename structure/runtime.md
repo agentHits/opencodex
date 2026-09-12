@@ -192,3 +192,5 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.
 
 Connected `ocx usage` reads `/v1/usage` through `src/client/hub-client.ts`, using its enrolled data key and checking connection/token ownership before and after the read. It reports hub/client scope and never substitutes local totals on failure. Standalone commands retain their management endpoint.
+
+The client usage read requires HTTPS or loopback HTTP before adding the enrolled credential, and sets request `cache: "no-store"`; the hub response also forbids caching.
