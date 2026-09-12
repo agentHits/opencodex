@@ -1248,6 +1248,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         }
         const text = await readBoundedRequestText(req, REMOTE_WORKSPACE_PAIRING_BODY_LIMIT);
         if (text === null) return Response.json({ error: "Remote Workspace pairing body is too large." }, { status: 413 });
+        if (remoteWorkspaceStopping) return Response.json({ error: "Remote Workspace is stopping." }, { status: 503 });
         let body: unknown;
         try { body = JSON.parse(text); }
         catch { return Response.json({ error: "Invalid Remote Workspace pairing request." }, { status: 400 }); }

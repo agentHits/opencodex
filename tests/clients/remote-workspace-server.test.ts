@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -293,7 +293,7 @@ describe("Remote Workspace hub HTTP and WebSocket integration", () => {
     }
   });
 
-  test("stops Remote Workspace runtimes when the Hub listener stops", async () => {
+  test("unused Hub listener shutdown never activates Remote Workspace", async () => {
     writeTestConfig(config());
     const hub = new RemoteWorkspaceHub(new HubStore());
     let stopCalls = 0;
@@ -305,7 +305,7 @@ describe("Remote Workspace hub HTTP and WebSocket integration", () => {
       managementApi: { remoteWorkspaceHub: hub, remoteWorkspaceSessions: sessions },
     });
     await server.stop(true);
-    expect(stopCalls).toBe(1);
+    expect(stopCalls).toBe(0);
   });
 
   test("accepts a paired Executor through the loopback management-ingress WebSocket exception", async () => {
@@ -367,3 +367,29 @@ test("server stop awaits workspace cleanup after management-only activation", as
   } finally { await server.stop(true); }
   expect(stopped).toBe(true);
 });
+
+test("pairing body completion after stop cannot consume the enrollment grant", async () => {
+  writeTestConfig(config());
+  const hub = new RemoteWorkspaceHub(new HubStore());
+  const grant = hub.createPairingGrant();
+  const payload = { code: grant.code, name: "Executor", platform: "test", publicKey: generateRemoteControlIdentityKeyPair().publicKey, roots: [{ id: crypto.randomUUID(), label: "Project" }] };
+  let admitted!: () => void;
+  const admission = new Promise<void>(resolve => { admitted = resolve; });
+  const original = hub.assertPairingSourceAllowed.bind(hub);
+  const spy = spyOn(hub, "assertPairingSourceAllowed").mockImplementation(source => { original(source); admitted(); });
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({ start(value) { controller = value; controller.enqueue(new TextEncoder().encode("{")); } });
+  const server = startServer(0, { managementAuthState: managementAuth(), managementApi: { remoteWorkspaceHub: hub } });
+  try {
+    const pending = fetch(new URL("/remote-workspace/pair", server.url), { method: "POST", headers: { "content-type": "application/json" }, body });
+    await admission;
+    const stopping = server.stop(false);
+    controller.enqueue(new TextEncoder().encode(JSON.stringify(payload).slice(1)));
+    controller.close();
+    const response = await pending;
+    expect(response.status).toBe(503);
+    await stopping;
+    expect(hub.listDevices()).toEqual([]);
+    expect(hub.pairDevice(payload).device.name).toBe("Executor");
+  } finally { spy.mockRestore(); await server.stop(true); }
+}, 15_000);

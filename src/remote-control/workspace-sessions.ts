@@ -280,6 +280,8 @@ export class RemoteWorkspaceSessionFileStore implements RemoteWorkspaceSessionSt
 
 export class RemoteWorkspaceSessionService {
   private shuttingDown = false;
+  private readonly pendingCreates = new Set<Promise<RemoteWorkspaceSessionSummary>>();
+  private startupCleanupFailure: Error | null = null;
   private readonly sessions = new Map<string, LiveSession>();
   private readonly runtimes = new Map<RemoteWorkspaceAgentProfile, RemoteWorkspaceRuntimeFactory>();
   private sequence = 0;
@@ -353,7 +355,19 @@ export class RemoteWorkspaceSessionService {
     return session ? this.publicSession(session) : null;
   }
 
-  async create(input: {
+  create(input: {
+    profile: RemoteWorkspaceAgentProfile;
+    deviceId: string;
+    rootId: string;
+    accessMode?: RemoteWorkspaceAccessMode;
+  }): Promise<RemoteWorkspaceSessionSummary> {
+    const operation = this.createSession(input);
+    this.pendingCreates.add(operation);
+    void operation.then(() => this.pendingCreates.delete(operation), () => this.pendingCreates.delete(operation));
+    return operation;
+  }
+
+  private async createSession(input: {
     profile: RemoteWorkspaceAgentProfile;
     deviceId: string;
     rootId: string;
@@ -446,8 +460,8 @@ export class RemoteWorkspaceSessionService {
         coordinator,
         emit: (type, text) => this.emit(session, type, text),
       });
-      if (session.stopOperation) {
-        await handle.stop().catch(() => {});
+      if (session.stopOperation || this.shuttingDown) {
+        await this.stopLateRuntime(handle);
         throw new Error("remote workspace session was stopped while starting");
       }
       session.threadId = handle.threadId;
@@ -561,7 +575,7 @@ export class RemoteWorkspaceSessionService {
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     const active = [...this.sessions.values()].filter(session => session.status !== "stopped");
-    await Promise.all(active.map(async session => {
+    const results = await Promise.allSettled(active.map(async session => {
       if (session.stopOperation) {
         await session.stopOperation;
         return;
@@ -596,7 +610,19 @@ export class RemoteWorkspaceSessionService {
       })();
       await session.stopOperation;
     }));
+    await Promise.allSettled([...this.pendingCreates]);
+    if (this.startupCleanupFailure) throw this.startupCleanupFailure;
+    const failed = results.find(result => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
     this.persist();
+  }
+
+  private async stopLateRuntime(handle: RemoteWorkspaceRuntimeHandle): Promise<void> {
+    try { await handle.stop(); }
+    catch (error) {
+      this.startupCleanupFailure = error instanceof Error ? error : new Error("remote workspace startup cleanup failed");
+      throw this.startupCleanupFailure;
+    }
   }
 
   private status(session: LiveSession, status: RemoteWorkspaceSessionStatus, text: string): void {
@@ -680,6 +706,10 @@ export class RemoteWorkspaceSessionService {
       coordinator,
       emit: (type, text) => this.emit(session, type, text),
     });
+    if (this.shuttingDown || session.stopOperation) {
+      await this.stopLateRuntime(handle);
+      throw new Error("remote workspace session was stopped while resuming");
+    }
     try {
       session.unregister = coordinator.register({
         sessionId: session.id,

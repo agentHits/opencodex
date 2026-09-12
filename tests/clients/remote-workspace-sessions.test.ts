@@ -52,6 +52,7 @@ function createHarness(options: {
   eventsAtStart?: number;
   sessionStore?: RemoteWorkspaceSessionStateStore;
   stopError?: Error;
+  onStop?: (call: number) => Promise<void>;
   closeError?: Error;
 } = {}): Harness {
   let online = true;
@@ -133,6 +134,7 @@ function createHarness(options: {
         },
         async stop() {
           stops += 1;
+          await options.onStop?.(stops);
           if (promptStarted) options.promptGate?.reject(new Error("turn cancelled"));
           if (options.stopError) throw options.stopError;
         },
@@ -361,9 +363,57 @@ test("availability completing after shutdown cannot create a new session", async
     async start() { started = true; throw new Error("must not start"); },
   }]);
   const outcome = service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
-  await service.shutdown();
+  const rejection = expect(outcome).rejects.toThrow("stopping");
+  const stopping = service.shutdown();
   gate.resolve();
-  await expect(outcome).rejects.toThrow("stopping");
+  await stopping;
+  await rejection;
   expect(started).toBe(false);
   expect(service.list()).toEqual([]);
+});
+
+
+test("shutdown owns a runtime that finishes starting late", async () => {
+  const startGate = deferred();
+  const entered = deferred();
+  const harness = createHarness({ startGate, onStart: entered.resolve });
+  const creating = harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+  const rejection = expect(creating).rejects.toThrow("stopped while starting");
+  await entered.promise;
+  let settled = false;
+  const stopping = harness.service.shutdown().then(() => { settled = true; });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  startGate.resolve();
+  await stopping;
+  await rejection;
+  expect(harness.stopCalls()).toBe(1);
+  expect(settled).toBe(true);
+});
+
+
+test("shutdown settles every session before propagating a cleanup failure", async () => {
+  const heldStop = deferred();
+  const secondEntered = deferred();
+  const harness = createHarness({
+    async onStop(call) {
+      if (call === 1) throw new Error("first cleanup failed");
+      secondEntered.resolve();
+      await heldStop.promise;
+    },
+  });
+  await harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+  await harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+  let settled = false;
+  const stopping = harness.service.shutdown().then(
+    () => { settled = true; return "unexpected success"; },
+    error => { settled = true; return (error as Error).message; },
+  );
+  await secondEntered.promise;
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  heldStop.resolve();
+  expect(await stopping).toBe("first cleanup failed");
+  expect(harness.stopCalls()).toBe(2);
 });

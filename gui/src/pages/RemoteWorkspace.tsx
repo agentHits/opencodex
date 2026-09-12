@@ -83,7 +83,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export default function RemoteWorkspace({ apiBase }: { apiBase: string }) {
+export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: string; hubOrigin: string }) {
   const t = useT();
   const resource = useKeyedClientResource(
     `remote-workspace:${apiBase}`,
@@ -102,7 +102,7 @@ export default function RemoteWorkspace({ apiBase }: { apiBase: string }) {
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [localSession, setLocalSession] = useState<RemoteSession | null>(null);
   const [pairing, setPairing] = useState<PairingGrant | null>(null);
-  const [prompt, setPrompt] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<"pair" | "session" | "revoke" | null>(null);
   const [promptPending, setPromptPending] = useState(false);
   const [stopPending, setStopPending] = useState(false);
@@ -133,11 +133,23 @@ export default function RemoteWorkspace({ apiBase }: { apiBase: string }) {
     ?? [...remoteSessions].reverse().find(session => session.status !== "stopped")
     ?? localSession;
 
+  const prompt = drafts[effectiveSession?.id ?? ""] ?? "";
+  const setPrompt = (value: string | ((current: string) => string)) => {
+    const id = effectiveSession?.id;
+    if (!id) return;
+    setDrafts(current => ({ ...current, [id]: typeof value === "function" ? value(current[id] ?? "") : value }));
+  };
+  const stale = Boolean(state && !resource.lastAttemptOk);
+  const canSend = Boolean(effectiveSession && prompt.trim() && busy === null && !promptPending && !stopPending && !stale
+    && effectiveSession.status !== "running" && effectiveSession.status !== "starting"
+    && effectiveSession.status !== "stopped"
+    && !(effectiveSession.status === "failed" && effectiveSession.resumable === false)
+    && !(effectiveSession.status === "waiting_for_executor" && !devices.find(device => device.id === effectiveSession.deviceId)?.online));
+
   const pairingCommands = useMemo(() => {
     if (!pairing) return { posix: "", powershell: "" };
-    const hub = typeof window === "undefined" ? "https://hub.example" : window.location.origin;
-    return remoteWorkspacePairingCommands(pairing.code, hub);
-  }, [pairing]);
+    return remoteWorkspacePairingCommands(pairing.code, hubOrigin);
+  }, [pairing, hubOrigin]);
 
   const mutate = async <T,>(path: string, init: RequestInit, fallback: string): Promise<T> => {
     const response = await fetch(`${apiBase}${path}`, init);
@@ -183,7 +195,7 @@ export default function RemoteWorkspace({ apiBase }: { apiBase: string }) {
   };
 
   const sendPrompt = async () => {
-    if (!effectiveSession || !prompt.trim() || promptPending || stopPending || busy !== null) return;
+    if (!effectiveSession || !canSend) return;
     const target = effectiveSession;
     const submitted = prompt;
     setPrompt("");
@@ -199,14 +211,14 @@ export default function RemoteWorkspace({ apiBase }: { apiBase: string }) {
       void resource.refresh();
     } catch (error) {
       if (stoppedSessionId.current !== target.id) {
-        setPrompt(submitted);
+        setPrompt(current => current || submitted);
         setNotice({ tone: "err", text: error instanceof Error ? error.message : t("remote.requestFailed") });
       }
     } finally { setPromptPending(false); }
   };
 
   const stopSession = async () => {
-    if (!effectiveSession || stopPending || busy !== null) return;
+    if (!effectiveSession || stopPending) return;
     const target = effectiveSession;
     setStopPending(true);
     try {
@@ -253,6 +265,7 @@ export default function RemoteWorkspace({ apiBase }: { apiBase: string }) {
         </button>
       </div>
 
+      {stale ? <Notice tone="err">{t("remote.loadFailed")}</Notice> : null}
       {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
 
       <div className="remote-workspace-grid">
@@ -342,7 +355,7 @@ export default function RemoteWorkspace({ apiBase }: { apiBase: string }) {
 
           <section className="panel remote-console-panel">
             <div className="remote-section-title">
-              <div><h3>{t("remote.sessions")}</h3>{effectiveSession ? <small>{PROFILE_LABEL[effectiveSession.profile]} · {effectiveSession.deviceName}/{effectiveSession.rootLabel} · {effectiveSession.accessMode === "read-only" ? t("remote.access.readOnly") : t("remote.access.workspace")}</small> : null}</div>
+              <div><h3>{t("remote.sessions")}</h3>{effectiveSession ? <small>{PROFILE_LABEL[effectiveSession.profile]} · {effectiveSession.deviceName}/{effectiveSession.rootLabel} · {effectiveSession.accessMode === "read-only" ? t("remote.access.readOnly") : effectiveSession.capabilities.includes("workspace.exec") ? t("remote.access.workspace") : t("remote.access.workspaceFilesOnly")}</small> : null}</div>
               {effectiveSession ? <span className={`remote-status remote-status--${effectiveSession.status}`}>{t(STATUS_TKEY[effectiveSession.status])}</span> : null}
             </div>
             {remoteSessions.length > 1 ? (
@@ -368,8 +381,8 @@ export default function RemoteWorkspace({ apiBase }: { apiBase: string }) {
                   }} />
                 </label>
                 <div className="remote-console-actions">
-                  <button type="button" className="btn btn-primary" onClick={() => void sendPrompt()} disabled={!prompt.trim() || busy !== null || promptPending || stopPending || effectiveSession.status === "running" || effectiveSession.status === "stopped" || (effectiveSession.status === "failed" && effectiveSession.resumable === false) || (effectiveSession.status === "waiting_for_executor" && !devices.find(device => device.id === effectiveSession.deviceId)?.online)}>{t("remote.send")}</button>
-                  <button type="button" className="btn btn-danger" onClick={() => void stopSession()} disabled={busy !== null || stopPending || effectiveSession.status === "stopped"}>{t("remote.stop")}</button>
+                  <button type="button" className="btn btn-primary" onClick={() => void sendPrompt()} disabled={!canSend}>{t("remote.send")}</button>
+                  <button type="button" className="btn btn-danger" onClick={() => void stopSession()} disabled={stopPending || effectiveSession.status === "stopped"}>{t("remote.stop")}</button>
                 </div>
               </>
             )}

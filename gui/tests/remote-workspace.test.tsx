@@ -139,7 +139,7 @@ test("pairs a computer and starts a Hub-owned session for its selected folder", 
   win.document.body.appendChild(host as never);
   await act(async () => {
     root = createRoot(host);
-    root.render(<LanguageProvider><RemoteWorkspace apiBase="" /></LanguageProvider>);
+    root.render(<LanguageProvider><RemoteWorkspace apiBase="" hubOrigin="https://actual-hub.example.test" /></LanguageProvider>);
     await new Promise(resolve => setTimeout(resolve, 20));
   });
   expect(host.textContent).toContain("Computer 2");
@@ -150,6 +150,8 @@ test("pairs a computer and starts a Hub-owned session for its selected folder", 
   expect(win.document.body.textContent).toContain("Edit files only");
   await act(async () => { button("Create pairing code").click(); await new Promise(resolve => setTimeout(resolve, 10)); });
   expect(host.textContent).toContain("ABCD-EFGH-JKLM");
+  expect(host.querySelector("pre")?.textContent).toContain("https://actual-hub.example.test");
+  expect(host.querySelector("pre")?.textContent).not.toContain("http://localhost");
   expect(host.textContent).toContain("Linux / macOS terminal");
   expect(host.textContent).toContain("Windows PowerShell");
 
@@ -177,4 +179,126 @@ test("pairs a computer and starts a Hub-owned session for its selected folder", 
   expect(calls.some(call => call.method === "DELETE" && call.url.endsWith(`/${SESSION_ID}`))).toBe(true);
   await act(async () => { releaseLongPrompt?.(); await new Promise(resolve => setTimeout(resolve, 10)); });
   expect(host.textContent).toContain("Stopped");
+});
+
+async function mountRemotePage(apiBase: string) {
+  const [{ act }, { createRoot }, { default: RemoteWorkspace }, { LanguageProvider }] = await Promise.all([
+    import("react"), import("react-dom/client"), import("../src/pages/RemoteWorkspace"), import("../src/i18n/provider"),
+  ]);
+  const host = win.document.createElement("div") as unknown as HTMLElement;
+  win.document.body.appendChild(host as never);
+  await act(async () => {
+    root = createRoot(host);
+    root.render(<LanguageProvider><RemoteWorkspace apiBase={apiBase} hubOrigin="https://hub.example.test" /></LanguageProvider>);
+  });
+  await act(async () => { await Promise.resolve(); });
+  return { host, act, button: (label: string) => [...host.querySelectorAll("button")].find(element => element.textContent?.includes(label)) as HTMLButtonElement };
+}
+
+const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+function readySnapshot(status = "ready") {
+  return {
+    available: true,
+    devices: [{ id: DEVICE_ID, name: "Executor", platform: "win32", online: true, capabilities: ["workspace.read", "workspace.write"], roots: [{ id: ROOT_ID, label: "Project" }] }],
+    runtimes: { codex: { available: true }, claude: { available: false }, pi: { available: false } },
+    sessions: [{ id: SESSION_ID, profile: "codex", accessMode: "workspace", deviceId: DEVICE_ID, deviceName: "Executor", rootId: ROOT_ID, rootLabel: "Project", capabilities: ["workspace.read", "workspace.write"], tools: ["read_file", "write_file"], resumable: true, status, events: [] }],
+  };
+}
+
+test("disabled status presents explicit activation instructions", async () => {
+  Reflect.set(globalThis, "fetch", async () => jsonResponse({ available: false, devices: [], runtimes: {}, sessions: [] }));
+  const { host } = await mountRemotePage("/disabled-fixture");
+  expect(host.textContent).toContain("OCX_REMOTE_WORKSPACE_ENABLED=1");
+  expect(host.textContent).not.toContain("Create pairing code");
+});
+
+test("a failed prompt preserves the newer draft and pairing never disables Stop", async () => {
+  let finishPrompt!: () => void;
+  let finishPairing!: () => void;
+  const heldPrompt = new Promise<void>(resolve => { finishPrompt = resolve; });
+  const heldPairing = new Promise<void>(resolve => { finishPairing = resolve; });
+  Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = String(input);
+    if (url.endsWith("/prompt")) { await heldPrompt; return jsonResponse({ error: "prompt failed" }, 500); }
+    if (url.endsWith("/pairing")) { await heldPairing; return jsonResponse({ code: "ABCD-EFGH-JKLM", expiresAt: "2099-01-01T00:00:00Z" }); }
+    if (init.method === "DELETE") return jsonResponse({ ok: true });
+    return jsonResponse(readySnapshot());
+  });
+  const { host, act, button } = await mountRemotePage("/draft-fixture");
+  expect(host.textContent).toContain("Edit files only");
+  const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+  const type = async (value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, value);
+    textarea.dispatchEvent(new win.Event("input", { bubbles: true }) as never);
+  });
+  await type("first request");
+  await act(async () => { button("Send").click(); });
+  await type("new draft");
+  await act(async () => { button("Create pairing code").click(); });
+  expect(button("Stop").disabled).toBe(false);
+  await act(async () => { finishPrompt(); await heldPrompt; });
+  expect(textarea.value).toBe("new draft");
+  await act(async () => { finishPairing(); await heldPairing; });
+});
+
+test("running sessions reject keyboard submission and stale snapshots show an error", async () => {
+  let reads = 0;
+  let mutations = 0;
+  Reflect.set(globalThis, "fetch", async (_input: RequestInfo | URL, init: RequestInit = {}) => {
+    if (init.method === "POST") { mutations += 1; return jsonResponse({}); }
+    if (++reads > 1) throw new Error("Hub unavailable");
+    return jsonResponse(readySnapshot("running"));
+  });
+  const { host, act, button } = await mountRemotePage("/stale-fixture");
+  const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "do not submit");
+    textarea.dispatchEvent(new win.Event("input", { bubbles: true }) as never);
+  });
+  await act(async () => { textarea.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }) as never); });
+  expect(mutations).toBe(0);
+  expect(textarea.value).toBe("do not submit");
+  await act(async () => { button("Refresh").click(); });
+  await act(async () => { await Promise.resolve(); });
+  expect(host.textContent).toContain("Could not load Remote Workspace");
+  expect(button("Stop").disabled).toBe(false);
+});
+
+test("Stop sends DELETE while an unrelated pairing request is held", async () => {
+  let finishPairing!: () => void;
+  const heldPairing = new Promise<void>(resolve => { finishPairing = resolve; });
+  let deleted = false;
+  Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    if (String(input).endsWith("/pairing")) { await heldPairing; return jsonResponse({ code: "ABCD-EFGH-JKLM", expiresAt: "2099-01-01T00:00:00Z" }); }
+    if (init.method === "DELETE") { deleted = true; return jsonResponse({ ok: true }); }
+    return jsonResponse(readySnapshot());
+  });
+  const { act, button } = await mountRemotePage("/stop-pairing-fixture");
+  await act(async () => { button("Create pairing code").click(); });
+  await act(async () => { button("Stop").click(); });
+  expect(deleted).toBe(true);
+  await act(async () => { finishPairing(); await heldPairing; });
+});
+
+test("stale ready sessions cannot submit through the keyboard", async () => {
+  let reads = 0;
+  let sent = false;
+  Reflect.set(globalThis, "fetch", async (_input: RequestInfo | URL, init: RequestInit = {}) => {
+    if (init.method === "POST") { sent = true; return jsonResponse({}); }
+    if (++reads > 1) throw new Error("offline");
+    return jsonResponse(readySnapshot());
+  });
+  const { host, act, button } = await mountRemotePage("/stale-ready-fixture");
+  const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "preserve this");
+    textarea.dispatchEvent(new win.Event("input", { bubbles: true }) as never);
+  });
+  expect(button("Send").disabled).toBe(false);
+  await act(async () => { button("Refresh").click(); });
+  await act(async () => { await Promise.resolve(); });
+  expect(button("Send").disabled).toBe(true);
+  await act(async () => { textarea.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }) as never); });
+  expect(sent).toBe(false);
+  expect(textarea.value).toBe("preserve this");
 });
