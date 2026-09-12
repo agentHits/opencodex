@@ -369,7 +369,8 @@ describe("truncated done preserves open tool integrity (#4312)", () => {
       ];
       const buffered = buildResponseJSON(events, "fixture/model");
       expect(buffered.status).toBe("incomplete");
-      expect(buffered.output.find(item => item.type === "function_call")?.status).toBe("completed");
+      const output = buffered.output as { type: string; status?: string }[];
+      expect(output.find(item => item.type === "function_call")?.status).toBe("completed");
       const text = await sseText(events);
       expect(terminalEventNames(text)).toEqual(["response.incomplete"]);
       expect(text).toContain("event: response.function_call_arguments.done");
