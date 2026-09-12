@@ -238,3 +238,5 @@ The legacy external writer is now refused for affected rows in any store whose s
 Native restore preflight also checks manifest-owned targets whose rows already returned to `openai`, including interrupted restores. Preimage capture distinguishes absent files from unreadable artifacts and aborts before mutation when a complete snapshot cannot be read.
 
 The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
+Exact [model input declarations](config.md#explicit-per-model-capability-declarations) now feed text-only eligibility and catalog hints; existing image-description/omission handling consumes them before the main upstream send.

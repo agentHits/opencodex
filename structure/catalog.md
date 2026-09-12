@@ -280,3 +280,5 @@ Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#c
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
 The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
+Exact [model input declarations](config.md#explicit-per-model-capability-declarations) now feed text-only eligibility and catalog hints; existing image-description/omission handling consumes them before the main upstream send.

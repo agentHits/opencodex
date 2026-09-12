@@ -674,7 +674,9 @@ export function configuredContextWindow(prov: OcxProviderConfig, id: string): nu
 }
 
 export function configuredInputModalities(prov: OcxProviderConfig, id: string): string[] | undefined {
-  const modalities = modelRecordValue(prov.modelInputModalities, id);
+  const declared = Object.hasOwn(prov.modelCapabilities ?? {}, id)
+    ? prov.modelCapabilities?.[id]?.inputModalities : undefined;
+  const modalities = declared ?? modelRecordValue(prov.modelInputModalities, id);
   return Array.isArray(modalities) && modalities.length > 0 ? [...modalities] : undefined;
 }
 

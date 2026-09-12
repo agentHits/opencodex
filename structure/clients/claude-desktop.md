@@ -93,3 +93,5 @@ The explicit sync coordinator also accepts Cline CLI as a separate file integrat
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
 
 The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
+Exact [model input declarations](../config.md#explicit-per-model-capability-declarations) now feed text-only eligibility and catalog hints; existing image-description/omission handling consumes them before the main upstream send.

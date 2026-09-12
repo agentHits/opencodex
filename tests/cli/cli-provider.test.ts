@@ -657,3 +657,18 @@ test("provider add --force preserves all explicit model capability axes", () => 
     expect(readConfig(dir).providers.caps.modelCapabilities).toEqual(declarations);
   } finally { removeTreeWithRetry(dir); }
 });
+
+
+test("provider add --text-only preserves other capability axes during force overwrite", () => {
+  const { dir } = freshConfig({ defaultProvider: "caps", providers: { caps: {
+    adapter: "openai-chat", baseUrl: "https://example.test/v1",
+    modelCapabilities: { ModelA: { contextTier: "long_context", video: { processing: "agentic" } }, modela: { inputModalities: ["text", "image"] } },
+  } } });
+  try {
+    const result = runCli(["provider", "add", "caps", "--adapter", "openai-chat", "--base-url", "https://example.test/v1", "--force", "--model", "ModelA", "--text-only", "--json"], { OPENCODEX_HOME: dir });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readConfig(dir).providers.caps.modelCapabilities).toEqual({
+      ModelA: { inputModalities: ["text"], contextTier: "long_context", video: { processing: "agentic" } }, modela: { inputModalities: ["text", "image"] },
+    });
+  } finally { removeTreeWithRetry(dir); }
+});
