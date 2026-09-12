@@ -364,6 +364,7 @@ import {
 import { isWin32EagerRewrite, selectEagerPath } from "../../lib/bun-stream-caps";
 import { cancelBodyOnAbort } from "../../lib/abort";
 import { isCodexWsUpstreamResponse, type BunRuntimeGateInput } from "./ws-upstream";
+import { readCodexWsStage } from "./codex-ws-wire";
 import {
   createResponsesItemIdPayloadRewrite,
   hasResponsesItemIdRepair,
@@ -5189,6 +5190,22 @@ async function handleResponsesInner(
       }
       hostAdmissionLease = null;
     };
+    /**
+     * #4191: a Codex WS exchange pins its content-free stage record on the
+     * Response it resolves (markCodexWsStage). Adopting the record here, at
+     * the single funnel every physical upstream response passes through,
+     * binds it to the attempt that actually served it — including the 502/504
+     * pre-response JSON settles that never reach the SSE relay.
+     */
+    const adoptCodexWsStage = (response: Response): void => {
+      const stage = readCodexWsStage(response);
+      if (stage && logCtx.activeAttempt) logCtx.activeAttempt.codexWsStage = stage;
+    };
+    const adoptObservedResponse = <T extends Response>(response: T): T => {
+      settleObservedHostResponse();
+      adoptCodexWsStage(response);
+      return response;
+    };
     let passthroughEstimate = typeof request.usageLog?.inputTokens === "number"
       ? request.usageLog.inputTokens
       : undefined;
@@ -5320,10 +5337,7 @@ async function handleResponsesInner(
             route.provider.authMode === "forward")
             // Every real attempt response — including an intermediate 5xx the
             // retry wrapper replaces — proves the host was reached (#914 review).
-            .then(res => {
-              settleObservedHostResponse();
-              return res;
-            });
+            .then(adoptObservedResponse);
         },
         { abortSignal: upstream.signal, label: safeHostLabel(request.url) },
       );
@@ -5396,10 +5410,7 @@ async function handleResponsesInner(
                   ? createCodexReserveDispatchGuard(authCtx, options.codexAuthPolicy ?? config, route.modelId, options.admission, options.visionDescribeTerminal === true) : undefined,
               }),
               route.provider.authMode === "forward")
-              .then(response => {
-                settleObservedHostResponse();
-                return response;
-              });
+              .then(adoptObservedResponse);
           },
           { abortSignal: upstream.signal, label: safeHostLabel(request.url) },
         );
@@ -5504,10 +5515,7 @@ async function handleResponsesInner(
             codex401ReplayKind === "stored" ? options.onStoredPool401ReplayDispatched : undefined,
           ),
           route.provider.authMode === "forward",
-        ).then(response => {
-          settleObservedHostResponse();
-          return response;
-        });
+        ).then(adoptObservedResponse);
       } catch (err) {
         return transportFailureResponse(err);
       } finally {
@@ -5622,10 +5630,7 @@ async function handleResponsesInner(
                   ? createCodexReserveDispatchGuard(authCtx, options.codexAuthPolicy ?? config, route.modelId, options.admission, options.visionDescribeTerminal === true) : undefined,
               }),
               route.provider.authMode === "forward")
-              .then(res => {
-                settleObservedHostResponse();
-                return res;
-              });
+              .then(adoptObservedResponse);
           },
           { abortSignal: upstream.signal, label: safeHostLabel(request.url) },
         );
@@ -5722,10 +5727,7 @@ async function handleResponsesInner(
                   ? createCodexReserveDispatchGuard(authCtx, options.codexAuthPolicy ?? config, route.modelId, options.admission, options.visionDescribeTerminal === true) : undefined,
               }),
               route.provider.authMode === "forward")
-              .then(res => {
-                settleObservedHostResponse();
-                return res;
-              });
+              .then(adoptObservedResponse);
           },
           { abortSignal: upstream.signal, label: safeHostLabel(request.url) },
         );
@@ -5804,6 +5806,7 @@ async function handleResponsesInner(
           passthroughEstimate,
           stream: parsed.stream,
           onResponse: (response, retryAuthCtx, retryRequest) => {
+            adoptCodexWsStage(response);
             captureAffinityResponse(
               response,
               retryAuthCtx,
