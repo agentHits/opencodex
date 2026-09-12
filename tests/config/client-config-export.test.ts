@@ -1105,3 +1105,36 @@ describe("EXPORT_CLIENTS registry", () => {
     expect(piConfig(empty).providers.opencodex!.models).toEqual([]);
   });
 });
+
+
+test("renamed CommandCode gathered effort tables reach DSH and ZCode exports", async () => {
+  const { gatherRoutedModels } = await import("../../src/codex/catalog");
+  const { clearModelCache } = await import("../../src/codex/model-cache");
+  const { installIsolatedCodexHome } = await import("../helpers/isolated-codex-home");
+  const isolated = installIsolatedCodexHome("ocx-renamed-provider-export-");
+  const known = "deepseek/deepseek-v4-flash";
+  const overridden = "deepseek/deepseek-v4.1-flash";
+  const config = cfg({ defaultProvider: "CommandCode", providers: { CommandCode: {
+    adapter: "openai-chat", authMode: "key", baseUrl: "https://api.commandcode.ai/provider/v1",
+    liveModels: false, models: [known, overridden, "unknown-model"],
+    modelReasoningEfforts: { [overridden]: ["low"] },
+  } } });
+  try {
+    clearModelCache();
+    const gathered = await gatherRoutedModels(config);
+    const rows = gathered.map(row => ({ ...row, namespaced: `CommandCode/${row.id}` }));
+    const models = exportModelsFromProxyRows(rows, config);
+    const context = ctx({ models, config });
+    const dshConfig = dsh.buildDshClientConfig(context);
+    const dshModels = Object.values(dshConfig["llm-pi-ai"].providers).flatMap(provider => provider.models);
+    expect(dshModels.find(model => model.id === `CommandCode/${known}`)?.reasoningEfforts).toEqual({ high: "high", max: "max" });
+    expect(dshModels.find(model => model.id === `CommandCode/${overridden}`)?.reasoningEfforts).toEqual({ low: "low" });
+    expect(dshModels.find(model => model.id === "CommandCode/unknown-model")?.reasoningEfforts).toBeUndefined();
+    const zcodeModels = Object.values(zcode.buildZcodeClientConfig(context).provider).flatMap(provider => Object.values(provider.models));
+    expect(zcodeModels.filter(model => model.reasoning?.variants.includes("high"))).toHaveLength(1);
+    expect(zcodeModels.filter(model => model.reasoning?.variants.includes("low"))).toHaveLength(1);
+  } finally {
+    clearModelCache();
+    isolated.restore();
+  }
+});

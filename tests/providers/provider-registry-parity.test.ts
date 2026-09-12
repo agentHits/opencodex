@@ -1,3 +1,4 @@
+import { configuredReasoningEfforts } from "../../src/reasoning-effort";
 import { describe, expect, spyOn, test } from "bun:test";
 import { buildCatalogEntries } from "../../src/codex/catalog";
 import { CURSOR_NO_VISION_MODELS } from "../../src/adapters/cursor/discovery";
@@ -1524,6 +1525,48 @@ describe("free-provider directory isolation", () => {
       expect(map?.xhigh, `${provider}/${model} xhigh alias`).toBe("high");
       expect(map?.low, `${provider}/${model} low resolution`).toBe("low");
       expect(map?.max, `${provider}/${model} max`).toBe("max");
+    }
+  });
+});
+
+
+describe("renamed fixed-key destination reasoning metadata", () => {
+  const known = "deepseek/deepseek-v4-flash";
+  const newer = "deepseek/deepseek-v4.1-flash";
+  const make = (overrides: Partial<OcxProviderConfig> = {}): OcxProviderConfig => ({
+    adapter: "openai-chat", authMode: "key", baseUrl: "https://api.commandcode.ai/provider/v1", ...overrides,
+  });
+  test("fills known model tables and unknown-model default for CommandCode", () => {
+    const provider = make();
+    enrichProviderFromRegistry("CommandCode", provider);
+    expect(configuredReasoningEfforts(provider, known)).toEqual(["high", "max"]);
+    expect(configuredReasoningEfforts(provider, newer)).toEqual(["high", "max"]);
+    expect(configuredReasoningEfforts(provider, "unknown-model")).toEqual([]);
+  });
+  test("preserves explicit entries and clones arrays without losing other table rows", () => {
+    const caller = ["low"];
+    const provider = make({ reasoningEfforts: ["medium"], modelReasoningEfforts: { [known]: caller, custom: [] } });
+    const registry = registryEntryForProviderDestination(provider)!;
+    const registryBefore = structuredClone(registry.modelReasoningEfforts);
+    enrichProviderFromRegistry("CommandCode", provider);
+    const once = structuredClone(provider);
+    enrichProviderFromRegistry("CommandCode", provider);
+    expect(provider).toEqual(once);
+    expect(configuredReasoningEfforts(provider, known)).toEqual(["low"]);
+    expect(configuredReasoningEfforts(provider, newer)).toEqual(["high", "max"]);
+    expect(configuredReasoningEfforts(provider, "custom")).toEqual([]);
+    expect(configuredReasoningEfforts(provider, "unknown-model")).toEqual(["medium"]);
+    provider.modelReasoningEfforts![known]!.push("high");
+    provider.modelReasoningEfforts![newer]!.push("low");
+    expect(caller).toEqual(["low"]);
+    expect(registry.modelReasoningEfforts).toEqual(registryBefore);
+  });
+  test("does not infer metadata for a different adapter, OAuth, or unrelated endpoint", () => {
+    for (const override of [{ adapter: "openai-responses" }, { authMode: "oauth" as const }, { baseUrl: "https://example.test/v1" }]) {
+      const provider = make(override);
+      enrichProviderFromRegistry("CommandCode", provider);
+      expect(provider.modelReasoningEfforts).toBeUndefined();
+      expect(provider.reasoningEfforts).toBeUndefined();
     }
   });
 });
