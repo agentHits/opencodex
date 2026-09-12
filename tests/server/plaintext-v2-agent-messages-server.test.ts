@@ -526,7 +526,7 @@ describe("plaintext v2 agent messages at the Responses server boundary", () => {
     });
   });
 
-  test("stores the client namespace so disabling the option cannot replay the private alias", async () => {
+  test.each([undefined, "websocket"] as const)("stores the client namespace across an option change on %s", async inboundTransport => {
     const sentBodies: string[] = [];
     let requestIndex = 0;
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -545,6 +545,7 @@ describe("plaintext v2 agent messages at the Responses server boundary", () => {
       collaborationRequest(),
       config(true),
       { model: "", provider: "" },
+      { inboundWire: "responses", inboundTransport },
     );
     await first.text();
     const second = await handleResponses(
@@ -554,6 +555,7 @@ describe("plaintext v2 agent messages at the Responses server boundary", () => {
       }),
       config(false),
       { model: "", provider: "" },
+      { inboundWire: "responses", inboundTransport },
     );
     await second.text();
 
@@ -637,4 +639,35 @@ test("cross-coordinate namespace conflict cannot publish continuation", async ()
   const next = await handleResponses(collaborationRequest({ previousResponseId: "refused-coordinates" }), config(false), { model: "", provider: "" });
   expect(next.status).toBe(400);
   expect(sends).toBe(1);
+});
+
+
+test("concurrent native requests do not share plaintext alias metadata", async () => {
+  const pending: Array<{ enabled: boolean; resolve: (value: Response) => void }> = [];
+  let bothReady!: () => void;
+  const ready = new Promise<void>(resolve => { bothReady = resolve; });
+  globalThis.fetch = ((_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    const enabled = body.tools.some((tool: { name: string }) => tool.name === PLAINTEXT_V2_COLLABORATION_NAMESPACE);
+    const response = new Promise<Response>(resolve => { pending.push({ enabled, resolve }); });
+    if (pending.length === 2) bothReady();
+    return response;
+  }) as typeof fetch;
+  const first = handleResponses(collaborationRequest(), config(true), { model: "", provider: "" });
+  const second = handleResponses(collaborationRequest(), config(false), { model: "", provider: "" });
+  await ready;
+  for (const request of [...pending].reverse()) {
+    const payload = completedResponsePayload(request.enabled ? "concurrent-enabled" : "concurrent-disabled");
+    if (!request.enabled) payload.output[0]!.namespace = "foreign";
+    request.resolve(Response.json(payload));
+  }
+  const [enabledResponse, disabledResponse] = await Promise.all([first, second]);
+  const enabledText = await enabledResponse.text();
+  const disabledText = await disabledResponse.text();
+  expect(enabledText).toContain('"namespace":"collaboration"');
+  expect(enabledText).toContain('"name":"spawn_agent"');
+  expect(enabledText).not.toContain("start_delegated_task");
+  expect(disabledText).toContain('"namespace":"foreign"');
+  expect(disabledText).toContain('"name":"start_delegated_task"');
+  expect(pending).toHaveLength(2);
 });
