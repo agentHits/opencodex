@@ -75,7 +75,7 @@ grant. The existing 351 lines must pass unmodified.
 | 41 | Device fails, no `onManualCodeInput`, darwin | Throws; message names the device failure |
 | 41b | Device fails, no paste surface, win32 | Message contains the device reason **and** `dev.meta.ai` **and** `META_MODEL_API_KEY` (fold 3) |
 | 41c | Empty paste on win32 | Message still contains `no credential to import` (fold 3) |
-| 41d | No `loginDevice` stub, injected `fetchImpl` | The device attempt uses the injected fetch; zero real network calls (fold 1) |
+| 41d | No `loginDevice` stub, with `fetchImpl`, `sleep` and `now` injected | The device attempt receives all three: zero real network calls, zero real timer waits, and the deadline derives from the injected clock (fold 1) |
 | 42 | Device cancelled | Rethrown; no paste prompt |
 | 43 | Consent warning | Still emitted before the first read, on every path including device |
 | 44 | `refreshMetaMuseToken` with a device credential | `muse` preserved; `source === "oauth"` |
@@ -96,12 +96,18 @@ grant. The existing 351 lines must pass unmodified.
 | 54 | Failure engages backoff | Second call within 5 minutes performs **zero** fetches |
 | 55 | Backoff expiry | A call after 5 minutes (injected `now`) fetches again |
 | 55b | Success TTL | A second call 1 minute after a SUCCESS performs zero fetches |
-| 55c | Success TTL ignores force | The same holds when the caller forces a refresh; only injected `now` advancing past 5 minutes permits another mint |
+| 55c | Success TTL is unconditional | `fetchMuseKeyQuotaSnapshot` takes no force parameter by design, so the TTL cannot be bypassed at this level; only injected `now` advancing past 5 minutes permits another mint |
 | 56 | Per-account isolation | Account A's backoff does not silence account B |
 | 57 | Key never escapes | The returned object has no `apiKey`/`api_key` and no value containing the canary key |
 | 58 | Never throws | A fetch that rejects yields `null`, not an exception |
 
-Dispatch coverage (probe preferred, passive fallback, probe failure non-fatal) is added to
+Dispatch coverage is added to the file named below: probe preferred, passive fallback,
+probe failure non-fatal, and — the case the audit asked for — a FORCED refresh through the
+dispatcher still mints at most once per success TTL, since `forceRefresh` never reaches the
+probe. That assertion belongs at the dispatcher, not at the snapshot function, which has no
+such parameter.
+
+Dispatch coverage is added to
 `tests/providers/muse-passive-quota-cache.test.ts`, which already owns the auth-store and
 cache fixtures for this provider.
 

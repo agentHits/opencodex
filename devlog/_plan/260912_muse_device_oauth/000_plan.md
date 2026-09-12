@@ -58,7 +58,7 @@ wp1 (docs)  ->  wp2 (device core)  ->  wp3 (login integration)  ->  wp4 (header 
 | Phase | Document | Outcome | Depends on |
 |---|---|---|---|
 | wp1 | this file, `001`, `002` | The roadmap below, concretized to diff level | — |
-| wp2 | `010_wp2_device_core.md` | `src/oauth/meta-muse-device.ts`: device authorization, RFC 8628 poll, key mint, error taxonomy | wp1 |
+| wp2 | `010_wp2_device_core.md` | `src/oauth/meta-muse-device.ts` (device authorization, RFC 8628 poll, key mint, error taxonomy) plus the `muse` field on `OAuthCredentials` in `src/oauth/types.ts` | wp1 |
 | wp3 | `020_wp3_login_integration.md` | `loginMetaMuse` gains the device path; registration, fallback order, credential persistence | wp2 |
 | wp4 | `030_wp4_header_and_quota.md` | `x-api-version` on Model API requests; on-demand quota probe from the mint response | wp3 |
 | wp5 | `040_wp5_tests_and_gate.md` | Targeted tests, docs consistency, receipt, local commits | wp4 |
