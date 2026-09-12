@@ -136,7 +136,7 @@ describe("pinned-start child cleanup", () => {
     expect(result.livenessChecks).toEqual([4241, 4242, 4243]);
   });
 
-  test("a previous child's late exit does not retire the current live child", async () => {
+  test.each(["exit", "error", "close"])("a previous child's late %s does not retire the current live child", async event => {
     const observed = new Set<FakeChild>();
     const result = await exhaustRetries({
       reusePid: true,
@@ -145,11 +145,33 @@ describe("pinned-start child cleanup", () => {
         if (!previous || observed.has(previous)) return;
         observed.add(previous);
         previous.exitCode = 0;
-        previous.emit("exit", 0, null);
+        if (event === "error") previous.emit(event, new Error("late spawn error"));
+        else previous.emit(event, 0, null);
       },
     });
     expect(observed.size).toBe(2);
     expect(result.killed).toEqual([4241, 4241, 4241]);
+  });
+
+  test("failed spawns retire on error and close without an exit event", async () => {
+    const observed = new Set<FakeChild>();
+    const result = await exhaustRetries({
+      spawned: child => { Object.defineProperty(child, "pid", { value: undefined }); },
+      healthWait: children => {
+        const child = children.at(-1)!;
+        if (observed.has(child)) return;
+        observed.add(child);
+        child.emit("error", new Error("spawn ENOENT"));
+        // Retirement also releases this attempt's closure; an absent-PID check alone
+        // would pass the kill assertions while keeping the exit handler installed.
+        expect(child.listenerCount("exit")).toBe(0);
+        expect(child.listenerCount("close")).toBe(0);
+        child.emit("close", -1, null);
+      },
+    });
+    expect(observed.size).toBe(3);
+    expect(result.killed).toEqual([]);
+    expect(result.livenessChecks).toEqual([]);
   });
 
   test("leaves the current child running when its health probe succeeds", async () => {

@@ -1381,9 +1381,15 @@ async function restartAfterUpdate(
     }
     const child = spawnPinnedStart(job, job.installer, port, launcher);
     lastChild = child;
-    child.once("exit", () => {
+    const retireChild = () => {
       if (lastChild === child) lastChild = null;
-    });
+      child.removeListener("exit", retireChild);
+      child.removeListener("error", retireChild);
+      child.removeListener("close", retireChild);
+    };
+    child.once("exit", retireChild);
+    child.once("error", retireChild);
+    child.once("close", retireChild);
     const healthDeadline = now() + perAttemptHealthMs;
     while (now() < healthDeadline) {
       if (await probe(port, hostname)) return;
