@@ -515,3 +515,5 @@ survives availability drift, while complete/native custom orders await explicit 
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+The shared Responses path follows the [bounded multipart recovery contract](subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.

@@ -303,3 +303,5 @@ The Remote Hub guide and affected CLI, server-config, management-API, and dashbo
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](../providers/openai-tiers.md#quota-cache-and-short-window-history).
+
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
