@@ -78,3 +78,6 @@ The management quota DTO keeps Combo editing aligned with scoped inference evide
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
 CCA image-capable requests do not acquire the text-summary includeThoughts opt-in. See [Google summary boundary](../providers/google.md).
+
+Claude replay carries [Go conversation affinity](inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.

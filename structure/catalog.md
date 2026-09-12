@@ -273,3 +273,10 @@ The management quota DTO keeps Combo editing aligned with scoped inference evide
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
 
 Provider `showThinkingSummary` is a Responses request default; it does not rewrite catalog summary defaults or client configuration. See [Google summaries](providers/google.md).
+
+## Paginated history writer boundary
+
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.

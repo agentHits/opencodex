@@ -108,3 +108,5 @@ The management quota DTO keeps Combo editing aligned with scoped inference evide
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
 
 Raw reasoning content and provider-authored summaries remain distinct on the Responses wire. See [reasoning presentation](providers/chat-compat.md).
+
+Cline CLI is a managed file integration: its provider settings and catalog share one recoverable journal operation. The [paired-file contract](clients/integrations.md#cline-paired-files) defines its stop/restart requirement.

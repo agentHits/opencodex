@@ -532,3 +532,16 @@ refreshes quota with Combo data while preserving drafts. Each successful quota s
 advances the observation clock, so a retained older row cannot defer evaluation of a fresh row.
 
 The provider editor field policy exposes `showThinkingSummary` as a boolean provider option; it controls Responses summary defaults without a dashboard rendering change. See [Google provider](providers/google.md).
+
+## Paginated history writer boundary
+
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.
+
+Cline journal Undo eligibility reads both native configuration files through the paired
+integration IO adapter. Its snapshot fingerprint cannot be checked against providers.json alone;
+[the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
+
+The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.
