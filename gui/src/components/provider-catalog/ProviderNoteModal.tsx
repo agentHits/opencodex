@@ -37,7 +37,12 @@ export default function ProviderNoteModal({
 
   useEffect(() => {
     const dialog = dialogRef.current;
+    const trigger = document.activeElement as HTMLElement | null;
     if (dialog && !dialog.open) dialog.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    };
   }, []);
 
   // Native <dialog> fires "cancel" on Escape — forward it so this popup closes first

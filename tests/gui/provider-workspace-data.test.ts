@@ -35,7 +35,6 @@ import {
   filterPresets,
   presetTier,
   noteNeedsReveal,
-  NOTE_CLAMP_CHARS,
   type CatalogPreset,
 } from "../../gui/src/components/provider-catalog/provider-presets";
 import { isLocalProvider, providerKind } from "../../gui/src/provider-workspace/kind";
@@ -568,19 +567,12 @@ describe("add-provider catalog presets (WP050a)", () => {
     expect(filterPresets(rows, "").map(p => p.id)).toEqual(["nvidia", "groq"]);
   });
 
-  test("only a note the two-line clamp actually hides earns a reveal control", () => {
-    // The short-note case that must stay clean: this is the real Ollama note.
-    expect(noteNeedsReveal("Local — key usually blank")).toBe(false);
+  test("every nonempty note remains readable regardless of rendered width", () => {
+    expect(noteNeedsReveal("Local — key usually blank")).toBe(true);
+    expect(noteNeedsReveal("Short")).toBe(true);
+    expect(noteNeedsReveal("x".repeat(1126))).toBe(true);
     expect(noteNeedsReveal(undefined)).toBe(false);
     expect(noteNeedsReveal("   ")).toBe(false);
-    // A paragraph-length note is the whole reason the clamp exists: opencode-free is
-    // ~1100 characters and unclamped it fills the entire 360px scroll viewport.
-    expect(noteNeedsReveal("x".repeat(1126))).toBe(true);
-    // Exactly at the threshold still fits; one character past it does not.
-    expect(noteNeedsReveal("x".repeat(NOTE_CLAMP_CHARS))).toBe(false);
-    expect(noteNeedsReveal("x".repeat(NOTE_CLAMP_CHARS + 1))).toBe(true);
-    // Trailing whitespace is not content and must not tip a short note over.
-    expect(noteNeedsReveal(`${"x".repeat(NOTE_CLAMP_CHARS)}${" ".repeat(40)}`)).toBe(false);
   });
 
 });

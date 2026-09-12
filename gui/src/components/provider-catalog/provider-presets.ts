@@ -119,33 +119,8 @@ export function filterPresets(presets: CatalogPreset[], query: string): CatalogP
   return presets.filter(p => p.label.toLowerCase().includes(q) || p.id.toLowerCase().includes(q));
 }
 
-/**
- * Longest note that still fits the two-line clamp on a catalog row at the modal width.
- * Deliberately a character count rather than a layout read: `scrollHeight > clientHeight`
- * needs a ref on every row plus a resize observer, and it makes the decision impossible
- * to test without a DOM. Erring slightly long only costs a reveal control on a row that
- * did not strictly need one.
- */
-export const NOTE_CLAMP_CHARS = 90;
-
-/** True when a note is long enough that the clamp hides part of it. */
+/** Every nonempty note has a full-text route: rendered clipping depends on width,
+ * adapter chips and badges, so no character threshold can safely hide the control. */
 export function noteNeedsReveal(note: string | undefined): boolean {
-  return (note?.trim().length ?? 0) > NOTE_CLAMP_CHARS;
-}
-
-const SPONSOR_RANK: Record<NonNullable<CatalogPreset["sponsor"]>, number> = { main: 0, standard: 1 };
-
-/**
- * Sponsor rows first — Main before Standard, alphabetical by label within a tier — then the
- * caller's order untouched. Stable, so usage ranking still decides the non-sponsor tail.
- * Alphabetical among sponsors is deliberate: it is the one order no sponsor can buy.
- */
-export function pinSponsors(presets: CatalogPreset[]): CatalogPreset[] {
-  const sponsors = presets.filter(p => p.sponsor);
-  if (sponsors.length === 0) return presets;
-  sponsors.sort((a, b) =>
-    SPONSOR_RANK[a.sponsor!] - SPONSOR_RANK[b.sponsor!]
-    || a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
-    || a.id.localeCompare(b.id));
-  return [...sponsors, ...presets.filter(p => !p.sponsor)];
+  return !!note?.trim();
 }
