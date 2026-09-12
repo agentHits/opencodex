@@ -84,6 +84,12 @@ NEW)
 - Serialization keeps the stage; payload stays free of reason/body/header
   strings.
 
+## Docs / ownership
+
+L1 touches owned `src/server/responses/*` and `src/server/request-log.ts`:
+sync structure/transports/responses.md and structure/runtime.md in this PR
+(structure:check must stay green).
+
 ## Out of scope
 
 Any WS behavior fix, SSE-fallback policy change, prelude-timeout tuning

@@ -7,9 +7,10 @@ Class C4 (user data). Stack top, base the L3 branch. Branch
 
 #4311's live defect (ordinal-0 `session_meta` clone) is already guarded:
 `updateSessionMeta` throws for paginated records before writing
-(src/codex/history-provider.ts:1144,1172), and preflight refuses
+(throw at src/codex/history-provider.ts:1172), and preflight refuses
 `history_paginated_requires_native_writer`
-(src/codex/inject.ts:899,1182,1194). The residual acceptance is
+(structured field src/codex/inject.ts:899; preflight closure
+src/codex/inject.ts:1182-1194). The residual acceptance is
 (a) native paginated writer support and (b) corrupted-rollout recovery.
 
 (a) needs a Codex-owned writer API/IPC. None exists in this tree: Codex
@@ -34,7 +35,8 @@ NEW `src/codex/history-ordinal-recovery.ts`
     via the same process/home inspection the service uses, fail safe when
     undecidable).
   - Target resolution follows `resolveCodexStateDbPath` and
-    `threads.rollout_path` (src/codex/paths.ts:72,108) — never assume
+    `threads.rollout_path` (src/codex/paths.ts:107-108; the column is
+    read through history-provider, not paths.ts) — never assume
     `~/.codex/sessions`.
   - Suffix shape verified: ordinals strictly increase before the boundary,
     regress at the boundary, and the suffix parses cleanly. Anything else

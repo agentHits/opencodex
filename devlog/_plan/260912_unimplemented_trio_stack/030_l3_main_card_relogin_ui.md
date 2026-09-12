@@ -20,7 +20,7 @@ full device-code modal; the main card has nothing.
   `reauthAccountId=__main__`: the pool login route rejects `__main__`
   (src/codex/account-id.ts:15-20; src/codex/auth-api.ts:221-224,2736-2748)
   and a successful pool login writes `isMain: false` rows
-  (src/codex/auth-api.ts:2896) — wrong credential store.
+  (src/codex/auth-api.ts:2934-2939) — wrong credential store.
 - DTO field chain: backend DTO → hook-validated state → main card only;
   no device code in browser storage; verification URL accepted only from
   the backend contract, never from arbitrary payloads.
@@ -52,7 +52,7 @@ MODIFY `gui/src/components/codex-account-pool-main-card.tsx`
 
 MODIFY `gui/src/components/CodexAccountPool.tsx`
 - Own main-reauth modal state separate from `showAdd`/`reauthId`
-  (42,189-192); wire `onReauthDevice` at the main-card render (515-533);
+  (75,94; openReauth at 189-192); wire `onReauthDevice` at the main-card render (515-533);
   pause pool refresh while the main flow is active, same as the existing
   modal pause (174-178).
 
@@ -71,7 +71,15 @@ MODIFY `tests/gui/provider-workspace-auth.test.ts` — main-card contract
 updated for the new CTA + copy.
 MODIFY `tests/gui/codex-auth-modal-status.test.ts` if locale-key
 assertions enumerate codexAuth keys.
-NEW gui test file: layout.json explicit + expected-fixture entries.
+The happy-dom file lives under `gui/tests/`, outside the `tests/` layout
+map — layout.json explicit + expected-fixture entries are needed only for
+any NEW `tests/gui/*` source-contract file, not for `gui/tests/*`.
+
+## Docs / ownership
+
+L3 touches owned `gui/`: sync structure/overview.md and
+structure/gui-and-management-api.md in this PR (structure:check must stay
+green).
 
 ## Verification
 

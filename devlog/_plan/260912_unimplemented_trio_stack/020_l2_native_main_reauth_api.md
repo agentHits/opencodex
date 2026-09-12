@@ -53,7 +53,7 @@ NEW `src/codex/main-device-reauth.ts`
   never publish. No tokens/emails/raw account ids in DTO/log/error.
 - Dedicated abort controller and direct `loginChatGPTNativeDevice` call:
   MUST NOT use `startLoginFlow("chatgpt")` (would overwrite the chatgpt
-  scratch slot and 409 against pool logins, src/oauth/index.ts:1856-1973).
+  scratch slot and 409 against pool logins, src/oauth/index.ts:1899-1973).
 
 NEW `src/codex/main-device-reauth-api.ts`
 - `POST/GET/DELETE /api/codex-auth/main/reauth-device` with exact opaque
@@ -73,16 +73,22 @@ MODIFY `src/cli/account-main.ts`
 
 On a headless hub the native owner lifecycle is a no-op
 (src/server/index.ts:1026-1046 binds the no-op when
-`shouldSyncCodexOnStart` is false via src/codex/desired-state.ts:79-81).
+`shouldSyncCodexOnStart` is false; the gate is composed at
+src/codex/desired-state.ts:130 — :79-81 is `localClientSyncAllowed`).
 The reauth commit therefore MUST NOT depend on owner activation and MUST
 NOT widen `shouldSyncCodexOnStart` (that gate covers client-config sync,
-not credential rewrite). Commit fencing on any runtime role:
-`withNativeMainExclusiveClaim` + in-process admission fence +
-path/hash/inode assertion, exactly as on workstations. B must verify
-`withNativeMainExclusiveClaim` functions without the owner lifecycle; if
-any part of the claim chain is owner-dependent, the route returns
-`native_main_unavailable` and no write occurs — an unfenced write is a
-C4 violation, not a fallback.
+not credential rewrite).
+
+Audit-folded correction to 080: 080's `assertNativeMainOwner` at
+preparation/commit is RETRACTED for this layer. That assert throws without
+a held owner entry (src/codex/native-main-owner.ts:302-314), which would
+make hub reauth always fail. The exclusive claim is owner-independent
+(src/codex/native-main-claim.ts:167, FS/SQLite lock only). The fence is
+pinned to: `withNativeMainExclusiveClaim` + in-process admission fence +
+path/hash/inode assertion + recovery/admission snapshot recheck, exactly
+as on workstations. Only claim/admission failure maps to
+`native_main_unavailable`; no write occurs without the full fence — an
+unfenced write is a C4 violation, not a fallback.
 
 ## Tests (red-first; domain tests/codex-integration, tests/oauth, tests/cli)
 
