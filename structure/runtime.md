@@ -197,7 +197,7 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 ### Empty forced search answers
 
-`src/web-search/loop.ts` makes at most one extra answer attempt after a clean forced-answer terminal with no visible output or tool call. The recovery has no tools and reuses gathered search results. Malformed calls fail, and recognized refusal/truncation terminals pass through unchanged, including empty or partial answers. The extra generation may incur provider usage.
+`src/web-search/loop.ts` makes at most one extra answer attempt after a clean forced-answer terminal with no visible output or tool call. The recovery has no tools and reuses gathered search results. Malformed calls fail before refusal/truncation passthrough, and well-formed recognized refusal/truncation terminals pass through unchanged, including empty or partial answers. The extra generation may incur provider usage.
 
 ## Scoped provider quota for Combo selection
 

@@ -875,7 +875,8 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
               // An unterminated call flushes AFTER the terminal event, so find
               // the terminal rather than assuming it is last (#1001).
               const terminalEvent = split.passthrough.find(event => event.type === "done");
-              if (terminalEvent?.type === "done" && isTruncatedStopReason(terminalEvent.stopReason)) {
+              if (terminalEvent?.type === "done" && !split.hasMalformedToolCall
+                && isTruncatedStopReason(terminalEvent.stopReason)) {
                 // A provider refusal or truncation is authoritative, even without text.
                 // Preserve it once; neither an empty-answer retry nor a generic 502 applies.
                 yield* replay(split.passthrough.slice(split.streamedPassthroughCount));

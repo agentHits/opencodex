@@ -183,8 +183,23 @@ describe("issue #1001 — forced-answer passes must produce usable output", () =
 
     test("the recovery pass asks for text with every tool removed", async () => {
       const seen: OcxParsedRequest[] = [];
+      let sidecarCalls = 0;
+      const evidence = "Distinctive gathered result: fixture-42";
+      globalThis.fetch = (async (input, init) => {
+        sidecarCalls++;
+        expect(String(input)).toBe("https://chatgpt.test/v1/responses");
+        const body = JSON.parse(String(init?.body));
+        expect(body.input[0].content[0].text).toBe("recovery fixture query");
+        return new Response(
+          `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: evidence })}\n\n`
+          + 'event: response.completed\ndata: {"type":"response.completed"}\n\n',
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      }) as typeof fetch;
+      const actualSearch: AdapterEvent[] = webSearchFirstPass.map(event => event.type === "tool_call_delta"
+        ? { ...event, arguments: JSON.stringify({ query: "recovery fixture query" }) } : event);
       await drivePasses([
-        webSearchFirstPass,
+        actualSearch,
         [{ type: "done" }],
         [{ type: "text_delta", text: "recovered answer" }, { type: "done" }],
       ], seen);
@@ -194,7 +209,11 @@ describe("issue #1001 — forced-answer passes must produce usable output", () =
       expect(recovery.options.toolChoice).toBe("none");
       expect(recovery.context.tools).toEqual([]);
       // The results gathered by the search reach the recovery turn as a tool result ...
-      expect(recovery.context.messages.filter(message => message.role === "toolResult")).toHaveLength(1);
+      const results = recovery.context.messages.filter(message => message.role === "toolResult");
+      expect(results).toHaveLength(1);
+      expect(JSON.stringify(results[0])).toContain(evidence);
+      expect(results).toEqual(seen[1]!.context.messages.filter(message => message.role === "toolResult"));
+      expect(sidecarCalls).toBe(1);
       // ... and the recovery turn carries the developer nudge that asks for the missing text.
       expect(recovery.context.messages.some(message =>
         message.role === "developer" && String(message.content).includes("no tools are available")))
@@ -209,6 +228,26 @@ describe("issue #1001 — forced-answer passes must produce usable output", () =
       expect(seen[2]!.context.tools).toEqual([]);
       expect(seen[2]!.options.toolChoice).toBe("none");
     });
+
+    for (const liveOutput of [false, true]) {
+      for (const stopReason of ["max_tokens", "content_filter"]) {
+        test(`malformed calls fail before ${stopReason} passthrough, live=${liveOutput}`, async () => {
+          const seen: OcxParsedRequest[] = [];
+          const frames = await drivePasses([webSearchFirstPass, [
+            { type: "tool_call_start", id: "partial", name: "fixture" },
+            { type: "tool_call_delta", arguments: '{"partial":' },
+            { type: "tool_call_start", id: "closed", name: "fixture" },
+            { type: "tool_call_delta", arguments: "{}" },
+            { type: "tool_call_end" },
+            { type: "done", stopReason },
+          ]], seen, true, liveOutput);
+          expect(seen).toHaveLength(2);
+          expect(frames.some(frame => frame.event === "response.failed")).toBe(true);
+          expect(frames.some(frame => frame.event === "response.function_call_arguments.done")).toBe(false);
+          expect(frames.some(frame => frame.event === "response.completed" || frame.event === "response.incomplete")).toBe(false);
+        });
+      }
+    }
 
     for (const [stopReason, reason] of [["refusal", "content_filter"], ["content_filter", "content_filter"], ["max_tokens", "max_output_tokens"], ["length", "max_output_tokens"]]) {
       for (const partial of [false, true]) {
