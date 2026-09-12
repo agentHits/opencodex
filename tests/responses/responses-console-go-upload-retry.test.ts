@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { markResponseNonReplayable } from "../../src/lib/upstream-retry";
 import { handleResponses } from "../../src/server/responses/core";
 import type { RequestLogContext } from "../../src/server/request-log";
 import type { OcxConfig } from "../../src/types";
@@ -176,6 +177,7 @@ describe("Console destination and translated recovery controls", () => {
             const completed = { id: "resp_fixture", object: "response", status: "completed", output: [] };
             return stream ? new Response(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: completed })}\n\n`, { headers: { "content-type": "text/event-stream" } }) : Response.json(completed);
           }
+          if (!stream) return Response.json({ id: "chat_fixture", object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content: "answer" }, finish_reason: "stop" }] });
           const chunk = { id: "chat_fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "answer" }, finish_reason: "stop" }] };
           return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
         }) as typeof fetch;
@@ -205,6 +207,26 @@ describe("Console destination and translated recovery controls", () => {
         expect(response.status).toBe(499);
         expect(sends).toBe(1);
       } finally { spy.mockRestore(); }
+    });
+  }
+});
+
+
+describe("Console nonreplayable response boundary", () => {
+  for (const adapter of ["openai-responses", "openai-chat"] as const) {
+    test(`${adapter} does not replay a marked response`, async () => {
+      const cfg = config(); cfg.providers.go!.adapter = adapter;
+      let sends = 0;
+      globalThis.fetch = (async () => {
+        sends++;
+        const response = refusal();
+        markResponseNonReplayable(response);
+        return response;
+      }) as typeof fetch;
+      const response = await handleResponses(request(), cfg, { model: "", provider: "" });
+      expect(response.status).toBe(400);
+      expect(sends).toBe(1);
+      expect(await response.text()).toContain("Invalid upload request.");
     });
   }
 });
