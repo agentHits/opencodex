@@ -52,12 +52,12 @@ function identifier(value: string, label: string): string {
   return value;
 }
 
-function resultText(result: RemoteWorkspaceToolResult): string {
+function boundedResult(result: RemoteWorkspaceToolResult): { text: string; success: boolean } {
   const encoded = JSON.stringify(result);
   if (Buffer.byteLength(encoded, "utf8") > REMOTE_WORKSPACE_MAX_TOOL_RESULT_BYTES) {
-    return JSON.stringify({ ok: false, error: "remote workspace tool result exceeded the coordinator limit" });
+    return { text: JSON.stringify({ ok: false, error: "remote workspace tool result exceeded the coordinator limit" }), success: false };
   }
-  return encoded;
+  return { text: encoded, success: result.ok };
 }
 
 export function remoteWorkspaceThreadStartParams(options: {
@@ -219,11 +219,12 @@ export class RemoteWorkspaceCoordinator {
   }
 
   private response(id: string | number, result: RemoteWorkspaceToolResult): AppServerDynamicToolResponse {
+    const bounded = boundedResult(result);
     return {
       id,
       result: {
-        contentItems: [{ type: "inputText", text: resultText(result) }],
-        success: result.ok,
+        contentItems: [{ type: "inputText", text: bounded.text }],
+        success: bounded.success,
       },
     };
   }
