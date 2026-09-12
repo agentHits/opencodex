@@ -209,6 +209,26 @@ describe("Remote Workspace session service", () => {
     }
   }
 
+  test.each(["stop", "shutdown"] as const)("%s reports failed cleanup of a late resumed runtime", async action => {
+    const store = new MemorySessionStore();
+    const first = createHarness({ sessionStore: store });
+    const created = await first.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+    await first.service.shutdown();
+    const gate = deferred();
+    const entered = deferred();
+    const resumed = createHarness({ sessionStore: store, startGate: gate, onStart: entered.resolve, stopError: new Error("late stop failed") });
+    const prompt = resumed.service.prompt(created.id, "Resume").then(() => "resolved", () => "rejected");
+    await entered.promise;
+    const stopping = action === "stop" ? resumed.service.stop(created.id) : resumed.service.shutdown();
+    const failed = expect(stopping).rejects.toThrow("late stop failed");
+    gate.resolve();
+    await failed;
+    expect(await prompt).toBe("rejected");
+    expect(resumed.stopCalls()).toBe(1);
+    expect(resumed.closedSessions).toEqual([created.id]);
+    expect(resumed.service.get(created.id)?.status).toBe("failed");
+  });
+
   test("failed availability releases every pending runtime reservation", async () => {
     const gate = deferred();
     const harness = createHarness({ availableGate: gate });

@@ -561,6 +561,7 @@ export class RemoteWorkspaceSessionService {
         await runRemoteWorkspaceCleanupSteps([
           async () => { if (handle) await handle.stop(); },
           () => activeOperation.catch(() => {}),
+          async () => { if (session.handle && session.handle !== handle) await session.handle.stop(); },
           () => { session.unregister?.(); session.unregister = null; },
           async () => { if (session.closeTransport) await session.closeTransport(); },
           () => {
@@ -600,6 +601,7 @@ export class RemoteWorkspaceSessionService {
           await runRemoteWorkspaceCleanupSteps([
             async () => { if (handle) await handle.stop(); },
             () => activeOperation.catch(() => {}),
+          async () => { if (session.handle && session.handle !== handle) await session.handle.stop(); },
             () => { session.unregister?.(); session.unregister = null; },
             async () => { if (session.closeTransport) await session.closeTransport(); },
             () => {
@@ -722,7 +724,8 @@ export class RemoteWorkspaceSessionService {
         emit: (type, text) => this.emit(session, type, text),
       });
       if (this.shuttingDown || session.stopOperation) {
-        await this.stopLateRuntime(handle);
+        // Stop/shutdown awaits this resume and must observe any late-handle cleanup failure.
+        session.handle = handle;
         throw new Error("remote workspace session was stopped while resuming");
       }
       try {
