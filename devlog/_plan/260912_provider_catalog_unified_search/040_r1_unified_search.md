@@ -70,3 +70,28 @@ comparator, and the alias rules all live in `provider-presets.ts` and are unit-t
 without React. The component test covers: a query with zero hits in the active tab
 leaves `tier` untouched; tab click with a non-empty query does not clear the query; an
 in-flight Accounts login keeps its `LoginHint` and paste field across a chip click.
+
+## What changed against this doc during the build
+
+Five things the plan did not anticipate, each found by an independent reviewer or by
+driving the surface:
+
+- **The group heading is not sticky.** A sticky bar needs an opaque background, and
+  `.modal-card` is a translucent glass panel, so it seamed against the card behind it —
+  and it read as a grey slab. It is now a small-caps `<h4>` with a hairline rule that
+  scrolls with the content; the chips above are already the index.
+- **The chip lookup cannot use `CSS.escape`.** Group ids come from `useId`, which emits
+  colons, so selecting on one needs `CSS.escape` — and `CSS` does not exist in the
+  happy-dom environment the GUI tests run in, so a chip click would have thrown
+  `ReferenceError` on CI rather than merely being untested. The heading carries a
+  `data-catalog-group` attribute instead.
+- **The jump scrolls the list itself**, and focuses with `preventScroll`. `.modal-card`
+  is also a scroll container, so both `scrollIntoView` and a plain `focus()` could drag
+  the search field out of view while jumping between groups.
+- **Loading and empty states key off what is actually on screen.** Using the total match
+  count meant the unfiltered Accounts bucket — which almost always holds an OpenAI login
+  row — kept a still-loading Free tab from ever saying it was loading. `visibleCount` is
+  the selected tab's own row count while browsing.
+- **The login/preset dedupe is a named helper**, `dropPresetsCoveredByAccounts`, rather
+  than a `Set` inside the memo, so the rule that a login row outranks a preset of the
+  same id has its own unit test.
