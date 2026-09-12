@@ -12,4 +12,4 @@ MODIFY directly relevant structure/runtime.md, structure/config.md, structure/op
 
 Design OPS-LIST-01..04 accepted with amendments. NEW tests/cli/cli-start-auxiliary-bind.test.ts, registered in both test-layout files, uses isolated CLI subprocess to cover soft and hard-pinned startup: failure names auxiliary key/address, exit nonzero, no public repick/wait branch. Existing management rollback fixture occupies management first then selects distinct public/loopback ports. Warning helper runs on all three load return paths plus read-only diagnostics; controls cover absent and valid-disabled entries and malformed secret-shaped input without echoing raw values.
 
-Follow-up090 validates raw managementIngress against its own shared strict schema; disappearance of the entire hub block is not evidence that the ingress itself was malformed.
+Follow-up090 validates raw managementIngress against the existing shared strict managementIngressSchema; disappearance of the entire hub block is not evidence that the ingress itself was malformed.
