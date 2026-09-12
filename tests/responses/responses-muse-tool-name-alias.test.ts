@@ -158,6 +158,37 @@ describe("muse tool-name body rewrite", () => {
     const wire = hashedName(longName);
     expect((rewritten.body as { tool_choice: { tools: Array<{ name: string }> } }).tool_choice.tools[0]!.name).toBe(wire);
   });
+
+  // Codex review on #4422: upstream still sees the whole aliased catalog, but a tool the
+  // caller disabled for this turn must not be restorable into an executable client name.
+  test("tool_choice narrows what may be restored, matching the namespace layer", () => {
+    const other = "mcp__plugin_android-emulator_android-emulator__android_install_app";
+    const declare = () => ({
+      tools: [
+        { type: "function", name: longName, parameters: {} },
+        { type: "function", name: other, parameters: {} },
+      ],
+    });
+
+    expect(rewriteMuseToolNamesForUpstream(declare()).aliases.size).toBe(2);
+    expect(rewriteMuseToolNamesForUpstream({ ...declare(), tool_choice: "auto" }).aliases.size).toBe(2);
+
+    const none = rewriteMuseToolNamesForUpstream({ ...declare(), tool_choice: "none" });
+    expect(none.aliases.size).toBe(0);
+    expect((none.body as { tools: Array<{ name: string }> }).tools[0]!.name).toBe(hashedName(longName));
+
+    const picked = rewriteMuseToolNamesForUpstream({
+      ...declare(),
+      tool_choice: { type: "function", name: longName },
+    });
+    expect([...picked.aliases.values()]).toEqual([longName]);
+
+    const allowed = rewriteMuseToolNamesForUpstream({
+      ...declare(),
+      tool_choice: { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: other }] },
+    });
+    expect([...allowed.aliases.values()]).toEqual([other]);
+  });
 });
 
 describe("muse tool-name restore", () => {

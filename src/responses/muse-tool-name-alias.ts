@@ -201,6 +201,44 @@ function rewriteInputItem(item: unknown, wireByOriginal: ReadonlyMap<string, str
 }
 
 /**
+ * Keep restoration inside the caller's per-turn authorization boundary, matching
+ * `authorizedAliases` in namespace-tool-compat. Upstream sees every declaration even when
+ * `tool_choice` narrows what it may call, so a wire name appearing in that catalog is not
+ * on its own evidence that restoring it into an executable client name is permitted.
+ * The selector is already rewritten to wire names here, so it compares against alias keys.
+ */
+function authorizedMuseAliases(
+  aliases: Map<string, string>,
+  toolChoice: unknown,
+): Map<string, string> {
+  if (toolChoice === undefined || toolChoice === "auto" || toolChoice === "required") return aliases;
+  if (toolChoice === "none" || !isPlainObject(toolChoice)) return new Map();
+
+  const authorized = new Set<string>();
+  if (
+    (toolChoice.type === "function" || toolChoice.type === "custom")
+    && typeof toolChoice.name === "string"
+  ) {
+    authorized.add(toolChoice.name);
+  } else if (toolChoice.type === "allowed_tools" && Array.isArray(toolChoice.tools)) {
+    for (const tool of toolChoice.tools) {
+      if (!isPlainObject(tool)) continue;
+      if (tool.type !== "function" && tool.type !== "custom") continue;
+      if (typeof tool.name === "string") authorized.add(tool.name);
+    }
+  } else {
+    // An explicit selector for another tool kind authorizes no function/custom call.
+    return new Map();
+  }
+
+  const kept = new Map<string, string>();
+  for (const [wire, original] of aliases) {
+    if (authorized.has(wire)) kept.set(wire, original);
+  }
+  return kept;
+}
+
+/**
  * Rewrite function/custom tool identities for the Meta Muse 64-char wire limit.
  * Arguments, user text, and schema property names stay untouched.
  */
@@ -235,8 +273,10 @@ export function rewriteMuseToolNamesForUpstream(body: unknown): {
   }
 
   const toolChoice = rewriteToolChoice(body.tool_choice, wireByOriginal);
+  // Upstream still receives the whole aliased catalog; only what may be restored narrows.
+  const restorable = authorizedMuseAliases(aliases, toolChoice);
   if (tools === body.tools && input === body.input && toolChoice === body.tool_choice) {
-    return { body, aliases };
+    return { body, aliases: restorable };
   }
   return {
     body: {
@@ -245,7 +285,7 @@ export function rewriteMuseToolNamesForUpstream(body: unknown): {
       ...(input !== body.input ? { input } : {}),
       ...(toolChoice !== body.tool_choice ? { tool_choice: toolChoice } : {}),
     },
-    aliases,
+    aliases: restorable,
   };
 }
 
