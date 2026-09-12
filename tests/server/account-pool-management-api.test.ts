@@ -667,6 +667,38 @@ describe("unified pool-settings contract (#695 wp5c)", () => {
     if (dir) removeTreeWithRetry(dir);
   });
 
+  test("reset-first round-trips through canonical and legacy Codex settings only", async () => {
+    const server = startServer(0);
+    try {
+      const write = async (provider: string, strategy: string) => fetch(new URL("/api/pool/settings", server.url), {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider, strategy }),
+      });
+      const result = await write("openai", "reset-first");
+      expect(result.status).toBe(200);
+      expect(await result.json()).toMatchObject({ kind: "codex", strategy: "reset-first" });
+      expect(loadConfig().accountPoolStrategy).toBe("reset-first");
+      const canonical = await fetch(new URL("/api/pool/settings?provider=openai", server.url));
+      expect(await canonical.json()).toMatchObject({ strategy: "reset-first" });
+      const legacy = new Request("http://localhost/api/codex-auth/active");
+      const legacyRead = await handleCodexAuthAPI(legacy, new URL(legacy.url), loadConfig());
+      expect(await legacyRead!.json()).toMatchObject({ accountPoolStrategy: "reset-first" });
+      for (const provider of ["anthropic", "google-antigravity"]) {
+        const rejected = await write(provider, "reset-first");
+        expect(rejected.status).toBe(400);
+        await rejected.text();
+      }
+      const compatibility = new Request("http://localhost/api/codex-auth/pool-strategy", {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ strategy: "reset-first" }),
+      });
+      const compatibilityWrite = await handleCodexAuthAPI(compatibility, new URL(compatibility.url), loadConfig());
+      expect(compatibilityWrite!.status).toBe(200);
+      expect(await compatibilityWrite!.json()).toMatchObject({ accountPoolStrategy: "reset-first" });
+      expect(loadConfig().accountPoolStrategy).toBe("reset-first");
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("every kind answers with the same keys and declares what it supports", async () => {
     const server = startServer(0);
     try {

@@ -39,6 +39,7 @@ import {
   normalizeAccountPoolStrategy,
   parseAccountPoolStickyLimit,
   parseAccountPoolStrategy,
+  parseCodexAccountPoolStrategy,
 } from "../../codex/pool-rotation";
 import { normalizeAccountPoolQuotaWindow, parseAccountPoolQuotaWindow } from "../../oauth/anthropic-routing";
 import { primeCodexPoolQuotas } from "../../codex/auth-api";
@@ -383,8 +384,10 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     // sticky limit is refused identically whichever pool is addressed.
     let strategy: string | undefined;
     if (fields.strategy !== undefined) {
-      const parsed = parseGenericPoolStrategy(fields.strategy);
-      if (parsed === null) return jsonResponse({ error: "strategy must be one of: quota, round-robin, fill-first" }, 400);
+      const parsed = kind === "codex" ? parseCodexAccountPoolStrategy(fields.strategy) : parseGenericPoolStrategy(fields.strategy);
+      if (parsed === null) return jsonResponse({ error: kind === "codex"
+        ? "strategy must be one of: quota, round-robin, fill-first, reset-first"
+        : "strategy must be one of: quota, round-robin, fill-first" }, 400);
       strategy = parsed;
     }
     let stickyLimit: number | undefined;

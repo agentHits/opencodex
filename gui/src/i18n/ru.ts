@@ -1912,6 +1912,8 @@ export const ru: Record<TKey, string> = {
 
   "accountPool.strategy": "Стратегия ротации",
   "accountPool.strategyDesc": "Как OpenCodex назначает аккаунт новой/непривязанной задаче.",
+  "accountPool.strategyResetFirst": "Ближайший сброс первым",
+  "accountPool.strategyHintResetFirst": "Среди аккаунтов ниже порога выбирается ближайший сброс 5-часовой или недельной квоты. Привязанные задачи следуют настроенной политике привязки. Независимые квоты моделей упорядочиваются по использованию.",
   "accountPool.strategyQuota": "Квота",
   "accountPool.strategyRoundRobin": "Round-robin",
   "accountPool.strategyFillFirst": "Fill-first",

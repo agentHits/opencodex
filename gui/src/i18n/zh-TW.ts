@@ -1474,6 +1474,8 @@ export const zhTW: Record<TKey, string> = {
   "anthropicPool.off": "關",
   "accountPool.strategy": "輪換策略",
   "accountPool.strategyDesc": "新會話如何從帳號池中選擇帳號。",
+  "accountPool.strategyResetFirst": "額度即將重設優先",
+  "accountPool.strategyHintResetFirst": "在低於用量門檻的帳號中，優先選擇下次5小時或週額度重設最早的帳號。已綁定任務遵循設定的親和策略。獨立模型額度按用量排序。",
   "accountPool.strategyQuota": "配額",
   "accountPool.strategyRoundRobin": "輪詢",
   "accountPool.strategyFillFirst": "填滿優先",
