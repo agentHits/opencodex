@@ -15,6 +15,10 @@ Grounded in the open-sourced official client (xai-org/grok-build); unit + eviden
   `~/.grok/auth.json` (read-only) before any refresh and adopt a newer usable generation with
   zero IdP calls (`shouldAdoptGrokGeneration`, later-expiresAt authority); an IdP refresh
   detaches the credential to `source:"oauth"`.
+- **Browser login callback:** Grok's browser login uses the shared `OAuthCallbackFlow` listener
+  on a per-provider FIXED loopback port, so every response it sends closes its connection. A
+  retired flow that kept a pooled socket would capture the NEXT login's callback and reject it
+  as a state mismatch; see `src/oauth/callback-server.ts`.
 - **Two-lock refresh transaction:** per-provider+account intent lock held across the IdP
   exchange plus a short global store-write lock + async mutation funnel around every
   `auth.json` load-merge-persist (`src/oauth/store.ts`); generation-guarded persist
@@ -53,3 +57,11 @@ malformed, gapped, oversized, contradictory, failed, or incomplete streams stay 
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+Account-scoped OAuth quota remains display evidence for provider-level Combo selection; it does not acquire single-key inference-veto authority. See [scoped provider quota](../runtime.md#scoped-provider-quota-for-combo-selection).
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.

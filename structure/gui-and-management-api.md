@@ -517,3 +517,31 @@ Chat helper admission in `src/server/responses/core.ts` follows the
 claims stored main, after terminal vision, routed vision and search exclusions.
 
 Codex account DTOs and cards expose the routing-plan exclusion separately from credential health; the [plan exclusion contract](providers/openai-tiers.md#automatic-pool-plan-exclusions) also governs CLI projection.
+
+## Combo editor routing quota
+
+`src/server/management/provider-routes.ts` projects `routingQuota` after each quota read using the
+current provider configuration and [scoped inference evidence](runtime.md#scoped-provider-quota-for-combo-selection).
+The DTO carries only state, observation time and an exclusive `validUntil`; cached display reports
+and private credential bindings are unchanged. Known states expire within 30 minutes; exhaustion
+may expire earlier when the runtime predicate clears at a reset boundary, accounting for other
+windows and persistent USD blockers.
+
+`gui/src/combo-workspace-data.ts` accepts only this projection for quota-based Save/Create blocking.
+Missing, invalid or expired evidence is unknown. `gui/src/pages/Combos.tsx` wakes at the rendered
+expiry, including a deadline crossed before effects run, rechecks activation and visibility, and
+refreshes quota with Combo data while preserving drafts. Each successful quota snapshot also
+advances the observation clock, so a retained older row cannot defer evaluation of a fresh row.
+
+## Paginated history writer boundary
+
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.
+
+Cline journal Undo eligibility reads both native configuration files through the paired
+integration IO adapter. Its snapshot fingerprint cannot be checked against providers.json alone;
+[the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
+
+The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.
