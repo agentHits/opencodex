@@ -187,7 +187,7 @@ test.each([undefined, { enabled: false }])("absent or disabled listeners do not 
 
 test("salvaged diagnostics retain listener warnings alongside the routing error", () => {
   const bytes = JSON.stringify({ ...candidate(undefined),
-    routingProfiles: { bad: { candidates: [{ provider: "xai", model: "model" }] } },
+    routingProfiles: { bad: { candidates: [] } },
     unauthenticatedLoopbackListener: { enabled: "true" },
     hub: { managementIngress: { enabled: true, port: 70000 } },
   });
