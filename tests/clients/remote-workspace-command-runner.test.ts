@@ -32,14 +32,25 @@ function fixture() {
 }
 
 function fakeNativeHelper(root: string, response: Record<string, unknown>, requestPath?: string) {
-  const path = join(root, "ocx-remote-helper-test");
-  const encodedResponse = JSON.stringify(response).replaceAll("'", "'\\''");
-  const requestCapture = requestPath
-    ? `input=$(cat); printf '%s' "$input" > '${requestPath.replaceAll("'", "'\\''")}'`
-    : "cat >/dev/null";
-  writeFileSync(path, `#!/bin/sh\nset -eu\n${requestCapture}\nprintf '%s\\n' '${encodedResponse}'\n`, { mode: 0o700 });
+  const path = join(root, "ocx-remote-helper-test.mjs");
+  const source = [
+    'const input = await new Response(Bun.stdin.stream()).text();',
+    requestPath ? `await Bun.write(${JSON.stringify(requestPath)}, input);` : '',
+    `process.stdout.write(${JSON.stringify(JSON.stringify(response) + "\n")});`,
+  ].join("\n");
+  writeFileSync(path, source, { mode: 0o700 });
   chmodSync(path, 0o700);
-  return pinRemoteWorkspaceNativeHelper(path);
+  const helper = pinRemoteWorkspaceNativeHelper(path);
+  // Exercise real pipes on every host while keeping the native launch boundary observable.
+  // Production still launches only its pinned native helper, never this fixture interpreter.
+  const spawn = ((argv: string[], options: { stdin: "pipe"; stdout: "pipe"; stderr: "pipe"; cwd: string; env: Record<string, string> }) => {
+    expect(argv).toEqual([helper.path]);
+    expect(options.stdin).toBe("pipe");
+    expect(options.stdout).toBe("pipe");
+    expect(options.stderr).toBe("pipe");
+    return Bun.spawn([process.execPath, helper.path], options);
+  }) as typeof Bun.spawn;
+  return { helper, spawn };
 }
 
 describe("remote workspace Linux command sandbox", () => {
@@ -61,7 +72,7 @@ describe("remote workspace Linux command sandbox", () => {
 
   test("Windows command capability stays unavailable even with a positive probe seam", () => {
     const state = fixture();
-    const helper = fakeNativeHelper(state.root, { version: 1, ok: true, probe: true });
+    const { helper } = fakeNativeHelper(state.root, { version: 1, ok: true, probe: true });
     let probes = 0;
     expect(nativeRemoteWorkspaceCommandRunnerAvailable({
       platform: "win32", helper,
@@ -126,7 +137,7 @@ describe("remote workspace Linux command sandbox", () => {
 
   test("advertises native exec only after a digest-pinned confinement probe", () => {
     const state = fixture();
-    const helper = fakeNativeHelper(state.root, { version: 1, ok: true, probe: true });
+    const { helper } = fakeNativeHelper(state.root, { version: 1, ok: true, probe: true });
     let probeRequest: unknown;
     expect(nativeRemoteWorkspaceCommandRunnerAvailable({
       helper,
@@ -158,7 +169,7 @@ describe("remote workspace Linux command sandbox", () => {
   test("sends native command authority over bounded stdin and decodes one strict result", async () => {
     const state = fixture();
     const requestPath = join(state.root, "request.json");
-    const helper = fakeNativeHelper(state.root, {
+    const { helper, spawn } = fakeNativeHelper(state.root, {
       version: 1,
       ok: true,
       exitCode: 7,
@@ -167,6 +178,7 @@ describe("remote workspace Linux command sandbox", () => {
     }, requestPath);
     const runner = createNativeRemoteWorkspaceCommandRunner({
       helper,
+      spawn,
       platform: "darwin",
       writableRoots: [state.workspace],
       probe: () => ({ version: 1, ok: true, probe: true }),
@@ -196,7 +208,7 @@ describe("remote workspace Linux command sandbox", () => {
 
   test("rejects widened or malformed native helper responses", async () => {
     const state = fixture();
-    const helper = fakeNativeHelper(state.root, {
+    const { helper, spawn } = fakeNativeHelper(state.root, {
       version: 1,
       ok: true,
       exitCode: 0,
@@ -205,6 +217,7 @@ describe("remote workspace Linux command sandbox", () => {
     });
     const runner = createNativeRemoteWorkspaceCommandRunner({
       helper,
+      spawn,
       platform: "darwin",
       writableRoots: [state.workspace],
       probe: () => ({ version: 1, ok: true, probe: true }),
@@ -220,7 +233,7 @@ describe("remote workspace Linux command sandbox", () => {
 
   test("never advertises or invokes a native helper from inside a writable workspace", async () => {
     const state = fixture();
-    const helper = fakeNativeHelper(state.workspace, {
+    const { helper } = fakeNativeHelper(state.workspace, {
       version: 1,
       ok: true,
       exitCode: 0,
@@ -242,7 +255,7 @@ describe("remote workspace Linux command sandbox", () => {
     const state = fixture();
     const other = join(state.root, "other-workspace");
     mkdirSync(other);
-    const helper = fakeNativeHelper(state.root, {
+    const { helper, spawn } = fakeNativeHelper(state.root, {
       version: 1,
       ok: true,
       exitCode: 0,
@@ -251,6 +264,7 @@ describe("remote workspace Linux command sandbox", () => {
     });
     const runner = createNativeRemoteWorkspaceCommandRunner({
       helper,
+      spawn,
       platform: "darwin",
       writableRoots: [state.workspace],
       probe: () => ({ version: 1, ok: true, probe: true }),

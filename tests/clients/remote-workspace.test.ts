@@ -6,6 +6,7 @@ import {
   linkSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   symlinkSync,
   writeFileSync,
@@ -39,7 +40,12 @@ const localTestCommandRunner: RemoteWorkspaceCommandRunner = {
   async run(request) {
     const child = Bun.spawn(request.command, {
       cwd: request.cwd,
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8", HOME: request.cwd },
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8", HOME: request.cwd,
+        ...(process.platform === "win32" ? Object.fromEntries(
+          ["SystemRoot", "WINDIR", "TEMP", "TMP"].flatMap(name => process.env[name] ? [[name, process.env[name]!]] : []),
+        ) : {}),
+      },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -233,9 +239,7 @@ describe("remote workspace coordinator and executor", () => {
     expect(readFileSync(join(state.executorRoot, "project", "marker.txt"), "utf8")).toBe("executor-after");
     expect(readFileSync(join(state.main, "project", "marker.txt"), "utf8")).toBe("main-only");
 
-    const command = process.platform === "win32"
-      ? ["powershell.exe", "-NoProfile", "-Command", "Write-Output -NoNewline 'executor-process:'; (Get-Location).Path"]
-      : ["/bin/sh", "-lc", "printf 'executor-process:'; pwd"];
+    const command = [process.execPath, "--eval", "process.stdout.write('executor-process:' + process.cwd())"];
     const exec = await state.coordinator.handle(state.request("exec", {
       command,
       cwd: "project",
@@ -244,9 +248,12 @@ describe("remote workspace coordinator and executor", () => {
     const result = responseValue(exec);
     expect(exec.result.success).toBe(true);
     expect(result.ok).toBe(true);
-    expect(JSON.stringify(result.value)).toContain("executor-process:");
-    expect(JSON.stringify(result.value)).toContain(join(state.executorRoot, "project"));
-    expect(JSON.stringify(result.value)).not.toContain(state.main);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { exitCode: 0, stderr: "", stdout: `executor-process:${realpathSync(join(state.executorRoot, "project"))}` },
+    });
+    const output = result.value as { stdout: string };
+    expect(output.stdout).not.toContain(realpathSync(state.main));
   });
 
   test("lists and reads bounded workspace data through the selected root", async () => {
