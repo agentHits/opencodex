@@ -130,13 +130,15 @@ describe("injectCodexConfig integration (Design B)", () => {
       let captureCode;
       try { captureCodexPreImages(); } catch(error) { captureCode=error.code; }
       const outcomes=[];
+      const unchangedAfterEach=[];
       for(const operation of [()=>restoreNativeCodex(),()=>restoreNativeCodexAsync(),()=>injectCodexConfig(10100,{})]) {
         try { outcomes.push((await operation()).success===false); }
         catch(error) { outcomes.push(error.code==="EACCES"); }
+        unchangedAfterEach.push(watched.every((p,i)=>realRead(p,"utf8")===original[i]));
       }
       const restored=restoreCodexPreImages({config:original[0],profile:original[1],journal:original[2]});
       readSpy.mockRestore();
-      console.log(JSON.stringify({captureCode,restored,outcomes,preserved:watched.every((p,i)=>realRead(p,"utf8")===original[i])}));
+      console.log(JSON.stringify({captureCode,restored,outcomes,unchangedAfterEach,preserved:watched.every((p,i)=>realRead(p,"utf8")===original[i])}));
     `;
     const child = spawnSync(process.execPath, ["--eval", script], {
       cwd: repoRoot, env: { ...process.env, CODEX_HOME: codexHome, OPENCODEX_HOME: ocxHome },
@@ -144,7 +146,7 @@ describe("injectCodexConfig integration (Design B)", () => {
     });
     expect(child.status, child.stderr).toBe(0);
     expect(JSON.parse(child.stdout)).toEqual({
-      captureCode: "EACCES", restored: { complete: false, unrestored: ["profile"] }, outcomes: [true, true, true], preserved: true,
+      captureCode: "EACCES", restored: { complete: false, unrestored: ["profile"] }, outcomes: [true, true, true], unchangedAfterEach: [true, true, true], preserved: true,
     });
   });
 
