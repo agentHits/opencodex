@@ -36,3 +36,7 @@ Local tests/build/typecheck/install NOT RUN by user instruction. Text comparison
 ## Scope decision REMOTE-ARCH-004
 
 Retain the eight-module public source and its existing prototype tests: host.ts and relay.ts preserve author protocol coverage. These are inactive adapters. RemoteControlHost may call an explicitly supplied terminal factory only after authenticated traffic; this carry does not supply or connect a production terminal factory. Phase 1 delivers cryptographic identity primitives and protocol contracts, not complete device authorization.
+
+## Phase-1 revalidation
+
+Previous D: roadmap locked; continue with inactive protocol library. Base HEAD is 3d5e7037b5, source library still absent. Original eight source files and prototype/framing assertions were read; no path drift affects their self-contained dependency closure. New protocol contract tests will exercise agent codec rejection and UTF-8 byte boundaries directly. Existing clients test domain and both manifest registration maps confirmed. Structure generator is scripts/structure-ssot.ts --fix; it writes INDEX from the manifest and is permitted documentation generation, not a product build or test suite.
