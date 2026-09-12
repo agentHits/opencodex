@@ -200,3 +200,24 @@ test("salvaged diagnostics retain listener warnings alongside the routing error"
   expect(diagnostics.warnings?.join("\n")).toContain("hub.managementIngress ignored");
   expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
 });
+
+
+test("valid ingress is not blamed when a malformed hub sibling disables the hub block", () => {
+  const bytes = JSON.stringify({ ...candidate(undefined), hub: {
+    dataPublicOrigin: "not-an-origin", managementIngress: { enabled: true, port: 12345 },
+  } });
+  writeFileSync(getConfigPath(), bytes);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const loaded = loadConfig();
+    expect(loaded.hub).toBeUndefined();
+    expect(loaded.providers.xai.note).toBe("keep me");
+    const messages = warn.mock.calls.flat().join("\n");
+    expect(messages).toContain("hub.dataPublicOrigin");
+    expect(messages).not.toContain("hub.managementIngress ignored");
+    const diagnostics = readConfigDiagnostics();
+    expect(diagnostics.warnings?.join("\n")).toContain("hub.dataPublicOrigin");
+    expect(diagnostics.warnings?.join("\n")).not.toContain("hub.managementIngress ignored");
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
+  } finally { warn.mockRestore(); }
+});

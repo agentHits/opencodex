@@ -1041,6 +1041,11 @@ function canonicalHttpOrigin(value: string): string | null {
   }
 }
 
+const managementIngressSchema = z.union([
+  z.object({ enabled: z.literal(false) }).strict(),
+  z.object({ enabled: z.literal(true), port: z.number().int().min(1).max(65535) }).strict(),
+]);
+
 const hubConfigSchema = z.object({
   managementPublicOrigin: z.string().transform((value, ctx) => {
     const origin = canonicalHttpOrigin(value);
@@ -1064,10 +1069,7 @@ const hubConfigSchema = z.object({
   }).optional(),
   // A malformed hand edit disables only the optional ingress. Live writes are rejected by
   // managementIngressConfigError before this load-time degradation can hide the mistake.
-  managementIngress: z.union([
-    z.object({ enabled: z.literal(false) }).strict(),
-    z.object({ enabled: z.literal(true), port: z.number().int().min(1).max(65535) }).strict(),
-  ]).optional().catch(undefined),
+  managementIngress: managementIngressSchema.optional().catch(undefined),
 }).strict();
 
 const tailscaleUserSchema = z.string().trim().min(1).superRefine((value, ctx) => {
@@ -1967,7 +1969,7 @@ function degradedListenerWarnings(rawParsed: unknown, validated: OcxConfig): str
     warnings.push("unauthenticatedLoopbackListener ignored: invalid listener configuration; repair config.json before enabling the listener");
   }
   const hub = rawConfigRecord(raw.hub);
-  if (hub?.managementIngress !== undefined && validated.hub?.managementIngress === undefined) {
+  if (hub?.managementIngress !== undefined && !managementIngressSchema.safeParse(hub.managementIngress).success) {
     warnings.push("hub.managementIngress ignored: invalid management listener configuration; repair config.json before enabling the listener");
   }
   return warnings;
