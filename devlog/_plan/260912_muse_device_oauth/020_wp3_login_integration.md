@@ -116,6 +116,8 @@ Body changes, in order:
 
 + const importAllowed = options.importLocal !== "off" && platform === "darwin";
 + if (importAllowed) {
++   // [fold 5] ctrl is passed, not just deps: the helper must keep handing ctrl.signal to
++   // the Keychain reader, which tests/providers/meta-muse-oauth.test.ts:168-178 asserts.
 +   const imported = await importFromKeychain(ctrl, deps);   // extracted, see below
 +   if (imported) return imported;
 + }
@@ -159,6 +161,7 @@ already pins that refusal, and it is right.
 | Pointer is not valid JSON | throws | **still throws** — a corrupt file is a real fault, not an absence |
 | Unsupported storage backend | throws | **still throws** — an unmeasured shape must not be guessed past |
 | Keychain entry carries no usable key | throws | **still throws** — the import found a credential and it was bad |
+| Keychain entry is not valid JSON | throws | **[fold 4] still throws** — same class as a corrupt pointer; the wp3 audit caught this row missing |
 
 `isCancellation` returns true for `MuseDeviceLoginError` with `kind === "cancelled"`, for
 `AbortError`, and for `ctrl.signal?.aborted`. A cancelled login must not be answered with
@@ -256,3 +259,14 @@ sentence is rewritten in `030`, not here, because that is the phase that makes i
 plus the order assertions listed in `040` §B. The existing 351-line test file must pass
 **unmodified except for additions** — if an existing case needs editing, the no-regression
 claim is false and that is a wp3 blocker, not a test to adjust.
+
+## wp3 audit note: the unmodified-tests claim
+
+The reviewer challenged the claim that the existing 351-line test file passes unmodified,
+noting that several non-darwin cases inject `okFetch` (200 for any URL) with no `loginDevice`
+stub, so a device grant now runs inside them. That is true, and the claim is not settled by
+argument: `okFetch` returns a body with no `device_code`, so `requestMuseDeviceAuthorization`
+should fail and every one of those cases should fall through to the paste path it already
+exercises. Should is not evidence. The B phase runs that file UNMODIFIED and the result
+decides: any failure there is a wp3 blocker and the selection order gets reconsidered, per
+this document own rule. Result recorded in the wp3 D summary.

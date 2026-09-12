@@ -23,7 +23,7 @@ const DEVICE_TOKEN = "https://auth.meta.com/oidc/device/token/";
 const MINT = "https://api.meta.ai/muse-code/key";
 
 /** Synthetic, matches the LLM| grammar the import path enforces. */
-const KEY = "LLM|1234567890123456|abcdefghijklmnopqrstuvw";
+const KEY = `LLM|${"1".repeat(16)}|${"c".repeat(27)}`;
 const ACCOUNT_TOKEN = "meta-account-" + "z".repeat(48);
 /** If this string ever reaches an error message, a response body leaked into one. */
 const BODY_CANARY = "canary-body-must-never-appear-in-an-error";
