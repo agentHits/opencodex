@@ -124,3 +124,20 @@ export function filterPresets(presets: CatalogPreset[], query: string): CatalogP
 export function noteNeedsReveal(note: string | undefined): boolean {
   return !!note?.trim();
 }
+
+const SPONSOR_RANK: Record<NonNullable<CatalogPreset["sponsor"]>, number> = { main: 0, standard: 1 };
+
+/**
+ * Sponsor rows first — Main before Standard, alphabetical by label within a tier — then the
+ * caller's order untouched. Stable, so usage ranking still decides the non-sponsor tail.
+ * Alphabetical among sponsors is deliberate: it is the one order no sponsor can buy.
+ */
+export function pinSponsors(presets: CatalogPreset[]): CatalogPreset[] {
+  const sponsors = presets.filter(p => p.sponsor);
+  if (sponsors.length === 0) return presets;
+  sponsors.sort((a, b) =>
+    SPONSOR_RANK[a.sponsor!] - SPONSOR_RANK[b.sponsor!]
+    || a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
+    || a.id.localeCompare(b.id));
+  return [...sponsors, ...presets.filter(p => !p.sponsor)];
+}
