@@ -730,7 +730,7 @@ describe("provider management validation", () => {
       body: JSON.stringify({ autoReviewModelOverrides: { "GLM-5.2": "gpt-5.6-terra" } }),
     });
     expect(update?.status).toBe(200);
-    expect(liveConfig.providers.relay?.autoReviewModelOverrides).toEqual({ "GLM-5.2": "gpt-5.6-terra" });
+    expect(liveConfig.providers.relay?.autoReviewModelOverrides).toEqual({ "glm-5.2": "gpt-test", "GLM-5.2": "gpt-5.6-terra" });
 
     const remove = await request("/api/providers?name=relay", {
       method: "PATCH",
@@ -738,7 +738,7 @@ describe("provider management validation", () => {
       body: JSON.stringify({ autoReviewModelOverrides: { "glm-5.2": null } }),
     });
     expect(remove?.status).toBe(200);
-    expect(liveConfig.providers.relay?.autoReviewModelOverrides).toBeUndefined();
+    expect(liveConfig.providers.relay?.autoReviewModelOverrides).toEqual({ "GLM-5.2": "gpt-5.6-terra" });
 
     const clear = await request("/api/providers?name=relay", {
       method: "PATCH",
@@ -775,9 +775,9 @@ describe("provider management validation", () => {
     };
 
     for (const overrides of [
-      { "glm-5.2": null, "GLM-5.2": "gpt-test" },
-      { "GLM-5.2": "gpt-test", "glm-5.2": null },
-      { "glm-5.2": null, "GLM-5.2": null },
+      { "vendor/model": null, "vendor-model": "gpt-test" },
+      { "vendor-model": "gpt-test", "vendor/model": null },
+      { "vendor/model": null, "vendor-model": null },
     ]) {
       const response = await request({ autoReviewModelOverrides: overrides });
       expect(response?.status).toBe(400);

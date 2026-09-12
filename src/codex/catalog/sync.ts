@@ -1620,15 +1620,15 @@ function isRoutedCatalogEntry(entry: RawEntry): boolean {
     || (typeof entry.description === "string" && entry.description.startsWith("Routed via opencodex → "));
 }
 
-/** Remove an override and its root-derived provenance marker from one catalog row. */
+/** Restore an owned native value, retaining provenance to avoid legacy reclassification. */
 function clearAutoReviewOverrideValue(entry: RawEntry): void {
   const stamp = rootAutoReviewStamp(entry);
   if (stamp) {
     if (entry.auto_review_model_override === stamp.applied) entry.auto_review_model_override = stamp.original;
   } else {
     entry.auto_review_model_override = null;
+    delete entry[AUTO_REVIEW_ROOT_MARKER];
   }
-  delete entry[AUTO_REVIEW_ROOT_MARKER];
 }
 
 /**

@@ -7471,6 +7471,18 @@ describe("provider-level auto_review_model overrides", () => {
     expect(models[0]!.auto_review_model_override).toBe("external-reviewer");
   });
 
+  test("restored native values are not later misclassified as uniform legacy stamps", () => {
+    const models: Array<Record<string, unknown>> = [
+      { slug: "gpt-5.6-terra", auto_review_model_override: "blsc/reviewer" },
+      { slug: "blsc/reviewer" },
+    ];
+    const providerConfig = config({ autoReviewModel: "reviewer" });
+    applyConfiguredAutoReviewModelOverride(models, "gpt-5.6-terra", providerConfig);
+    applyConfiguredAutoReviewModelOverride(models, null, providerConfig);
+    applyConfiguredAutoReviewModelOverride(models, null, providerConfig);
+    expect(models[0]!.auto_review_model_override).toBe("blsc/reviewer");
+  });
+
   test("legacy root stamps are swept when provider configuration replaces the root in one step", () => {
     // Catalogs written before the provenance marker carry root stamps that look exactly like
     // upstream values, so removing the root while adding a provider selector has to fall back to

@@ -759,7 +759,7 @@ test("provider-scoped auto-review overrides win on routed rows in both writers",
 
     writeAutoReviewModel("gpt-5.5");
     writeCatalog([
-      { ...nativeEntry(), auto_review_model_override: "native-upstream" },
+      { ...nativeEntry(), auto_review_model_override: "static/deepseek-v4-flash" },
       generatedRoutedEntry("static/deepseek-v4-flash"),
       generatedRoutedEntry("static/glm-5.2"),
     ]);
@@ -783,9 +783,16 @@ test("provider-scoped auto-review overrides win on routed rows in both writers",
     writeAutoReviewModel(undefined);
     catalog = await write(nextConfig);
     expect(catalog.models?.find(entry => entry.slug === "gpt-5.5"))
-      .toHaveProperty("auto_review_model_override", "native-upstream");
+      .toHaveProperty("auto_review_model_override", "static/deepseek-v4-flash");
     expect(catalog.models?.find(entry => entry.slug === "static/glm-5.2"))
       .toHaveProperty("auto_review_model_override", null);
+    nextConfig.providers.static!.autoReviewModel = "deepseek-v4-flash";
+    catalog = await write(nextConfig);
+    // Force a real changed write with the same reviewer provenance, without reseeding.
+    nextConfig.providers.static!.modelDisplayNames = { "glm-5.2": "Updated label" };
+    catalog = await write(nextConfig);
+    expect(catalog.models?.find(entry => entry.slug === "gpt-5.5"))
+      .toHaveProperty("auto_review_model_override", "static/deepseek-v4-flash");
   }
 });
 
