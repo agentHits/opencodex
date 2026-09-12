@@ -104,6 +104,12 @@ cooldown it belonged to, and both operator escapes remove it: clearing a cooldow
 account each clear the window from the account-wide entry and from every scoped entry, because a
 reset-derived refusal records only the scoped one.
 
+Clearing a cooldown is also the management operation for a window whose cooldown has already
+lapsed. Because the cooldown is the shorter of the two durations, the state an operator usually
+finds is an expired cooldown and a live window, so a live window alone makes the operation
+succeed and report a clear. An account with neither reports no change, which is what keeps the
+route from disclosing whether an account exists.
+
 A confirmed manual reset-credit consumption may immediately reconcile that account's
 eligible pre-existing ordinary reset-derived cooldown after a complete, non-exhausted usage
 observation started after the reset. Paused or reauthentication-required accounts and
