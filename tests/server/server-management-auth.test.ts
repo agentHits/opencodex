@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfigPath, saveConfig } from "../../src/config";
 import { clearContextSessionOwnersForTests } from "../../src/codex/context-owner";
+import { resetContextRelayActivationForTests } from "../../src/codex/context-compat";
 import { startServer } from "../../src/server";
 import { readCodexAccountRecord, saveCodexAccountCredential } from "../../src/codex/account-store";
 import type { OcxConfig } from "../../src/types";
@@ -88,9 +89,15 @@ import { setSystemRestartIoForTests } from "../../src/server/management/system-r
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const previousHome = process.env.OPENCODEX_HOME;
+const previousCodexHome = process.env.CODEX_HOME;
 const previousDataToken = process.env.OPENCODEX_API_AUTH_TOKEN;
 const previousAdminToken = process.env.OPENCODEX_ADMIN_AUTH_TOKEN;
 let testHome = "";
+
+function enableContextRelay(): void {
+  writeFileSync(join(testHome, "config.toml"), "[features]\ncontext_management.experimental_mode = true\n");
+  resetContextRelayActivationForTests();
+}
 
 function remoteConfig(): OcxConfig {
   return {
@@ -174,11 +181,16 @@ function websocketHandshakeOpens(url: URL, token: string): Promise<boolean> {
 beforeEach(() => {
   testHome = mkdtempSync(join(tmpdir(), "ocx-management-auth-"));
   process.env.OPENCODEX_HOME = testHome;
+  process.env.CODEX_HOME = testHome;
+  resetContextRelayActivationForTests();
   process.env.OPENCODEX_API_AUTH_TOKEN = "data-secret";
   process.env.OPENCODEX_ADMIN_AUTH_TOKEN = "admin-secret";
 });
 
 afterEach(() => {
+  resetContextRelayActivationForTests();
+  if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = previousCodexHome;
   setSystemRestartIoForTests();
   setIcaclsRunnerForTests(null);
   setPlatformForTests(null);
@@ -623,6 +635,7 @@ describe("management and data-plane credential separation", () => {
   });
 
   test("Codex backend aliases retain data-plane authentication and cannot enter management", async () => {
+    enableContextRelay();
     saveConfig(remoteConfig());
     const server = startServer(0);
     try {
@@ -642,7 +655,21 @@ describe("management and data-plane credential separation", () => {
     }
   });
 
+  test("context relay remains absent without the native experimental opt-in", async () => {
+    saveConfig(remoteConfig());
+    const server = startServer(0);
+    try {
+      const response = await fetch(new URL("/v1/alpha/notes/v2/read_file", server.url), {
+        method: "POST", headers: { authorization: "Bearer data-secret" }, body: "{}",
+      });
+      expect(response.status).toBe(404);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test("context bearer admission reaches body validation without accepting foreign credentials", async () => {
+    enableContextRelay();
     saveConfig(remoteConfig());
     const server = startServer(0);
     try {
@@ -661,6 +688,7 @@ describe("management and data-plane credential separation", () => {
   });
 
   test("authenticated context without a successful model owner fails closed on both listener prefixes", async () => {
+    enableContextRelay();
     const cfg = remoteConfig();
     cfg.providers.openai = { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", codexAccountMode: "pool" };
     saveConfig(cfg); clearContextSessionOwnersForTests();

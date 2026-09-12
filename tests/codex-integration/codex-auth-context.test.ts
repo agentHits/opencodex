@@ -75,6 +75,7 @@ import {
 import type { CodexModelEntitlementSnapshot } from "../../src/codex/model-entitlements";
 import { recordContextSessionOwner, clearContextSessionOwnersForTests } from "../../src/codex/context-owner";
 import { handleContextHistory } from "../../src/server/context-history";
+import { resetContextRelayActivationForTests } from "../../src/codex/context-compat";
 import { hasForwardableCodexBearer } from "../../src/server/auth-cors";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -104,6 +105,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetContextRelayActivationForTests();
   setIcaclsRunnerForTests(null);
   removeTreeWithRetry(testDir);
   clearThreadAccountMap();
@@ -2392,6 +2394,8 @@ describe("native-main fence names its gate reason", () => {
 
 
 test("context Direct bearer admission uses real stored-main materialization and fails closed without it", async () => {
+  writeFileSync(join(testDir, "config.toml"), "[features]\ncontext_management.experimental_mode = true\n");
+  resetContextRelayActivationForTests();
   const cfg = config();
   cfg.providers.openai = {
     adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex",
