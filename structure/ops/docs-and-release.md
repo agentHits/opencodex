@@ -1,5 +1,8 @@
 # Docs And Release
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Public docs
 
 The public documentation site lives in `docs-site/` and is built with Astro + Starlight. English is
@@ -303,6 +306,3 @@ The Remote Hub guide and affected CLI, server-config, management-API, and dashbo
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](../providers/openai-tiers.md#quota-cache-and-short-window-history).
-
-The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
-is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

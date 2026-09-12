@@ -1,5 +1,8 @@
 # Images Data Plane
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Standalone Images
 
 Codex's local `image_gen.imagegen` tool makes a second Images request after the model calls it:
@@ -69,6 +72,3 @@ injects summary generation into a request, and config validation rejects a deliv
 conflicts with `modelSupportsReasoningSummaries: false` for the same model.
 
 > Decision record: [ADR-0045](../decisions/ADR-0045-standalone-images.md)
-
-The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
-is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

@@ -1,5 +1,8 @@
 # Adapter Registry Authority
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Decision
 
 Runtime adapter construction has one authority: `src/adapters/registry.ts`.
@@ -52,6 +55,3 @@ request when a node carries both. Codex's own deferred tool catalog emits exactl
 so the schema is not something a user can fix from configuration (issue #2673).
 
 > Decision record: [ADR-0093](../decisions/ADR-0093-moonshot-ref-with-siblings-normalization.md)
-
-The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
-is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

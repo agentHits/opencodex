@@ -1,5 +1,8 @@
 # Streaming Health And WebSocket
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Heartbeat and stall deadline
 
 The HTTP/SSE bridge emits an SSE comment-line keep-alive (`: opencodex heartbeat`) during upstream
@@ -189,6 +192,3 @@ WebSocket clients observe the same canonical lifecycle.
 `ws-bridge.ts` preserves upstream `failed` and `incomplete` status values in the final WebSocket
 frame rather than always emitting `response.completed`. If the response status is `failed`, a
 `response.failed` frame is sent; otherwise `response.completed` carries through the original status.
-
-The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
-is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

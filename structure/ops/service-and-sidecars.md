@@ -1,5 +1,8 @@
 # Background Service And Sidecars
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Background service command selection
 
 A bare `ocx service` is an idempotent install-or-repair command. Argument validation happens before
@@ -132,6 +135,3 @@ Binary detection decodes only the supplied buffer view; malformed UTF-8 can itse
 so the flag does not identify the peer responsible for corruption. Existing diagnostic files are
 not rewritten. Audio devices, WebRTC media negotiation, captions and spoken handoff delivery remain
 client responsibilities.
-
-The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
-is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
