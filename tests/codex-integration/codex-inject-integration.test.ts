@@ -111,11 +111,19 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(result.preserved).toBe(true);
   });
 
-  test("unreadable preimages abort capture and remain visible as compensation failures", () => {
+  // The denial has to be a real filesystem permission. `inject-coordination.ts`
+  // binds `readFileSync` as an ESM named import, so `spyOn(fs, "readFileSync")`
+  // on the child's `require("node:fs")` handle never reached it: the mock
+  // matched nothing and every assertion below passed through an undenied run.
+  // `unreadable` now proves the precondition before anything depends on it.
+  // Root reads a mode-0 file regardless, and Windows chmod only toggles the
+  // read-only bit, so neither can express the permission this test needs.
+  const unreadablePreimages =
+    process.platform === "win32" || process.getuid?.() === 0 ? test.skip : test;
+  unreadablePreimages("unreadable preimages abort capture and remain visible as compensation failures", () => {
     const script = `
       const fs = require("node:fs");
       const { join } = require("node:path");
-      const { spyOn } = require("bun:test");
       const target = require("./src/codex/paths").CODEX_PROFILE_PATH;
       const configPath = join(process.env.CODEX_HOME,"config.toml");
       fs.writeFileSync(configPath,'model="test"');
@@ -124,12 +132,12 @@ describe("injectCodexConfig integration (Design B)", () => {
       if(!initial.success) throw new Error("fixture injection failed");
       const watched=[configPath,target,join(process.env.CODEX_HOME,"opencodex-journal.json")];
       const original=watched.map(path=>fs.readFileSync(path,"utf8"));
-      const realRead = fs.readFileSync;
-      let matchedReads = 0;
-      const readSpy = spyOn(fs,"readFileSync").mockImplementation((path,...args)=>{
-        if (String(path)===target) { matchedReads++; throw Object.assign(new Error("fixture denied"),{code:"EACCES"}); }
-        return realRead(path,...args);
-      });
+      const deny=()=>fs.chmodSync(target,0o000);
+      const allow=()=>fs.chmodSync(target,0o600);
+      const readWatched=()=>{allow();const seen=watched.map(path=>fs.readFileSync(path,"utf8"));deny();return seen;};
+      deny();
+      let unreadable=false;
+      try { fs.readFileSync(target,"utf8"); } catch(error) { unreadable=error.code==="EACCES"; }
       const {captureCodexPreImages,restoreCodexPreImages}=require("./src/codex/inject-coordination");
       let captureCode;
       try { captureCodexPreImages(); } catch(error) { captureCode=error.code; }
@@ -138,21 +146,20 @@ describe("injectCodexConfig integration (Design B)", () => {
       for(const operation of [()=>restoreNativeCodex(),()=>restoreNativeCodexAsync(),()=>injectCodexConfig(10100,{})]) {
         try { outcomes.push((await operation()).success===false); }
         catch(error) { outcomes.push(error.code==="EACCES"); }
-        unchangedAfterEach.push(watched.every((p,i)=>realRead(p,"utf8")===original[i]));
+        unchangedAfterEach.push(readWatched().every((bytes,i)=>bytes===original[i]));
       }
       const restored=restoreCodexPreImages({config:original[0],profile:original[1],journal:original[2]});
-      readSpy.mockRestore();
-      console.log(JSON.stringify({matchedReads,captureCode,restored,outcomes,unchangedAfterEach,preserved:watched.every((p,i)=>realRead(p,"utf8")===original[i])}));
+      const preserved=readWatched().every((bytes,i)=>bytes===original[i]);
+      allow();
+      console.log(JSON.stringify({unreadable,captureCode,restored,outcomes,unchangedAfterEach,preserved}));
     `;
     const child = spawnSync(process.execPath, ["--eval", script], {
       cwd: repoRoot, env: { ...process.env, CODEX_HOME: codexHome, OPENCODEX_HOME: ocxHome },
       encoding: "utf8", timeout: SPAWN_BUDGET_MS - 5_000,
     });
     expect(child.status, child.stderr).toBe(0);
-    const { matchedReads, ...result } = JSON.parse(child.stdout);
-    expect(matchedReads).toBeGreaterThan(0);
-    expect(result).toEqual({
-      captureCode: "EACCES", restored: { complete: false, unrestored: ["profile"] }, outcomes: [true, true, true], unchangedAfterEach: [true, true, true], preserved: true,
+    expect(JSON.parse(child.stdout)).toEqual({
+      unreadable: true, captureCode: "EACCES", restored: { complete: false, unrestored: ["profile"] }, outcomes: [true, true, true], unchangedAfterEach: [true, true, true], preserved: true,
     });
   });
 
