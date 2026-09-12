@@ -222,7 +222,7 @@ import {
   isProxyAdmissionSecret,
   validateForwardAdmissionCredential,
 } from "../auth-cors";
-import { contextPrincipalIdOf } from "../auth-cors";
+import { resolveContextPrincipal } from "../auth-cors";
 import type { DataPlaneAdmission } from "../auth-cors";
 import { createTranslatorBudget, isTranslatorBudgetExceededError, type TranslatorBudget } from "../../lib/translator-budget";
 import { captureExplicitOpenAiCallerAuth, listOpenAiForwardSidecarCandidates, resolveFirstUsableOpenAiSidecar, type ExplicitOpenAiCallerAuth, type ResolvedOpenAiForwardSidecar } from "../../providers/openai-sidecar";
@@ -4778,7 +4778,7 @@ async function handleResponsesInner(
     // History has no model namespace. Record the account that actually accepted this
     // final attempt, after refresh/failover, rather than guessing from mutable affinity.
     if (outboundHeaders && isCanonicalOpenAiForwardProvider(route.provider)) {
-      recordContextSessionOwner(contextPrincipalIdOf(options.admission), req.headers,
+      recordContextSessionOwner(resolveContextPrincipal(req, config, options.admission), req.headers,
         route.provider.baseUrl, authCtx, new Headers(outboundHeaders), substituteMainCredential);
     }
   };

@@ -171,10 +171,14 @@ reach each other's sessions even when both resolve to the same ChatGPT workspace
 names an organization rather than a person, so the registry also binds the stable user carried by
 the credential upstream accepted: an ordinary token refresh for that same user continues the
 session, while a different user in the same workspace does not. When the accepted credential
-proves no stable user, only that exact credential continues. On the default loopback bind opencodex admits requests without reading a key, so the relay asks
-for one separately: send your opencodex API key on context requests (the `x-opencodex-api-key`
-header, or an `Authorization: Bearer` value holding that key) and it becomes the owning principal.
-A context request carrying no opencodex key has no caller identity and returns HTTP 403.
+proves no stable user, only that exact credential continues. That principal is the opencodex API key the request presents. A remote bind already requires one,
+  so ownership works there. On the default loopback bind opencodex admits requests without reading a
+key, and the built-in loopback injection cannot carry the `x-opencodex-api-key` header, so Codex
+presents no opencodex key and context history returns HTTP 403. **The relay is therefore available
+on a remote bind with a configured key, or to a client that sends `x-opencodex-api-key` itself, and
+not through the default built-in loopback integration.** Whether a loopback-bound proxy should be
+able to name a caller at all is an open maintainer decision, so the current behaviour refuses
+rather than guessing.
 
 Unknown, expired, evicted, conflicting, or restart-lost ownership returns HTTP 409 before account
 selection or upstream I/O. The relay does not guess from the current active account. Existing
