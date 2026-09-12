@@ -28,7 +28,7 @@ Credential-bearing model, image, video, and search requests do not automatically
 
 The proxy completes the upstream live sideband handshake before accepting the client
 WebSocket. An upstream rejection fails the upgrade with 502; a ten-second handshake timeout
-returns 504. Bun does not expose the exact upstream handshake status, so an upstream 404/410
+returns 504, and client cancellation returns 499. Bun does not expose the exact upstream handshake status, so an upstream 404/410
 cannot currently be forwarded precisely. A successful connection preserves the initial session
 frames in order. This handshake policy is separate from the Responses WebSocket transport.
 
