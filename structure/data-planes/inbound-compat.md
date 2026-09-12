@@ -89,3 +89,6 @@ copies an authoritative catalog context window into `limit.context` and a nonemp
 reasoning ladder into `thinking.effortOptions`. Missing capabilities stay absent instead of
 falling back to OpenCodex guesses, and the integration does not write the removed
 `thinking.effort` / `defaultEffort` fields because MCode owns the active effort per session.
+
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

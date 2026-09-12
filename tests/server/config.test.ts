@@ -1216,6 +1216,46 @@ describe("opencodex config defaults", () => {
     }
   });
 
+  test("plaintextV2AgentMessages is explicit and degrades invalid hand edits", () => {
+    const base = {
+      port: 12345,
+      providers: {
+        custom: {
+          adapter: "openai-responses",
+          baseUrl: "https://example.test/v1",
+        },
+      },
+      defaultProvider: "custom",
+    };
+    expect(getDefaultConfig().plaintextV2AgentMessages).toBeUndefined();
+
+    writeConfig({ ...base, plaintextV2AgentMessages: true });
+    expect(loadConfig()).toMatchObject({ ...base, plaintextV2AgentMessages: true });
+    expect(validateConfigCandidate({ ...base, plaintextV2AgentMessages: true })).toMatchObject({
+      ok: true,
+      config: { plaintextV2AgentMessages: true },
+    });
+
+    for (const invalid of [null, "true", 1, {}]) {
+      writeConfig({ ...base, plaintextV2AgentMessages: invalid });
+      const diagnostics = readConfigDiagnostics();
+      expect(diagnostics).toMatchObject({
+        source: "file",
+        error: null,
+        config: base,
+      });
+      expect(diagnostics.config.plaintextV2AgentMessages).toBeUndefined();
+      expect(diagnostics.warnings).toContain(
+        "plaintextV2AgentMessages ignored: expected a boolean",
+      );
+      expect(validateConfigCandidate({ ...base, plaintextV2AgentMessages: invalid })).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("plaintextV2AgentMessages"),
+      });
+      expect(backupNames()).toEqual([]);
+    }
+  });
+
   test("native subagent-default sync is opt-in and ignores malformed opt-ins without falling back", () => {
     const base = {
       port: 12345,

@@ -75,3 +75,6 @@ away from. Resolution stays a pure function of (env, platform, home) so the Wind
 testable on any host: stubbing `process.platform` does not propagate to `os.platform()` under Bun.
 
 > Decision record: [ADR-0046](../decisions/ADR-0046-claude-desktop-config-library-resolution.md)
+
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

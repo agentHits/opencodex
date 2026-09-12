@@ -103,3 +103,6 @@ would pass while the rule was violated.
 
 - **INV-HOME-01** — `CODEX_HOME` wins over `~/.codex` when present and valid.
 - **INV-SLUG-01** — Routed model slugs use `provider/model`.
+
+The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

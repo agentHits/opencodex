@@ -24,6 +24,7 @@ import type { TranslatorBudget } from "../lib/translator-budget";
 import { rewriteRoutedCustomToolsForUpstream } from "../responses/custom-tool-compat";
 import { rewriteRoutedToolSearchForUpstream } from "../responses/tool-search-compat";
 import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-tool-compat";
+import { preparePlaintextV2AgentMessages } from "../responses/plaintext-v2-agent-messages";
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { stripUnicodePropertyPatterns } from "./responses-tool-schema";
@@ -2370,6 +2371,8 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       let routedCustomToolRepairNames: Set<string> | undefined;
       let convertedRoutedToolSearchNames: Set<string> | undefined;
       let convertedRoutedNamespaceToolAliases: Map<string, { namespace: string; name: string; kind: "function" | "custom" }> | undefined;
+      let plaintextV2AgentMessageToolNames: ReadonlySet<string> | undefined;
+      let plaintextV2AgentMessageAliasedToolNames: ReadonlySet<string> | undefined;
       const unexpandedMiss = !!parsed.previousResponseId && parsed._previousResponseInputExpanded !== true;
       let outBody = stripPreviousResponseId(
         parsed._rawBody,
@@ -2479,6 +2482,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // Run after routed compaction so nested input_image parts are replaced before a malformed
       // tool output is flattened to text and can no longer be inspected structurally.
       outBody = repairUnidentifiedToolOutputItems(outBody);
+      if (parsed._plaintextV2AgentMessages === true && isCanonicalOpenAiForwardProvider(provider)) {
+        const prepared = preparePlaintextV2AgentMessages(outBody);
+        outBody = prepared.body;
+        if (prepared.namespaceAliased) {
+          plaintextV2AgentMessageToolNames = prepared.toolNames;
+          plaintextV2AgentMessageAliasedToolNames = prepared.aliasedAgentMessageToolNames;
+        }
+      }
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
         stripSparkCompatibility(
@@ -2571,6 +2582,8 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),
         ...(convertedRoutedNamespaceToolAliases ? { convertedRoutedNamespaceToolAliases } : {}),
+        ...(plaintextV2AgentMessageToolNames ? { plaintextV2AgentMessageToolNames } : {}),
+        ...(plaintextV2AgentMessageAliasedToolNames ? { plaintextV2AgentMessageAliasedToolNames } : {}),
         ...(tierLog ? { tierLog } : {}),
       };
     },

@@ -389,3 +389,6 @@ model settings, and noncanonical `openai` rows never receive that recovery path.
 `GET /api/codex-auth/accounts?refresh=1` treats missing main credentials, HTTP 401, and allowlisted
 terminal 403 codes as `needsReauth`; generic permission failures remain non-terminal, and a
 successful main usage refresh clears the runtime mark.
+
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

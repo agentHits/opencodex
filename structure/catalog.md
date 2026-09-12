@@ -264,3 +264,6 @@ provider wire mapping; unpinned native requests retain their existing pass-throu
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
+
+The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

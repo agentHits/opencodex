@@ -91,6 +91,10 @@ export interface AdapterRequest {
     convertedRoutedToolSearchNames?: ReadonlySet<string>;
     /** Upstream-only aliases for namespace tools flattened in this request. */
     convertedRoutedNamespaceToolAliases?: ReadonlyMap<string, { namespace: string; name: string; kind: "function" | "custom" }>;
+    /** Request-declared collaboration child names eligible for plaintext-v2 alias restoration. */
+    plaintextV2AgentMessageToolNames?: ReadonlySet<string>;
+    /** Collaboration message-tool names actually rewritten to fixed aliases in this request. */
+    plaintextV2AgentMessageAliasedToolNames?: ReadonlySet<string>;
     /** Releases observation of a serialized request body after its final fetch attempt settles. */
     releaseBodyObservation?: () => void;
     /** Exact reasoning parameter emitted by the adapter, for request-log diagnostics only. */

@@ -264,3 +264,6 @@ fragments are not guessed onto pending ID-only calls.
 parallel/colliding identities, distinct unsafe raw JSON index literals, the maximum
 safe-integer boundary, invalid index types, missing/null continuations and UTF-8
 byte-limit boundaries.
+
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

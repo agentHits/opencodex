@@ -57,3 +57,6 @@ does not cover ordinary requests, streaming, retries, or per-hop redirect review
 Caller-owned `provider.fetch` executors are also deferred: they receive literal/config checks and
 redirect blocking, but cannot inherit DNS classification or peer pinning without a verified-peer
 executor contract. Main-request migration must not treat that branch as fixed-transport equivalent.
+
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

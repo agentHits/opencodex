@@ -427,6 +427,13 @@ import {
   type RoutedNamespaceToolAliases,
 } from "../../responses/namespace-tool-compat";
 import {
+  createPlaintextV2AgentMessageCallRestoreRewrite,
+  PLAINTEXT_V2_AGENT_MESSAGE_RESTORE_OVERFLOW_MESSAGE,
+  restorePlaintextV2AgentMessageCalls,
+  restorePlaintextV2AgentMessageCallsInJsonResult,
+  shouldPreparePlaintextV2AgentMessages,
+} from "../../responses/plaintext-v2-agent-messages";
+import {
   collectDeclaredBareWireToolNames,
   collectDeclaredNamelessClientCallTypes,
   collectDeclaredWireToolNames,
@@ -2510,6 +2517,12 @@ async function applyFinalRouteRequestNormalization(args: {
   // this request will actually use (#404).
   route.provider = resolveOpenCodeGoTransport(route.provider, getOrAllocateRequestSessionLane(req));
   route.provider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire);
+  parsed._plaintextV2AgentMessages = shouldPreparePlaintextV2AgentMessages({
+    enabled: config.plaintextV2AgentMessages === true,
+    inboundWire,
+    canonicalChatGpt: isCanonicalOpenAiForwardProvider(route.provider),
+    requestBody: parsed._rawBody,
+  });
   if (preserveAnthropicResponseModel) parsed._responseModelId = responseModelId;
   logCtx.model = route.modelId;
   logCtx.provider = route.providerName;
@@ -4699,8 +4712,12 @@ async function handleResponsesInner(
   }
 
   let routedNamespaceToolAliases: RoutedNamespaceToolAliases = new Map();
-  const refreshRoutedNamespaceToolAliases = (builtRequest: AdapterRequest): void => {
+  let plaintextV2AgentMessageToolNames: ReadonlySet<string> = new Set();
+  let plaintextV2AgentMessageAliasedToolNames: ReadonlySet<string> = new Set();
+  const refreshRequestToolAliases = (builtRequest: AdapterRequest): void => {
     routedNamespaceToolAliases = builtRequest.convertedRoutedNamespaceToolAliases ?? new Map();
+    plaintextV2AgentMessageToolNames = builtRequest.plaintextV2AgentMessageToolNames ?? new Set();
+    plaintextV2AgentMessageAliasedToolNames = builtRequest.plaintextV2AgentMessageAliasedToolNames ?? new Set();
   };
 
   if ("passthrough" in adapter && adapter.passthrough && !routedCompaction) {
@@ -4797,7 +4814,7 @@ async function handleResponsesInner(
       // would incorrectly disable restoration for the exact ambiguous-name case the alias fixes.
       routedToolSearchNames.add(name);
     }
-    refreshRoutedNamespaceToolAliases(request);
+    refreshRequestToolAliases(request);
     // #1700: the bridged paths refuse a call to a tool the request never declared
     // (`declaredToolNames`, src/bridge.ts). The passthrough had no equivalent, so a routed
     // provider's top-level `apply_patch` — which under Codex code mode exists only as a nested
@@ -4983,7 +5000,7 @@ async function handleResponsesInner(
       }
       // The snapshot callback opts the inspector into output reconstruction. Compaction
       // has no continuation cache, so use the parsed terminal here without adding retention.
-      if (!rememberPassthroughResponse && payload && typeof payload === "object"
+      if (plaintextV2AgentMessageToolNames.size === 0 && !rememberPassthroughResponse && payload && typeof payload === "object"
         && "type" in payload && payload.type === "response.completed"
         && "response" in payload && payload.response && typeof payload.response === "object"
         && !Array.isArray(payload.response)) {
@@ -5000,9 +5017,14 @@ async function handleResponsesInner(
         routedCustomToolRepairNames,
         declaredWireToolNames,
       ).value;
-      const restoredResponse = (functionRepairSchemas.size > 0
+      const normalizedResponse = (functionRepairSchemas.size > 0
         ? JSON.parse(normalizeFunctionCompletionJson(JSON.stringify(restored)))
         : restored) as { id?: unknown; output?: unknown; status?: unknown };
+      const plaintextRestore = restorePlaintextV2AgentMessageCalls(
+        normalizedResponse, plaintextV2AgentMessageToolNames, plaintextV2AgentMessageAliasedToolNames,
+      );
+      if (plaintextRestore.overflowed) return;
+      const restoredResponse = plaintextRestore.value as typeof normalizedResponse;
       // Replay overlap compares the items the client echoes, including visible reasoning shape.
       const replayResponse = parsed.options.hideThinkingSummary !== true
         && routeUsesContentChannelReasoning(route.provider, route.modelId)
@@ -5249,7 +5271,7 @@ async function handleResponsesInner(
           headers: selectedForwardHeaders,
           translatorBudget,
         });
-        refreshRoutedNamespaceToolAliases(request);
+        refreshRequestToolAliases(request);
         recordAdapterReasoning(logCtx, request);
         recordAdapterTier(logCtx, request);
       } catch (err) {
@@ -5366,7 +5388,7 @@ async function handleResponsesInner(
           headers: selectedForwardHeaders,
           translatorBudget,
         });
-        refreshRoutedNamespaceToolAliases(request);
+        refreshRequestToolAliases(request);
         recordAdapterReasoning(logCtx, request);
         recordAdapterTier(logCtx, request);
         refreshUndeclaredToolGuard(request);
@@ -5487,7 +5509,7 @@ async function handleResponsesInner(
           headers: selectedForwardHeaders,
           translatorBudget,
         });
-        refreshRoutedNamespaceToolAliases(request);
+        refreshRequestToolAliases(request);
         recordAdapterReasoning(logCtx, request);
         recordAdapterTier(logCtx, request);
       } catch (err) {
@@ -5710,7 +5732,7 @@ async function handleResponsesInner(
         if (retry.kind === "retried") {
           authCtx = retry.authCtx;
           request = retry.request;
-          refreshRoutedNamespaceToolAliases(request);
+          refreshRequestToolAliases(request);
           refreshUndeclaredToolGuard(request);
           upstreamResponse = retry.upstreamResponse;
           selectedForwardHeaders = retry.selectedForwardHeaders;
@@ -5791,7 +5813,7 @@ async function handleResponsesInner(
     // treating a successful body as SSE when the caller requested streaming.
     const passthroughCt = headers.get("content-type")?.toLowerCase();
     const isEventStream = passthroughCt?.includes("text/event-stream")
-      || (upstreamResponse.ok && !!upstreamResponse.body && !passthroughCt && parsed.stream);
+      || (plaintextV2AgentMessageToolNames.size === 0 && upstreamResponse.ok && !!upstreamResponse.body && !passthroughCt && parsed.stream);
     const recordTerminalOutcome = codexForwardTerminalOutcomeRecorder(
       config,
       authCtx,
@@ -6010,6 +6032,18 @@ async function handleResponsesInner(
       // injection at the block level, after payload rewrites. Defaults come
       // from the finalized OUTBOUND body — the normalized internal tool shapes
       // are not the Responses wire shapes the snapshot must mirror.
+      // Only validated client blocks may publish plaintext continuation state.
+      // Raw inspection precedes rewriting on eager relays, so it cannot own this write.
+      const plaintextInspector = plaintextV2AgentMessageToolNames.size > 0
+        ? createSseInspector({ onCompletedResponse: rememberPassthroughResponseChecked })
+        : undefined;
+      const plaintextEncoder = plaintextInspector ? new TextEncoder() : undefined;
+      const rememberPlaintextBlock = plaintextInspector
+        ? Object.assign((block: string): readonly string[] => {
+          plaintextInspector.feed(plaintextEncoder!.encode(`${block}\n\n`));
+          return [block];
+        }, { dispose: () => plaintextInspector.dispose() })
+        : undefined;
       const blockRewrites = [
         payloadRewrites.length > 0
           ? payloadRewriteAsBlockRewrite(composeSsePayloadRewrites(...payloadRewrites))
@@ -6037,6 +6071,11 @@ async function handleResponsesInner(
         snapshotRepairEnabled
           ? createResponsesSnapshotBlockRewrite(outboundRequestBody, translatorBudget)
           : undefined,
+        plaintextV2AgentMessageToolNames.size > 0
+          ? payloadRewriteAsBlockRewrite(createPlaintextV2AgentMessageCallRestoreRewrite(
+            plaintextV2AgentMessageToolNames, plaintextV2AgentMessageAliasedToolNames,
+          ))
+          : undefined,
         createResponsesFieldBackfillBlockRewrite(),
         functionRepairSchemas.size > 0
           ? createResponsesFunctionToolRepairBlockRewrite(functionRepairSchemas, translatorBudget)
@@ -6051,6 +6090,7 @@ async function handleResponsesInner(
             declaredBareWireToolNames,
           )
           : undefined,
+        rememberPlaintextBlock,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
       const clientBlockRewrite = blockRewrites.length > 0
         ? composeSseBlockRewrites(...blockRewrites)
@@ -6098,7 +6138,7 @@ async function handleResponsesInner(
         const inspector = createSseInspector({
           onTerminal: reportNativeTerminal,
           logCtx,
-          onCompletedResponse: rememberPassthroughResponse ? rememberPassthroughResponseChecked : undefined,
+          onCompletedResponse: rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
           onParsedPayload: noteInspectedPayload,
           onFirstOutput: options.onFirstOutput,
           pinCompletedResponseIdToFirstSeen: githubCopilotRepairEnabled,
@@ -6197,7 +6237,7 @@ async function handleResponsesInner(
             responseCompletionCancelled = true;
             options.onNativePassthroughCancel?.();
           },
-          rememberPassthroughResponse ? rememberPassthroughResponseChecked : undefined,
+          rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -6207,7 +6247,7 @@ async function handleResponsesInner(
           logCtx,
           turnAc.signal,
           () => unregisterTurn(turnAc),
-          rememberPassthroughResponse ? rememberPassthroughResponseChecked : undefined,
+          rememberPassthroughResponse && plaintextV2AgentMessageToolNames.size === 0 ? rememberPassthroughResponseChecked : undefined,
           options.onFirstOutput,
           inspectionConsumerOptions,
         );
@@ -6249,6 +6289,7 @@ async function handleResponsesInner(
       }
       const text = bounded.text;
       inspectResponseLogJson(logCtx, text);
+      let plaintextV2RestoreFailed = false;
       let clientJson = (() => {
         const restoredNamespace = restoreRoutedNamespaceCallsInJson(
           scrubSelfNamedToolCallNamespaceInJson(
@@ -6271,7 +6312,12 @@ async function handleResponsesInner(
           restored,
           routedToolSearchNames,
         );
-        const repaired = normalizeFunctionCompletionJson(restoredToolSearch);
+        const normalizedJson = normalizeFunctionCompletionJson(restoredToolSearch);
+        const plaintextRestore = restorePlaintextV2AgentMessageCallsInJsonResult(
+          normalizedJson, plaintextV2AgentMessageToolNames, plaintextV2AgentMessageAliasedToolNames,
+        );
+        plaintextV2RestoreFailed = plaintextRestore.overflowed;
+        const repaired = plaintextRestore.value;
         const modelRewritten = parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
           ? rewriteResponsesModelJson(repaired, parsed._responseModelId)
           : repaired;
@@ -6283,6 +6329,9 @@ async function handleResponsesInner(
           ? rewriteReasoningSummaryInJsonString(modelRewritten)
           : modelRewritten;
       })();
+      if (plaintextV2RestoreFailed) {
+        return formatErrorResponse(502, "upstream_error", PLAINTEXT_V2_AGENT_MESSAGE_RESTORE_OVERFLOW_MESSAGE);
+      }
       // #1700: same fail-closed policy as the SSE relay above. Both the plain JSON answer and
       // the reframed-SSE branch below are built from this body, so one check covers them. This
       // runs BEFORE the continuation cache write below: a refused turn must not become state a
@@ -6389,6 +6438,10 @@ async function handleResponsesInner(
         statusText: upstreamResponse.statusText,
         headers,
       });
+    }
+    if (plaintextV2AgentMessageToolNames.size > 0) {
+      try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already closed */ }
+      return formatErrorResponse(502, "upstream_error", "plaintext V2 agent-message response used an unsupported content type");
     }
     // An unclassified passthrough body is relayed directly and has no bounded completion observer;
     // use the same non-error-status success boundary as SSE instead of retaining per-stream state.
@@ -7158,7 +7211,7 @@ async function handleResponsesInner(
     Math.max(1, budget - transientSendsUsed);
   try {
     initialRequest = await activeAdapter.buildRequest(parsed, { headers: selectedForwardHeaders, translatorBudget });
-    refreshRoutedNamespaceToolAliases(initialRequest);
+    refreshRequestToolAliases(initialRequest);
     recordAdapterReasoning(logCtx, initialRequest);
     recordAdapterTier(logCtx, initialRequest);
     inputTokenEstimate = typeof initialRequest.usageLog?.inputTokens === "number"
@@ -7303,7 +7356,7 @@ async function handleResponsesInner(
         sameTargetParsed = parsed;
         sameTargetToken = transportToken;
       }
-      refreshRoutedNamespaceToolAliases(retryRequest);
+      refreshRequestToolAliases(retryRequest);
       const retryEstimate = typeof retryRequest.usageLog?.inputTokens === "number"
         ? retryRequest.usageLog.inputTokens
         : undefined;

@@ -198,3 +198,23 @@ Native Codex advertisements still follow display priority; private guidance rank
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
+
+## Plaintext V2 agent messages
+
+`src/responses/plaintext-v2-agent-messages.ts` owns the experimental, configuration-only
+`plaintextV2AgentMessages` request compiler and response restoration. The default is unset;
+only explicit true on Responses ingress to the final canonical ChatGPT forward route activates it.
+A default top-level collaboration catalog is required. The compiler preserves caller objects,
+aliases the namespace and three message functions, and removes only their true encryption marker.
+Declaration/reference collisions refuse the whole rewrite without changing the request.
+
+`src/adapters/openai-responses.ts` returns request-local alias capabilities. The Responses core
+refreshes them after every request rebuild and restores JSON, SSE and WebSocket identities after
+snapshot repair. Malformed, conflicting, unsupported or over-limit responses fail closed without
+retrying the model. Raw stream inspection cannot publish plaintext continuation state: only
+restored client blocks reach its dedicated bounded collector. Foreign namespaces and opaque
+argument/metadata values remain unchanged; the empty encrypted-function-args marker is preserved.
+
+Startup warns that task text can remain in Codex history, selected-provider requests and local
+response/debug state. This is application-level plaintext over HTTPS, depends on undocumented
+upstream behavior, and does not decrypt existing tasks or replace authenticated recovery.

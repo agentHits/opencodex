@@ -511,3 +511,6 @@ converge the Codex catalog once and return its disposition. The Models UI owns a
 picker data resource so failure cannot erase the ordinary model inventory; Apply publishes through
 the resource's generation fence, and Most used reads usage only on explicit Apply. Stored mode
 survives availability drift, while complete/native custom orders await explicit replacement.
+
+The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
