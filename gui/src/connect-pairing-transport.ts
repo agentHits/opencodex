@@ -4,8 +4,10 @@ import type { ApiTarget } from "./api-targets";
 const PAIRING_CODE = /^ocx_pair_[A-Za-z0-9_-]{43}$/;
 
 export class PairingError extends Error {
-  constructor(readonly kind: "invalid-code" | "refused" | "unreachable" | "request-failed" | "invalid-response") {
+  readonly kind: "invalid-code" | "refused" | "unreachable" | "request-failed" | "invalid-response";
+  constructor(kind: PairingError["kind"]) {
     super(`pairing_${kind}`);
+    this.kind = kind;
     this.name = "PairingError";
   }
 }

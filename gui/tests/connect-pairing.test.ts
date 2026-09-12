@@ -6,6 +6,8 @@ test("App mounts the relay pairing form and installs only the returned shared se
   const keys = ["window", "document", "navigator", "sessionStorage", "localStorage", "fetch", "confirm", "alert", "IS_REACT_ACT_ENVIRONMENT", "__APP_VERSION__"] as const;
   const previous = Object.fromEntries(keys.map(key => [key, Reflect.get(globalThis, key)]));
   const win = new Window({ url: "http://localhost/#dashboard" });
+  // Hidden documents have no periodic resource poll: pairing must explicitly revalidate.
+  Object.defineProperty(win.document, "visibilityState", { configurable: true, value: "hidden" });
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: win },
     document: { configurable: true, value: win.document },
