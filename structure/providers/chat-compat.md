@@ -264,3 +264,5 @@ fragments are not guessed onto pending ID-only calls.
 parallel/colliding identities, distinct unsafe raw JSON index literals, the maximum
 safe-integer boundary, invalid index types, missing/null continuations and UTF-8
 byte-limit boundaries.
+
+Translated Chat request construction uses the [inline-image budget](../transports/streaming-health.md#translated-chat-inline-image-budget); the shared normalizer counts retained bytes even when a wire-specific drop callback keeps the image attached.

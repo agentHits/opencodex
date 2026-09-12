@@ -108,3 +108,5 @@ The management quota DTO keeps Combo editing aligned with scoped inference evide
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
 
 Cline CLI is a managed file integration: its provider settings and catalog share one recoverable journal operation. The [paired-file contract](clients/integrations.md#cline-paired-files) defines its stop/restart requirement.
+
+Translated Chat request construction uses the [inline-image budget](transports/streaming-health.md#translated-chat-inline-image-budget); the shared normalizer counts retained bytes even when a wire-specific drop callback keeps the image attached.

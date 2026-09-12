@@ -82,3 +82,5 @@ constraints cannot widen the canonical shape. Bare shell bridge names are reject
 on the freeform path.
 Namespaced tools do not acquire bare-shell behavior. Regression coverage lives in
 `tests/providers/cursor/cursor-tool-definitions.test.ts`.
+
+Translated Chat request construction uses the [inline-image budget](../transports/streaming-health.md#translated-chat-inline-image-budget); the shared normalizer counts retained bytes even when a wire-specific drop callback keeps the image attached.

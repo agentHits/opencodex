@@ -128,3 +128,5 @@ changes prompt roles, not conversation identity, and cannot guarantee upstream c
 Instruction notice extraction scans fence ranges once and walks original lines backwards with
 a decreasing cursor. It accepts exactly one ASCII space inside the token notice, preserves
 unmatched prefix bytes, and does not repeatedly scan or copy shrinking prompt prefixes.
+
+Translated Chat request construction uses the [inline-image budget](../transports/streaming-health.md#translated-chat-inline-image-budget); the shared normalizer counts retained bytes even when a wire-specific drop callback keeps the image attached.
