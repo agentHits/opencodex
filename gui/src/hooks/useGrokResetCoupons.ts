@@ -98,7 +98,7 @@ function expiryRank(coupon: GrokResetCoupon): number {
 }
 
 function byExpiry(coupons: GrokResetCoupon[]): GrokResetCoupon[] {
-  return [...coupons].sort((a, b) => expiryRank(a) - expiryRank(b));
+  return coupons.toSorted((a, b) => expiryRank(a) - expiryRank(b));
 }
 
 function wasAborted(error: unknown, signal: AbortSignal): boolean {
@@ -188,8 +188,10 @@ export function useGrokResetCoupons({ apiBase, accountIds, enabled }: {
         body: JSON.stringify({ accountId, tokenId: request.tokenId, operationId: request.operationId }),
         signal: bounded.signal,
       });
+      if (!response.ok) {
+        return { ok: false, code: errorCode(await response.json().catch(() => null)), replayed: false };
+      }
       const data = await response.json().catch(() => null) as unknown;
-      if (!response.ok) return { ok: false, code: errorCode(data), replayed: false };
       const replayed = Boolean(data && typeof data === "object" && (data as { replayed?: unknown }).replayed === true);
       const code = settledCode(data);
       await read(accountId, epoch.current);
