@@ -96,3 +96,13 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+## Claude affinity at final Go dispatch
+
+`src/server/claude-messages.ts` carries validated conversation affinity privately through
+Responses options. Configured Go headers win; otherwise explicit session/thread identity,
+then an explicit Go header, then valid Claude metadata, then the original request-scoped
+allocation supplies the lane. `src/server/responses/core.ts` applies it only at the final
+canonical Go transport, including combo selection and failover. No Go-only replay header
+reaches non-Go destinations. Shared system cache keys never become conversation identity.
+The request-scoped fallback is stable across retries and distinct across client requests.
