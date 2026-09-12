@@ -79,3 +79,5 @@ testable on any host: stubbing `process.platform` does not propagate to `os.plat
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+Desktop requests routed to the Codex pool use the shared [automatic plan exclusion contract](../providers/openai-tiers.md#automatic-pool-plan-exclusions); explicit account-qualified targets retain their selection semantics.

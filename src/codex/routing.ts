@@ -1066,7 +1066,7 @@ function excludedCodexPoolPlanKeys(config: OcxConfig): ReadonlySet<string> | und
  * selection-only drain so routing never reads the fenced native credential for it, so a rule that
  * covered main would disagree with itself between drain and ordinary routing.
  */
-function isCodexAccountPlanExcluded(
+export function isCodexAccountPlanExcluded(
   config: OcxConfig,
   accountId: string,
   precomputed?: ReadonlySet<string>,
@@ -2155,6 +2155,7 @@ export function previewCodexAccountForRequest(
     else if (
       hasConfiguredPoolAccount(config, active, selectionOptions)
       && !isCodexAccountPaused(config, active)
+      && !isCodexAccountPlanExcluded(config, active)
     ) return active;
     else return null;
   }
@@ -2391,6 +2392,7 @@ export function resolveCodexAccountForThreadDetailed(
     } else if (
       hasConfiguredPoolAccount(config, active, selectionOptions)
       && !isCodexAccountPaused(config, active)
+      && !isCodexAccountPlanExcluded(config, active)
     ) {
       return { status: "selected", accountId: active };
     } else {

@@ -101,6 +101,9 @@ function statusText(row: AccountRow): string {
   if (row.active) parts.push(row.type === "codex" ? "selected" : "active");
   if (row.needsReauth) parts.push("needs-reauth");
   if (row.validationPending) parts.push("validation-pending");
+  if (row.selectionExcludedReason === "plan_excluded") {
+    parts.push(`not-auto-selected(plan=${row.selectionExcludedPlan ?? row.plan ?? "unknown"})`);
+  }
   return parts.join(" ");
 }
 

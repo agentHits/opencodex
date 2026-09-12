@@ -1837,6 +1837,8 @@ export const fr: Record<TKey, string> = {
   "codexAuth.pause": "Suspendre",
   "codexAuth.resume": "Reprendre",
   "codexAuth.paused": "SUSPENDU",
+  "codexAuth.planExcluded": "Exclu du choix automatique",
+  "codexAuth.planExcludedHint": "Le forfait {plan} est exclu de la sélection automatique. Les routes explicites vers ce compte restent disponibles.",
   "codexAuth.pauseSucceeded": "{email} est suspendu",
   "codexAuth.resumeSucceeded": "{email} est de nouveau disponible dans le groupe",
   "codexAuth.pauseFailed": "Impossible de suspendre {email}. Aucune modification apportée.",

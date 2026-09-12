@@ -103,3 +103,5 @@ would pass while the rule was violated.
 
 - **INV-HOME-01** — `CODEX_HOME` wins over `~/.codex` when present and valid.
 - **INV-SLUG-01** — Routed model slugs use `provider/model`.
+
+Codex plan exclusions constrain automatic pool selection without deleting credentials; [account-policy reasons](providers/openai-tiers.md#automatic-pool-plan-exclusions) remain distinct from health and pause.

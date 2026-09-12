@@ -586,6 +586,18 @@ afterEach(() => {
 });
 
 describe("ocx account CLI (issue #180 matrix)", () => {
+  test("plan exclusions survive the API projection and use the policy plan", async () => {
+    codexAccounts = [{ id: "policy", plan: "plus", selectionExcludedReason: "plan_excluded", selectionExcludedPlan: "free", paused: false }];
+    const human = await run(["list", "openai"]);
+    expect(human.code).toBe(0);
+    expect(human.stdout).toContain("not-auto-selected(plan=free)");
+    const machine = await run(["list", "openai", "--json"]);
+    expect(JSON.parse(machine.stdout).accounts[0]).toMatchObject({ selectionExcludedReason: "plan_excluded", selectionExcludedPlan: "free" });
+    codexAccounts = [{ id: "policy", plan: "plus", selectionExcludedReason: "unrecognized", selectionExcludedPlan: "free" }];
+    expect((await run(["list", "openai"])).stdout).not.toContain("not-auto-selected");
+    expect(JSON.parse((await run(["list", "openai", "--json"])).stdout).accounts[0]).not.toHaveProperty("selectionExcludedReason");
+  });
+
   test.each([100, 12])("pending validation stays visible at %s percent usage without exposing raw health details", async weeklyPercent => {
     codexAccounts = [{ id: "pending", email: "p***@example.test", quota: { weeklyPercent },
       health: { status: "warning", reason: "validation_pending", message: RAW_SENTINEL } }];

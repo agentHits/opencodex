@@ -1365,6 +1365,8 @@ export const ko: Record<TKey, string> = {
   "codexAuth.pause": "일시 중지",
   "codexAuth.resume": "재개",
   "codexAuth.paused": "일시 중지됨",
+  "codexAuth.planExcluded": "자동 선택 제외",
+  "codexAuth.planExcludedHint": "{plan} 플랜은 자동 선택에서 제외됩니다. 계정을 직접 지정하면 사용할 수 있습니다.",
   "codexAuth.pauseSucceeded": "{email} 계정을 일시 중지했습니다",
   "codexAuth.resumeSucceeded": "{email} 계정을 풀에서 다시 사용할 수 있습니다",
   "codexAuth.pauseFailed": "{email} 계정을 일시 중지하지 못했습니다. 변경 사항이 없습니다.",

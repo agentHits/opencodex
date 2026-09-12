@@ -1905,6 +1905,8 @@ export const en = {
   "codexAuth.pause": "Pause",
   "codexAuth.resume": "Resume",
   "codexAuth.paused": "PAUSED",
+  "codexAuth.planExcluded": "Not auto-selected",
+  "codexAuth.planExcludedHint": "Plan {plan} is excluded from automatic selection. Explicit account routes remain available.",
   "codexAuth.pauseSucceeded": "{email} is paused",
   "codexAuth.resumeSucceeded": "{email} is available to the pool again",
   "codexAuth.pauseFailed": "Could not pause {email}. Nothing was changed.",

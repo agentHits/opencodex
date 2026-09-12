@@ -49,6 +49,7 @@ import {
   clearThreadAccountMapForAccount,
   getEffectiveActiveCodexAccountId,
   isEffectiveCodexAccountPinned,
+  isCodexAccountPlanExcluded,
   reconcileCodexActiveAfterExclusion,
   resetCodexRoutingForManualSelection,
   settleCodexQuotaRecoveryProbe,
@@ -379,6 +380,7 @@ export type CodexAccountReauthReason =
   | "forbidden";
 
 function poolAccountDto(
+  config: OcxConfig,
   account: CodexAccount,
   quotaResult: PoolQuotaResult,
   hasCredential: boolean,
@@ -413,6 +415,10 @@ function poolAccountDto(
     quota: quota ? { ...quota } : null,
     needsReauth: needsReauth || health.status === "reauth_required",
     ...(reauthReason !== undefined ? { reauthReason } : {}),
+    ...(isCodexAccountPlanExcluded(config, account.id) ? {
+      selectionExcludedReason: "plan_excluded" as const,
+      selectionExcludedPlan: codexPlanValue(config.codexAccounts?.find(row => row.id === account.id)?.plan),
+    } : {}),
     hasCredential,
     ...(quotaResult.quotaProbeSkipped ? { quotaProbeSkipped: true as const } : {}),
     ...oauthAccountHealthFields("codex", account.id, health),
@@ -1192,6 +1198,9 @@ export interface CodexAuthAccountDto {
    * needs the operator; `/api/oauth/accounts` already carries the same field name.
    */
   reauthReason?: CodexAccountReauthReason;
+  /** Automatic selection policy only; explicit routes retain their usual auth checks. */
+  selectionExcludedReason?: "plan_excluded";
+  selectionExcludedPlan?: string;
   hasCredential: boolean;
   health: OAuthAccountHealth;
   healthLabel: OAuthHealthLabel;
@@ -2006,6 +2015,7 @@ export async function listCodexAuthAccountsSnapshot(
     const currentCredential = getCodexAccountCredential(accountId);
     if (!currentCredential) {
       return [poolAccountDto(
+        runtimeConfig,
         currentAccount,
         { quota: null, needsReauth: true },
         false,
@@ -2026,6 +2036,7 @@ export async function listCodexAuthAccountsSnapshot(
       ? { ...currentAccount, plan: quotaResult.freshPlan }
       : currentAccount;
     return [poolAccountDto(
+      runtimeConfig,
       dtoAccount,
       effectiveQuotaResult,
       true,

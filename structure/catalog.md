@@ -268,3 +268,5 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+Account-qualified catalog routes bypass automatic plan exclusions while retaining credential and entitlement checks; see [automatic pool plan exclusions](providers/openai-tiers.md#automatic-pool-plan-exclusions).

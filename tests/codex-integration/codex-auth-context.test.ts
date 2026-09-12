@@ -1523,6 +1523,28 @@ describe("Codex auth context", () => {
       .resolves.toMatchObject({ kind: "pool", accountId: "pool-b" });
   });
 
+  test("explicit account routing bypasses plan policy while retaining pause and reauth checks", async () => {
+    const cfg = config();
+    cfg.codexAccounts!.find(account => account.id === "pool-a")!.plan = "free";
+    cfg.codexPool = { excludedPlans: ["free"] };
+    saveCodexAccountCredential("pool-a", {
+      accessToken: "pool_a_token", refreshToken: "pool_a_refresh",
+      expiresAt: Date.now() + 5 * 60_000, chatgptAccountId: "pool_a_acc",
+    });
+    await expect(resolveCodexAuthContext(new Headers(), cfg, "pool", {
+      accountId: "pool-a", modelId: "gpt-5.5",
+    })).resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
+    cfg.pausedCodexAccountIds = ["pool-a"];
+    await expect(resolveCodexAuthContext(new Headers(), cfg, "pool", {
+      accountId: "pool-a", modelId: "gpt-5.5",
+    })).rejects.toThrow("Selected Codex account is unavailable");
+    cfg.pausedCodexAccountIds = [];
+    markAccountNeedsReauth("pool-a");
+    await expect(resolveCodexAuthContext(new Headers(), cfg, "pool", {
+      accountId: "pool-a", modelId: "gpt-5.5",
+    })).rejects.toThrow("Selected Codex account needs reauthentication");
+  });
+
   test("exact selection reports reauthentication without falling back to the active Pool account", async () => {
     const cfg = config();
     cfg.activeCodexAccountId = "pool-b";

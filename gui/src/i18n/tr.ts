@@ -1862,6 +1862,8 @@ export const tr: Record<TKey, string> = {
   "codexAuth.pause": "Duraklat",
   "codexAuth.resume": "Devam Ettir",
   "codexAuth.paused": "DURAKLATILDI",
+  "codexAuth.planExcluded": "Otomatik seçilmez",
+  "codexAuth.planExcludedHint": "{plan} planı otomatik seçimden hariç tutulur. Açık hesap yönlendirmeleri kullanılabilir.",
   "codexAuth.pauseSucceeded": "{email} duraklatıldı",
   "codexAuth.resumeSucceeded": "{email} tekrar havuza alındı",
   "codexAuth.pauseFailed": "{email} duraklatılamadı.",

@@ -1051,6 +1051,22 @@ describe("codex-auth API", () => {
     }
   });
 
+  test("account DTO exposes the routing plan exclusion and clears it on renewal", async () => {
+    const cfg = makeConfig({ codexPool: { excludedPlans: ["free"] } });
+    seedPoolAccount(cfg, { id: "plan-row", email: "plan@example.test", plan: "free" });
+    const read = async () => {
+      const request = new Request("http://localhost/api/codex-auth/accounts");
+      const response = await handleCodexAuthAPI(request, new URL(request.url), cfg);
+      const body = await response!.json() as { accounts: CodexAuthAccountDto[] };
+      return body.accounts.find(account => account.id === "plan-row")!;
+    };
+    expect(await read()).toMatchObject({ selectionExcludedReason: "plan_excluded", selectionExcludedPlan: "free", paused: false });
+    cfg.codexAccounts![0].plan = "plus";
+    const renewed = await read();
+    expect(renewed).not.toHaveProperty("selectionExcludedReason");
+    expect(renewed).not.toHaveProperty("selectionExcludedPlan");
+  });
+
   test("GET /api/codex-auth/accounts returns array with main", async () => {
     const req = new Request("http://localhost/api/codex-auth/accounts", { method: "GET" });
     const url = new URL(req.url);

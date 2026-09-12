@@ -1453,6 +1453,8 @@ export const zhTW: Record<TKey, string> = {
   "codexAuth.pause": "暫停",
   "codexAuth.resume": "恢復",
   "codexAuth.paused": "已暫停",
+  "codexAuth.planExcluded": "不自動選取",
+  "codexAuth.planExcludedHint": "方案 {plan} 已排除自動選取。仍可明確指定此帳號。",
   "codexAuth.pauseSucceeded": "已暫停 {email}",
   "codexAuth.resumeSucceeded": "{email} 已重新加入帳號池",
   "codexAuth.pauseFailed": "無法暫停 {email}，未做任何變更。",
