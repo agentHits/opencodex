@@ -1,5 +1,60 @@
 /** Backend path and opt-in config compatibility for native Codex history/notes. */
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { getCodexHome } from "./paths";
+
 export const CONTEXT_BACKEND_PREFIX = "/backend-api/codex";
+
+/** The single definition of the opt-in, shared by injection and the runtime gate. */
+export function contextExperimentalEnabled(configContent: string): boolean {
+  let parsed: { features?: { context_management?: { experimental_mode?: boolean } } };
+  try {
+    parsed = Bun.TOML.parse(configContent) as typeof parsed;
+  } catch {
+    // Injection tolerates incomplete user config; malformed TOML is not an opt-in.
+    return false;
+  }
+  return parsed.features?.context_management?.experimental_mode === true;
+}
+
+let activation: { key: string; active: boolean } | undefined;
+
+/**
+ * Whether this proxy may serve the context relay at all, decided by opencodex reading Codex own
+ * config rather than by anything a caller sends.
+ *
+ * Rewriting the injected base URL is what makes the feature REACHABLE, and gating only that would
+ * leave the ownership registry and both endpoint prefixes live for anyone who can already reach
+ * the data plane. An opt-in that a direct POST walks around is not an opt-in, so the same
+ * predicate guards recording and dispatch. An absent, unreadable or malformed config is not an
+ * opt-in. The result is cached against the config identity and re-read when the file changes, so
+ * turning the feature off takes effect without a restart and steady-state traffic does not parse
+ * TOML per request.
+ */
+export function contextRelayActivated(configPath = join(getCodexHome(), "config.toml")): boolean {
+  let key: string;
+  try {
+    const seen = statSync(configPath);
+    key = `${configPath}:${seen.mtimeMs}:${seen.size}:${String(seen.ino)}`;
+  } catch {
+    activation = undefined;
+    return false;
+  }
+  if (activation?.key === key) return activation.active;
+  let active = false;
+  try {
+    active = contextExperimentalEnabled(readFileSync(configPath, "utf8"));
+  } catch {
+    active = false;
+  }
+  activation = { key, active };
+  return active;
+}
+
+/** Test seam: the cache is keyed by config identity, which a temp home reuses across cases. */
+export function resetContextRelayActivationForTests(): void {
+  activation = undefined;
+}
 
 const CONTEXT_ENDPOINTS = new Set([
   "alpha/history/v2/list_windows", "alpha/history/v2/list_items",
@@ -25,14 +80,7 @@ export function codexCompatibleUrl(rawUrl: string): URL {
 
 /** Change only marker-managed built-in routing, and only with an explicit context opt-in. */
 export function contextCompatibleBaseLine(content: string, line: string): string {
-  let parsed: {features?: {context_management?: {experimental_mode?: boolean}}};
-  try {
-    parsed = Bun.TOML.parse(content) as typeof parsed;
-  } catch {
-    // Injection tolerates incomplete user config; malformed TOML is not an opt-in.
-    return line;
-  }
-  if (parsed.features?.context_management?.experimental_mode !== true) return line;
+  if (!contextExperimentalEnabled(content)) return line;
   const match = /^openai_base_url = "([^"]+)"$/.exec(line);
   if (!match) return line;
   const url = new URL(match[1]);

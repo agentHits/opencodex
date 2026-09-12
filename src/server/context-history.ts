@@ -7,7 +7,7 @@ import {
   materializeCodexUpstreamAuth, isCodexAuthContextUsable, resolveCodexAuthContext, releaseCodexAuthContextProbeLease,
 } from "../codex/auth-context";
 import { getContextSessionOwner, contextSessionOwnerMatches } from "../codex/context-owner";
-import { contextEndpoint } from "../codex/context-compat";
+import { contextEndpoint, contextRelayActivated } from "../codex/context-compat";
 import { formatCodexProviderForLog } from "../codex/routing";
 import { listOpenAiForwardSidecarCandidates } from "../providers/openai-sidecar";
 import { clearableDeadline, type ClearableDeadline } from "../lib/abort";
@@ -64,7 +64,11 @@ async function relayContextHistory(
   turnAdmissionLease?: AdmissionLease, admission?: DataPlaneAdmission,
   revalidateAdmission?: () => DataPlaneAdmission | null,
 ): Promise<Response> {
-  if (!contextEndpoint("/v1/" + endpoint) || req.method !== "POST") {
+  // The feature is opt-in, and the opt-in has to hold here rather than only where the injected
+  // base URL is rewritten: a caller that can reach the data plane can POST these paths directly.
+  // While it is off the endpoints do not exist, which is also what a disabled route should look
+  // like from outside.
+  if (!contextEndpoint("/v1/" + endpoint) || req.method !== "POST" || !contextRelayActivated()) {
     return formatErrorResponse(404, "not_found", "Unknown context endpoint");
   }
   // Only a trusted listener admission authorizes replacing a proxy bearer with Codex auth.

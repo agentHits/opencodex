@@ -199,6 +199,11 @@ upstream after either.
 To disable the feature, remove the experimental key (or set it to `false`), run `ocx sync`,
 and start a new Codex session. The managed root base returns to `/v1`.
 
+While the key is absent or `false` the relay does not exist: the ten endpoints answer 404 for any
+caller, including one that posts them directly, and a model turn records no history ownership.
+opencodex decides this by reading Codex own config itself, so the switch does not depend on the
+injected URL or on anything a client sends, and turning it off takes effect without a restart.
+
 ### Built-in image generation (`image_gen`)
 
 Codex's built-in `image_gen` tool does not go through `/v1/responses` — the codex-rs extension

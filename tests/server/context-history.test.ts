@@ -1,5 +1,9 @@
 // mock.module replacements require file isolation (bun test --isolate).
 import { describe, test, expect, mock, beforeEach, afterAll } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { resetContextRelayActivationForTests } from "../../src/codex/context-compat";
 import type { CodexAuthContext } from "../../src/codex/auth-context";
 import { recordContextSessionOwner, clearContextSessionOwnersForTests } from "../../src/codex/context-owner";
 import type { DataPlaneAdmission } from "../../src/server/auth-cors";
@@ -10,6 +14,17 @@ type Selection = { headers: Headers; mode: string; options: { modelId: string; a
 let selection: Selection | undefined;
 const config: OcxConfig = { port: 0, defaultProvider: "openai", providers: {} };
 const logContext = (): RequestLogContext => ({ model: "context_history", provider: "" });
+
+// The relay only exists while Codex own config opts in, so these cases need a home that does.
+const codexHome = mkdtempSync(join(tmpdir(), "ocx-context-flag-"));
+const codexConfigPath = join(codexHome, "config.toml");
+const previousCodexHome = process.env.CODEX_HOME;
+process.env.CODEX_HOME = codexHome;
+function setContextFeature(enabled: boolean): void {
+  writeFileSync(codexConfigPath, enabled ? "[features]\ncontext_management.experimental_mode = true\n" : "model = \"gpt-5.5\"\n");
+  resetContextRelayActivationForTests();
+}
+setContextFeature(true);
 let materialized: { config: OcxConfig; modelId: string } | undefined;
 let materializationError: Error | undefined;
 let materializationOptions: { admission?: DataPlaneAdmission; substituteMainCredential?: boolean } | undefined;
@@ -77,8 +92,8 @@ const originalFetch=globalThis.fetch;
 function setFetch(handler: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): void {
   globalThis.fetch = Object.assign(handler, { preconnect: originalFetch.preconnect });
 }
-afterAll(()=>{clearContextSessionOwnersForTests();globalThis.fetch=originalFetch;mock.restore();});
-beforeEach(()=>{clearContextSessionOwnersForTests();for (const id of ["root", "root-test", "s"]) seedOwner(id);outgoingAccount="test-only";globalThis.fetch=originalFetch;materialized=undefined;materializationError=undefined;selection=undefined;validated=0;materializationOptions=undefined;outgoingBearer="test-only";accountMode="pool";probe=false;released=0;directError=false;duringSelection=undefined;});
+afterAll(()=>{if(previousCodexHome===undefined)delete process.env.CODEX_HOME;else process.env.CODEX_HOME=previousCodexHome;resetContextRelayActivationForTests();clearContextSessionOwnersForTests();globalThis.fetch=originalFetch;mock.restore();});
+beforeEach(()=>{clearContextSessionOwnersForTests();for (const id of ["root", "root-test", "s"]) seedOwner(id);outgoingAccount="test-only";globalThis.fetch=originalFetch;materialized=undefined;materializationError=undefined;selection=undefined;validated=0;materializationOptions=undefined;outgoingBearer="test-only";accountMode="pool";probe=false;released=0;directError=false;duringSelection=undefined;setContextFeature(true);});
 
 describe("context relay contract",()=>{
   test("selects root shared lane but sends original body and protocol headers",async()=>{
@@ -205,6 +220,21 @@ test("a key withdrawn during the request cannot dispatch on its earlier admissio
   const rotated = { kind: "configured", keyId: "synthetic-key", source: "dedicated", contextPrincipalId: "principal-b" } as const;
   expect((await handleContextHistory(contextRequest(body), config, logContext(),
     "alpha/notes/v2/read_file", undefined, keyAdmission, () => rotated)).status).toBe(401);
+  expect(calls).toBe(0);
+});
+
+test("with the experimental feature off the endpoints do not exist", async () => {
+  let calls = 0;
+  setFetch(async () => { calls++; return Response.json({ value: "ok" }); });
+  setContextFeature(false);
+  const body = JSON.stringify({ context: { session_id: "root" } });
+  // Rewriting the injected base URL is what makes the feature reachable, but a caller that can
+  // already reach the data plane can POST these paths directly, so the opt-in has to hold here.
+  for (const endpoint of ["alpha/history/v2/list_items", "alpha/notes/v2/write_file"]) {
+    const response = await handleContextHistory(contextRequest(body), config, logContext(), endpoint, undefined, keyAdmission);
+    expect(response.status).toBe(404);
+  }
+  expect(selection).toBeUndefined();
   expect(calls).toBe(0);
 });
 

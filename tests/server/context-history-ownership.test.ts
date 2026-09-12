@@ -11,6 +11,7 @@ import { clearAccountNeedsReauth } from "../../src/codex/account-runtime-state";
 import { clearAccountQuota, setAccountQuotaFromParsed } from "../../src/codex/quota";
 import { clearCodexUpstreamHealth, clearThreadAccountMap, resetCodexRoutingForManualSelection } from "../../src/codex/routing";
 import { clearContextSessionOwnersForTests, getContextSessionOwner } from "../../src/codex/context-owner";
+import { resetContextRelayActivationForTests } from "../../src/codex/context-compat";
 
 const principal = "principal-a";
 const keyAdmission: DataPlaneAdmission = { kind: "configured", keyId: "k1", source: "dedicated", contextPrincipalId: principal };
@@ -65,10 +66,16 @@ async function notes(cfg: OcxConfig, session: string, headers = requestHeaders(s
   } finally { lease?.release(); }
 }
 
+function setContextFeature(enabled: boolean): void {
+  writeFileSync(join(home, "config.toml"), enabled ? "[features]\ncontext_management.experimental_mode = true\n" : "model = \"gpt-5.5\"\n");
+  resetContextRelayActivationForTests();
+}
+
 beforeEach(() => {
   previousHome = process.env.OPENCODEX_HOME; previousCodexHome = process.env.CODEX_HOME;
   home = mkdtempSync(join(tmpdir(), "ocx-context-owner-"));
   process.env.OPENCODEX_HOME = home; process.env.CODEX_HOME = home;
+  setContextFeature(true);
   clearContextSessionOwnersForTests(); clearAccountQuota(); clearThreadAccountMap(); clearCodexUpstreamHealth();
   for (const id of ["pool-a", "pool-b", "__main__"]) clearAccountNeedsReauth(id);
   install("pool-a", "physical-a"); install("pool-b", "physical-b");
@@ -115,6 +122,17 @@ test("successful explicit account A owns context while active B remains selected
   clearContextSessionOwnersForTests();
   expect((await notes(cfg, "root-explicit")).status).toBe(409);
   expect(sent).toHaveLength(2);
+});
+
+test("with the experimental feature off no relay state is built and no endpoint answers", async () => {
+  const cfg = config(); resetCodexRoutingForManualSelection("pool-b");
+  setContextFeature(false);
+  expect((await model(cfg, "root-disabled")).status).toBe(200);
+  // The model turn still serves normally; what it must not do is build ownership for a relay
+  // that is switched off, and the endpoints must not answer.
+  expect(getContextSessionOwner(principal, "root-disabled", destination)).toBeUndefined();
+  expect((await notes(cfg, "root-disabled")).status).toBe(404);
+  expect(sent.filter(row => row.url.includes("/alpha/"))).toHaveLength(0);
 });
 
 test("failed account A then successful B records only the serving account", async () => {

@@ -1,5 +1,6 @@
 import type { Server } from "bun";
 import { recordContextSessionOwner } from "../../codex/context-owner";
+import { contextRelayActivated } from "../../codex/context-compat";
 import { randomUUID } from "node:crypto";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse, type ResponsesTerminalStatus } from "../../bridge";
 import { formatPassthroughUpstreamError } from "./passthrough-error";
@@ -4777,7 +4778,9 @@ async function handleResponsesInner(
     commitReasoningReplayServingIdentity(parsed._reasoningReplayScope);
     // History has no model namespace. Record the account that actually accepted this
     // final attempt, after refresh/failover, rather than guessing from mutable affinity.
-    if (outboundHeaders && isCanonicalOpenAiForwardProvider(route.provider)) {
+    // Recording is relay state. With the feature off there is no relay, so building an owner
+    // registry for it is out of scope for this request.
+    if (outboundHeaders && isCanonicalOpenAiForwardProvider(route.provider) && contextRelayActivated()) {
       recordContextSessionOwner(resolveContextPrincipal(req, config, options.admission), req.headers,
         route.provider.baseUrl, authCtx, new Headers(outboundHeaders), substituteMainCredential);
     }
