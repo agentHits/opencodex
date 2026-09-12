@@ -539,3 +539,9 @@ Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#c
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
 Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
+
+Cline journal Undo eligibility reads both native configuration files through the paired
+integration IO adapter. Its snapshot fingerprint cannot be checked against providers.json alone;
+[the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
+
+The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.
