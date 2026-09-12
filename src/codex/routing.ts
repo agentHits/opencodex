@@ -2099,8 +2099,10 @@ function resetFirstAffinityReplacement(
   quotaScope?: CodexQuotaScope,
   selectionOptions?: CodexAccountUsabilityOptions,
 ): string | null {
+  const threshold = config.autoSwitchThreshold ?? 80;
+  if (threshold <= 0) return null;
   const usage = computeCodexUsageScore(getAccountQuota(entry.accountId), getPoolAccountPlanForSelection(config, entry.accountId, selectionOptions), now);
-  if (!mayRebindAffinityForQuota(config, entry.accountId, usage, config.autoSwitchThreshold ?? 80, selectionOptions)) return null;
+  if (!mayRebindAffinityForQuota(config, entry.accountId, usage, threshold, selectionOptions)) return null;
   const candidates = getEligiblePoolAccounts(config, entry.accountId, now, quotaScope, selectionOptions, true)
     .filter(id => hasCodexQuotaHeadroom(config, id, selectionOptions, now));
   return pickResetFirstCodexAccount(config, candidates, now, selectionOptions);

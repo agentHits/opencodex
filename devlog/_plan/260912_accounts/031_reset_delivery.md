@@ -7,3 +7,5 @@ Regression sources include original reset-first cases plus mixed units, cacheAff
 Source search: accountPoolStrategy, normalizeAccountPoolStrategy, resetAtToMs, pool/settings, mayRebindAffinityForQuota, manualPreferenceBlocks and all strategy consumers. Existing pool-kernel and routing owners extended; no new dependency or separate pool implementation. Config passthrough behavior preserved deliberately; write routes validate through the Codex-specific parser.
 
 Co-authored-by: Terry Tan <tmy1995hflc@gmail.com>
+
+C source audit found threshold=0/cacheAffinity=true could still rebind at100%. Accepted and fixed with early disabled-threshold return before reset-first affinity evaluation; new preview/resolve/all100 fixtures cover both cache settings. Failure recovery stays separate. Local suites NOT RUN; source re-audit and hosted CI pending.

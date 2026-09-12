@@ -421,6 +421,22 @@ describe("accountPoolStrategy new-session routing", () => {
     expect(resolveCodexAccountForThread("cached-reset", config, now + 1)).toBe(cacheAffinity ? "a" : "b");
   });
 
+  test.each([false, true])("reset-first threshold zero retains a spent binding with cacheAffinity=%s", cacheAffinity => {
+    const config = makeThreeAccountConfig({ accountPoolStrategy: "reset-first", autoSwitchThreshold: 0, pool: { cacheAffinity } });
+    const now = Date.now();
+    setAccountQuotaFromParsed("a", { weeklyPercent: 10, weeklyResetAt: now / 1000 + 10 });
+    setAccountQuotaFromParsed("b", { weeklyPercent: 20, weeklyResetAt: now / 1000 + 20 });
+    setAccountQuotaFromParsed("c", { weeklyPercent: 30, weeklyResetAt: now / 1000 + 30 });
+    expect(resolveCodexAccountForThread("zero-reset", config, now)).toBe("a");
+    for (const id of ["a", "b", "c"]) setAccountQuotaFromParsed(id, { weeklyPercent: 100 });
+    for (const later of [now + 1, now + CODEX_THREAD_AFFINITY_REEVAL_INTERVAL_MS + 1]) {
+      expect(previewCodexAccountForRequest("zero-reset", config, later)).toBe("a");
+      expect(resolveCodexAccountForThread("zero-reset", config, later)).toBe("a");
+    }
+    recordCodexUpstreamOutcome(config, "a", 429, { now: now + 2, resetAt: now / 1000 + 300 });
+    expect(pickAlternateCodexAccount(config, "a", now + 3)).not.toBe("a");
+  });
+
   test("reset-first keeps affinity until either window reaches the threshold", () => {
     const config = makeThreeAccountConfig({ accountPoolStrategy: "reset-first" });
     const now = Date.now();
