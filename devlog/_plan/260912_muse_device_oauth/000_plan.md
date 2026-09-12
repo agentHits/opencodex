@@ -24,6 +24,9 @@ need and deliberately refused to write it:
 > id, and [...] a `gui/src/oauth-tos-risk.ts` entry with its
 > `tests/oauth-tos-warning.test.ts` coverage
 
+(The quoted test path is stale. The warning test actually shipped at
+`tests/gui/oauth-tos-warning.test.ts`; the quote above is verbatim, stale path included.)
+
 Every item on that list is now available without guessing. `001` records the endpoints,
 client id, payload shapes and identity semantics from a working second-party
 implementation, and the ToS entry already exists: `gui/src/oauth-tos-risk.ts:10` carries
