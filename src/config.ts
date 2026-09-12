@@ -14,8 +14,11 @@ import {
   pinnedReasoningEffortConfigError,
   modelAdapterRecordConfigError,
   modelDisplayNamesConfigError,
+  autoReviewModelOverridesConfigError,
+  autoReviewModelTargetConfigError,
   nonBlankStringArrayConfigError,
   normalizeNonBlankStringArray,
+  normalizeAutoReviewModelOverrides,
   positiveIntegerConfigError,
   positiveIntegerRecordConfigError,
   providerBaseUrlConfigError,
@@ -573,6 +576,20 @@ const modelPinnedEffortsSchema = z.unknown().superRefine((value, ctx) => {
   Object.entries(value as Record<string, string>).map(([key, effort]) => [key.trim(), effort]),
 ));
 
+const autoReviewModelSchema = z.unknown().superRefine((value, ctx) => {
+  const error = autoReviewModelTargetConfigError(value, "autoReviewModel", true);
+  if (error) ctx.addIssue({ code: "custom", message: error });
+}).transform(value => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+});
+
+const autoReviewModelOverridesSchema = z.unknown().superRefine((value, ctx) => {
+  const error = autoReviewModelOverridesConfigError(value, "autoReviewModelOverrides", true);
+  if (error) ctx.addIssue({ code: "custom", message: error });
+}).transform(value => normalizeAutoReviewModelOverrides(value));
+
 /**
  * Zod schema for one provider entry: known fields are validated strictly while unknown
  * fields pass through (preserved for runtime extensions).
@@ -584,6 +601,8 @@ const providerConfigSchema = z.object({
   // load silently and then be ignored at selection time, which reads as a broken feature
   // rather than a rejected setting.
   apiKeyPoolStrategy: z.enum(["round-robin", "fill-first", "quota"]).optional(),
+  autoReviewModel: autoReviewModelSchema.optional(),
+  autoReviewModelOverrides: autoReviewModelOverridesSchema.optional(),
   adapter: z.string().min(1),
   baseUrl: z.string().min(1),
   alias: z.string().optional(),
@@ -665,9 +684,12 @@ export {
   apiKeyTransportConfigError,
   booleanRecordConfigError,
   modelAdapterRecordConfigError,
+  autoReviewModelOverridesConfigError,
+  autoReviewModelTargetConfigError,
   modelDisplayNamesConfigError,
   nonBlankStringArrayConfigError,
   normalizeNonBlankStringArray,
+  normalizeAutoReviewModelOverrides,
   positiveIntegerConfigError,
   positiveIntegerRecordConfigError,
   providerBaseUrlConfigError,
@@ -1947,6 +1969,44 @@ function sanitizeModelCostsForLoad(parsed: unknown): void {
 }
 
 /**
+ * Load-time degradation for provider-scoped auto-review selectors. A malformed
+ * hand edit must not fail the whole config parse; the management boundary stays
+ * strict and rejects the same shapes before they can be written.
+ */
+function sanitizeAutoReviewForLoad(parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object") return;
+  const root = parsed as Record<string, unknown>;
+  const providers = root.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return;
+  for (const [name, providerValue] of Object.entries(providers as Record<string, unknown>)) {
+    if (!providerValue || typeof providerValue !== "object" || Array.isArray(providerValue)) continue;
+    const provider = providerValue as Record<string, unknown>;
+    const safeProviderName = JSON.stringify(redactSecretString(name));
+    if (name === "openai") {
+      delete provider.autoReviewModel;
+      delete provider.autoReviewModelOverrides;
+      continue;
+    }
+    if (provider.autoReviewModel !== undefined
+      && autoReviewModelTargetConfigError(provider.autoReviewModel, "autoReviewModel", true) !== null) {
+      console.warn(`⚠️  config.json providers.${safeProviderName}.autoReviewModel is invalid — ignoring the selector`);
+      delete provider.autoReviewModel;
+    }
+    if (provider.autoReviewModelOverrides !== undefined) {
+      const overridesError = autoReviewModelOverridesConfigError(
+        provider.autoReviewModelOverrides,
+        "autoReviewModelOverrides",
+        true,
+      );
+      if (overridesError) {
+        console.warn(`⚠️  config.json providers.${safeProviderName}.autoReviewModelOverrides is invalid — ignoring the map`);
+        delete provider.autoReviewModelOverrides;
+      }
+    }
+  }
+}
+
+/**
  * Companion to {@link warnDegradedStreamMode} for a blank persisted `hostname`. The bind
  * falls back to loopback, which is the safe direction but not what the file asked for —
  * say so once instead of silently ignoring the field.
@@ -2401,6 +2461,7 @@ export function loadConfig(): OcxConfig {
     sanitizeAliasesForLoad(parsed);
     sanitizeReasoningPinsForLoad(parsed);
     sanitizeModelDisplayNamesForLoad(parsed);
+    sanitizeAutoReviewForLoad(parsed);
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
@@ -3025,6 +3086,7 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // schema and send the caller a default-config fallback (the config command could then
     // persist that fallback over the user's providers/keys).
     sanitizeModelDisplayNamesForLoad(parsed);
+    sanitizeAutoReviewForLoad(parsed);
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
     const result = configSchema.safeParse(parsed);

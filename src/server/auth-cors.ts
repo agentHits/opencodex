@@ -13,6 +13,8 @@ import {
 } from "../config";
 import {
   apiKeyTransportConfigError,
+  autoReviewModelOverridesConfigError,
+  autoReviewModelTargetConfigError,
   booleanRecordConfigError,
   providerReasoningPinsConfigError,
   modelAdapterRecordConfigError,
@@ -590,6 +592,13 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
   const raw = provider as Record<string, unknown>;
   const pinsError = providerReasoningPinsConfigError(raw);
   if (pinsError) return pinsError;
+  if (name === "openai" && (Object.hasOwn(raw, "autoReviewModel") || Object.hasOwn(raw, "autoReviewModelOverrides"))) {
+    return "provider openai must not include autoReviewModel or autoReviewModelOverrides";
+  }
+  const autoReviewTargetError = autoReviewModelTargetConfigError(raw.autoReviewModel, "autoReviewModel", true);
+  if (autoReviewTargetError) return autoReviewTargetError;
+  const autoReviewMapError = autoReviewModelOverridesConfigError(raw.autoReviewModelOverrides, "autoReviewModelOverrides", true);
+  if (autoReviewMapError) return autoReviewMapError;
   for (const field of FORBIDDEN_PROVIDER_RUNTIME_FIELDS) {
     if (Object.hasOwn(raw, field)) return `provider ${name} must not include runtime field "${field}"`;
   }
@@ -855,6 +864,8 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   modelDefaultReasoningEfforts: "editor",
   pinnedReasoningEffort: "editor",
   modelPinnedReasoningEfforts: "editor",
+  autoReviewModel: "editor",
+  autoReviewModelOverrides: "editor",
   modelSupportsReasoningSummaries: "editor",
   modelSupportsVerbosity: "editor",
   supportsVerbosity: "editor",

@@ -5,6 +5,7 @@ import {
   MODEL_DISCOVERY_MAX_MODELS,
 } from "../providers/model-discovery-limits";
 import { isDeclaredReasoningEffort, modelRecordValue } from "../reasoning-effort";
+import { encodeRoutedModelId } from "../providers/slug-codec";
 import {
   isWirePinnedModel,
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
@@ -216,7 +217,9 @@ export function modelDisplayNamesConfigError(
     return `${field} must contain at most ${MODEL_DISCOVERY_MAX_MODELS} entries`;
   }
   for (const [modelId, displayName] of entries) {
-    if (!isValidModelDiscoveryModelId(modelId)) return `${field} keys must be valid model ids`;
+    if (!isValidModelDiscoveryModelId(modelId) || ["__proto__", "prototype", "constructor"].includes(modelId)) {
+      return `${field} keys must be valid non-reserved model ids`;
+    }
     const safeModelId = JSON.stringify(redactSecretString(modelId));
     if (typeof displayName !== "string") return `${field}.${safeModelId} must be a string`;
     const trimmed = displayName.trim();
@@ -231,6 +234,85 @@ export function modelDisplayNamesConfigError(
     }
   }
   return null;
+}
+
+/** Characters that make a Codex catalog selector ambiguous or unrepresentable. */
+export const AUTO_REVIEW_MODEL_CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\s]/;
+
+/** Validate one auto-review target (provider-wide value or map value). */
+export function autoReviewModelTargetConfigError(
+  value: unknown,
+  field = "autoReviewModel",
+  allowClear = false,
+): string | null {
+  if (value === undefined || (allowClear && (value === null || value === ""))) return null;
+  if (typeof value !== "string") return `${field} must be a string`;
+  const trimmed = value.trim();
+  if (!trimmed) return `${field} must be nonblank`;
+  if (trimmed.length > 1024 || AUTO_REVIEW_MODEL_CONTROL_CHARS.test(trimmed)) {
+    return `${field} must be a catalog selector without whitespace or control characters`;
+  }
+  return null;
+}
+
+/** True when the value is a valid Codex catalog auto-review selector. */
+export function isValidAutoReviewModel(value: unknown): value is string {
+  return typeof value === "string" && autoReviewModelTargetConfigError(value) === null;
+}
+
+/** Canonical model key used for map matching, duplicate detection, and route tombstones. */
+export function canonicalAutoReviewModelKey(modelId: string): string {
+  return encodeRoutedModelId(modelId.trim());
+}
+
+/** Validate a per-model auto-review override map. */
+export function autoReviewModelOverridesConfigError(
+  value: unknown,
+  field = "autoReviewModelOverrides",
+  allowTombstones = false,
+): string | null {
+  if (value === undefined) return null;
+  if (value === null && allowTombstones) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return `${field} must be a plain object`;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return `${field} must be a plain object with own properties`;
+  }
+  const entries = Object.entries(value);
+  if (entries.length > MODEL_DISCOVERY_MAX_MODELS) {
+    return `${field} must contain at most ${MODEL_DISCOVERY_MAX_MODELS} entries`;
+  }
+  const canonicalKeys = new Set<string>();
+  for (const [modelId, target] of entries) {
+    if (!isValidModelDiscoveryModelId(modelId) || ["__proto__", "prototype", "constructor"].includes(modelId)) {
+      return `${field} keys must be valid non-reserved model ids`;
+    }
+    const safeModelId = JSON.stringify(redactSecretString(modelId));
+    const canonicalKey = canonicalAutoReviewModelKey(modelId);
+    if (canonicalKeys.has(canonicalKey)) {
+      return `${field} keys must be unique after trimming and slash normalization`;
+    }
+    canonicalKeys.add(canonicalKey);
+    if (allowTombstones && (target === null || target === "")) continue;
+    const targetError = autoReviewModelTargetConfigError(target, `${field}.${safeModelId}`);
+    if (targetError) return targetError;
+  }
+  return null;
+}
+
+/** Normalize a persisted auto-review override map (trim, drop blanks, keep insertion order). */
+export function normalizeAutoReviewModelOverrides(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out = Object.create(null) as Record<string, string>;
+  for (const [modelId, target] of Object.entries(value)) {
+    const key = modelId.trim();
+    if (!key) continue;
+    if (target === null || typeof target !== "string") continue;
+    const trimmed = target.trim();
+    if (!trimmed) continue;
+    out[key] = trimmed;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Validate the management DTO boundary for the opt-in empty-tool-output annotation. */

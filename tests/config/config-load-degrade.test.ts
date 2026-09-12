@@ -54,6 +54,23 @@ function writeCandidate(modelDisplayNames: unknown, provider = "xai"): void {
   writeFileSync(getConfigPath(), JSON.stringify(config), "utf8");
 }
 
+function writeAutoReviewConfig(autoReviewModel: unknown, autoReviewModelOverrides: unknown): void {
+  const defaults = getDefaultConfig();
+  writeFileSync(getConfigPath(), JSON.stringify({
+    ...defaults,
+    defaultProvider: "xai",
+    providers: {
+      xai: {
+        adapter: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+        note: "keep me",
+        autoReviewModel,
+        autoReviewModelOverrides,
+      },
+    },
+  }), "utf8");
+}
+
 test("config validation accepts only safe provider model display names", () => {
   const valid = validateConfigCandidate(candidate({
     "grok-4.6": "Grok 4.6",
@@ -128,6 +145,25 @@ test("load warnings never reveal display values or secret shaped provider names"
   }
 });
 
+
+test("load ignores malformed auto-review selectors without dropping the provider", () => {
+  writeAutoReviewConfig("bad selector", { model: "bad selector" });
+
+  const loaded = loadConfig();
+
+  expect(loaded.providers.xai).toMatchObject({ note: "keep me" });
+  expect(loaded.providers.xai.autoReviewModel).toBeUndefined();
+  expect(loaded.providers.xai.autoReviewModelOverrides).toBeUndefined();
+});
+
+test("load preserves valid auto-review selectors and trims boundary whitespace", () => {
+  writeAutoReviewConfig("  openai/gpt-test  ", { "glm-5.2": " gpt-test " });
+
+  const loaded = loadConfig();
+
+  expect(loaded.providers.xai.autoReviewModel).toBe("openai/gpt-test");
+  expect(loaded.providers.xai.autoReviewModelOverrides).toEqual({ "glm-5.2": "gpt-test" });
+});
 
 test("Fast rows default on for fresh and omitted config; explicit false and malformed values disable", () => {
   expect(getDefaultConfig().fastRows).toBe(true);
