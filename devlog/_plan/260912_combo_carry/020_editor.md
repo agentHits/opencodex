@@ -11,15 +11,15 @@ index 9434a1e98a..9073372327 100644
 +++ b/docs-site/src/content/docs/fr/guides/combos.md
 @@ -281,9 +281,7 @@ Ouvrez le tableau de bord local et choisissez **Modèles → Combos**. L'espace
  combos, et son sélecteur de cible exclut les modèles désactivés et les combos imbriqués.
- 
+
  Chaque cible affiche aussi un badge de quota en direct : **Disponible**, **Quota épuisé** ou **Quota inconnu**.
 -Enregistrer et Créer ne sont désactivés que lorsque chaque cible activée dispose de preuves fraîches et complètes
 -que son quota est épuisé. Les données manquantes, obsolètes, mal formées ou agrégées de façon incomplète restent
 -inconnues et ne verrouillent jamais un contrôle. La récupération du quota réactive automatiquement l’action.
 +L’éditeur bloque Enregistrer et Créer pour une raison de quota uniquement lorsque chaque cible utilisable dispose d’une confirmation serveur encore valide indiquant que la limite d’inférence liée à ses identifiants configurés est épuisée. Les quotas de compte, de modèle, de recherche et de MCP fournis uniquement à titre d’affichage, ainsi que les informations de routage absentes ou expirées, ne déclenchent pas ce blocage. Le blocage expire à la réinitialisation applicable ou à l’expiration de la validité des données et fait l’objet d’une nouvelle vérification lorsque la page devient active ou visible ; Actualiser recharge à la fois les données des combos et les quotas.
- 
+
  ### CLI
- 
+
 diff --git a/docs-site/src/content/docs/guides/combos.md b/docs-site/src/content/docs/guides/combos.md
 index c7d076d9b7..ef5ccde16c 100644
 --- a/docs-site/src/content/docs/guides/combos.md
@@ -27,7 +27,7 @@ index c7d076d9b7..ef5ccde16c 100644
 @@ -349,10 +349,7 @@ task workflow.
  Open the local dashboard and choose **Models → Combos**. The workspace creates, edits, renames, and removes
  combos, and its target picker excludes disabled models and nested combos.
- 
+
 -Each target also shows a live quota badge: **Available**, **Out of quota**, or **Quota unknown**. Save and
 -Create are disabled only when every enabled target has fresh, complete evidence that its quota is exhausted.
 -Missing, stale, malformed, or incomplete aggregate evidence stays unknown and never locks a control. Polling
@@ -35,126 +35,126 @@ index c7d076d9b7..ef5ccde16c 100644
 +Each target also shows a live quota badge: **Available**, **Out of quota**, or **Quota unknown**. The editor blocks Save and Create for quota only when every usable target has a current server-confirmed exhausted inference limit for its configured credential. Display-only account, model, search and MCP quota, or missing or expired routing evidence, does not cause this block. The block expires at the applicable reset or freshness boundary and is rechecked when the page becomes active or visible; Refresh reloads both Combo data and quota. The dashboard
  editor does not yet expose `cooldownMs` or `waitForCooldownMs`; use the configuration file or management
  API until the follow-up UI work lands.
- 
+
 diff --git a/docs-site/src/content/docs/ja/guides/combos.md b/docs-site/src/content/docs/ja/guides/combos.md
 index f6eca53214..70c902ec6e 100644
 --- a/docs-site/src/content/docs/ja/guides/combos.md
 +++ b/docs-site/src/content/docs/ja/guides/combos.md
 @@ -182,8 +182,7 @@ v1/base/v2 モードと完全な暗号化タスクのワークフローについ
  ローカル ダッシュボードを開き、**Models → コンボ**を選択します。ワークスペースはコンボを作成、編集、名前変更、削除し、そのターゲット ピッカーは無効なモデルとネストされたコンボを除外します。
- 
+
  各ターゲットには **利用可能**、**クォータを使い切りました**、**クォータ不明** のライブバッジも表示されます。
 -保存と作成が無効になるのは、有効な全ターゲットについて、クォータ枯渇を示す新鮮で完全な証拠がある場合だけです。
 -欠落、古い、不正、または不完全な集約データは不明のままで、操作をロックしません。クォータが回復すると操作は自動で再び有効になります。ダッシュボードのエディターではまだ `cooldownMs` と `waitForCooldownMs` を設定できません。後続の UI 作業が完了するまでは、構成ファイルまたは管理 API を使用してください。
 +エディターがクォータを理由に保存と作成をブロックするのは、使用可能なすべてのターゲットについて、設定された認証情報の推論上限に達したことを示す、サーバーによる確認が現在も有効な場合だけです。表示専用のアカウント・モデル・検索・MCP クォータや、ルーティングの根拠情報の欠落・期限切れによって、このブロックが発生することはありません。ブロックは該当するリセット時刻またはデータの有効期限に解除され、ページがアクティブになるか表示状態になると再確認されます。「更新」はコンボデータとクォータの両方を再読み込みします。ダッシュボードのエディターではまだ `cooldownMs` と `waitForCooldownMs` を設定できません。後続の UI 作業が完了するまでは、構成ファイルまたは管理 API を使用してください。
- 
+
  ### CLI
- 
+
 diff --git a/docs-site/src/content/docs/ko/guides/combos.md b/docs-site/src/content/docs/ko/guides/combos.md
 index 71e557f25c..80eac32c2d 100644
 --- a/docs-site/src/content/docs/ko/guides/combos.md
 +++ b/docs-site/src/content/docs/ko/guides/combos.md
 @@ -187,9 +187,7 @@ v1/base/v2 모드와 암호화된 작업의 전체 흐름은 [Sub-agent Surface]
- 
+
  로컬 대시보드를 열고 **Models → Combos**를 선택합니다. 워크스페이스는 콤보를 만들고, 편집하고, 이름을 바꾸고, 제거할 수 있으며, 대상 선택기에서는 비활성 모델과 중첩 콤보를 제외합니다.
- 
+
 -각 대상에는 **사용 가능**, **할당량 소진**, **할당량 알 수 없음** 실시간 배지도 표시됩니다. 저장과 만들기 버튼은
 -활성화된 모든 대상에 할당량 소진을 입증하는 최신의 완전한 증거가 있을 때만 비활성화됩니다. 누락되거나 오래되거나
 -형식이 잘못되었거나 집계가 불완전한 데이터는 알 수 없음으로 남으며 버튼을 잠그지 않습니다. 할당량이 복구되면 버튼도 자동으로 다시 활성화됩니다. 대시보드 편집기에서는 아직 `cooldownMs`나 `waitForCooldownMs`를 설정할 수 없습니다. 후속 UI 작업이 완료될 때까지 구성 파일이나 관리 API를 사용하세요.
 +각 대상에는 **사용 가능**, **할당량 소진**, **할당량 알 수 없음** 실시간 배지도 표시됩니다. 편집기는 사용 가능한 모든 대상에 대해 설정된 인증 정보의 추론 한도가 소진되었다는 서버 확인이 현재 유효할 때만 할당량을 이유로 저장과 만들기를 차단합니다. 표시 전용 계정·모델·검색·MCP 할당량이나 누락되거나 만료된 라우팅 근거 정보는 이 차단을 일으키지 않습니다. 차단은 해당 한도의 초기화 시점이나 데이터 유효기간이 끝나면 해제되며 페이지가 활성화되거나 표시될 때 다시 확인됩니다. 새로 고침은 콤보 데이터와 할당량을 모두 다시 불러옵니다. 대시보드 편집기에서는 아직 `cooldownMs`나 `waitForCooldownMs`를 설정할 수 없습니다. 후속 UI 작업이 완료될 때까지 구성 파일이나 관리 API를 사용하세요.
- 
+
  ### CLI
- 
+
 diff --git a/docs-site/src/content/docs/ru/guides/combos.md b/docs-site/src/content/docs/ru/guides/combos.md
 index 868416ae5b..b873f4ed03 100644
 --- a/docs-site/src/content/docs/ru/guides/combos.md
 +++ b/docs-site/src/content/docs/ru/guides/combos.md
 @@ -234,9 +234,7 @@ effort вызывающей стороне и цели.
  переименовывать и удалять combo, а селектор целей исключает отключённые модели и вложенные combo.
- 
+
  У каждой цели также отображается актуальный значок квоты: **Доступно**, **Квота исчерпана** или **Квота неизвестна**.
 -Кнопки сохранения и создания отключаются только тогда, когда для всех включённых целей есть свежие и полные
 -данные об исчерпании квоты. Отсутствующие, устаревшие, некорректные или неполные агрегированные данные остаются
 -неизвестными и никогда не блокируют управление. Восстановление квоты автоматически снова включает действие. Редактор дашборда пока не предоставляет `cooldownMs` и `waitForCooldownMs`; до появления соответствующего UI используйте файл конфигурации или Management API.
 +Редактор блокирует сохранение и создание из-за квоты только тогда, когда для каждой пригодной к использованию цели есть действующее подтверждение сервера об исчерпании лимита инференса для настроенных учётных данных. Квоты аккаунта, модели, поиска и MCP, предназначенные только для отображения, а также отсутствующие или просроченные данные для принятия решения о маршрутизации не вызывают эту блокировку. Блокировка истекает при соответствующем сбросе квоты или окончании срока актуальности данных и проверяется повторно, когда страница становится активной или видимой; «Обновить» повторно загружает и данные combo, и квоты. Редактор дашборда пока не предоставляет `cooldownMs` и `waitForCooldownMs`; до появления соответствующего UI используйте файл конфигурации или Management API.
- 
+
  ### CLI
- 
+
 diff --git a/docs-site/src/content/docs/tr/guides/combos.md b/docs-site/src/content/docs/tr/guides/combos.md
 index 520c157e83..b8cd5bad0d 100644
 --- a/docs-site/src/content/docs/tr/guides/combos.md
 +++ b/docs-site/src/content/docs/tr/guides/combos.md
 @@ -312,9 +312,7 @@ hedef seçicisi ise devre dışı bırakılmış modelleri ve iç içe geçmiş
  hariç tutar.
- 
+
  Her hedef ayrıca canlı bir kota rozeti gösterir: **Kullanılabilir**, **Kota tükendi** veya **Kota bilinmiyor**.
 -Kaydet ve Oluştur yalnızca etkin hedeflerin tamamı için kotanın tükendiğini gösteren güncel ve eksiksiz kanıt varsa
 -devre dışı bırakılır. Eksik, eski, bozuk veya tamamlanmamış toplu kanıt bilinmiyor olarak kalır ve denetimleri asla
 -kilitlemez. Kota yenilendiğinde işlem otomatik olarak yeniden etkinleşir.
 +Düzenleyici, kota nedeniyle Kaydet ve Oluştur işlemlerini yalnızca kullanılabilir hedeflerin tümü için yapılandırılmış kimlik bilgisine ait çıkarım sınırının tükendiğini doğrulayan geçerli sunucu bilgisi varsa engeller. Yalnızca görüntüleme amaçlı hesap, model, arama ve MCP kotaları ya da eksik veya süresi dolmuş yönlendirme kanıtları bu engellemeye neden olmaz. Engelleme, ilgili sıfırlama zamanında veya verinin güncellik süresi dolduğunda sona erer ve sayfa etkin ya da görünür olduğunda yeniden kontrol edilir; Yenile, hem kombo verilerini hem de kotaları yeniden yükler.
- 
+
  ### CLI
- 
+
 @@ -411,4 +409,3 @@ Hata hedefe özgü olmaktan ziyade uç (terminal) bir hataydı. Geçersiz girdiy
  düzeltin, aşırı büyük bir bağlamı azaltın, bir politika reddini işleyin veya
  reddedilen istek kaynağını düzeltin. Kombolar bu durumlar için atlama yapmaz.
- 
+
 -
 diff --git a/docs-site/src/content/docs/zh-cn/guides/combos.md b/docs-site/src/content/docs/zh-cn/guides/combos.md
 index d84efca472..abe32ae786 100644
 --- a/docs-site/src/content/docs/zh-cn/guides/combos.md
 +++ b/docs-site/src/content/docs/zh-cn/guides/combos.md
 @@ -211,9 +211,7 @@ combo 失败分为 **跳转** 失败和 **终止** 失败。
- 
+
  打开本地 dashboard 并选择 **Models → Combos**。该工作区可以创建、编辑、重命名和删除 combo，其目标选择器会排除已禁用的模型和嵌套 combo。
- 
+
 -每个目标还会显示实时额度徽章：**可用**、**额度已用尽**或**额度未知**。只有当所有已启用目标都有最新、
 -完整的额度耗尽证据时，保存和创建操作才会被禁用。缺失、过期、格式错误或聚合不完整的证据会保持为未知，
 -绝不会锁定控件。额度恢复后，操作会自动重新启用。dashboard 编辑器目前还不能设置 `cooldownMs` 或 `waitForCooldownMs`；在后续 UI 完成前，请使用配置文件或管理 API。
 +每个目标还会显示实时额度徽章：**可用**、**额度已用尽**或**额度未知**。只有当每个可用目标均有当前有效的服务器确认，表明其所配置凭据的推理限额已耗尽时，编辑器才会因额度而禁止保存和创建。仅供显示的账户、模型、搜索和 MCP 额度，以及缺失或已过期的路由依据，都不会触发此限制。此限制会在适用的重置时间或数据有效期结束时解除，并在页面变为活动或可见状态时重新检查；刷新会同时重新加载 Combo 数据和额度。dashboard 编辑器目前还不能设置 `cooldownMs` 或 `waitForCooldownMs`；在后续 UI 完成前，请使用配置文件或管理 API。
- 
+
  ### CLI
- 
+
 diff --git a/docs-site/src/content/docs/zh-tw/guides/combos.md b/docs-site/src/content/docs/zh-tw/guides/combos.md
 index d82b399e6f..ce3ad70a94 100644
 --- a/docs-site/src/content/docs/zh-tw/guides/combos.md
 +++ b/docs-site/src/content/docs/zh-tw/guides/combos.md
 @@ -219,9 +219,7 @@ Codex v2 子代理有一個重要限制（[issue #92](https://github.com/lidge-j
- 
+
  開啟本機儀表板並選擇 **Combos**。該工作區可建立、編輯、重新命名與移除 combo，且其目標 picker 會排除已停用的模型與巢狀 combo。
- 
+
 -每個目標也會顯示即時額度徽章：**可用**、**額度已用盡**或**額度未知**。只有當所有已啟用目標都有最新、
 -完整的額度耗盡證據時，儲存與建立操作才會停用。缺失、過期、格式錯誤或聚合不完整的證據會維持未知，
 -絕不會鎖住控制項。額度恢復後，操作會自動重新啟用。
 +每個目標也會顯示即時額度徽章：**可用**、**額度已用盡**或**額度未知**。只有當每個可用目標均有目前有效的伺服器確認，顯示其所設定憑證的推論限額已耗盡時，編輯器才會因配額而停用儲存與建立。僅供顯示的帳戶、模型、搜尋與 MCP 配額，以及缺失或已過期的路由依據，都不會觸發此限制。此限制會在適用的重設時間或資料有效期限結束時解除，並在頁面變為作用中或可見狀態時重新檢查；重新整理會同時重新載入 Combo 資料與配額。
- 
+
  ### CLI
- 
+
 diff --git a/gui/src/combo-workspace-data.ts b/gui/src/combo-workspace-data.ts
 index bf8b881c55..b89bff656f 100644
 --- a/gui/src/combo-workspace-data.ts
 +++ b/gui/src/combo-workspace-data.ts
 @@ -4,6 +4,7 @@
   */
- 
+
  import { SUPPORTED_NATIVE_OPENAI_SLUGS } from "../../src/codex/catalog/native-models";
 +import { PROVIDER_QUOTA_MAX_AGE_MS } from "../../src/providers/quota-types";
  import type { TKey } from "./i18n/shared";
- 
+
  export { SUPPORTED_NATIVE_OPENAI_SLUGS };
 @@ -92,7 +93,7 @@ export type ComboQuotaState = "available" | "exhausted" | "unknown";
  export type ProviderQuotaStates = Readonly<Record<string, ComboQuotaState>>;
- 
+
  /** Matches the management endpoint's bounded last-good quota lifetime. */
 -export const COMBO_QUOTA_MAX_AGE_MS = 30 * 60_000;
 +export const COMBO_QUOTA_MAX_AGE_MS = PROVIDER_QUOTA_MAX_AGE_MS;
- 
+
  let comboTargetKeySeq = 0;
- 
+
 @@ -282,133 +283,36 @@ function finiteNumber(value: unknown): number | null {
    return typeof value === "number" && Number.isFinite(value) ? value : null;
  }
- 
+
 -function quotaTimestampIsFresh(value: unknown, now: number): boolean {
 -  const timestamp = finiteNumber(value);
 -  return timestamp !== null && now - timestamp < COMBO_QUOTA_MAX_AGE_MS;
@@ -243,7 +243,7 @@ index bf8b881c55..b89bff656f 100644
 +    || validUntil > updatedAt + COMBO_QUOTA_MAX_AGE_MS) return null;
 +  return { state: routing.state, validUntil };
  }
- 
+
  function quotaStateFromReport(raw: Record<string, unknown>, now: number): ComboQuotaState {
 -  if (!quotaTimestampIsFresh(raw.updatedAt, now)) return "unknown";
 -  const quota = recordFromUnknown(raw.quota);
@@ -278,7 +278,7 @@ index bf8b881c55..b89bff656f 100644
 -  }
 +  return routingQuotaFromReport(raw, now)?.state ?? "unknown";
 +}
- 
+
 -  if (Object.hasOwn(quota, "creditsUsd")) {
 -    const credits = recordFromUnknown(quota.creditsUsd);
 -    if (!credits) return "unknown";
@@ -308,7 +308,7 @@ index bf8b881c55..b89bff656f 100644
 -  return exhausted ? "exhausted" : "available";
 +  return next;
  }
- 
+
  /** Fail-unknown parser for the live `/api/provider-quotas` report array. */
 diff --git a/gui/src/pages/Combos.tsx b/gui/src/pages/Combos.tsx
 index ca05ca8fd5..dee11a7e69 100644
@@ -350,7 +350,7 @@ index ca05ca8fd5..dee11a7e69 100644
 +      document.removeEventListener("visibilitychange", onVisible);
 +    };
 +  }, [active, apiBase, quotaResource.data, quotaResource.lastAttemptOk, quotaExpiry]);
- 
+
    const data = state.data ?? retainedData ?? undefined;
    const combos = data?.combos ?? [];
 @@ -361,7 +374,7 @@ export default function Combos({
@@ -374,11 +374,11 @@ index 1f3566dbbe..c82ac799d4 100644
 +import { type ComboItem, providerQuotaStatesFromReports } from "../src/combo-workspace-data";
  import ComboWorkspace from "../src/components/ComboWorkspace";
  import { LanguageProvider } from "../src/i18n/provider";
- 
+
 @@ -178,11 +178,14 @@ test("dirty Save disables for exhausted targets and re-enables on quota recovery
    document.body.append(container);
    const root = createRoot(container);
- 
+
 -  const render = (quotaState: "available" | "exhausted") => (
 +  const now = Date.now();
 +  const display = { provider: "openai", updatedAt: now,
@@ -395,7 +395,7 @@ index 1f3566dbbe..c82ac799d4 100644
 @@ -197,7 +200,7 @@ test("dirty Save disables for exhausted targets and re-enables on quota recovery
      </LanguageProvider>
    );
- 
+
 -  await act(async () => { root.render(render("exhausted")); });
 +  await act(async () => { root.render(render({ state: "exhausted", updatedAt: now, validUntil: now + 60_000 })); });
    await flushTimers();
@@ -404,7 +404,7 @@ index 1f3566dbbe..c82ac799d4 100644
 @@ -208,7 +211,11 @@ test("dirty Save disables for exhausted targets and re-enables on quota recovery
    expect(container.querySelector<HTMLButtonElement>("#cwi-edit-save")!.disabled).toBe(true);
    expect(container.textContent).toContain("All enabled targets are out of quota");
- 
+
 -  await act(async () => { root.render(render("available")); });
 +  await act(async () => { root.render(render()); });
 +  expect(container.querySelector<HTMLButtonElement>("#cwi-edit-save")!.disabled).toBe(false);
@@ -413,7 +413,7 @@ index 1f3566dbbe..c82ac799d4 100644
 +  await act(async () => { root.render(render({ state: "available", updatedAt: now, validUntil: now + 60_000 })); });
    expect(container.querySelector<HTMLButtonElement>("#cwi-edit-save")!.disabled).toBe(false);
    expect(container.textContent).not.toContain("All enabled targets are out of quota");
- 
+
 diff --git a/gui/tests/combo-workspace-empty.test.tsx b/gui/tests/combo-workspace-empty.test.tsx
 index 4fb8416067..ba6efc49d7 100644
 --- a/gui/tests/combo-workspace-empty.test.tsx
@@ -423,13 +423,13 @@ index 4fb8416067..ba6efc49d7 100644
  import ComboWorkspace from "../src/components/ComboWorkspace";
  import { LanguageProvider } from "../src/i18n/provider";
 +import { providerQuotaStatesFromReports } from "../src/combo-workspace-data";
- 
+
  const globals = ["document", "window", "navigator", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
  let previousGlobals: Record<(typeof globals)[number], unknown>;
 @@ -134,11 +135,14 @@ test("first-combo Create disables only while every usable target is known exhaus
    document.body.append(container);
    const root = createRoot(container);
- 
+
 -  const render = (quotaState: "available" | "exhausted") => (
 +  const now = Date.now();
 +  const display = { provider: "openai", updatedAt: now,
@@ -446,16 +446,16 @@ index 4fb8416067..ba6efc49d7 100644
 @@ -153,7 +157,7 @@ test("first-combo Create disables only while every usable target is known exhaus
      </LanguageProvider>
    );
- 
+
 -  await act(async () => { root.render(render("exhausted")); });
 +  await act(async () => { root.render(render({ state: "exhausted", updatedAt: now, validUntil: now + 60_000 })); });
    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
- 
+
    const providerSelect = container.querySelector<HTMLSelectElement>('select[aria-label="Provider"]')!;
 @@ -167,7 +171,11 @@ test("first-combo Create disables only while every usable target is known exhaus
    expect(createButton.disabled).toBe(true);
    expect(container.textContent).toContain("All enabled targets are out of quota");
- 
+
 -  await act(async () => { root.render(render("available")); });
 +  await act(async () => { root.render(render()); });
 +  expect(container.querySelector<HTMLButtonElement>("#cwi-edit-create")!.disabled).toBe(false);
@@ -464,7 +464,7 @@ index 4fb8416067..ba6efc49d7 100644
 +  await act(async () => { root.render(render({ state: "available", updatedAt: now, validUntil: now + 60_000 })); });
    expect(container.querySelector<HTMLButtonElement>("#cwi-edit-create")!.disabled).toBe(false);
    expect(container.textContent).not.toContain("All enabled targets are out of quota");
- 
+
 diff --git a/gui/tests/page-loading-contract.test.tsx b/gui/tests/page-loading-contract.test.tsx
 index 2ab6b88385..52a889fb28 100644
 --- a/gui/tests/page-loading-contract.test.tsx
@@ -599,7 +599,7 @@ index 1e45d60065..3acaf1be50 100644
  import { providerUsesKeyAuthOverride, resolveProviderApiKey } from "./key-store";
  import { getProviderRegistryEntry } from "./registry";
 +import { PROVIDER_QUOTA_MAX_AGE_MS } from "./quota-types";
- 
+
  export interface ProviderQuotaRoutingEvidence {
    quota: ProviderQuota;
 @@ -54,7 +55,7 @@ export function replaceCachedProviderQuotas(
@@ -627,7 +627,7 @@ index 873eb30221..e0bdf9cb4f 100644
 @@ -8,6 +8,13 @@
   * blocks any later attempt to load one side without the other.
   */
- 
+
 +export const PROVIDER_QUOTA_MAX_AGE_MS = 30 * 60_000;
 +
 +/** Management-only eligibility evidence; private credential binding never leaves the server. */
@@ -676,7 +676,7 @@ index 1439d7899c..847b240994 100644
 @@ -689,12 +692,54 @@ function canonicalOpenAiBudgetPatchError(
      ?? providerEmptyToolOutputConfigError("openai", applied.next);
  }
- 
+
 +function providerRoutingQuota(config: OcxConfig, name: string, now: number): ProviderRoutingQuota {
 +  const provider = hasOwnProvider(config.providers, name) ? config.providers[name] : undefined;
 +  const quota = getCachedProviderRoutingQuota(name, provider, now);
@@ -713,7 +713,7 @@ index 1439d7899c..847b240994 100644
 +
  export async function handleProviderRoutes(ctx: ManagementContext): Promise<Response | null> {
    const { req, url, config, deps, principal, convergeCodexCatalog, syncClaudeAgentDefsBestEffort } = ctx;
- 
+
    if (url.pathname === "/api/provider-quotas" && req.method === "GET") {
      const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
 -    return jsonResponse(await fetchProviderQuotaReports(config, forceRefresh));
@@ -727,7 +727,7 @@ index 1439d7899c..847b240994 100644
 +      })),
 +    });
    }
- 
+
    if (url.pathname === "/api/provider-request-pacing" && req.method === "GET") {
 diff --git a/structure/04_transports-and-sidecars.md b/structure/04_transports-and-sidecars.md
 index ecade01c78..f91195e8bb 100644
@@ -736,7 +736,7 @@ index ecade01c78..f91195e8bb 100644
 @@ -1657,6 +1657,15 @@ credential cannot inherit another key's cap. The same getter controls immediate
  bounded cooldown waiting and reset-window ordering. This does not override explicit eligibility,
  target cooldowns, account admission or response-driven retry rules.
- 
+
 +The management quota response projects a separate `routingQuota` from this evidence after each
 +probe or cached read, using the current provider row. It contains only a state, observation time
 +and `validUntil`; the cached display report and private binding remain unchanged. Known states
@@ -764,7 +764,7 @@ index e3d340f2f8..e754020636 100644
 @@ -42,6 +43,31 @@ function quotaReport(
    };
  }
- 
+
 +describe("server-scoped Combo quota", () => {
 +  test("display exhaustion without routing authority stays unknown", () => {
 +    expect(providerQuotaStatesFromReports([
@@ -796,7 +796,7 @@ index e3d340f2f8..e754020636 100644
 @@ -297,87 +323,57 @@ describe("combo-workspace-data", () => {
      ]);
    });
- 
+
 -  test("derives exhausted state from USD, percentage, and custom-window evidence", () => {
 +  test("accepts known routing states independently of display data", () => {
      expect(providerQuotaStatesFromReports([
@@ -849,7 +849,7 @@ index e3d340f2f8..e754020636 100644
 +      ], QUOTA_NOW)).toEqual({ keyed: "unknown" });
 +    }
    });
- 
+
 -  test("trims provider ids and rejects incomplete aggregate quota evidence", () => {
 +  test("complete display aggregates cannot authorize a provider-wide block", () => {
      expect(providerQuotaStatesFromReports([
@@ -919,7 +919,7 @@ index e3d340f2f8..e754020636 100644
 +    expect(nextProviderQuotaStateExpiration(rows, QUOTA_NOW)).toBe(QUOTA_NOW + 1000);
 +    expect(nextProviderQuotaStateExpiration(rows, QUOTA_NOW + 5000)).toBeUndefined();
    });
- 
+
    test("combo quota excludes disabled targets and disables only when every usable target is exhausted", () => {
 diff --git a/tests/server/management-provider-validation.test.ts b/tests/server/management-provider-validation.test.ts
 index 09bfb1e67c..949791f2d6 100644
@@ -931,13 +931,13 @@ index 09bfb1e67c..949791f2d6 100644
  import { removeTreeWithRetry } from "../helpers/remove-tree";
 +import { clearProviderQuotaCache, fetchProviderQuotaReports, setProviderQuotaBeforePublishForTests } from "../../src/providers/quota";
 +import { setCachedProviderQuotaForTests } from "../../src/providers/quota-routing-cache";
- 
+
  // Full-suite Windows load: startServer + multi-step provider PATCH/GET flows exceed the
  // default 5s per-test budget (same flake class as 810fa115 / claude-management-api).
 @@ -136,6 +138,153 @@ afterEach(() => {
    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
  });
- 
+
 +describe("provider quota routing state", () => {
 +  function quotaConfig(name = "openrouter", baseUrl = "https://openrouter.ai/api/v1"): OcxConfig {
 +    return { port: 10100, defaultProvider: name, providers: { [name]: {
