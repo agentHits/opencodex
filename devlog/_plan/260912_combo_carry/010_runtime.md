@@ -878,3 +878,7 @@ index 56d69951d5..0f7ea31451 100644
 ## Current-dev consumer amendment
 
 `src/combos/resolve.ts:126` has a newer catalog `quotaInactiveReason` consumer. MODIFY its loop from separate native-forward exemption + `getCachedProviderQuota(target.provider, now)` to `getCachedProviderRoutingQuota(target.provider, provider, now)`. Unknown routing evidence returns undefined, explicit exhausted evidence retains no_credit. MODIFY the existing quota inactive tests (locate with rg quotaInactiveReason tests) to use credential-bearing provider fixtures and prove display-only/mismatched evidence cannot mark catalog rows inactive. Update stale explanatory comments to reference the scoped cache. This preserves consistency after removed imports and is necessary current-dev integration, not unrelated catalog redesign.
+
+## Design reflection D5 amendment
+
+Accept Bohr D1-D6 with D5 corrected: MODIFY `getCachedProviderRoutingQuota` to return null for nonfinite/negative/future timestamps or age `>= maxAgeMs`, aligning runtime/catalog with the editor's exclusive deadline. Retain display getter compatibility. MODIFY `tests/codex-integration/catalog-zero-credit-picker.test.ts` with genuine WeakMap publication plus positive control; then mutate apiKey/baseUrl/adapter independently and require undefined inactivity. Test timestamp at exactly 30 minutes, future, negative and NaN as unknown. This is the shared scoped evidence boundary, not a new auth flow. No local suites; hosted final tip owns execution.

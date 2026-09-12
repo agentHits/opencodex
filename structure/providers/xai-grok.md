@@ -53,3 +53,5 @@ malformed, gapped, oversized, contradictory, failed, or incomplete streams stay 
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+Account-scoped OAuth quota remains display evidence for provider-level Combo selection; it does not acquire single-key inference-veto authority. See [scoped provider quota](../runtime.md#scoped-provider-quota-for-combo-selection).
