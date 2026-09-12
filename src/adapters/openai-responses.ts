@@ -865,6 +865,21 @@ function promoteClientLoadedTools(body: unknown): unknown {
 }
 
 const MAX_RESPONSES_CALL_ID_LENGTH = 64;
+
+/**
+ * Whether the outgoing body still delivers tools through the responses-lite shape.
+ *
+ * Lite carries the client catalog as an `additional_tools` input item; the non-Lite wire shape
+ * expects top-level `tools`. Anything that flips the Lite advertisement has to agree with the
+ * shape actually being sent, or the destination silently loses the tool surface.
+ */
+function bodyCarriesLiteToolShape(body: Record<string, unknown>): boolean {
+  if (!Array.isArray(body.input)) return false;
+  return body.input.some(item =>
+    isPlainObject(item) && item.type === "additional_tools"
+    && Array.isArray(item.tools) && item.tools.length > 0
+  );
+}
 const REPAIRED_CALL_ID_PREFIX = "call_ocx_";
 const REPAIRED_CALL_ID_DIGEST_LENGTH = MAX_RESPONSES_CALL_ID_LENGTH - REPAIRED_CALL_ID_PREFIX.length;
 
@@ -2506,7 +2521,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         ),
         isXaiSchemaTarget(provider),
       );
-      const finalBody = stripDisabledVerbosity(
+      const unnormalizedBody = stripDisabledVerbosity(
         stripDisabledReasoningSummaries(
           normalizeConfiguredReasoningSummaryDelivery(sanitizedBody, provider, parsed.modelId),
           provider,
@@ -2515,13 +2530,32 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         provider,
         parsed.modelId,
       );
+      // Normalize the wire model before deriving model-dependent transport metadata.
+      const finalBody =
+        provider.modelSuffixBracketStrip
+          && unnormalizedBody !== null
+          && typeof unnormalizedBody === "object"
+          && !Array.isArray(unnormalizedBody)
+          && typeof (unnormalizedBody as { model?: unknown }).model === "string"
+          ? { ...(unnormalizedBody as Record<string, unknown>), model: stripBracketedModelSuffix((unnormalizedBody as { model: string }).model) }
+          : unnormalizedBody;
       if (isCanonicalOpenAiForwardProvider(provider)) {
-        // Spark closes Responses Lite streams before a terminal completion. Select compatibility
-        // from the final wire model so aliases cannot leave the caller or a static header enabled.
+        // Select Spark's Lite compatibility from the final wire model, including aliases, and
+        // let the BODY decide it. The header also overrides native WS metadata downstream, so a
+        // forwarded or statically configured value must never contradict the shape being sent.
+        //
+        // The synchronized catalog keeps `use_responses_lite: true` for Spark precisely because
+        // it selects tool delivery (`input[].additional_tools` instead of top-level `tools`), and
+        // stripSparkCompatibility filters that group in place rather than promoting it. So a
+        // Lite-shaped body is pinned back ON — otherwise an inherited `false` advertises non-Lite
+        // while the tools exist only in the Lite shape, and Spark loses the tool surface. Only a
+        // body with no Lite tool group is downgraded, which is what the stream fix needs.
         if (isPlainObject(finalBody) && finalBody.model === "gpt-5.3-codex-spark") {
+          const liteShaped = bodyCarriesLiteToolShape(finalBody);
           for (const name of Object.keys(headers)) {
             if (name.toLowerCase() === CODEX_RESPONSES_LITE_HEADER) delete headers[name];
           }
+          headers[CODEX_RESPONSES_LITE_HEADER] = liteShaped ? "true" : "false";
         }
         const routingHeaders = new Headers(headers);
         applyCodexRoutingHint(routingHeaders, finalBody);
@@ -2548,15 +2582,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // here, on the serialized body, not on the parsed selector. One place covers both the
       // HTTP and the WebSocket outbound, because the WS path transports this same request
       // instead of rebuilding it.
-      const body = JSON.stringify(
-        provider.modelSuffixBracketStrip
-          && finalBody !== null
-          && typeof finalBody === "object"
-          && !Array.isArray(finalBody)
-          && typeof (finalBody as { model?: unknown }).model === "string"
-          ? { ...(finalBody as Record<string, unknown>), model: stripBracketedModelSuffix((finalBody as { model: string }).model) }
-          : finalBody,
-      );
+      const body = JSON.stringify(finalBody);
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
         new TextEncoder().encode(body).byteLength,

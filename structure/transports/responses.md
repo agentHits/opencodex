@@ -402,6 +402,16 @@ final outgoing model/tier. No caller identity is synthesized. Noncanonical
 opt-in gateways keep their own metadata policy. Oversized/unsupported-runtime
 HTTP fallback preserves the original HTTP body and Lite header.
 
+For the final wire model `gpt-5.3-codex-spark`, the canonical forward adapter normalizes the
+Lite header from the BODY, overriding caller/configured headers and stale native WS Lite
+metadata in both directions. A body carrying a nonempty `additional_tools` input item is
+pinned to `true`: that item IS the Lite tool-delivery format and the non-Lite wire shape
+expects top-level `tools`, so an inherited `false` would advertise non-Lite while the tools
+exist only in the Lite shape and hide the client tool surface. Any other Spark body is set to
+`false`, selecting the non-Lite framing policy. A changed Lite identity retires the previous socket;
+subsequent eligible Spark requests with the same identity can reuse the new socket. Malformed
+native metadata retains HTTP fallback eligibility without rewriting its body.
+
 Canonical WS quota and response metadata preceding the first Responses event
 are projected into bounded, allowlisted HTTP headers before the response is
 committed. Later quota observations update only the captured serving account;
@@ -520,3 +530,5 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Spark Lite and routing metadata use the same suffix-normalized model object as serialization, including configured bracket-suffix removal.

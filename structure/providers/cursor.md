@@ -82,3 +82,5 @@ constraints cannot widen the canonical shape. Bare shell bridge names are reject
 on the freeform path.
 Namespaced tools do not acquire bare-shell behavior. Regression coverage lives in
 `tests/providers/cursor/cursor-tool-definitions.test.ts`.
+
+Canonical Spark Lite metadata follows the final serialized model and surviving nonempty Lite tool catalog; see [Responses transport](../transports/responses.md).

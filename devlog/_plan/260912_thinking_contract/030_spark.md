@@ -64,3 +64,11 @@ index c4aa523ee6..8fbe43816d 100644
          applyCodexRoutingHint(routingHeaders, finalBody);
 
 ```
+
+## Spark P revalidation
+
+Prior D: hint source/security review PASS, final hosted tests pending. This independent branch starts from bd34120180. Latest #4130 hunks still apply cleanly. CCA summary and hint branches do not modify this adapter. Body-dependent Lite true/false, canonical final wire model and no retirement remain the acceptance contract.
+
+## Spark design reflection amendments
+
+S1 accepted: apply the existing modelSuffixBracketStrip normalization to finalBody before deciding Lite, using the same immutable object serialized later. A canonical gpt-5.3-codex-spark[1m] request that strips to Spark gets the policy; a final non-Spark model does not. S2 accepted: all eight architecture paragraphs say nonempty additional_tools tools array, not merely group presence; source PR outstanding documentation finding is addressed. S3 accepted: tests cover catalog filtered empty, surviving functions group, only top-level tools, both alias directions and preserved noncanonical configured Lite. Check both actual serialized body and WS header metadata; shape detection is not tool-support validation.

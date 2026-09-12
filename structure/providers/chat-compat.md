@@ -264,3 +264,5 @@ fragments are not guessed onto pending ID-only calls.
 parallel/colliding identities, distinct unsafe raw JSON index literals, the maximum
 safe-integer boundary, invalid index types, missing/null continuations and UTF-8
 byte-limit boundaries.
+
+Canonical Spark Lite metadata follows the final serialized model and surviving nonempty Lite tool catalog; see [Responses transport](../transports/responses.md).
