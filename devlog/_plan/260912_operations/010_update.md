@@ -9,3 +9,5 @@ MODIFY tests/update/update-job.test.ts: carry #4185 deterministic fake EventEmit
 Exact starting patch: public PR #4185 head 2602f3ceca4b93237436911dcd8dffc35b3b5e57, reviewed source diff retained locally in .tmp/operations/pr-4185.diff. Before: numeric PID may remain after child exit. After: recorded exit/signal or matching exit event retires cleanup authority. This does not make all OS signalling atomic against PID reuse.
 
 Planned hosted activation checks (not yet executed): seven tests in update/update-job.test.ts exercise both cleanup sites. Local execution NOT RUN. Source check: both sites use the same child-aware closure; no unrelated test weakened. Co-authored-by: luvs01 <27862058+luvs01@users.noreply.github.com>.
+
+Follow-up080 extends exact-child retirement to error/close/exit and releases its own handlers; failed spawn error+close without exit is covered separately. Local tests remain NOT RUN.
