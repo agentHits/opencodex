@@ -683,8 +683,10 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   // never silently moves a deliberate subscriber onto proxy.
   if (runClaudeAuthModeMigration(config)) saveConfig(config);
   // Sidecar model migration (KST 2026-07-10 06:00 = UTC 2026-07-09 21:00): auto-migrate the old
-  // gpt-5.4-mini default to gpt-5.6-luna for both search and vision sidecars. Only touches configs
-  // still on the old default — explicit user choices are preserved.
+  // gpt-5.4-mini default to gpt-5.6-luna for the search and vision sidecars and the Codex pool
+  // warmup slug. The match is exact equality, so an explicitly chosen gpt-5.4-mini moves too —
+  // that model is retired upstream, so leaving it in place would only produce a 404 on every
+  // sidecar or warmup call. Any other stored value is left alone.
   {
     const SIDECAR_MIGRATION_CUTOFF = Date.UTC(2026, 6, 9, 21, 0); // July 9 21:00 UTC = KST July 10 06:00
     if (Date.now() >= SIDECAR_MIGRATION_CUTOFF) {
@@ -695,6 +697,10 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
       }
       if (config.visionSidecar?.model === "gpt-5.4-mini") {
         config.visionSidecar = { ...config.visionSidecar, model: "gpt-5.6-luna" };
+        migrated = true;
+      }
+      if (config.tokenGuardian?.codexWarmupModel === "gpt-5.4-mini") {
+        config.tokenGuardian = { ...config.tokenGuardian, codexWarmupModel: "gpt-5.6-luna" };
         migrated = true;
       }
       if (migrated) saveConfig(config);
