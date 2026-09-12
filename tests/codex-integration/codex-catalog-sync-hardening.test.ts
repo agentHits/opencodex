@@ -189,7 +189,15 @@ describe("Codex catalog sync hardening", () => {
       // A complete unknown native is a positive control for the same provenance/shape gates.
       const future = { ...nativeEntry("gpt-future-native", 2), supported_in_api: true };
       writeFileSync(catalogPath, JSON.stringify({ models: [
-        nativeEntry("gpt-5.5", 0), retired, ...(source === "account-catalog" ? [observed] : []),
+        // Unknown account rows inherit this template. Seed GPT-5.5's real window so the
+        // first pass does not use the 128k missing-field fallback before sync normalizes it.
+        {
+          ...nativeEntry("gpt-5.5", 0),
+          context_window: 272_000,
+          max_context_window: 272_000,
+          auto_compact_token_limit: 244_800,
+        },
+        retired, ...(source === "account-catalog" ? [observed] : []),
       ] }));
       writeFileSync(cachePath, JSON.stringify({ models: [future, ...(source === "account-catalog" ? [] : [observed])] }));
       const runtime = createCodexCatalogFixture(opencodexHome);
@@ -228,7 +236,12 @@ describe("Codex catalog sync hardening", () => {
           expect(rows.some(row => row.slug === "side/gpt-future-native")).toBe(false);
         }
         expect(pass.catalog.find(row => row.slug === "desktop/gpt-future-native"))
-          .toMatchObject({ opencodex_catalog_kind: "account-selector-v1" });
+          .toMatchObject({
+            opencodex_catalog_kind: "account-selector-v1",
+            context_window: 272_000,
+            max_context_window: 272_000,
+            auto_compact_token_limit: 244_800,
+          });
         expect(pass.catalog.some(row => row.slug === "gpt-future-native")).toBe(false);
         expect(pass.catalog.some(row => row.slug === "desktop/gpt-5.5")).toBe(true);
       }
