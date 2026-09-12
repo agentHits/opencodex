@@ -5,6 +5,9 @@ import { DEVIN_DEFAULT_API_SERVER, resolveDevinApiBaseUrl, validateDevinApiBaseU
 import { registerUser } from "../../src/oauth/devin/register-user";
 import { anySignal } from "../../src/lib/abort";
 import { buildGetChatMessageRequestForTests } from "../../src/adapters/devin/cloud-direct/chat";
+import { decodeModelUsageStats } from "../../src/adapters/devin/cloud-direct/chat";
+import { CloudChatError, decodeChatFrame } from "../../src/adapters/devin/cloud-direct/chat";
+import { devinErrorClassification, mergeDevinUsage } from "../../src/adapters/devin";
 import { iterFields } from "../../src/adapters/devin/cloud-direct/wire";
 import { buildMetadata, normalizeDevinSessionToken } from "../../src/adapters/devin/cloud-direct/metadata";
 
@@ -278,5 +281,120 @@ describe("devin session-token normalization", () => {
     ]) {
       expect(normalizeDevinSessionToken(key)).toBe(key);
     }
+  });
+});
+
+describe("devin ModelUsageStats decode (response field 7)", () => {
+  function varint(num: number, value: number): Buffer {
+    const out: number[] = [(num << 3) | 0];
+    let v = value;
+    do { const b = v & 0x7f; v = Math.floor(v / 128); out.push(v > 0 ? b | 0x80 : b); } while (v > 0);
+    return Buffer.from(out);
+  }
+  const stats = (input: number, output: number, write: number, read: number) =>
+    Buffer.concat([varint(2, input), varint(3, output), varint(4, write), varint(5, read)]);
+
+  test("an exclusive frame folds cache into the inclusive input this repo reports", () => {
+    // 1k fresh + 57k cache read is the 58k prompt the user sees as one number.
+    const u = decodeModelUsageStats(stats(1_000, 200, 0, 57_000));
+    expect(u?.promptTokens).toBe(58_000);
+    expect(u?.cachedInputTokens).toBe(57_000);
+    expect(u?.totalTokens).toBe(58_200);
+  });
+
+  test("an already-inclusive frame is left alone rather than inflated", () => {
+    const u = decodeModelUsageStats(stats(58_000, 200, 0, 57_000));
+    expect(u?.promptTokens).toBe(58_000);
+    expect(u?.cachedInputTokens).toBe(57_000);
+    // normalizeCostTokens only rejects read + write > input, so an inflated
+    // input would pass validation and bill cache at the uncached rate.
+    expect(u!.cachedInputTokens! + (u!.cacheCreationInputTokens ?? 0)).toBeLessThanOrEqual(u!.promptTokens!);
+  });
+
+  test("cache write counts as prompt too, and an empty message decodes to nothing", () => {
+    const u = decodeModelUsageStats(stats(1_000, 0, 4_000, 0));
+    expect(u?.promptTokens).toBe(5_000);
+    expect(u?.cacheCreationInputTokens).toBe(4_000);
+    expect(decodeModelUsageStats(Buffer.alloc(0))).toBeNull();
+  });
+});
+
+describe("devin frame-level usage precedence and classification", () => {
+  // Tags above 15 need a multi-byte varint: field 28 wire 2 is 226, and
+  // writing that as one raw byte sets the continuation bit and swallows the
+  // next byte.
+  function uvarint(value: number): number[] {
+    const out: number[] = [];
+    let v = value;
+    do { const b = v & 0x7f; v = Math.floor(v / 128); out.push(v > 0 ? b | 0x80 : b); } while (v > 0);
+    return out;
+  }
+  function varint(num: number, value: number): Buffer {
+    return Buffer.from([...uvarint((num << 3) | 0), ...uvarint(value)]);
+  }
+  function lenDelim(num: number, payload: Buffer): Buffer {
+    return Buffer.concat([Buffer.from([...uvarint((num << 3) | 2), ...uvarint(payload.length)]), payload]);
+  }
+  // ResponseDimensionGroup carrying a cumulative metric whose uid reads like a
+  // metric id — the shape the old decoder mined for usage.
+  function displayGroup(uid: string, value: number): Buffer {
+    const f32 = Buffer.alloc(5);
+    f32.writeUInt8((2 << 3) | 5, 0);
+    f32.writeFloatLE(value, 1);
+    const entry = Buffer.concat([lenDelim(4, f32), lenDelim(5, Buffer.from(uid, "utf8"))]);
+    return lenDelim(2, entry);
+  }
+
+  test("field 7 suppresses the display rows and is reported before finish", () => {
+    const stats = Buffer.concat([varint(2, 1_000), varint(3, 200), varint(4, 0), varint(5, 57_000)]);
+    const frame = Buffer.concat([
+      lenDelim(7, stats),
+      varint(5, 2),                                   // stop_reason STOP_PATTERN
+      lenDelim(28, displayGroup("input_tokens", 999)), // the wrong, display-derived number
+    ]);
+    const events = [...decodeChatFrame(frame)];
+    const usages = events.filter(e => e.kind === "usage");
+    expect(usages).toHaveLength(1);
+    expect(usages[0]!.promptTokens).toBe(58_000);
+    expect(usages[0]!.cachedInputTokens).toBe(57_000);
+    // Ahead of finish, so ordering does not depend on where the service puts
+    // the field.
+    expect(events.findIndex(e => e.kind === "usage"))
+      .toBeLessThan(events.findIndex(e => e.kind === "finish"));
+  });
+
+  test("a frame with no field 7 still falls back to the display rows", () => {
+    const frame = lenDelim(28, Buffer.concat([
+      displayGroup("input_tokens", 4_000),
+      displayGroup("output_tokens", 100),
+    ]));
+    const usages = [...decodeChatFrame(frame)].filter(e => e.kind === "usage");
+    expect(usages).toHaveLength(1);
+    expect(usages[0]!.promptTokens).toBe(4_000);
+  });
+});
+
+describe("devin usage merging and error classification", () => {
+  test("a later partial frame cannot zero an earlier count, and the total stays derived", () => {
+    const merged = mergeDevinUsage(
+      { inputTokens: 58_000, outputTokens: 200, totalTokens: 58_200, cachedInputTokens: 57_000 },
+      { inputTokens: 58_000, outputTokens: 900 },
+    );
+    expect(merged.cachedInputTokens).toBe(57_000);
+    expect(merged.outputTokens).toBe(900);
+    // Taking the max of two totals alongside per-field maxima would leave
+    // 58,200 here, which no longer equals input + output.
+    expect(merged.totalTokens).toBe(58_900);
+  });
+
+  test("an HTTP status on the cloud error becomes a structured classification", () => {
+    expect(devinErrorClassification(new CloudChatError("x", undefined, undefined, 429)))
+      .toEqual({ status: 429, errorType: "rate_limit_error", retryable: true });
+    expect(devinErrorClassification(new CloudChatError("x", undefined, undefined, 401)))
+      .toEqual({ status: 401, errorType: "authentication_error", retryable: false });
+    expect(devinErrorClassification(new CloudChatError("x", undefined, undefined, 503)))
+      .toEqual({ status: 503, retryable: true });
+    // A Connect trailer carries no status, so it keeps the older inference path.
+    expect(devinErrorClassification(new CloudChatError("x", "resource_exhausted"))).toEqual({});
   });
 });
