@@ -236,3 +236,5 @@ Injection preflights affected history using the normalized config candidate befo
 The legacy external writer is now refused for affected rows in any store whose schema includes history_mode, even while their row mode is still legacy. This deliberately sacrifices automatic relabeling on migration-capable stores rather than racing native conversion. Synchronous/asynchronous restore, inline journal restore, and direct config removal preserve all artifacts on the same refusal.
 
 Native restore preflight also checks manifest-owned targets whose rows already returned to `openai`, including interrupted restores. Preimage capture distinguishes absent files from unreadable artifacts and aborts before mutation when a complete snapshot cannot be read.
+
+Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
