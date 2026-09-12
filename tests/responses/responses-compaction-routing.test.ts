@@ -1230,6 +1230,19 @@ describe("compact alternate-account attempt (#913)", () => {
     });
   });
 
+  test("ordinary pooled HTTP responses publish their captured quota history writer", async () => {
+    await withPoolEnv("ocx-http-history-", async config => {
+      globalThis.fetch = (async () => Response.json(completedPayload("ordinary history"), {
+        headers: { "x-codex-primary-used-percent": "31", "x-codex-primary-window-minutes": "10080" },
+      })) as typeof fetch;
+      const response = await handleResponses(compactionRequest({ model: "gpt-5.5", input: [{ role: "user", content: "hello" }], stream: false }), config, { model: "", provider: "" });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(getAccountQuotaHistory("pool-a").observations).toHaveLength(1);
+      expect(getAccountQuotaHistory("pool-a").observations[0].windows[0].usedPercent).toBe(31);
+    });
+  });
+
   test.each([false, true])("compact final quota history follows the serving account with alternate=%s", async alternate => {
     await withPoolEnv("ocx-compact-history-", async config => {
       let calls = 0;

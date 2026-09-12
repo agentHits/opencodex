@@ -1,3 +1,4 @@
+import { getAccountQuotaHistory } from "../../src/codex/quota";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import { Database } from "bun:sqlite";
@@ -1796,6 +1797,8 @@ describe("codex-auth API", () => {
       const data = await resp!.json() as { accounts: { id: string; quota: unknown }[] };
       const pool = data.accounts.find(a => a.id === "pool-refresh");
       expect(pool?.quota).toMatchObject({ weeklyPercent: 6, weeklyResetAt: 1782628379 });
+      expect(getAccountQuotaHistory("pool-refresh").observations).toHaveLength(1);
+      expect(getAccountQuotaHistory("pool-refresh").observations[0]).toMatchObject({ source: "wham", windows: [{ family: "account", window: "weekly", usedPercent: 6, resetAtMs: 1782628379000 }] });
       expect(calls).toBe(1);
     } finally {
       globalThis.fetch = originalFetch;
@@ -6097,6 +6100,7 @@ describe("manual reset cooldown recovery (#3973)", () => {
     expect((await consume(config))?.status).toBe(200);
     expect(getCodexQuotaHealthSnapshot("manual-a", "shared")).toBeNull();
     expect(readCodexAccountRecord("manual-a")!.generation).toBe(generation + 1);
+    expect(getAccountQuotaHistory("manual-a").observations.some(row => row.source === "wham")).toBe(true);
     expect(urls).toEqual([CONSUME, USAGE, "https://auth.openai.com/oauth/token", USAGE]);
   });
 

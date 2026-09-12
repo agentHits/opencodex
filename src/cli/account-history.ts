@@ -1,6 +1,12 @@
 import { isValidCodexAccountId } from "../codex/account-id";
 import { apiError, apiJson, proxyUnreachable, resolveBaseUrl, type AccountDeps } from "./account-api";
 
+function historyDate(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "unknown";
+}
+
 /** Read cached pool observations without refreshing credentials or spending quota. */
 export async function cmdAccountHistory(args: string[], deps: AccountDeps): Promise<number> {
   const [provider, accountId, ...flags] = args;
@@ -32,7 +38,7 @@ export async function cmdAccountHistory(args: string[], deps: AccountDeps): Prom
     if (!observation || typeof observation !== "object" || !Array.isArray(observation.windows)
       || !Number.isFinite(observation.observedAt)) return apiError({}, "Invalid quota history response", 502);
     for (const window of observation.windows) {
-      console.log(`${new Date(observation.observedAt).toISOString()}\t${observation.source}\t${window.family}/${window.window}\t${window.usedPercent}%\t${typeof window.resetAtMs === "number" ? new Date(window.resetAtMs).toISOString() : "unknown"}`);
+      console.log(`${historyDate(observation.observedAt)}\t${observation.source}\t${window.family}/${window.window}\t${window.usedPercent}%\t${historyDate(window.resetAtMs)}`);
     }
   }
   return 0;

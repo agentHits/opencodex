@@ -688,6 +688,20 @@ describe("unified pool-settings contract (#695 wp5c)", () => {
       const response = await fetch(new URL(`${endpoint}?accountId=history-row&limit=1`, server.url));
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ accountId: "history-row", observations: [], retention: { maxObservations: 200, maxAgeDays: 30 }, truncated: false });
+      const { saveCodexAccountCredential, capturePoolQuotaWriter } = await import("../../src/codex/account-store");
+      const { setAccountQuotaFromParsed } = await import("../../src/codex/quota");
+      const credential = { accessToken: "history-secret-access", refreshToken: "history-secret-refresh", expiresAt: Date.now() + 3600_000, chatgptAccountId: "private-history-account" };
+      const generation = saveCodexAccountCredential("history-row", credential);
+      const writer = capturePoolQuotaWriter("history-row", { ...credential, generation })!;
+      const raw = { weeklyPercent: 21 };
+      setAccountQuotaFromParsed("history-row", raw, undefined, undefined, raw, { writer, observedAt: Date.now(), source: "wham", raw });
+      const populated = await fetch(new URL(`${endpoint}?accountId=history-row`, server.url));
+      const body = await populated.json() as { observations: Array<{ source: string; windows: Array<{ usedPercent: number }> }> };
+      expect(body.observations).toHaveLength(1);
+      expect(body.observations[0]).toMatchObject({ source: "wham", windows: [{ family: "account", window: "weekly", usedPercent: 21 }] });
+      const serialized = JSON.stringify(body);
+      for (const privateValue of [credential.accessToken, credential.refreshToken, writer.historyIdentity, "credentialGeneration"]) expect(serialized).not.toContain(privateValue);
+
     } finally { await server.stop(true); }
   });
 

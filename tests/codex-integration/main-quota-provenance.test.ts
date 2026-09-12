@@ -447,6 +447,12 @@ test("native main observations and oversized cache never become pool history", (
   const persisted = JSON.parse(flushPersistence());
   expect(persisted.history.accounts).not.toHaveProperty(MAIN);
   clearAccountQuota();
-  writeFileSync(join(testDir, "codex-quota-cache.json"), " ".repeat(4 * 1024 * 1024 + 1));
+  const credential = { accessToken: "large-cache-access", refreshToken: "large-cache-refresh", chatgptAccountId: "large-cache-account", expiresAt: Date.now() + 3600_000 };
+  const generation = saveCodexAccountCredential("history-pool", credential);
+  const writer = capturePoolQuotaWriter("history-pool", { ...credential, generation })!;
+  writeFileSync(join(testDir, "codex-quota-cache.json"), JSON.stringify({ version: 1, quotas: {}, history: { version: 1, accounts: {
+    "history-pool": { identity: writer.historyIdentity, samples: [{ observedAt: Date.now(), source: "wham", credentialGeneration: generation,
+      windows: [{ family: "account", window: "weekly", usedPercent: 20 }] }] },
+  } }, padding: "x".repeat(4 * 1024 * 1024) }));
   expect(getAccountQuotaHistory("history-pool").observations).toEqual([]);
 });

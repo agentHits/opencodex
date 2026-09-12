@@ -586,6 +586,16 @@ afterEach(() => {
 });
 
 describe("ocx account CLI (issue #180 matrix)", () => {
+  test("human quota history renders populated rows and safely handles oversized reset dates", async () => {
+    const result = await run(["history", "openai", "pool-a"], { baseUrl: "http://127.0.0.1:10100", fetchImpl: (async () => Response.json({
+      observations: [{ observedAt: 1_800_000_000_000, source: "wham", windows: [
+        { family: "account", window: "weekly", usedPercent: 20, resetAtMs: 1e20 },
+      ] }],
+    })) as typeof fetch });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("2027-01-15T08:00:00.000Z\twham\taccount/weekly\t20%\tunknown");
+  });
+
   test("history reads one cached endpoint and rejects invalid arguments before I/O", async () => {
     let calls = 0;
     const deps: AccountDeps = { baseUrl: "http://127.0.0.1:10100", fetchImpl: (async input => {

@@ -53,7 +53,7 @@ describe("bounded quota observation history", () => {
     expect(history.serialize(now).accounts).toEqual({});
     history.hydrate({ version: 1, accounts: { "pool-a": { identity, samples: Array.from({ length: 201 }, () => sample()) } } }, now);
     expect(history.serialize(now).accounts).toEqual({});
-    history.hydrate({ version: 1, accounts: {}, extra: "x".repeat(QUOTA_HISTORY_LIMITS.bytes) }, now);
+    history.hydrate({ version: 1, accounts: { "pool-a": { identity, samples: [sample()] } }, extra: "x".repeat(QUOTA_HISTORY_LIMITS.bytes) }, now);
     expect(history.serialize(now).accounts).toEqual({});
   });
 
@@ -78,4 +78,23 @@ describe("bounded quota observation history", () => {
     expect(new TextEncoder().encode(JSON.stringify(disk)).byteLength).toBeLessThanOrEqual(QUOTA_HISTORY_LIMITS.bytes);
     expect(disk.accounts["pool-64"].samples.at(-1)?.observedAt).toBe(now - 1);
   });
+});
+
+
+test("append byte budget evicts samples before any row or account count limit", () => {
+  const history = new CodexQuotaHistory();
+  const windows = ([
+    ["account", "short"], ["account", "weekly"], ["account", "monthly"], ["spark", "short"], ["spark", "weekly"],
+  ] as const).map(([family, window]) => ({ family, window, usedPercent: 12.345678901234567,
+    resetAtMs: 1_800_000_123_456.789, windowSeconds: 123_456_789.12345678,
+    ...(window === "monthly" ? { monthlyIsPrimaryWindow: true } : {}),
+  }));
+  for (let account = 0; account < 32; account++) for (let index = 0; index < 128; index++) {
+    history.append({ ...writer, accountId: `long-account-${account}` }, { ...sample(now - 4096 + account * 128 + index), windows }, now);
+  }
+  const persisted = history.serialize(now);
+  const retained = Object.values(persisted.accounts).reduce((count, row) => count + row.samples.length, 0);
+  expect(retained).toBeGreaterThan(0);
+  expect(retained).toBeLessThan(4096);
+  expect(new TextEncoder().encode(JSON.stringify(persisted)).byteLength).toBeLessThanOrEqual(QUOTA_HISTORY_LIMITS.bytes);
 });
