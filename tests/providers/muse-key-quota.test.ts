@@ -131,6 +131,27 @@ describe("muse key quota probe", () => {
     expect(h.calls()).toBe(2);
     expect(other?.weeklyPercent).toBe(34);
   });
+  // The TTL check alone is not atomic. ?refresh=1 and the reset poller can both pass it
+  // before either writes, so without an in-flight gate one window would spend two mints.
+  test("two overlapping callers share one mint instead of racing it", async () => {
+    const h = harness([{ body: USAGE_OK }]);
+    const [a, b] = await Promise.all([
+      fetchMuseKeyQuotaSnapshot("acct-a", TOKEN, h.deps),
+      fetchMuseKeyQuotaSnapshot("acct-a", TOKEN, h.deps),
+    ]);
+    expect(h.calls()).toBe(1);
+    expect(a?.weeklyPercent).toBe(34);
+    expect(b?.weeklyPercent).toBe(34);
+  });
+
+  test("overlapping callers for different accounts are not serialised", async () => {
+    const h = harness([{ body: USAGE_OK }, { body: USAGE_OK }]);
+    await Promise.all([
+      fetchMuseKeyQuotaSnapshot("acct-a", TOKEN, h.deps),
+      fetchMuseKeyQuotaSnapshot("acct-b", TOKEN, h.deps),
+    ]);
+    expect(h.calls()).toBe(2);
+  });
 });
 
 describe("muse model api version header", () => {

@@ -49,11 +49,20 @@ export interface MuseKeyQuotaDeps {
 /** Keyed by account id: one account's rate limit must not silence another's. */
 const backoffUntil = new Map<string, number>();
 const lastSuccessAt = new Map<string, number>();
+/**
+ * One in-flight probe per account.
+ *
+ * The TTL check alone is not atomic: `?refresh=1` and the reset poller can both pass it
+ * before either writes `lastSuccessAt`, which would spend two mints inside one window.
+ * Concurrent callers share the first request instead of racing it.
+ */
+const inFlight = new Map<string, Promise<ProviderQuota | null>>();
 
 /** Test seam only. */
 export function resetMuseKeyQuotaBackoff(): void {
   backoffUntil.clear();
   lastSuccessAt.clear();
+  inFlight.clear();
 }
 
 export function museKeyQuotaBackoffRemainingMs(accountId: string, now = Date.now()): number {
@@ -72,6 +81,24 @@ export async function fetchMuseKeyQuotaSnapshot(
   // Success spacing, enforced even for a forced refresh. See SUCCESS_TTL_MS.
   const last = lastSuccessAt.get(accountId);
   if (last !== undefined && at - last < SUCCESS_TTL_MS) return null;
+  const running = inFlight.get(accountId);
+  if (running) return await running;
+  const attempt = probe(accountId, oauthAccessToken, deps, signal);
+  inFlight.set(accountId, attempt);
+  try {
+    return await attempt;
+  } finally {
+    inFlight.delete(accountId);
+  }
+}
+
+async function probe(
+  accountId: string,
+  oauthAccessToken: string,
+  deps: MuseKeyQuotaDeps,
+  signal?: AbortSignal,
+): Promise<ProviderQuota | null> {
+  const now = deps.now ?? Date.now;
   try {
     // No `onboard`: this is a read, not a login. Onboarding on a poll would be a
     // side effect on the user's account.

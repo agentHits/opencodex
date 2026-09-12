@@ -44,7 +44,7 @@ const KEYCHAIN_TIMEOUT_MS = 5_000;
  */
 const CONSENT_WARNING = [
   "Meta scopes the Muse Code credential to the Muse Code CLI.",
-  "A device login authenticates as Meta own Muse Code client, which is a stronger claim than reusing a key your CLI already minted.",
+  "A device login authenticates as Meta own Muse Code client, which is a stronger claim than reusing a key your CLI already minted, and that grant has not been exercised against Meta from OpenCodex.",
   "Using it here is UNSUPPORTED: Meta does not authorize subscription coverage outside its own CLI,",
   "how these calls settle is not observable from the API, and you should treat every call as billable.",
   "The key you import or paste is copied into OpenCodex's auth store (~/.opencodex/auth.json, 0600).",
@@ -122,9 +122,6 @@ async function defaultReadKeychain(signal?: AbortSignal): Promise<string | null>
     if (proc && proc.exitCode === null) { try { proc.kill(); } catch { /* already gone */ } }
   }
 }
-
-const INSTALL_HINT =
-  "Install it from https://dev.meta.ai/install.sh, run `muse login`, then retry.";
 
 /**
  * Where a user without the CLI gets a key by hand.
