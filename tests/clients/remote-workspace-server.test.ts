@@ -108,6 +108,38 @@ function managementAuth(): ManagementAuthState {
 }
 
 describe("Remote Workspace hub HTTP and WebSocket integration", () => {
+  test("graceful server stop closes a still-connected executor socket", async () => {
+    const workspace = join(root, "graceful-executor");
+    mkdirSync(workspace);
+    writeTestConfig(config());
+    const hub = new RemoteWorkspaceHub(new HubStore());
+    const server = startServer(0, { managementAuthState: managementAuth(), managementApi: { remoteWorkspaceHub: hub } });
+    let handle: ReturnType<typeof connectRemoteWorkspaceAgent> | null = null;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const grant = hub.createPairingGrant();
+      const state = await pairRemoteWorkspaceDevice({
+        hubUrl: server.url.toString(), pairingCode: grant.code, name: "Executor", devicePlatform: "test",
+        roots: [{ path: workspace, label: "Project" }], store: new DeviceStore(),
+      });
+      handle = connectRemoteWorkspaceAgent({ state, commandRunner: null });
+      await handle.connected;
+      expect(hub.connection(state.deviceId)).not.toBeNull();
+      await Promise.race([
+        server.stop(false),
+        new Promise<never>((_resolve, reject) => {
+          deadline = setTimeout(() => reject(new Error("graceful stop did not close the executor")), 5_000);
+        }),
+      ]);
+      expect(hub.connection(state.deviceId)).toBeNull();
+    } finally {
+      clearTimeout(deadline);
+      handle?.stop();
+      if (handle) await handle.closed;
+      await server.stop(true);
+    }
+  }, 15_000);
+
   test("pairs an OCX-only executor and carries encrypted file work over its outbound socket", async () => {
     const workspace = join(root, "computer-2-project");
     mkdirSync(workspace);

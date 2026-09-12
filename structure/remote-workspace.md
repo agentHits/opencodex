@@ -18,7 +18,7 @@ Regression coverage lives in `tests/clients/remote-workspace-session-binding.tes
 
 `src/server/index.ts` admits the opt-in pair exchange and bearer-authenticated agent upgrade after Origin and role checks. The unauthenticated loopback companion does not expose either endpoint. `src/server/management-api.ts` answers disabled workspace status before importing services; mutations require a dashboard session. `src/server/management/remote-workspace-routes.ts` reads bounded management JSON and uses the initialized Hub/session services.
 
-The listener retains an awaited shutdown callback only after optional activation. It refuses initialization once stop begins and awaits session shutdown before closing Hub connections in a finally path. `src/server/ws-bridge.ts` carries structural receive/open/close callbacks without importing concrete workspace services.
+The listener retains an awaited shutdown callback only after optional activation. It refuses initialization once stop begins, starts listener admission closure and workspace cleanup concurrently, and awaits session shutdown before closing Hub connections in a finally path. Listener drain completes after these owned sockets close; cleanup failures still propagate. `src/server/ws-bridge.ts` carries structural receive/open/close callbacks without importing concrete workspace services.
 
 `gui/src/pages/RemoteWorkspace.tsx` defaults to read-only access, displays actual effective capabilities, and keeps Stop available while a prompt is pending. Error retries preserve draft text. The UI explains explicit Hub opt-in in each locale; no historical screenshot is evidence of the current surface.
 
