@@ -52,3 +52,7 @@ request when a node carries both. Codex's own deferred tool catalog emits exactl
 so the schema is not something a user can fix from configuration (issue #2673).
 
 > Decision record: [ADR-0093](../decisions/ADR-0093-moonshot-ref-with-siblings-normalization.md)
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.

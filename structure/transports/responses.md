@@ -507,3 +507,7 @@ deprecated, sunset, decommissioned, or no longer available). An unrelated applic
 not retried.
 
 > Decision record: [ADR-0071](../decisions/ADR-0071-combo-streaming-commit-boundary.md)
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.

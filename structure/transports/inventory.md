@@ -57,3 +57,7 @@ does not cover ordinary requests, streaming, retries, or per-hop redirect review
 Caller-owned `provider.fetch` executors are also deferred: they receive literal/config checks and
 redirect blocking, but cannot inherit DNS classification or peer pinning without a verified-peer
 executor contract. Main-request migration must not treat that branch as fixed-transport equivalent.
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.

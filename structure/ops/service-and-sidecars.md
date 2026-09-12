@@ -132,3 +132,7 @@ Binary detection decodes only the supplied buffer view; malformed UTF-8 can itse
 so the flag does not identify the peer responsible for corruption. Existing diagnostic files are
 not rewritten. Audio devices, WebRTC media negotiation, captions and spoken handoff delivery remain
 client responsibilities.
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.
