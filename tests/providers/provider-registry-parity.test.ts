@@ -1561,6 +1561,12 @@ describe("renamed fixed-key destination reasoning metadata", () => {
     expect(caller).toEqual(["low"]);
     expect(registry.modelReasoningEfforts).toEqual(registryBefore);
   });
+  test("explicit empty model declaration overrides a seeded ladder", () => {
+    const provider = make({ modelReasoningEfforts: { [known]: [] } });
+    enrichProviderFromRegistry("CommandCode", provider);
+    expect(configuredReasoningEfforts(provider, known)).toEqual([]);
+    expect(configuredReasoningEfforts(provider, newer)).toEqual(["high", "max"]);
+  });
   test("does not infer metadata for a different adapter, OAuth, or unrelated endpoint", () => {
     for (const override of [{ adapter: "openai-responses" }, { authMode: "oauth" as const }, { baseUrl: "https://example.test/v1" }]) {
       const provider = make(override);

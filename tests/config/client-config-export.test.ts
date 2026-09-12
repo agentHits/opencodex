@@ -1130,9 +1130,16 @@ test("renamed CommandCode gathered effort tables reach DSH and ZCode exports", a
     expect(dshModels.find(model => model.id === `CommandCode/${known}`)?.reasoningEfforts).toEqual({ high: "high", max: "max" });
     expect(dshModels.find(model => model.id === `CommandCode/${overridden}`)?.reasoningEfforts).toEqual({ low: "low" });
     expect(dshModels.find(model => model.id === "CommandCode/unknown-model")?.reasoningEfforts).toBeUndefined();
-    const zcodeModels = Object.values(zcode.buildZcodeClientConfig(context).provider).flatMap(provider => Object.values(provider.models));
-    expect(zcodeModels.filter(model => model.reasoning?.variants.includes("high"))).toHaveLength(1);
-    expect(zcodeModels.filter(model => model.reasoning?.variants.includes("low"))).toHaveLength(1);
+    for (const id of [known, overridden, "unknown-model"]) {
+      expect(dshModels.find(model => model.id === `CommandCode/${id}`)).toBeDefined();
+    }
+    const zcodeModels = Object.assign({}, ...Object.values(zcode.buildZcodeClientConfig(context).provider).map(provider => provider.models)) as Record<string, zcode.ZcodeModelEntry>;
+    expect(zcodeModels[`CommandCode/${known}`]).toBeDefined();
+    expect(zcodeModels[`CommandCode/${known}`]!.reasoning?.variants).toEqual(["high", "max"]);
+    expect(zcodeModels[`CommandCode/${overridden}`]).toBeDefined();
+    expect(zcodeModels[`CommandCode/${overridden}`]!.reasoning?.variants).toEqual(["low"]);
+    expect(zcodeModels["CommandCode/unknown-model"]).toBeDefined();
+    expect(zcodeModels["CommandCode/unknown-model"]!.reasoning).toBeUndefined();
   } finally {
     clearModelCache();
     isolated.restore();
