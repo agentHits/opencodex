@@ -429,8 +429,11 @@ Entries are bounded, process-local and expiring, and are keyed by the admission 
 `src/server/auth-cors.ts` mints for the matched opencodex API key, plus the destination and the
 root session. Two keys therefore cannot observe or overwrite each other's ownership even when both
 resolve to one ChatGPT workspace, and rotating a key mints a new principal instead of inheriting
-the previous holder's sessions. Loopback admission mints no principal and can neither own nor read
-a session.
+the previous holder's sessions. The default bind is loopback, where admission never reads a token, so
+`resolveContextPrincipal` asks the relay question separately: a context request that presents a
+real opencodex API key gets that key principal even on loopback, and one that presents none has no
+caller identity and is refused. This adds identity where the caller volunteered it rather than
+admitting anyone new, and it does not change which credential is sent upstream.
 
 A workspace id identifies an organization, so an entry also binds the stable user claim carried by
 the accepted credential. That claim is read without signature verification, which is why upstream

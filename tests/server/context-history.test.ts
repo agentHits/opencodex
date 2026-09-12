@@ -50,7 +50,7 @@ const realRouting = await import("../../src/codex/routing");
 mock.module("../../src/codex/routing",()=>({...realRouting, formatCodexProviderForLog:()=>"openai-test"}));
 mock.module("../../src/providers/openai-sidecar",()=>({listOpenAiForwardSidecarCandidates:()=>[{providerName:"openai",provider:{baseUrl:"https://chatgpt.com/backend-api/codex"},accountMode}]}));
 class ForwardAdmissionCredentialError extends Error {}
-mock.module("../../src/server/auth-cors",()=>({ForwardAdmissionCredentialError,contextPrincipalIdOf:(a?:{contextPrincipalId?:string})=>a?.contextPrincipalId,validateForwardAdmissionCredential:(h:Headers)=>{validated++;if(!h.has("authorization") || h.get("authorization") === "Bearer ocx_data_test_admission")throw new ForwardAdmissionCredentialError("test credential missing");}}));
+mock.module("../../src/server/auth-cors",()=>({ForwardAdmissionCredentialError,resolveContextPrincipal:(_r:Request,_c:OcxConfig,a?:{contextPrincipalId?:string})=>a?.contextPrincipalId,validateForwardAdmissionCredential:(h:Headers)=>{validated++;if(!h.has("authorization") || h.get("authorization") === "Bearer ocx_data_test_admission")throw new ForwardAdmissionCredentialError("test credential missing");}}));
 mock.module("../../src/server/responses",()=>({codexLogAccountId:()=>"test",decodeRequestErrorResponse:()=>new Response("invalid json",{status:400})}));
 mock.module("../../src/server/lifecycle",()=>({codexAccountSelectionForTurn:()=>()=>undefined}));
 const { handleContextHistory, contextSelectionHeaders } = await import("../../src/server/context-history");

@@ -5,6 +5,7 @@ import {
   isProxyAdmissionSecret,
   requireResponsesApiAuth,
   resolveApiAuth,
+  resolveContextPrincipal,
   resolveDataPlaneAdmissionSecret,
   resolveResponsesApiAuth,
 } from "../../src/server/auth-cors";
@@ -188,6 +189,30 @@ describe("loopback binds", () => {
     expect(resolveResponsesApiAuth(request(), config)).toEqual({ kind: "loopback", source: "loopback" });
     expect(hasValidApiAuth(request(), config)).toBe(true);
     expect(requireResponsesApiAuth(request(), config)).toBeNull();
+  });
+
+  test("still let a context caller name itself with a real key", () => {
+    const config = loopbackConfig();
+    const admission = resolveApiAuth(request(), config)!;
+    // Admission is unchanged: the relay asks the identity question separately, so a caller that
+    // volunteers a real key owns its sessions even here, and one that volunteers nothing does not.
+    expect(resolveContextPrincipal(request(), config, admission)).toBeUndefined();
+    expect(resolveContextPrincipal(request({ "x-opencodex-api-key": "ocx_data_wrongsecret" }), config, admission)).toBeUndefined();
+
+    const first = resolveContextPrincipal(request({ "x-opencodex-api-key": "ocx_data_firstsecret" }), config, admission);
+    const bearer = resolveContextPrincipal(request({ authorization: "Bearer ocx_data_firstsecret" }), config, admission);
+    const second = resolveContextPrincipal(request({ "x-opencodex-api-key": "ocx_data_secondsecret" }), config, admission);
+    expect(first).toBeString();
+    expect(bearer).toBe(first!);
+    expect(second).not.toBe(first!);
+  });
+
+  test("a remote bind keeps naming the principal from its own admission", () => {
+    const config = remoteConfig();
+    const admission = resolveApiAuth(request({ "x-opencodex-api-key": "ocx_data_firstsecret" }), config)!;
+    expect(resolveContextPrincipal(request(), config, admission))
+      .toBe(resolveContextPrincipal(request({ "x-opencodex-api-key": "ocx_data_firstsecret" }), config, admission));
+    expect(resolveContextPrincipal(request(), config, undefined)).toBeUndefined();
   });
 });
 

@@ -14,7 +14,7 @@ import { clearableDeadline, type ClearableDeadline } from "../lib/abort";
 import { readBoundedResponseBytes } from "../lib/bounded-body";
 import type { AdmissionLease } from "../lib/admission";
 import type { OcxConfig } from "../types";
-import { contextPrincipalIdOf, ForwardAdmissionCredentialError, validateForwardAdmissionCredential, type DataPlaneAdmission } from "./auth-cors";
+import { resolveContextPrincipal, ForwardAdmissionCredentialError, validateForwardAdmissionCredential, type DataPlaneAdmission } from "./auth-cors";
 import { readBoundedJsonRequestBody } from "./request-decompress";
 import { codexLogAccountId, decodeRequestErrorResponse } from "./responses";
 import { codexAccountSelectionForTurn } from "./lifecycle";
@@ -77,10 +77,10 @@ async function relayContextHistory(
   // A workspace is not a person and a local socket is not a caller. Ownership is keyed by the
   // admission secret that was actually matched, so an admission that carries no principal —
   // loopback — cannot own or reach a session.
-  const principalId = contextPrincipalIdOf(admission);
+  const principalId = resolveContextPrincipal(req, config, admission);
   if (!principalId) {
     return formatErrorResponse(403, "context_principal_required",
-      "Context history requires an authenticated opencodex API key; loopback admission carries no caller identity");
+      "Context history requires an opencodex API key on the request; admission alone carries no caller identity");
   }
   let body: unknown;
   try { body = await readBoundedJsonRequestBody(req, MAX_REQUEST_BYTES, undefined, { signal: deadline.signal }); }
@@ -163,7 +163,7 @@ async function relayContextHistory(
   // Body reading and credential selection are both waits, and a key can be revoked, rotated or
   // replaced during them. Re-resolve admission against the receiving listener policy and require
   // the same principal, so a withdrawn key cannot dispatch on a snapshot taken minutes earlier.
-  if (revalidateAdmission && contextPrincipalIdOf(revalidateAdmission() ?? undefined) !== principalId) {
+  if (revalidateAdmission && resolveContextPrincipal(req, config, revalidateAdmission() ?? undefined) !== principalId) {
     return formatErrorResponse(401, "authentication_error",
       "opencodex API key changed during this request; retry with current credentials");
   }

@@ -414,6 +414,32 @@ export function contextPrincipalIdOf(admission: DataPlaneAdmission | undefined):
   return admission && "contextPrincipalId" in admission ? admission.contextPrincipalId : undefined;
 }
 
+/**
+ * The caller principal for a context-relay request, which is a stricter question than admission.
+ *
+ * The default bind is loopback, where admission deliberately never reads a token, so an admitted
+ * request carries no caller identity. History ownership needs one, so the relay asks separately:
+ * a caller that presents a real opencodex API key gets that key’s principal even on loopback,
+ * and a caller that presents none gets nothing and is refused. This adds identity where the caller
+ * volunteered it; it does not admit anyone who was not already admitted, and it does not change
+ * which credential goes upstream.
+ */
+export function resolveContextPrincipal(req: Request, config: OcxConfig, admission: DataPlaneAdmission | undefined): string | undefined {
+  const named = contextPrincipalIdOf(admission);
+  if (named) return named;
+  if (admission?.kind !== "loopback") return undefined;
+  const dedicated = req.headers.get("x-opencodex-api-key")?.trim();
+  const bearer = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
+  const apiKey = req.headers.get("x-api-key")?.trim();
+  for (const [token, source] of [[dedicated, "dedicated"], [bearer, "bearer"], [apiKey, "x-api-key"]] as const) {
+    if (!token) continue;
+    const resolved = resolveDataPlaneAdmissionSecret(token, config, source);
+    const principal = contextPrincipalIdOf(resolved ?? undefined);
+    if (principal) return principal;
+  }
+  return undefined;
+}
+
 /** Whether `token` is a data-plane admission secret. */
 export function isDataPlaneAdmissionSecret(token: string, config: OcxConfig): boolean {
   return resolveDataPlaneAdmissionSecret(token, config) !== null;

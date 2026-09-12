@@ -84,8 +84,10 @@ ChatGPT forward 목적지를 사용하는 내장 `openai` provider로만 전달�
 레지스트리는 업스트림이 실제로 수락한 자격 증명이 담고 있는 사용자 식별자까지 함께 묶습니다. 같은
 사용자의 토큰 갱신은 세션을 이어가지만, 같은 워크스페이스의 다른 사용자는 이어받지 못합니다. 수락된
 자격 증명이 사용자 식별자를 증명하지 못하면 정확히 그 자격 증명만 세션을 이어갈 수 있습니다.
-loopback으로 들어온 요청에는 호출자 신원이 없으므로 context history는 HTTP 403을 반환합니다.
-opencodex API 키를 사용하세요.
+기본 loopback 바인드에서는 opencodex가 키를 읽지 않고 요청을 받아들이므로, relay는 키를 따로
+요구합니다. context 요청에 opencodex API 키를 실어 보내면(`x-opencodex-api-key` 헤더 또는 그 키를
+담은 `Authorization: Bearer`) 그 키가 소유 principal이 됩니다. opencodex 키가 없는 context 요청은
+호출자 신원이 없으므로 HTTP 403을 반환합니다.
 
 relay 작업 전체는 35초 deadline 하나로 묶입니다. 본문을 읽기 전에 시작해서 자격 증명 선택까지
 포함하므로, 멈춘 클라이언트가 처리 슬롯을 붙잡고 있을 수 없습니다. 클라이언트가 끊으면 499,

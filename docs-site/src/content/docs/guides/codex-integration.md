@@ -171,8 +171,10 @@ reach each other's sessions even when both resolve to the same ChatGPT workspace
 names an organization rather than a person, so the registry also binds the stable user carried by
 the credential upstream accepted: an ordinary token refresh for that same user continues the
 session, while a different user in the same workspace does not. When the accepted credential
-proves no stable user, only that exact credential continues. Requests admitted on loopback carry
-no caller identity, so context history returns HTTP 403 for them; use an opencodex API key.
+proves no stable user, only that exact credential continues. On the default loopback bind opencodex admits requests without reading a key, so the relay asks
+for one separately: send your opencodex API key on context requests (the `x-opencodex-api-key`
+header, or an `Authorization: Bearer` value holding that key) and it becomes the owning principal.
+A context request carrying no opencodex key has no caller identity and returns HTTP 403.
 
 Unknown, expired, evicted, conflicting, or restart-lost ownership returns HTTP 409 before account
 selection or upstream I/O. The relay does not guess from the current active account. Existing
