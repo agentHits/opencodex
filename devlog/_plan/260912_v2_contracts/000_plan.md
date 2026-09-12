@@ -22,3 +22,5 @@ Generic supported inherited-model subagents provide independent design consultat
 wp0: P entered with own session binding; roadmap in progress. Product validation NOT RUN.
 
 wp0 A: Gauss GO-WITH-FIXES (blockers=0); WP1-A01 cache ordering and WP2-A01 fragment owner folded into decade docs. Pasteur reflection ALIGNED; generic inherited-model consultation, native architect not selected.
+
+wp0 check correction: initial D was refused because the roadmap task had not yet been marked done. The subsequent P command re-entered planning; no completed cycle is claimed for that attempt. Re-audit retains the unchanged independent verdict, and a fresh docs-only B/C/D closes the actual cycle after recording its task outcome.
