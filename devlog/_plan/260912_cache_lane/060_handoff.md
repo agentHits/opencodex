@@ -28,3 +28,11 @@ Local tests of every size, build, typecheck and install were **NOT RUN** by expl
 ## Final evidence-cycle record
 
 The final evidence B phase produces this tracked update as its documentation artifact. An earlier C transition was rejected by SOURCE-DELTA-01 because only scratch metadata and the PR body had changed; that rejected transition did not advance the FSM. The evidence branch now records the actual delivered source heads, parent integrations and unproven closure attribution. It changes no runtime code. Hosted terminal results must still be read before this cycle closes; an evidence document is not a product-test pass.
+
+## Resumed terminal-CI reconciliation
+
+The original final-tip results are now terminal: affinity run34674962749 FAILED (native restore/injection fixtures); prefix run34675829597 FAILED (the same restore family plus Cline registry/CLI/localization/icon/test-layout expectations); Hermes run34674763850 FAILED (Combo active-reactivation GUI fixture). Their passing cache assertions do not make those runs green. Claim run34673563105 remains SUCCESS and was not rerun.
+
+Shared fixture repair #4390 is merged at20861aebf56c6f8ec2b0d8d04d1d0b54441650bb, containing the delivered affinity and repaired prefix heads by verified Git ancestry. Its [hosted CI34688482827](https://github.com/lidge-jun/opencodex/actions/runs/34688482827) succeeded:19 jobs successful,2 skipped. This is new cumulative integration evidence, not a relabeling of the old failed results. Cache runtime sources were not rewritten to fix another lane's failure.
+
+The remaining open Hermes PR4365 is refreshed onto392e182a004d61b38c7cf652642e63b9a11d9a65 without conflicts, preserving its test-only delta. Its new final head and hosted outcome are exported to that PR description and the scratch handoff after source audit and publication. Merged evidence PR4377 is left intact. The host goal is blocked; persisted phase C is preserved and neither is claimed completed. Local product suites/build/typecheck/install remain NOT RUN.

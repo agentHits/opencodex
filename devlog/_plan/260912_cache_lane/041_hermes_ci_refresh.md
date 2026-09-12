@@ -1,0 +1,9 @@
+# Hermes hosted-CI refresh after shared fixture repair
+
+Resume preserves the same worktree and session. The host goal is blocked and persisted phase remains C; no goal/FSM reset, reactivation or completion is claimed. This file records the authorized remaining work, not a new completed cycle.
+
+The original Hermes head b254efc8385ce2a9dc34b9a5ac7d2a449605d75d failed gates on the Combo active-reactivation fixture, while four Linux and two macOS product shards succeeded. Shared repair #4390 is now integrated as20861aebf56c6f8ec2b0d8d04d1d0b54441650bb and its exact hosted CI34688482827 succeeds. Affinity/prefix old runs failed restore/Cline fixtures subsequently repaired by that same PR. Old failed runs remain failed.
+
+Rebase the one owned Hermes test-only commit from e4ee8c54 onto current origin/dev392e182a00 (record full SHA in handoff). Read-only merge-tree reports no conflict. Preserve the99-line runtime-boundary test and both mappings; no Combo, Cline, restore or provider source edits. Compare old/new authored source deltas and obtain an inherited-model independent source audit. Append terminal evidence to060, preserving real Hermes acceptance as open. Push only existing Hermes branch with --no-verify and exact old-head lease; no new task/worktree or recreation of merged evidence PR4377. Bind new final hosted CI to new Hermes SHA. Parent owns integration and chooses any source collision slot.
+
+Local suites/focused/GUI/build/typecheck/install remain NOT RUN. The successful shared integration CI proves its own cumulative source tree, not the old failed PR heads. A new Hermes tip must be independently verified remotely before a passing delivery claim.
