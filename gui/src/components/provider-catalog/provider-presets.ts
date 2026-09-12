@@ -125,6 +125,90 @@ export function noteNeedsReveal(note: string | undefined): boolean {
   return !!note?.trim();
 }
 
+/**
+ * Queries that mean "a runtime on my own machine" without naming one. Resolved through
+ * `isLocalCatalogPreset` rather than a substring match, so `localhost` finds the Local
+ * group instead of matching every base URL that happens to contain the word.
+ */
+const LOCAL_QUERY_ALIASES = new Set(["local", "localhost", "ollama", "vllm", "lmstudio", "lm studio", "self-hosted", "selfhosted"]);
+
+/**
+ * Unified-search match for one preset.
+ *
+ * The haystack stays label + id, for the same reason `filterPresets` documents: a
+ * substring match on the adapter would return Ollama, vLLM, LM Studio, Groq, Cerebras
+ * and PackyCode for the query `openai`, and matching base URLs would return every local
+ * row for `localhost`. It widens in exactly two controlled ways instead — an *equality*
+ * match on the adapter id, so `cursor` finds Cursor while `openai` still does not match
+ * `openai-chat`, and the local aliases above.
+ */
+export function matchesCatalogQuery(preset: CatalogPreset, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (preset.label.toLowerCase().includes(q)) return true;
+  if (preset.id.toLowerCase().includes(q)) return true;
+  if (preset.adapter.toLowerCase() === q) return true;
+  return LOCAL_QUERY_ALIASES.has(q) && isLocalCatalogPreset(preset);
+}
+
+/**
+ * Order matched rows WITHIN one group: exact id or label first, then a label/id prefix,
+ * then everything else in the order the caller already established — which carries the
+ * sponsor pin, then usage rank, then label. Deliberately never applied across groups: a
+ * paid sponsor sorted above free NVIDIA on the query `nim` reads as an ad slot, and the
+ * sponsor already has a badge and a pin inside its own group.
+ */
+export function sortCatalogMatches(presets: CatalogPreset[], query: string): CatalogPreset[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return presets;
+  const rank = (p: CatalogPreset): number => {
+    const label = p.label.toLowerCase();
+    const id = p.id.toLowerCase();
+    if (id === q || label === q) return 0;
+    if (label.startsWith(q) || id.startsWith(q)) return 1;
+    return 2;
+  };
+  return presets
+    .map((preset, index) => ({ preset, index }))
+    .sort((a, b) => rank(a.preset) - rank(b.preset) || a.index - b.index)
+    .map(entry => entry.preset);
+}
+
+/**
+ * Account-tab login rows are a different shape from presets and are built elsewhere, so
+ * they get their own label/id filter rather than a widened `filterPresets`.
+ *
+ * `pinnedId` is the provider with a login in flight. It survives a non-matching query on
+ * purpose: the row owns the authorization URL and the paste field, and unmounting it
+ * mid-login throws away what the user is in the middle of doing.
+ */
+export function filterAccountRows<T extends { id: string; label: string }>(
+  rows: readonly T[],
+  query: string,
+  pinnedId?: string | null,
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...rows];
+  return rows.filter(row =>
+    row.id === pinnedId
+    || row.label.toLowerCase().includes(q)
+    || row.id.toLowerCase().includes(q));
+}
+
+/**
+ * Drop presets that a matched login row already represents. A login row and a preset can
+ * share an id (`openai`); the login row is the one that can actually be acted on, so it
+ * wins rather than the same provider appearing twice under two different tiers.
+ */
+export function dropPresetsCoveredByAccounts(
+  presets: CatalogPreset[],
+  accountRows: readonly { id: string }[],
+): CatalogPreset[] {
+  if (accountRows.length === 0) return presets;
+  const covered = new Set(accountRows.map(row => row.id));
+  return presets.filter(preset => !covered.has(preset.id));
+}
+
 const SPONSOR_RANK: Record<NonNullable<CatalogPreset["sponsor"]>, number> = { main: 0, standard: 1 };
 
 /**

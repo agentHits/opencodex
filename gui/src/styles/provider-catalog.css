@@ -29,6 +29,85 @@
   border-bottom-color: var(--accent);
 }
 
+/* Search mode: the strip stops being a tablist and becomes jump chips with counts, so
+   it loses the selected-underline vocabulary and gains a count badge. A chip with no
+   matches is disabled rather than hidden, so the strip does not reflow under the
+   pointer on every keystroke. */
+.provider-catalog-tabs--chips {
+  border-bottom: none;
+  flex-wrap: wrap;
+}
+
+.provider-catalog-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.provider-catalog-chip:not(:disabled):hover {
+  color: var(--text);
+  border-color: var(--accent-ring);
+}
+
+.provider-catalog-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.provider-catalog-chip-count {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-label);
+  color: var(--muted);
+}
+
+/* Group heading inside the result list: a small caps label with a hairline running out
+   to the right, the way a dense list separates sections without adding another slab of
+   chrome. It scrolls with the content rather than sticking — `.modal-card` is a
+   translucent glass panel, so any opaque sticky bar shows a seam against it, and with
+   four short groups in a 360px list the chips above are the index anyway. */
+.provider-catalog-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 2px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.provider-catalog-group-head:first-child {
+  padding-top: 2px;
+}
+
+.provider-catalog-group-head::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+
+.provider-catalog-group-head:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+
+/* The count is data, not a label: tabular figures, no small caps, and it sits before
+   the rule so the eye reads "FREE 1 ————" as one unit. */
+.provider-catalog-group-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-normal, 400);
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.75;
+}
+
 .provider-catalog-accounts-hint {
   padding: 2px 2px 0;
 }

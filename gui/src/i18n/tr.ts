@@ -1145,6 +1145,7 @@ export const tr: Record<TKey, string> = {
   "modal.tab.local": "Yerel",
   "modal.tab.paid": "Ücretli",
   "modal.noteMore": "Açıklamanın tamamını göster",
+  "modal.searchResults": "{tiers} içinde {count} sonuç",
   "modal.accountsHint": "ChatGPT/Codex ve OAuth hesaplarına buradan giriş yapın.",
   "modal.accountsCodexAuthLink": "Codex Kimlik Doğrulaması",
   "modal.notListed": "Sağlayıcı listede yok mu? Özel sağlayıcı ekleyin",
