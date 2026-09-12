@@ -288,6 +288,15 @@ The cache remains bounded; this does not extend retention or recover history the
 longer has. HTTP clients must handle the error explicitly and resend their full context without
 `previous_response_id`. Retrying only the same ID cannot recover missing state.
 
+The same recovery signal applies to routed Responses providers configured with
+`statelessResponses: true`, and to routed requests where a custom tool was lowered to a function
+but a delta result has no local call to establish its original type. Full replay preserves the
+call, result, and reasoning together; opencodex does not guess the result type or drop it.
+Stateful providers still resolve native function and native-only custom continuations themselves.
+These checks follow the selected wire protocol and tool declarations, not the model name. For a
+gateway that cannot resolve stored response IDs, enable `statelessResponses` on that provider;
+other providers keep their defaults.
+
 ### Client-side compaction (opt-in)
 
 Authenticated loopback routing normally keeps Codex on its built-in `openai` provider identity.
