@@ -533,3 +533,21 @@ export async function loginMetaMuseDevice(
 No registration, no credential persistence, no header change, no quota work. `src/oauth/index.ts`
 is untouched until `020`, so this module is unreachable from a user action at the end of
 this phase — which is the point: it is testable in isolation first.
+
+## wp2 P re-verification (stale check)
+
+Re-verified against HEAD `7136e45a45` before building. The tree has not moved since the
+roadmap was written — wp1 changed no source file — so every insertion point below still
+holds. Confirmed individually:
+
+| Claim | State at HEAD |
+|---|---|
+| `OAuthCredentials` ends with `kiro?: KiroOAuthMetadata;` and that is where `muse` goes | Confirmed, `src/oauth/types.ts:43-45` |
+| `sanitizeApiKeyValue(value: unknown): string | undefined` | Confirmed, `src/providers/api-keys.ts:47-51` |
+| `"oauth"` is a legal `OAuthCredentialSource` | Confirmed, `src/oauth/types.ts:2` |
+| The `LLM|` grammar matches the import path character for character | Confirmed, `src/oauth/meta-muse.ts:270` |
+| `AbortSignal.any([signal, timeout])` is the local idiom | Confirmed, `src/oauth/nous.ts:399`, `src/oauth/kiro.ts:546` |
+| Test fetch fakes stub `globalThis.fetch` and route by URL | Confirmed, `tests/oauth/chatgpt-device-auth.test.ts:50-87` |
+
+No amendment was needed. One addition to the build order, from the wp1 audit: the type and
+the module land in the SAME commit, because the module cannot compile without the type.
