@@ -11,7 +11,7 @@
   "domains": {
     "providers": {
       "match": [
-        "^(?:aside(?!-profile)|auto|azure|baseten|chutes|cline|command|commandcode|context|cyber|deepinfra|deepseek|digitalocean|exa|featherless|forward|hyperbolic|kimi|meta|mimo|minimax|moonshot|muse|new|nous|novita|nscale|nvidia|opencode|openrouter|qwen38|sambanova|umans|vercel|zcode|zhipu)-"
+        "^(?:aside(?!-profile)|auto|azure|baseten|chutes|cline(?!-(?:client|writer))|command|commandcode|context|cyber|deepinfra|deepseek|digitalocean|exa|featherless|forward|hyperbolic|kimi|meta|mimo|minimax|moonshot|muse|new|nous|novita|nscale|nvidia|opencode|openrouter|qwen38|sambanova|umans|vercel|zcode|zhipu)-"
       ],
       "children": {
         "cursor": [
@@ -109,6 +109,7 @@
     "clients": {
       "match": [
         "^aside-profile(?!s-routes)",
+        "^cline-(?:client|writer)(?:-|[.])",
         "^(?:desktop|omp|pi|prime|remote|sync)-"
       ]
     },
@@ -281,6 +282,7 @@
     "catalog-vision-sidecar-modalities.test.ts": "codex-integration",
     "catalog-zero-credit-picker.test.ts": "codex-integration",
     "chat-completions-endpoint.test.ts": "responses",
+    "chat-conversation-affinity.test.ts": "responses",
     "chat-json-sse-fallback.test.ts": "responses",
     "chat-refusal.test.ts": "responses",
     "chatgpt-device-auth.test.ts": "oauth",
@@ -1058,6 +1060,9 @@
     "release-notes.test.ts": "ci-workflows",
     "release-version-line.test.ts": "ci-workflows",
     "remote-catalog.test.ts": "clients",
+    "remote-control-prototype.test.ts": "clients",
+    "remote-workspace-protocol.test.ts": "clients",
+    "remote-workspace-rpc-framing.test.ts": "clients",
     "remove-tree-helper.test.ts": "lib",
     "repo-hygiene.test.ts": "ci-workflows",
     "request-decompress.test.ts": "usage",
