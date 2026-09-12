@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach, setDefaultTimeout } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -59,8 +59,8 @@ describe("injectCodexConfig integration (Design B)", () => {
   let ocxHome: string;
 
   beforeEach(() => {
-    codexHome = mkdtempSync(join(tmpdir(), "ocx-inject-codex-"));
-    ocxHome = mkdtempSync(join(tmpdir(), "ocx-inject-home-"));
+    codexHome = realpathSync.native(mkdtempSync(join(tmpdir(), "ocx-inject-codex-")));
+    ocxHome = realpathSync.native(mkdtempSync(join(tmpdir(), "ocx-inject-home-")));
   });
 
   afterEach(() => {
@@ -76,6 +76,7 @@ describe("injectCodexConfig integration (Design B)", () => {
       const { Database } = require("bun:sqlite");
       const { injectCodexConfig, restoreNativeCodex, restoreNativeCodexAsync } = require("./src/codex/inject");
       const { syncCodexHistoryProvider, historyBackupPathFor } = require("./src/codex/history-provider");
+      const { resolveCodexStateDbPath } = require("./src/codex/paths");
       const enabled = await injectCodexConfig(10100, {});
       if (!enabled.success) throw new Error("fixture injection failed");
       const dbPath = join(process.env.CODEX_HOME, "state_5.sqlite");
@@ -91,10 +92,11 @@ describe("injectCodexConfig integration (Design B)", () => {
       db.close();
       const backup = historyBackupPathFor(dbPath);
       const entries = Object.keys(JSON.parse(fs.readFileSync(backup,"utf8")).entries).length;
+      const defaultEntries = Object.keys(JSON.parse(fs.readFileSync(historyBackupPathFor(resolveCodexStateDbPath()),"utf8")).entries).length;
       const paths = ["config.toml","opencodex.config.toml","opencodex-journal.json"].map(p=>join(process.env.CODEX_HOME,p)).concat([backup,rollout]);
       const before = paths.map(p=>fs.readFileSync(p,"utf8"));
       const result = ${kind === "sync" ? "restoreNativeCodex()" : "await restoreNativeCodexAsync()"};
-      console.log(JSON.stringify({entries,result,preserved:paths.every((p,i)=>fs.readFileSync(p,"utf8")===before[i])}));
+      console.log(JSON.stringify({entries,defaultEntries,result,preserved:paths.every((p,i)=>fs.readFileSync(p,"utf8")===before[i])}));
     `;
     const child = spawnSync(process.execPath, ["--eval", script], {
       cwd: repoRoot, env: { ...process.env, CODEX_HOME: codexHome, OPENCODEX_HOME: ocxHome },
@@ -103,6 +105,7 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(child.status, child.stderr).toBe(0);
     const result = JSON.parse(child.stdout);
     expect(result.entries).toBe(1);
+    expect(result.defaultEntries).toBe(1);
     expect(result.result.success).toBe(false);
     expect(result.result.message).toContain("history_paginated_requires_native_writer");
     expect(result.preserved).toBe(true);
@@ -113,7 +116,7 @@ describe("injectCodexConfig integration (Design B)", () => {
       const fs = require("node:fs");
       const { join } = require("node:path");
       const { spyOn } = require("bun:test");
-      const target = join(process.env.CODEX_HOME,"opencodex.config.toml");
+      const target = require("./src/codex/paths").CODEX_PROFILE_PATH;
       const configPath = join(process.env.CODEX_HOME,"config.toml");
       fs.writeFileSync(configPath,'model="test"');
       const {injectCodexConfig,restoreNativeCodex,restoreNativeCodexAsync}=require("./src/codex/inject");
@@ -122,8 +125,9 @@ describe("injectCodexConfig integration (Design B)", () => {
       const watched=[configPath,target,join(process.env.CODEX_HOME,"opencodex-journal.json")];
       const original=watched.map(path=>fs.readFileSync(path,"utf8"));
       const realRead = fs.readFileSync;
+      let matchedReads = 0;
       const readSpy = spyOn(fs,"readFileSync").mockImplementation((path,...args)=>{
-        if (String(path)===target) throw Object.assign(new Error("fixture denied"),{code:"EACCES"});
+        if (String(path)===target) { matchedReads++; throw Object.assign(new Error("fixture denied"),{code:"EACCES"}); }
         return realRead(path,...args);
       });
       const {captureCodexPreImages,restoreCodexPreImages}=require("./src/codex/inject-coordination");
@@ -138,14 +142,16 @@ describe("injectCodexConfig integration (Design B)", () => {
       }
       const restored=restoreCodexPreImages({config:original[0],profile:original[1],journal:original[2]});
       readSpy.mockRestore();
-      console.log(JSON.stringify({captureCode,restored,outcomes,unchangedAfterEach,preserved:watched.every((p,i)=>realRead(p,"utf8")===original[i])}));
+      console.log(JSON.stringify({matchedReads,captureCode,restored,outcomes,unchangedAfterEach,preserved:watched.every((p,i)=>realRead(p,"utf8")===original[i])}));
     `;
     const child = spawnSync(process.execPath, ["--eval", script], {
       cwd: repoRoot, env: { ...process.env, CODEX_HOME: codexHome, OPENCODEX_HOME: ocxHome },
       encoding: "utf8", timeout: SPAWN_BUDGET_MS - 5_000,
     });
     expect(child.status, child.stderr).toBe(0);
-    expect(JSON.parse(child.stdout)).toEqual({
+    const { matchedReads, ...result } = JSON.parse(child.stdout);
+    expect(matchedReads).toBeGreaterThan(0);
+    expect(result).toEqual({
       captureCode: "EACCES", restored: { complete: false, unrestored: ["profile"] }, outcomes: [true, true, true], unchangedAfterEach: [true, true, true], preserved: true,
     });
   });
