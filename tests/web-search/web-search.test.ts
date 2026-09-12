@@ -133,6 +133,122 @@ describe("issue #1001 — forced-answer passes must produce usable output", () =
     expect(frames.some(frame => frame.event === "response.completed")).toBe(true);
     expect(frames.some(frame => frame.event === "response.failed")).toBe(false);
   });
+
+  // #1001 chose to fail rather than complete silently, which turned silence into a dead turn:
+  // the user sees "stream disconnected before completion: forced-answer pass produced no usable
+  // assistant output". Silence is recoverable, so the pass is retried once with no tools before
+  // the same error is reported. Malformed calls still fail immediately.
+  describe("empty forced answer recovery", () => {
+    function sequenceAdapter(passes: AdapterEvent[][], seen: OcxParsedRequest[]): ProviderAdapter {
+      let pass = 0;
+      return {
+        name: "sequence",
+        buildRequest: (request) => {
+          seen.push(request);
+          return { url: "https://routed.test/v1", method: "POST", headers: {}, body: "{}" };
+        },
+        fetchResponse: async () => new Response("wire", { status: 200 }),
+        async *parseStream() {
+          for (const event of passes[Math.min(pass++, passes.length - 1)] ?? []) yield event;
+        },
+        async parseResponse() {
+          throw new Error("parseResponse must be unreachable");
+        },
+      };
+    }
+
+    async function drivePasses(passes: AdapterEvent[][], seen: OcxParsedRequest[] = [], ordinaryTool = false) {
+      const response = await runWithWebSearch({
+        parsed: parseRequest({ model: "routed/model", input: "hi", stream: true, tools: [{ type: "web_search" }, ...(ordinaryTool ? [{ type: "function", name: "fixture", parameters: { type: "object", properties: {} } }] : [])] }),
+        adapter: sequenceAdapter(passes, seen),
+        forwardProvider,
+        hostedTool: { type: "web_search" },
+        selectedForwardHeaders: new Headers({ authorization: "Bearer token" }),
+        settings: { model: "gpt-5.6-luna", reasoning: "low", timeoutMs: 30_000 },
+        maxSearches: 1,
+      });
+      return collectSse(response.body!);
+    }
+
+    test("an empty forced pass is retried once and completes", async () => {
+      const frames = await drivePasses([
+        webSearchFirstPass,
+        [{ type: "done" }],
+        [{ type: "text_delta", text: "recovered answer" }, { type: "done" }],
+      ]);
+      expect(frames.some(frame => frame.event === "response.completed")).toBe(true);
+      expect(frames.some(frame => frame.event === "response.failed")).toBe(false);
+    });
+
+    test("the recovery pass asks for text with every tool removed", async () => {
+      const seen: OcxParsedRequest[] = [];
+      await drivePasses([
+        webSearchFirstPass,
+        [{ type: "done" }],
+        [{ type: "text_delta", text: "recovered answer" }, { type: "done" }],
+      ], seen);
+      // The search pass plus the empty forced pass plus exactly one recovery — no extra upstream call.
+      expect(seen).toHaveLength(3);
+      const recovery = seen[2]!;
+      expect(recovery.options.toolChoice).toBe("none");
+      expect(recovery.context.tools).toEqual([]);
+      // The results gathered by the search reach the recovery turn as a tool result ...
+      expect(recovery.context.messages.filter(message => message.role === "toolResult")).toHaveLength(1);
+      // ... and the recovery turn carries the developer nudge that asks for the missing text.
+      expect(recovery.context.messages.some(message =>
+        message.role === "developer" && String(message.content).includes("no tools are available")))
+        .toBe(true);
+    });
+
+    test("recovery removes ordinary tools as well as web search", async () => {
+      const seen: OcxParsedRequest[] = [];
+      await drivePasses([webSearchFirstPass, [{ type: "done" }], [{ type: "text_delta", text: "answer" }, { type: "done" }]], seen, true);
+      expect(seen).toHaveLength(3);
+      expect(seen[1]!.context.tools.length).toBeGreaterThan(0);
+      expect(seen[2]!.context.tools).toEqual([]);
+      expect(seen[2]!.options.toolChoice).toBe("none");
+    });
+
+    for (const [stopReason, reason] of [["refusal", "content_filter"], ["content_filter", "content_filter"], ["max_tokens", "max_output_tokens"], ["length", "max_output_tokens"]]) {
+      for (const partial of [false, true]) {
+        test(`${stopReason} partial=${partial} stays authoritative without a retry`, async () => {
+          const seen: OcxParsedRequest[] = [];
+          const terminalPass: AdapterEvent[] = [
+            ...(partial ? [{ type: "text_delta" as const, text: "partial answer" }] : []),
+            { type: "done", stopReason },
+          ];
+          const frames = await drivePasses([webSearchFirstPass, terminalPass, [{ type: "done" }]], seen);
+          expect(seen).toHaveLength(2);
+          expect(frames.filter(frame => ["response.incomplete", "response.completed", "response.failed"].includes(frame.event)).map(frame => frame.event)).toEqual(["response.incomplete"]);
+          expect(frames.find(frame => frame.event === "response.incomplete")!.data.response.incomplete_details.reason).toBe(reason);
+          if (partial) expect(frames.filter(frame => frame.event === "response.output_text.delta").map(frame => frame.data.delta).join("")).toBe("partial answer");
+        });
+      }
+    }
+
+    test("a persistent empty forced pass still fails after the one recovery", async () => {
+      const seen: OcxParsedRequest[] = [];
+      const frames = await drivePasses([
+        webSearchFirstPass,
+        [{ type: "done" }],
+        [{ type: "done" }],
+      ], seen);
+      expect(seen).toHaveLength(3);
+      expect(frames.some(frame => frame.event === "response.failed")).toBe(true);
+      expect(frames.some(frame => frame.event === "response.completed")).toBe(false);
+    });
+
+    test("a malformed forced call is not retried", async () => {
+      const seen: OcxParsedRequest[] = [];
+      const frames = await drivePasses([
+        webSearchFirstPass,
+        [{ type: "tool_call_start", id: "", name: "" }, { type: "tool_call_end" }, { type: "done" }],
+        [{ type: "text_delta", text: "recovered answer" }, { type: "done" }],
+      ], seen);
+      expect(seen).toHaveLength(2);
+      expect(frames.some(frame => frame.event === "response.failed")).toBe(true);
+    });
+  });
 });
 
 const routedProvider: OcxProviderConfig = {

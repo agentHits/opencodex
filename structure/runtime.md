@@ -192,3 +192,7 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+### Empty forced search answers
+
+`src/web-search/loop.ts` makes at most one extra answer attempt after a clean forced-answer terminal with no visible output or tool call. The recovery has no tools and reuses gathered search results. Malformed calls fail, and recognized refusal/truncation terminals pass through unchanged, including empty or partial answers. The extra generation may incur provider usage.
