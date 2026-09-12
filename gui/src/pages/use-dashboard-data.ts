@@ -1,3 +1,4 @@
+import { classifyDataSurface } from "../data-surface";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useKeyedClientResource } from "../client-resource";
 import { replaceHash } from "../hash-routing";
@@ -279,6 +280,7 @@ export function useDashboardData(apiBase: string, refreshEpoch = 0) {
     (signal) => fetchDashboardOverview(apiBase, signal),
     { pollMs: 5000 },
   );
+  const overviewSurface = classifyDataSurface(overviewPoll, data => data.health === null, true);
   const overviewReady = health !== null || overviewPoll.data !== undefined;
 
   // Preferences that are just config — never gate on overview or injection.
@@ -850,8 +852,8 @@ export function useDashboardData(apiBase: string, refreshEpoch = 0) {
     effortCap, subagentEffortCap, effortCapSaving, setEffortCap, setSubagentEffortCap, setEffortCapSaving,
     syncResult, syncError, projectConfigWarnings,
     updateOpen, updateChannel, setUpdateRestart, updateRestart, updateLoading,
-    updateCheck, updateError, updateJob, reconnecting, error,
-    connectionFailure: overviewPoll.data?.failure, refreshDashboard: overviewPoll.refresh,
+    updateCheck, updateError, updateJob, reconnecting, error: error || overviewSurface.showError,
+    connectionFailure: overviewPoll.data?.failure ?? (overviewSurface.showError ? "unavailable" : undefined), refreshDashboard: overviewPoll.refresh,
     effortCapHelpTriggerRef, updateTriggerRef, maHelpTriggerRef, shadowCallHelpTriggerRef,
     effortCapHelpDialogRef, updateDialogRef, maHelpDialogRef, shadowCallHelpDialogRef,
     filteredGroups, sidecarModels, visionModels,

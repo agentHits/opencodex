@@ -254,32 +254,45 @@ export async function fetchDashboardOverview(
   signal: AbortSignal,
 ): Promise<DashboardOverviewPoll> {
   const failed = (failure: DashboardOverviewPoll["failure"]): DashboardOverviewPoll => ({ health: null, providers: [], error: true, failure });
-  let hRes: Response;
-  let pRes: Response;
+  const controller = new AbortController();
+  const requestSignal = AbortSignal.any([signal, controller.signal]);
+  let accessFailure: "auth" | "denied" | undefined;
+  let notifyAccess!: () => void;
+  const accessChanged = new Promise<"access">(resolve => { notifyAccess = () => resolve("access"); });
+  const observe = (response: Response) => {
+    if (response.status === 401 || response.status === 403) {
+      if (response.status === 403 || accessFailure === undefined) accessFailure = response.status === 403 ? "denied" : "auth";
+      notifyAccess();
+    }
+    return response;
+  };
   try {
-    [hRes, pRes] = await Promise.all([
-      fetch(`${apiBase}/api/system/health`, { signal }),
-      fetch(`${apiBase}/api/providers`, { signal }),
-    ]);
-  } catch (error) {
-    if (isAbortError(error, signal)) throw error;
-    return failed("unavailable");
-  }
-  if (hRes.status === 403 || pRes.status === 403) return failed("denied");
-  if (hRes.status === 401 || pRes.status === 401) return failed("auth");
-  if (!hRes.ok || !pRes.ok) return failed("request");
-  try {
-    const health = await requireJson<HealthData>(hRes);
-    const providers = await requireJson<ProviderInfo[]>(pRes);
-    if (!health || typeof health.status !== "string" || typeof health.version !== "string"
-      || !Number.isFinite(health.uptime) || health.uptime < 0
-      || !Array.isArray(providers) || providers.some(row => !row || typeof row.name !== "string"
-        || typeof row.adapter !== "string" || typeof row.baseUrl !== "string" || typeof row.hasApiKey !== "boolean"
-        || (row.defaultModel !== undefined && typeof row.defaultModel !== "string"))) return failed("invalid");
-    return { health, providers, error: false };
-  } catch (error) {
-    if (isAbortError(error, signal)) throw error;
-    return failed("invalid");
+    const requests = ["/api/system/health", "/api/providers"].map(path =>
+      Promise.resolve().then(() => fetch(`${apiBase}${path}`, { signal: requestSignal })).then(observe));
+    // Access failure must not be lost behind a rejected or stalled peer request.
+    const result = await Promise.race([Promise.allSettled(requests), accessChanged]);
+    signal.throwIfAborted();
+    if (result === "access") return failed(accessFailure ?? "auth");
+    const [hResult, pResult] = result;
+    if (hResult.status === "rejected" || pResult.status === "rejected") return failed("unavailable");
+    const hRes = hResult.value;
+    const pRes = pResult.value;
+    if (!hRes.ok || !pRes.ok) return failed("request");
+    try {
+      const health = await requireJson<HealthData>(hRes);
+      const providers = await requireJson<ProviderInfo[]>(pRes);
+      if (!health || typeof health.status !== "string" || typeof health.version !== "string"
+        || !Number.isFinite(health.uptime) || health.uptime < 0
+        || !Array.isArray(providers) || providers.some(row => !row || typeof row.name !== "string"
+          || typeof row.adapter !== "string" || typeof row.baseUrl !== "string" || typeof row.hasApiKey !== "boolean"
+          || (row.defaultModel !== undefined && typeof row.defaultModel !== "string"))) return failed("invalid");
+      return { health, providers, error: false };
+    } catch (error) {
+      if (isAbortError(error, signal)) throw error;
+      return failed("invalid");
+    }
+  } finally {
+    controller.abort();
   }
 }
 

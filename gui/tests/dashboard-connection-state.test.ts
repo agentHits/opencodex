@@ -32,3 +32,19 @@ test("transport failure is distinct from cancelled polling", async () => {
   const controller = new AbortController(); controller.abort();
   await expect(fetchDashboardOverview("", controller.signal)).rejects.toThrow();
 });
+
+for (const deniedPath of ["/api/system/health", "/api/providers"]) {
+  test(`a 403 from ${deniedPath} outranks a rejected peer`, async () => {
+    globalThis.fetch = (async input => {
+      if (String(input).endsWith(deniedPath)) return new Response(null, { status: 403 });
+      throw new TypeError("network failed");
+    }) as typeof fetch;
+    expect(await fetchDashboardOverview("", new AbortController().signal)).toMatchObject({ failure: "denied" });
+  });
+  test(`a 403 from ${deniedPath} does not wait for a stalled peer`, async () => {
+    globalThis.fetch = ((input, init) => String(input).endsWith(deniedPath)
+      ? Promise.resolve(new Response(null, { status: 403 }))
+      : new Promise<Response>((_resolve, reject) => { init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true }); })) as typeof fetch;
+    expect(await fetchDashboardOverview("", new AbortController().signal)).toMatchObject({ failure: "denied" });
+  });
+}
