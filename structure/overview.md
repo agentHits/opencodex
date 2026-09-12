@@ -103,3 +103,5 @@ would pass while the rule was violated.
 
 - **INV-HOME-01** — `CODEX_HOME` wins over `~/.codex` when present and valid.
 - **INV-SLUG-01** — Routed model slugs use `provider/model`.
+
+Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.

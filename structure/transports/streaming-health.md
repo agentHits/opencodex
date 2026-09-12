@@ -189,3 +189,5 @@ WebSocket clients observe the same canonical lifecycle.
 `ws-bridge.ts` preserves upstream `failed` and `incomplete` status values in the final WebSocket
 frame rather than always emitting `response.completed`. If the response status is `failed`, a
 `response.failed` frame is sent; otherwise `response.completed` carries through the original status.
+
+Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.

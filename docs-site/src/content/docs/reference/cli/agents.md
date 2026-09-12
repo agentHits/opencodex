@@ -162,6 +162,11 @@ separately, and requests with no matching price row are counted as
 ocx usage --range today --provider xai
 ```
 
+When some usage records cannot be included, human output warns, including when there are zero readable rows.
+Any displayed totals reflect readable records only. If a filter has no readable matches, the output shows
+the warning and guidance instead of total lines; skipped records may contain matches.
+`--json` preserves the response-level `usageIncomplete` diagnostic and reason.
+
 ### `ocx debug <provider|usage|injection|claude> <on|off|status|reset|logs [-f]>`
 
 Read or change runtime debug overrides through the running proxy's management API.

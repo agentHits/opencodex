@@ -132,3 +132,5 @@ Binary detection decodes only the supplied buffer view; malformed UTF-8 can itse
 so the flag does not identify the peer responsible for corruption. Existing diagnostic files are
 not rewritten. Audio devices, WebRTC media negotiation, captions and spoken handoff delivery remain
 client responsibilities.
+
+Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.

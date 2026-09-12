@@ -36,3 +36,5 @@ surfaces, run through all 3 stages in order.
 - Design methodology: Product-Personality-Selection (dev-uiux-design §1)
 - 6 design dials: mood, lightness, density, shape, typography, motion
 - 7 axes total: design → domain → feature/data/security/ops/cost (derived)
+
+Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.

@@ -195,3 +195,5 @@ Client connection metadata stores a stable `apiKeyId` and a non-secret rotation 
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
+
+Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.

@@ -69,3 +69,5 @@ injects summary generation into a request, and config validation rejects a deliv
 conflicts with `modelSupportsReasoningSummaries: false` for the same model.
 
 > Decision record: [ADR-0045](../decisions/ADR-0045-standalone-images.md)
+
+Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.

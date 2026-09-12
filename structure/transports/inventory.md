@@ -57,3 +57,5 @@ does not cover ordinary requests, streaming, retries, or per-hop redirect review
 Caller-owned `provider.fetch` executors are also deferred: they receive literal/config checks and
 redirect blocking, but cannot inherit DNS classification or peer pinning without a verified-peer
 executor contract. Main-request migration must not treat that branch as fixed-transport equivalent.
+
+Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.
