@@ -11,6 +11,7 @@ import { readIntegrationState } from "../../src/integrations/state";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 import type { IntegrationTransaction } from "../../src/integrations/config-io";
 import type { OcxConfig } from "../../src/types";
+import { refreshOwnedCatalogIntegrations } from "../../src/integrations/catalog-refresh";
 
 let root: string;
 let input: IntegrationWriteInput;
@@ -39,6 +40,17 @@ function settingsDoc() { return JSON.parse(readFileSync(settings, "utf8")); }
 function catalogDoc() { return JSON.parse(readFileSync(catalog, "utf8")); }
 
 describe("Cline journaled pair", () => {
+  test("explicit catalog sync leaves unowned clients alone and refreshes owned pairs", async () => {
+    let loads = 0;
+    const request = { ...input, models: async () => { loads += 1; return [models[0]!]; } };
+    expect(await refreshOwnedCatalogIntegrations(request, ["cline"])).toEqual([]);
+    expect(loads).toBe(0);
+    expect(existsSync(settings)).toBe(false);
+    expect(applyIntegration(input).ok).toBe(true);
+    expect(await refreshOwnedCatalogIntegrations(request, ["cline"])).toEqual([{ client: "cline", ok: true, changed: true }]);
+    expect(loads).toBe(1);
+    expect(Object.keys(catalogDoc().providers.opencodex.models)).toEqual(["mock/a"]);
+  });
   test("preserves foreign providers/default, journals both originals, and restores exact bytes", () => {
     seed();
     const applied = applyIntegration(input);

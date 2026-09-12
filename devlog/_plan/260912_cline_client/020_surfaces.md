@@ -10,3 +10,5 @@ MODIFY all gui/src/i18n locale modules: append integrations.tab.cline, integrati
 MODIFY docs-site/src/content/docs/guides/integrations.md: documented installation contract, env precedence, --client verbs, conflict opt-in, --op restore/drift, two-file export format and running-client limitation. Update structure/runtime.md and structure GUI/CLI ownership docs where applicable with factual links to canonical integration contract.
 
 Verification: existing GUI client-list/route/i18n assertions extended for cline. No local GUI tests/build. Final hosted GUI build/lint/tests; obtain hosted screenshot artifact where available and inspect it. If unavailable report missing visual evidence rather than fabricate screenshot. No real user server configuration is used for capture.
+
+Surfaces P resumes 019: "next cycle wires existing CLI/dashboard surfaces and explicit catalog sync." Source lists still end in omo; append Cline only. Existing cline-color.svg is reused. Public guide path verified as guides/integrations.md. Independent core audit corrections remain mandatory in the final verification cycle; these list/copy changes do not depend on its implementation details.
