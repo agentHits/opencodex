@@ -1682,6 +1682,10 @@ export interface ConsumedComboFailure {
 
 
 export interface HandleResponsesOptions {
+  /** Internal Claude replay identity; consumed only by the final canonical Go transport. */
+  claudeGoAffinity?: { sessionLane?: string };
+  /** Validated Claude metadata identity; projected only into final canonical attempt headers. */
+  claudeNativeSessionId?: string;
   /** Original live policy owner; separate from caller-specific routing/sidecar snapshots. */
   codexAuthPolicy?: CodexAuthPolicyConfig;
   turnAdmissionLease?: AdmissionLease;
@@ -2049,6 +2053,15 @@ function canPassThroughEncryptedV2AgentTask(
     provider,
     inboundWire,
   ).adapter === "openai-responses";
+}
+
+/** Keep synthesized Claude identity out of request headers reused by policy/combo fallback. */
+function withClaudeNativeSession(headers: Headers, provider: OcxProviderConfig, sessionId?: string): Headers {
+  if (!sessionId || !isCanonicalOpenAiForwardProvider(provider)
+    || headers.has("session_id") || headers.has("session-id") || headers.has("thread-id")) return headers;
+  const forwarded = new Headers(headers);
+  forwarded.set("session_id", sessionId);
+  return forwarded;
 }
 
 type ResponsesAuthResolution =
@@ -2485,6 +2498,7 @@ async function applyFinalRouteRequestNormalization(args: {
   logCtx: RequestLogContext;
   inboundWire: InboundWire;
   inboundTransport?: "websocket";
+  claudeGoAffinity?: HandleResponsesOptions["claudeGoAffinity"];
 }): Promise<void> {
   const { parsed, route, config, req, logCtx, inboundWire, inboundTransport } = args;
   const effortSelector = prepareEffortNormalization(parsed, route);
@@ -2512,7 +2526,8 @@ async function applyFinalRouteRequestNormalization(args: {
 
   // Settle the wire once so logging, fast-mode, auth, and sidecars read the adapter
   // this request will actually use (#404).
-  route.provider = resolveOpenCodeGoTransport(route.provider, getOrAllocateRequestSessionLane(req));
+  route.provider = resolveOpenCodeGoTransport(route.provider,
+    args.claudeGoAffinity ? args.claudeGoAffinity.sessionLane : getOrAllocateRequestSessionLane(req));
   route.provider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire);
   if (preserveAnthropicResponseModel) parsed._responseModelId = responseModelId;
   logCtx.model = route.modelId;
@@ -3934,6 +3949,7 @@ async function handleResponsesInner(
     logCtx,
     inboundWire,
     inboundTransport: options.inboundTransport,
+    claudeGoAffinity: options.claudeGoAffinity,
   });
   // Attribute local auth/cooldown failures to the public selector too; exact auth may fail before
   // the normal post-resolution provider label is assigned.
@@ -3995,8 +4011,8 @@ async function handleResponsesInner(
     const finalAuth = await resolveResponsesCodexAuth(req, config, route, options, credentialDomainWasRewritten);
     if (!finalAuth.ok) return finalAuth.response;
     authCtx = finalAuth.authCtx;
-    selectedForwardHeaders = finalAuth.headers;
-    callerAuthHeaders = finalAuth.callerAuthHeaders;
+    selectedForwardHeaders = withClaudeNativeSession(finalAuth.headers, route.provider, options.claudeNativeSessionId);
+    callerAuthHeaders = withClaudeNativeSession(finalAuth.callerAuthHeaders, route.provider, options.claudeNativeSessionId);
     substituteMainCredential = finalAuth.substituteMainCredential;
   }
 
@@ -5379,7 +5395,7 @@ async function handleResponsesInner(
       }
       authCtx = replay.authCtx;
       route.provider = replay.provider;
-      selectedForwardHeaders = replay.headers;
+      selectedForwardHeaders = withClaudeNativeSession(replay.headers, replay.provider, options.claudeNativeSessionId);
       const replayAdapter = resolveSelectionAdapter(
         resolveWireProtocolOverride(route.providerName, route.modelId, replay.provider, inboundWire),
         config.cacheRetention,
