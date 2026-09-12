@@ -604,9 +604,10 @@ for (const streamMode of ["legacy-tee", "eager-relay"] as const) {
       expect(text).not.toContain("start_delegated_task");
       expect(sends).toBe(1);
       const next = await handleResponses(collaborationRequest({ previousResponseId: "refused-plaintext", input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "next" }] }] }), config(false), { model: "", provider: "" });
-      await next.text();
-      expect(sent[1]).not.toContain("plain assignment");
-      expect(sends).toBe(2);
+      expect(next.status).toBe(400);
+      expect(await next.text()).toContain("previous_response_not_found");
+      expect(sent).toHaveLength(1);
+      expect(sends).toBe(1);
     });
   }
 }
@@ -617,5 +618,23 @@ test("malformed bounded JSON is a single-attempt 502", async () => {
   const response = await handleResponses(collaborationRequest(), config(true), { model: "", provider: "" });
   expect(response.status).toBe(502);
   expect(await response.text()).not.toContain("{malformed");
+  expect(sends).toBe(1);
+});
+
+test("cross-coordinate namespace conflict cannot publish continuation", async () => {
+  let sends = 0;
+  globalThis.fetch = (async () => {
+    sends += 1;
+    const events = [
+      { type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "fc1", call_id: "c1", name: "start_delegated_task", arguments: "" } },
+      { type: "response.function_call_arguments.done", item_id: "fc1", namespace: PLAINTEXT_V2_COLLABORATION_NAMESPACE, name: "start_delegated_task", arguments: "{}" },
+      { type: "response.completed", response: { id: "refused-coordinates", status: "completed", output: [{ type: "function_call", call_id: "c1", namespace: "foreign", name: "spawn_agent", arguments: "{}" }] } },
+    ];
+    return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+  }) as typeof fetch;
+  const response = await handleResponses(collaborationRequest(), config(true, false, "eager-relay"), { model: "", provider: "" });
+  expect(await response.text()).toContain("response.failed");
+  const next = await handleResponses(collaborationRequest({ previousResponseId: "refused-coordinates" }), config(false), { model: "", provider: "" });
+  expect(next.status).toBe(400);
   expect(sends).toBe(1);
 });

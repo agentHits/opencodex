@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createResponsesPassthroughAdapter as createResponsesPassthroughAdapterProduction } from "../../src/adapters/openai-responses";
 import {
   PlaintextV2AgentMessageRestoreOverflowError,
+  createPlaintextV2AgentMessageCallRestoreRewrite,
   PLAINTEXT_V2_COLLABORATION_NAMESPACE,
   preparePlaintextV2AgentMessages,
   restorePlaintextV2AgentMessageCalls,
@@ -600,10 +601,10 @@ describe("plaintext v2 agent message response restoration", () => {
     expect(restored.encrypted_function_args).toEqual([]);
   });
 
-  test("is byte-identical for invalid JSON and payloads without the private alias", () => {
-    for (const payload of ["not json", '{"type":"response.completed"}']) {
-      expect(restorePlaintextV2AgentMessageCallsInJson(payload, declaredToolNames)).toBe(payload);
-    }
+  test("rejects invalid JSON but preserves valid payloads without aliases", () => {
+    expect(() => restorePlaintextV2AgentMessageCallsInJson("not json", declaredToolNames)).toThrow(PlaintextV2AgentMessageRestoreOverflowError);
+    const payload = '{"type":"response.completed"}';
+    expect(restorePlaintextV2AgentMessageCallsInJson(payload, declaredToolNames)).toBe(payload);
   });
 
   test("restores an unqualified private tool alias in streamed JSON", () => {
@@ -831,4 +832,52 @@ describe("plaintext V2 refusal boundaries", () => {
     const payload = JSON.stringify({ type: "function_call", namespace: "foreign", name: `${PLAINTEXT_V2_COLLABORATION_NAMESPACE}__start_delegated_task`, arguments: "{}" });
     expect(restorePlaintextV2AgentMessageCallsInJson(payload, names)).toBe(payload);
   });
+});
+
+test("plaintext restoration refuses malformed identity arrays", () => {
+  for (const value of [{ output: { name: "start_delegated_task" } }, { tools: "collaboration-optimize" }]) {
+    expect(restorePlaintextV2AgentMessageCallsInJsonResult(JSON.stringify(value), new Set(["spawn_agent"])).overflowed).toBe(true);
+  }
+});
+
+
+test("restores namespace selectors and allowed namespace choices", () => {
+  const names = new Set(["spawn_agent"]);
+  for (const choice of [
+    { type: "namespace", name: PLAINTEXT_V2_COLLABORATION_NAMESPACE },
+    { type: "allowed_tools", tools: [{ type: "namespace", name: PLAINTEXT_V2_COLLABORATION_NAMESPACE }] },
+  ]) {
+    const restored = restorePlaintextV2AgentMessageCallsInJson(JSON.stringify({ tool_choice: choice }), names);
+    expect(restored).not.toContain(PLAINTEXT_V2_COLLABORATION_NAMESPACE);
+    expect(restored).toContain('"collaboration"');
+  }
+});
+
+test("sparse argument events inherit only a compatible existing binding", () => {
+  const rewrite = createPlaintextV2AgentMessageCallRestoreRewrite(new Set(["spawn_agent", "send_message"]));
+  rewrite(JSON.stringify({ type: "response.output_item.added", output_index: 0, item: {
+    type: "function_call", id: "fc1", namespace: PLAINTEXT_V2_COLLABORATION_NAMESPACE, name: "start_delegated_task",
+  } }));
+  expect(JSON.parse(rewrite(JSON.stringify({ type: "response.function_call_arguments.done", item_id: "fc1", name: "start_delegated_task", arguments: "{}" }))).name).toBe("spawn_agent");
+  expect(() => rewrite(JSON.stringify({ type: "response.function_call_arguments.done", item_id: "fc1", name: "deliver_delegated_message", arguments: "{}" }))).toThrow(PlaintextV2AgentMessageRestoreOverflowError);
+});
+
+test("request replay preserves explicit foreign namespace identity", () => {
+  const replay = { type: "function_call", namespace: "foreign", name: "collaboration__spawn_agent", arguments: "{}" };
+  const body = { tools: [{ type: "namespace", name: "collaboration", tools: [collaborationTool("spawn_agent")] }], input: [replay] };
+  const prepared = preparePlaintextV2AgentMessages(body);
+  expect(prepared.namespaceAliased).toBe(true);
+  expect((prepared.body as typeof body).input[0]).toBe(replay);
+});
+
+
+test("namespace refinement follows every bound coordinate", () => {
+  const rewrite = createPlaintextV2AgentMessageCallRestoreRewrite(new Set(["spawn_agent"]));
+  rewrite(JSON.stringify({ type: "response.output_item.added", output_index: 0, item: {
+    type: "function_call", id: "fc1", call_id: "c1", name: "start_delegated_task",
+  } }));
+  rewrite(JSON.stringify({ type: "response.function_call_arguments.done", item_id: "fc1", namespace: PLAINTEXT_V2_COLLABORATION_NAMESPACE, name: "start_delegated_task", arguments: "{}" }));
+  expect(() => rewrite(JSON.stringify({ type: "response.completed", response: { output: [{
+    type: "function_call", call_id: "c1", namespace: "foreign", name: "spawn_agent", arguments: "{}",
+  }] } }))).toThrow(PlaintextV2AgentMessageRestoreOverflowError);
 });

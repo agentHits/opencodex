@@ -373,6 +373,7 @@ function aliasCollaborationReference(
   if (!isPlainObject(value)) return value;
   const type = value.type;
   const canCarryNamespace = isToolIdentity(value);
+  if (canCarryNamespace && value.namespace !== undefined && value.namespace !== COLLABORATION_NAMESPACE) return value;
   let rewritten = value;
   if (canCarryNamespace && value.namespace === COLLABORATION_NAMESPACE) {
     const name = (type === "function" || type === "function_call") && typeof value.name === "string"
@@ -616,6 +617,7 @@ function restoreToolIdentity(
     && value.type === "namespace"
     && value.name === PLAINTEXT_V2_COLLABORATION_NAMESPACE
   ) {
+    if (value.tools !== undefined && !Array.isArray(value.tools)) return { ...unchanged(value), overflow: true };
     const children = restoreIdentityList(value.tools, context, false);
     if (children.overflow) return { ...unchanged(value), overflow: true };
     return {
@@ -708,9 +710,12 @@ function restoreIdentityList(
 }
 
 function restoreToolChoice(value: unknown, context: RestoreContext): RestoreOutcome {
-  const direct = restoreToolIdentity(value, context);
+  if (isPlainObject(value) && value.tools !== undefined && !Array.isArray(value.tools)) {
+    return { ...unchanged(value), overflow: true };
+  }
+  const direct = restoreToolIdentity(value, context, true);
   if (direct.overflow || !isPlainObject(value) || !Array.isArray(value.tools)) return direct;
-  const tools = restoreIdentityList(value.tools, context, false);
+  const tools = restoreIdentityList(value.tools, context, true);
   if (tools.overflow) return { ...unchanged(value), overflow: true };
   if (!tools.changed) return direct;
   const base = direct.value as Record<string, unknown>;
@@ -719,6 +724,10 @@ function restoreToolChoice(value: unknown, context: RestoreContext): RestoreOutc
 
 function restoreResponseSnapshot(value: unknown, context: RestoreContext): RestoreOutcome {
   if (!isPlainObject(value)) return unchanged(value);
+  if ((value.output !== undefined && !Array.isArray(value.output))
+    || (value.tools !== undefined && !Array.isArray(value.tools))) {
+    return { ...unchanged(value), overflow: true };
+  }
   const output = restoreIdentityList(value.output, context, false);
   if (output.overflow) return { ...unchanged(value), overflow: true };
   const tools = restoreIdentityList(value.tools, context, true);
@@ -825,7 +834,8 @@ export function createPlaintextV2AgentMessageCallRestoreRewrite(
   toolNames: ReadonlySet<string>,
   aliasedAgentMessageToolNames: ReadonlySet<string> = toolNames,
 ): (payload: string) => string {
-  const bindings = new Map<string, string>();
+  type Binding = { namespace: string; name: string; keys: Set<string> };
+  const bindings = new Map<string, Binding>();
   let refused = false;
   return payload => {
     if (refused) throw new PlaintextV2AgentMessageRestoreOverflowError();
@@ -845,18 +855,38 @@ export function createPlaintextV2AgentMessageCallRestoreRewrite(
             name = name.slice(prefix.length);
           }
         }
-        const identity = JSON.stringify([namespace, name]);
         const keys = [
           typeof item.id === "string" ? `id:${item.id}` : undefined,
           typeof item.item_id === "string" ? `id:${item.item_id}` : undefined,
           typeof item.call_id === "string" ? `call:${item.call_id}` : undefined,
           typeof outputIndex === "number" ? `index:${outputIndex}` : undefined,
         ].filter((key): key is string => key !== undefined);
-        for (const key of keys) {
+        const groups = [...new Set(keys.flatMap(key => {
           const prior = bindings.get(key);
-          if (prior !== undefined && prior !== identity) throw new PlaintextV2AgentMessageRestoreOverflowError();
-          if (prior === undefined && bindings.size >= MAX_RESTORED_TOOL_IDENTITIES) throw new PlaintextV2AgentMessageRestoreOverflowError();
-          bindings.set(key, identity);
+          return prior ? [prior] : [];
+        }))];
+        for (const group of groups) {
+          if (group.name !== name || (group.namespace && namespace && group.namespace !== namespace)) {
+            throw new PlaintextV2AgentMessageRestoreOverflowError();
+          }
+          namespace ||= group.namespace;
+        }
+        // All coordinates for a call share the same refined identity, including
+        // coordinates omitted by this particular sparse event. Merge smaller groups
+        // into the largest to bound repeated cross-coordinate refinement work.
+        groups.sort((left, right) => right.keys.size - left.keys.size);
+        const binding: Binding = groups[0] ?? { namespace, name, keys: new Set() };
+        binding.namespace = namespace;
+        for (const group of groups.slice(1)) {
+          for (const key of group.keys) {
+            binding.keys.add(key);
+            bindings.set(key, binding);
+          }
+        }
+        for (const key of keys) {
+          if (!bindings.has(key) && bindings.size >= MAX_RESTORED_TOOL_IDENTITIES) throw new PlaintextV2AgentMessageRestoreOverflowError();
+          binding.keys.add(key);
+          bindings.set(key, binding);
         }
       };
       bind(value, value.output_index);
