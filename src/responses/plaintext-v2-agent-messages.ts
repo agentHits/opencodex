@@ -643,15 +643,19 @@ function restoreToolIdentity(
     return unchanged(value);
   }
 
+  if (value.namespace !== undefined && value.namespace !== null && typeof value.namespace !== "string") {
+    return { ...unchanged(value), overflow: true };
+  }
   const allowAgentMessageAlias = (
     identityType === "function"
     || identityType === "function_call"
     || identityType === "response.function_call_arguments.done"
   ) && (
     value.namespace === undefined
+    || value.namespace === null
     || value.namespace === PLAINTEXT_V2_COLLABORATION_NAMESPACE
   );
-  if (value.namespace !== undefined && value.namespace !== PLAINTEXT_V2_COLLABORATION_NAMESPACE) {
+  if (value.namespace !== undefined && value.namespace !== null && value.namespace !== PLAINTEXT_V2_COLLABORATION_NAMESPACE) {
     return unchanged(value);
   }
   const childName = declaredChildName(

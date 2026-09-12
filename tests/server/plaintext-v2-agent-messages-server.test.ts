@@ -12,7 +12,7 @@ import {
   PLAINTEXT_V2_AGENT_MESSAGE_RESTORE_OVERFLOW_MESSAGE,
   PLAINTEXT_V2_COLLABORATION_NAMESPACE,
 } from "../../src/responses/plaintext-v2-agent-messages";
-import { clearResponseStateForTests } from "../../src/responses/state";
+import { clearResponseStateForTests, expandPreviousResponseInput } from "../../src/responses/state";
 import { handleResponses } from "../../src/server/responses";
 import type { OcxConfig } from "../../src/types";
 
@@ -136,6 +136,25 @@ function overLimitResponsePayload(id = "resp-plaintext-v2-overflow") {
 }
 
 describe("plaintext v2 agent messages at the Responses server boundary", () => {
+  test.each(["json", "legacy-tee", "eager-relay"] as const)("null namespace restores before %s delivery and continuation storage", async mode => {
+    const id = `resp-null-namespace-${mode}`;
+    const item = { ...completedResponsePayload(id).output[0]!, namespace: null };
+    const payload = { id, status: "completed", output: [item] };
+    globalThis.fetch = (async () => mode === "json" ? Response.json(payload) : new Response(
+      `event: response.output_item.added\ndata: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item })}\n\n`
+      + `event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: payload })}\n\ndata: [DONE]\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    )) as typeof fetch;
+    const response = await handleResponses(collaborationRequest(), config(true, false, mode === "json" ? undefined : mode), { model: "", provider: "" });
+    const text = await response.text();
+    expect(text).toContain('"namespace":"collaboration"');
+    expect(text).toContain('"name":"spawn_agent"');
+    expect(text).not.toContain('"name":"start_delegated_task"');
+    const replay = expandPreviousResponseInput({ previous_response_id: id, input: [] }) as { input: Array<Record<string, unknown>> };
+    expect(replay.input.find(value => value.type === "function_call")).toMatchObject({ namespace: "collaboration", name: "spawn_agent" });
+    expect(JSON.stringify(replay)).not.toContain("start_delegated_task");
+  });
+
   test("rewrites the canonical request and restores every SSE response snapshot", async () => {
     const sentBodies: string[] = [];
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {

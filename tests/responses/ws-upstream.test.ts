@@ -387,7 +387,7 @@ describe("handleResponses Codex WS relay selection", () => {
     });
   }
 
-  test("plaintext v2 collaboration rewriting applies to WS requests and responses", async () => {
+  test.each(["collaboration-optimize", null])("plaintext v2 WS restoration handles namespace=%s", async namespace => {
     installFake(ws => {
       ws.emit("open", {});
       ws.emit("message", {
@@ -409,7 +409,7 @@ describe("handleResponses Codex WS relay selection", () => {
             type: "function_call",
             id: "fc_spawn",
             call_id: "call-spawn",
-            namespace: "collaboration-optimize",
+            namespace,
             name: "start_delegated_task",
             arguments: "",
             encrypted_function_args: [],
@@ -422,7 +422,7 @@ describe("handleResponses Codex WS relay selection", () => {
           type: "response.function_call_arguments.done",
           item_id: "fc_spawn",
           output_index: 0,
-          namespace: "collaboration-optimize",
+          namespace,
           name: "collaboration-optimize__start_delegated_task",
           arguments: JSON.stringify({ message: "plain WS assignment" }),
           encrypted_function_args: [],
@@ -436,7 +436,7 @@ describe("handleResponses Codex WS relay selection", () => {
             type: "function_call",
             id: "fc_spawn",
             call_id: "call-spawn",
-            namespace: "collaboration-optimize",
+            namespace,
             name: "start_delegated_task",
             arguments: JSON.stringify({ message: "plain WS assignment" }),
             encrypted_function_args: [],
@@ -454,7 +454,7 @@ describe("handleResponses Codex WS relay selection", () => {
               type: "function_call",
               id: "fc_spawn",
               call_id: "call-spawn",
-              namespace: "collaboration-optimize",
+              namespace,
               name: "start_delegated_task",
               arguments: JSON.stringify({ message: "plain WS assignment" }),
               encrypted_function_args: [],
