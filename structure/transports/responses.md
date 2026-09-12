@@ -522,3 +522,6 @@ The management quota DTO keeps Combo editing aligned with scoped inference evide
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
 Codex pool settings and their consumers follow the [reset-first ordering contract](../providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
+
+Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.
