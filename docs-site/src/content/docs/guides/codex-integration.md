@@ -172,7 +172,7 @@ names an organization rather than a person, so the registry also binds the stabl
 the credential upstream accepted: an ordinary token refresh for that same user continues the
 session, while a different user in the same workspace does not. When the accepted credential
 proves no stable user, only that exact credential continues. That principal is the opencodex API key the request presents. A remote bind already requires one,
-  so ownership works there. On the default loopback bind opencodex admits requests without reading a
+so ownership works there. On the default loopback bind opencodex admits requests without reading a
 key, and the built-in loopback injection cannot carry the `x-opencodex-api-key` header, so Codex
 presents no opencodex key and context history returns HTTP 403. **The relay is therefore available
 on a remote bind with a configured key, or to a client that sends `x-opencodex-api-key` itself, and
