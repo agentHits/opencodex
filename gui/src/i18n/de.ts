@@ -2756,6 +2756,7 @@ export const de: Record<TKey, string> = {
   "remote.send": "Senden",
   "remote.stop": "Sitzung stoppen",
   "remote.requestFailed": "Remote-Workspace-Anfrage fehlgeschlagen.",
+  "remote.submissionUnknown": "Der Übermittlungsstatus ist unbekannt. Prüfen Sie die Sitzung, bevor Sie erneut senden.",
   "remote.status.starting": "Startet",
   "remote.status.ready": "Bereit",
   "remote.status.running": "Läuft",

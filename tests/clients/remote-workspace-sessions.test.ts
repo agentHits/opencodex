@@ -51,6 +51,7 @@ function createHarness(options: {
   onAvailable?: () => void;
   deviceIds?: string[];
   onStart?: () => void;
+  onPrompt?: () => void;
   lazyResumable?: boolean;
   eventsAtStart?: number;
   sessionStore?: RemoteWorkspaceSessionStateStore;
@@ -122,6 +123,7 @@ function createHarness(options: {
         canResume: () => runtimeResumable,
         async prompt() {
           promptStarted = true;
+          options.onPrompt?.();
           if (options.promptGate) await options.promptGate.promise;
           else {
             const response = await coordinator.handle({
@@ -166,6 +168,62 @@ function createHarness(options: {
 }
 
 describe("Remote Workspace session service", () => {
+  test("accepted resumed turns stay busy through reconnect and runtime startup", async () => {
+    const store = new MemorySessionStore();
+    const first = createHarness({ sessionStore: store });
+    const created = await first.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+    await first.service.shutdown();
+    const startGate = deferred();
+    const started = deferred();
+    const promptGate = deferred();
+    const prompted = deferred();
+    const resumed = createHarness({ sessionStore: store, startGate, onStart: started.resolve, promptGate, onPrompt: prompted.resolve });
+    const accepted = resumed.service.submitPrompt(created.id, "Long turn");
+    expect(["starting", "running"]).toContain(accepted.status);
+    expect(accepted.events.at(-1)!.sequence).toBeGreaterThan(created.events.at(-1)!.sequence);
+    await started.promise;
+    expect(["starting", "running"]).toContain(resumed.service.get(created.id)!.status);
+    startGate.resolve();
+    await prompted.promise;
+    expect(resumed.service.get(created.id)!.status).toBe("running");
+    expect(() => resumed.service.submitPrompt(created.id, "Duplicate")).toThrow("active turn");
+    await resumed.service.stop(created.id);
+    expect(resumed.service.get(created.id)!.status).toBe("stopped");
+  });
+
+  test("a rejected accepted turn is observed and publishes a terminal failure", async () => {
+    const failed = deferred();
+    const store = new class extends MemorySessionStore {
+      override save(state: RemoteWorkspaceSessionState) {
+        super.save(state);
+        if (state.sessions.some(session => session.status === "failed")) failed.resolve();
+      }
+    }();
+    const gate = deferred();
+    const entered = deferred();
+    const harness = createHarness({ sessionStore: store, promptGate: gate, onPrompt: entered.resolve });
+    const created = await harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+    const accepted = harness.service.submitPrompt(created.id, "Will fail");
+    expect(accepted.status).toBe("running");
+    await entered.promise;
+    gate.reject(new Error("held turn failed"));
+    await failed.promise;
+    expect(harness.service.get(created.id)!.status).toBe("failed");
+    expect(harness.service.get(created.id)!.events.at(-1)!.text).toBe("held turn failed");
+    await harness.service.stop(created.id);
+  });
+
+  test("Stop immediately after acceptance prevents the model prompt", async () => {
+    let prompts = 0;
+    const harness = createHarness({ onPrompt: () => { prompts++; } });
+    const created = await harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+    harness.service.submitPrompt(created.id, "Cancel before execution");
+    await harness.service.stop(created.id);
+    expect(prompts).toBe(0);
+    expect(harness.stopCalls()).toBe(1);
+    expect(harness.service.get(created.id)!.status).toBe("stopped");
+  });
+
   for (const operation of ["create", "resume"] as const) {
     for (const scope of ["device", "global"] as const) {
       test(`${operation} reserves ${scope} capacity before awaiting runtime availability`, async () => {

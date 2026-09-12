@@ -2779,6 +2779,7 @@ export const tr: Record<TKey, string> = {
   "remote.send": "Gönder",
   "remote.stop": "Oturumu durdur",
   "remote.requestFailed": "Uzak çalışma alanı isteği başarısız oldu.",
+  "remote.submissionUnknown": "Gönderim durumu bilinmiyor. Yeniden göndermeden önce oturumu kontrol edin.",
   "remote.status.starting": "Başlatılıyor",
   "remote.status.ready": "Hazır",
   "remote.status.running": "Çalışıyor",

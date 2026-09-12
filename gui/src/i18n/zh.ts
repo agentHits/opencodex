@@ -2777,6 +2777,7 @@ export const zh: Record<TKey, string> = {
   "remote.send": "发送",
   "remote.stop": "停止会话",
   "remote.requestFailed": "远程工作区请求失败。",
+  "remote.submissionUnknown": "无法确认发送状态。请先检查会话，再决定是否重新发送。",
   "remote.status.starting": "正在启动",
   "remote.status.ready": "就绪",
   "remote.status.running": "运行中",

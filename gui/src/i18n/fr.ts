@@ -2744,6 +2744,7 @@ export const fr: Record<TKey, string> = {
   "remote.send": "Envoyer",
   "remote.stop": "Arrêter la session",
   "remote.requestFailed": "La requête d'espace distant a échoué.",
+  "remote.submissionUnknown": "Le statut de l’envoi est inconnu. Vérifiez la session avant de renvoyer.",
   "remote.status.starting": "Démarrage",
   "remote.status.ready": "Prêt",
   "remote.status.running": "En cours",

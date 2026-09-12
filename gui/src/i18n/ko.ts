@@ -2778,6 +2778,7 @@ export const ko: Record<TKey, string> = {
   "remote.send": "보내기",
   "remote.stop": "세션 중지",
   "remote.requestFailed": "원격 워크스페이스 요청에 실패했습니다.",
+  "remote.submissionUnknown": "전송 여부를 확인하지 못했습니다. 다시 보내기 전에 세션 상태를 확인하세요.",
   "remote.status.starting": "시작 중",
   "remote.status.ready": "준비됨",
   "remote.status.running": "실행 중",

@@ -2777,6 +2777,7 @@ export const ja: Record<TKey, string> = {
   "remote.send": "送信",
   "remote.stop": "セッションを停止",
   "remote.requestFailed": "リモートワークスペースの要求に失敗しました。",
+  "remote.submissionUnknown": "送信状況を確認できません。再送信する前にセッションを確認してください。",
   "remote.status.starting": "開始中",
   "remote.status.ready": "準備完了",
   "remote.status.running": "実行中",

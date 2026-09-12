@@ -2742,6 +2742,7 @@ export const zhTW: Record<TKey, string> = {
   "remote.send": "傳送",
   "remote.stop": "停止工作階段",
   "remote.requestFailed": "遠端工作區要求失敗。",
+  "remote.submissionUnknown": "無法確認傳送狀態。請先檢查工作階段，再決定是否重新傳送。",
   "remote.status.starting": "正在啟動",
   "remote.status.ready": "就緒",
   "remote.status.running": "執行中",

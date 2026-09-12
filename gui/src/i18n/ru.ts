@@ -2779,6 +2779,7 @@ export const ru: Record<TKey, string> = {
   "remote.send": "Отправить",
   "remote.stop": "Остановить сеанс",
   "remote.requestFailed": "Запрос удалённого рабочего пространства завершился ошибкой.",
+  "remote.submissionUnknown": "Статус отправки неизвестен. Проверьте сеанс перед повторной отправкой.",
   "remote.status.starting": "Запуск",
   "remote.status.ready": "Готово",
   "remote.status.running": "Выполняется",

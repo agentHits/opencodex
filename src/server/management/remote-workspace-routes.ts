@@ -122,7 +122,7 @@ export async function handleRemoteWorkspaceRoutes(ctx: ManagementContext): Promi
     try {
       const body = await jsonObject(req);
       exactBodyKeys(body, ["prompt"]);
-      return response(await sessions.prompt(promptMatch[1]!, body.prompt));
+      return response(sessions.submitPrompt(promptMatch[1]!, body.prompt), 202);
     } catch (error) {
       rethrowManagementBodyTooLarge(error);
       return response({ error: error instanceof Error ? error.message : "Remote Workspace turn failed." }, 409);

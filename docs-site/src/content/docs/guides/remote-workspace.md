@@ -120,6 +120,8 @@ Send prompts from the Hub dashboard on Computer 1, Computer 3, or a phone. The s
 to another computer or folder silently. If the Executor disconnects, the session enters
 **Executor offline** and never falls back to the Hub's filesystem.
 
+Prompt submission acknowledges acceptance immediately; the dashboard polls the session for progress and completion. If the acknowledgement is lost, the draft remains visible with an unknown-submission notice. Check session progress before sending it again; the dashboard never retries a prompt automatically.
+
 **Stop** remains available while a prompt is running. It interrupts the Hub coding-agent turn,
 cancels an active Executor command, and prevents a late response from reopening the stopped
 session.
@@ -187,3 +189,7 @@ Remote Workspace does not copy or synchronize credentials to other computers. It
 Remote Hub provider routing and from any future hosted compute or Super Sync product. A production
 release still requires signed Windows helper packaging, native CI proof on the exact binaries,
 independent maintainer review, and a real three-computer acceptance run.
+
+## Prompt acceptance API
+
+`POST /api/remote-workspace/sessions/:id/prompt` returns HTTP 202 with the accepted session snapshot. Its session ID and monotonic event sequence identify the acceptance snapshot; 202 does not mean that the model turn completed. Poll `GET /api/remote-workspace/sessions` for later events and terminal status. Reconnect and runtime resume remain busy while that turn is active. A lost acknowledgement leaves acceptance unknown, so clients must poll before choosing whether to submit again.

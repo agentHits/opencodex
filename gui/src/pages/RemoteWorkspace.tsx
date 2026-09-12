@@ -128,9 +128,15 @@ export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: strin
     ? selectedProfile
     : availableProfiles[0] ?? selectedProfile;
   const remoteSessions = state?.sessions ?? [];
-  const effectiveSession = remoteSessions.find(session => session.id === selectedSessionId)
-    ?? (localSession && localSession.id === selectedSessionId ? localSession : null)
-    ?? [...remoteSessions].reverse().find(session => session.status !== "stopped")
+  const fallbackSession = [...remoteSessions].reverse().find(session => session.status !== "stopped");
+  const wantedSessionId = selectedSessionId || localSession?.id || fallbackSession?.id;
+  const polledSession = remoteSessions.find(session => session.id === wantedSessionId);
+  const selectedLocal = localSession?.id === wantedSessionId ? localSession : null;
+  const selectedSession = selectedLocal && (!polledSession
+    || (selectedLocal.events.at(-1)?.sequence ?? 0) > (polledSession.events.at(-1)?.sequence ?? 0))
+    ? selectedLocal : polledSession;
+  const effectiveSession = selectedSession
+    ?? fallbackSession
     ?? localSession;
 
   const prompt = drafts[effectiveSession?.id ?? ""] ?? "";
@@ -198,21 +204,28 @@ export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: strin
     if (!effectiveSession || !canSend) return;
     const target = effectiveSession;
     const submitted = prompt;
-    setPrompt("");
     setPromptPending(true);
     setNotice(null);
+    let responseStatus: number | undefined;
     try {
-      const session = await mutate<RemoteSession>(`/api/remote-workspace/sessions/${target.id}/prompt`, {
+      const response = await fetch(`${apiBase}/api/remote-workspace/sessions/${target.id}/prompt`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompt: submitted }),
-      }, t("remote.requestFailed"));
+      });
+      responseStatus = response.status;
+      const session = await readJsonOrThrow<RemoteSession>(response, t("remote.requestFailed"));
+      if (!session) throw new Error(t("remote.requestFailed"));
+      setPrompt(current => current === submitted ? "" : current);
       if (stoppedSessionId.current !== target.id) setLocalSession(session);
       void resource.refresh();
     } catch (error) {
       if (stoppedSessionId.current !== target.id) {
-        setPrompt(current => current || submitted);
-        setNotice({ tone: "err", text: error instanceof Error ? error.message : t("remote.requestFailed") });
+        const rejected = responseStatus !== undefined && responseStatus >= 400 && responseStatus < 500;
+        setNotice({ tone: "err", text: rejected
+          ? error instanceof Error ? error.message : t("remote.requestFailed")
+          : t("remote.submissionUnknown") });
+        void resource.refresh();
       }
     } finally { setPromptPending(false); }
   };

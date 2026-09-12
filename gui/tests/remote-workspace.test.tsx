@@ -212,6 +212,47 @@ test("disabled status presents explicit activation instructions", async () => {
   expect(host.textContent).not.toContain("Create pairing code");
 });
 
+test("202 acceptance stays busy over an older ready poll and does not resubmit", async () => {
+  let sends = 0;
+  const stale = readySnapshot();
+  const accepted = { ...stale.sessions[0]!, status: "running", events: [{ sequence: 2, at: "2026-01-01T00:00:01Z", type: "status", text: "Turn accepted" }] };
+  Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/prompt")) { sends++; return jsonResponse(accepted, 202); }
+    return jsonResponse(stale);
+  });
+  const { host, act, button } = await mountRemotePage("/accepted-fixture");
+  const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+  const type = async (value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, value);
+    textarea.dispatchEvent(new win.Event("input", { bubbles: true }) as never);
+  });
+  await type("first turn");
+  await act(async () => { button("Send").click(); });
+  expect(textarea.value).toBe("");
+  await type("next turn");
+  expect(button("Send").disabled).toBe(true);
+  expect(button("Stop").disabled).toBe(false);
+  expect(sends).toBe(1);
+});
+
+test("lost acceptance keeps the draft and reports uncertainty without retrying", async () => {
+  let sends = 0;
+  Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/prompt")) { sends++; throw new TypeError("connection lost"); }
+    return jsonResponse(readySnapshot());
+  });
+  const { host, act, button } = await mountRemotePage("/unknown-acceptance-fixture");
+  const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "unconfirmed turn");
+    textarea.dispatchEvent(new win.Event("input", { bubbles: true }) as never);
+  });
+  await act(async () => { button("Send").click(); });
+  expect(textarea.value).toBe("unconfirmed turn");
+  expect(host.textContent).toContain("Submission status is unknown");
+  expect(sends).toBe(1);
+});
+
 test("a failed prompt preserves the newer draft and pairing never disables Stop", async () => {
   let finishPrompt!: () => void;
   let finishPairing!: () => void;

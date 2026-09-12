@@ -2790,6 +2790,7 @@ export const en = {
   "remote.send": "Send",
   "remote.stop": "Stop session",
   "remote.requestFailed": "Remote Workspace request failed.",
+  "remote.submissionUnknown": "Submission status is unknown. Check the session before sending again.",
   "remote.status.starting": "Starting",
   "remote.status.ready": "Ready",
   "remote.status.running": "Running",

@@ -142,7 +142,7 @@ describe("Remote Workspace management routes", () => {
       availability: emptySessions.availability.bind(emptySessions),
       list: () => [summary],
       async create(input: unknown) { calls.push(["create", input]); return summary; },
-      async prompt(id: string, prompt: unknown) { calls.push(["prompt", id, prompt]); return summary; },
+      submitPrompt(id: string, prompt: unknown) { calls.push(["prompt", id, prompt]); return summary; },
       async stop(id: string) { calls.push(["stop", id]); return true; },
     } as unknown as RemoteWorkspaceSessionService;
 
@@ -175,7 +175,7 @@ describe("Remote Workspace management routes", () => {
       { prompt: "Run on Computer 2" },
       sessions,
     );
-    expect(prompted.status).toBe(200);
+    expect(prompted.status).toBe(202);
     const stopped = await call(
       hubConfig,
       hub,

@@ -512,6 +512,16 @@ export class RemoteWorkspaceSessionService {
   }
 
   async prompt(sessionId: string, value: unknown): Promise<RemoteWorkspaceSessionSummary> {
+    const session = this.startPrompt(sessionId, value);
+    await session.operation;
+    return this.publicSession(session);
+  }
+
+  submitPrompt(sessionId: string, value: unknown): RemoteWorkspaceSessionSummary {
+    return this.publicSession(this.startPrompt(sessionId, value));
+  }
+
+  private startPrompt(sessionId: string, value: unknown): LiveSession {
     const prompt = boundedPrompt(value);
     const session = this.sessions.get(sessionId);
     if (!session || session.status === "stopped") throw new Error("remote workspace session is not ready");
@@ -523,6 +533,7 @@ export class RemoteWorkspaceSessionService {
     session.turnActive = true;
     const run = async () => {
       try {
+        this.status(session, "running", "Turn accepted");
         await this.ensureRemoteTransport(session);
         await this.ensureRuntime(session);
         if (session.stopOperation) throw new Error("remote workspace session is stopping");
@@ -544,8 +555,10 @@ export class RemoteWorkspaceSessionService {
       }
     };
     session.operation = run();
-    await session.operation;
-    return this.publicSession(session);
+    // Polling observes the stored terminal status; awaited callers and cleanup retain
+    // the original rejecting promise, with an observer attached before detachment.
+    void session.operation.catch(() => {});
+    return session;
   }
 
   async stop(sessionId: string): Promise<boolean> {
@@ -695,7 +708,7 @@ export class RemoteWorkspaceSessionService {
     if (session.remoteTransport) session.remoteTransport.replace(transport);
     else session.remoteTransport = new SwitchableRemoteWorkspaceTransport(transport);
     session.closeTransport = () => connection.closeSession(session.id);
-    this.status(session, "ready", `${session.profile} reconnected to ${session.deviceName}/${session.rootLabel}`);
+    this.status(session, session.turnActive ? "running" : "ready", `${session.profile} reconnected to ${session.deviceName}/${session.rootLabel}`);
   }
 
   private async ensureRuntime(session: LiveSession): Promise<void> {
@@ -744,7 +757,7 @@ export class RemoteWorkspaceSessionService {
       }
       session.threadId = handle.threadId;
       session.handle = handle;
-      this.status(session, "ready", `${session.profile} resumed on ${session.deviceName}/${session.rootLabel}`);
+      this.status(session, session.turnActive ? "running" : "ready", `${session.profile} resumed on ${session.deviceName}/${session.rootLabel}`);
     } finally {
       releaseRuntime();
     }
