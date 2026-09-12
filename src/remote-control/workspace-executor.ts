@@ -188,7 +188,8 @@ function assertOpenedRegularFile(root: string, target: string, descriptor: numbe
 
 function readBoundedRegularFile(root: string, target: string, maximum: number): { body: Buffer; mode: number } {
   const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
-  const descriptor = openSync(target, constants.O_RDONLY | noFollow);
+  const nonBlock = typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0;
+  const descriptor = openSync(target, constants.O_RDONLY | noFollow | nonBlock);
   try {
     const metadata = assertOpenedRegularFile(root, target, descriptor, maximum);
     const body = Buffer.alloc(metadata.size);

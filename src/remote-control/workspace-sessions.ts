@@ -283,6 +283,7 @@ export class RemoteWorkspaceSessionService {
   private readonly pendingCreates = new Set<Promise<RemoteWorkspaceSessionSummary>>();
   private startupCleanupFailure: Error | null = null;
   private readonly sessions = new Map<string, LiveSession>();
+  private readonly runtimeReservations = new Map<string, string>();
   private readonly runtimes = new Map<RemoteWorkspaceAgentProfile, RemoteWorkspaceRuntimeFactory>();
   private sequence = 0;
   private availabilityCache: { at: number; value: RuntimeAvailability } | null = null;
@@ -355,6 +356,21 @@ export class RemoteWorkspaceSessionService {
     return session ? this.publicSession(session) : null;
   }
 
+  private reserveRuntime(deviceId: string): () => void {
+    const live = [...this.sessions.values()].filter(session => session.handle !== null);
+    const pending = [...this.runtimeReservations.values()];
+    if (live.length + pending.length >= MAX_LIVE_SESSIONS) {
+      throw new Error("remote workspace active session limit reached");
+    }
+    if (live.filter(session => session.deviceId === deviceId).length
+      + pending.filter(device => device === deviceId).length >= REMOTE_CONTROL_MAX_SESSIONS_PER_DEVICE) {
+      throw new Error("remote workspace executor session limit reached");
+    }
+    const reservation = randomUUID();
+    this.runtimeReservations.set(reservation, deviceId);
+    return () => { this.runtimeReservations.delete(reservation); };
+  }
+
   create(input: {
     profile: RemoteWorkspaceAgentProfile;
     deviceId: string;
@@ -375,126 +391,123 @@ export class RemoteWorkspaceSessionService {
   }): Promise<RemoteWorkspaceSessionSummary> {
     if (this.shuttingDown) throw new Error("remote workspace hub is stopping");
     this.pruneRetainedSessions();
-    const liveCount = [...this.sessions.values()].filter(session => session.handle !== null).length;
-    if (liveCount >= MAX_LIVE_SESSIONS) throw new Error("remote workspace active session limit reached");
-    const deviceLiveCount = [...this.sessions.values()].filter(session => (
-      session.deviceId === input.deviceId && session.handle !== null
-    )).length;
-    if (deviceLiveCount >= REMOTE_CONTROL_MAX_SESSIONS_PER_DEVICE) {
-      throw new Error("remote workspace executor session limit reached");
-    }
-    const factory = this.runtimes.get(input.profile);
-    if (!factory) throw new Error(`remote workspace ${input.profile} runtime is not installed on the hub`);
-    const available = await factory.available();
-    if (this.shuttingDown) throw new Error("remote workspace hub is stopping");
-    if (!available.available) throw new Error(available.reason ?? `remote workspace ${input.profile} runtime is unavailable`);
-    const device = this.hub.listDevices().find(candidate => candidate.id === input.deviceId);
-    if (!device) throw new Error("remote workspace device not found");
-    const root = device.roots.find(candidate => candidate.id === input.rootId);
-    if (!root) throw new Error("remote workspace root not found on the selected device");
-    const connection = this.hub.connection(device.id);
-    if (!connection) throw new Error("remote workspace executor is offline");
-    const id = randomUUID();
-    const accessMode = parseAccessMode(input.accessMode ?? "read-only");
-    const deviceCapabilities = parseRemoteWorkspaceCapabilities(device.capabilities);
-    const capabilities = accessMode === "read-only"
-      ? parseRemoteWorkspaceCapabilities(["workspace.read"])
-      : deviceCapabilities;
-    const tools = remoteWorkspaceToolsForCapabilities(capabilities);
-    const connectionCapabilities = connection.capabilities();
-    if (capabilities.some(capability => !connectionCapabilities.includes(capability))) {
-      throw new Error("remote workspace executor capability advertisement is stale; refresh and try again");
-    }
-    const timestamp = new Date(this.now()).toISOString();
-    const session: LiveSession = {
-      id,
-      profile: input.profile,
-      accessMode,
-      deviceId: device.id,
-      deviceName: device.name,
-      rootId: root.id,
-      rootLabel: root.label,
-      capabilities,
-      tools,
-      threadId: null,
-      resumable: false,
-      status: "starting",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      events: [],
-      handle: null,
-      unregister: null,
-      closeTransport: null,
-      operation: Promise.resolve(),
-      stopOperation: null,
-      remoteTransport: null,
-      turnActive: false,
-    };
-    this.sessions.set(id, session);
-    this.emit(session, "status", `Starting ${input.profile} on ${device.name}/${root.label}`);
+    const releaseRuntime = this.reserveRuntime(input.deviceId);
     try {
-      this.persist();
-    } catch (error) {
-      this.sessions.delete(id);
-      throw error;
-    }
-    try {
-      session.closeTransport = () => connection.closeSession(id);
-      const transport = await connection.openSession({ sessionId: id, rootId: root.id, profile: input.profile, capabilities });
-      if (session.stopOperation) {
-        await session.closeTransport().catch(() => {});
-        session.closeTransport = null;
-        throw new Error("remote workspace session was stopped while starting");
+      const factory = this.runtimes.get(input.profile);
+      if (!factory) throw new Error(`remote workspace ${input.profile} runtime is not installed on the hub`);
+      const available = await factory.available();
+      if (this.shuttingDown) throw new Error("remote workspace hub is stopping");
+      if (!available.available) throw new Error(available.reason ?? `remote workspace ${input.profile} runtime is unavailable`);
+      const device = this.hub.listDevices().find(candidate => candidate.id === input.deviceId);
+      if (!device) throw new Error("remote workspace device not found");
+      const root = device.roots.find(candidate => candidate.id === input.rootId);
+      if (!root) throw new Error("remote workspace root not found on the selected device");
+      const connection = this.hub.connection(device.id);
+      if (!connection) throw new Error("remote workspace executor is offline");
+      const id = randomUUID();
+      const accessMode = parseAccessMode(input.accessMode ?? "read-only");
+      const deviceCapabilities = parseRemoteWorkspaceCapabilities(device.capabilities);
+      const capabilities = accessMode === "read-only"
+        ? parseRemoteWorkspaceCapabilities(["workspace.read"])
+        : deviceCapabilities;
+      const tools = remoteWorkspaceToolsForCapabilities(capabilities);
+      const connectionCapabilities = connection.capabilities();
+      if (capabilities.some(capability => !connectionCapabilities.includes(capability))) {
+        throw new Error("remote workspace executor capability advertisement is stale; refresh and try again");
       }
-      const remoteTransport = new SwitchableRemoteWorkspaceTransport(transport);
-      session.remoteTransport = remoteTransport;
-      const coordinator = new RemoteWorkspaceCoordinator(remoteTransport);
-      const handle = await factory.start({
-        sessionId: id,
+      const timestamp = new Date(this.now()).toISOString();
+      const session: LiveSession = {
+        id,
+        profile: input.profile,
+        accessMode,
         deviceId: device.id,
         deviceName: device.name,
         rootId: root.id,
         rootLabel: root.label,
         capabilities,
         tools,
-        coordinator,
-        emit: (type, text) => this.emit(session, type, text),
-      });
-      if (session.stopOperation || this.shuttingDown) {
-        await this.stopLateRuntime(handle);
-        throw new Error("remote workspace session was stopped while starting");
+        threadId: null,
+        resumable: false,
+        status: "starting",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        events: [],
+        handle: null,
+        unregister: null,
+        closeTransport: null,
+        operation: Promise.resolve(),
+        stopOperation: null,
+        remoteTransport: null,
+        turnActive: false,
+      };
+      this.sessions.set(id, session);
+      this.emit(session, "status", `Starting ${input.profile} on ${device.name}/${root.label}`);
+      try {
+        this.persist();
+      } catch (error) {
+        this.sessions.delete(id);
+        throw error;
       }
-      session.threadId = handle.threadId;
-      session.resumable = handle.canResume?.() ?? true;
-      session.handle = handle;
-      session.unregister = coordinator.register({
-        sessionId: id,
-        threadId: handle.threadId,
-        executorDeviceId: device.id,
-        executorName: device.name,
-        rootId: root.id,
-        capabilities,
-        tools,
-      });
-      this.status(session, "ready", `${input.profile} is ready on ${device.name}/${root.label}`);
-      return this.publicSession(session);
-    } catch (error) {
-      let reported = error;
-      if (session.status !== "stopped") {
-        try {
-          this.status(session, "failed", error instanceof Error ? error.message : "remote workspace session failed to start");
-        } catch (persistenceError) {
-          reported = persistenceError;
+      try {
+        session.closeTransport = () => connection.closeSession(id);
+        const transport = await connection.openSession({ sessionId: id, rootId: root.id, profile: input.profile, capabilities });
+        if (session.stopOperation) {
+          await session.closeTransport().catch(() => {});
+          session.closeTransport = null;
+          throw new Error("remote workspace session was stopped while starting");
         }
+        const remoteTransport = new SwitchableRemoteWorkspaceTransport(transport);
+        session.remoteTransport = remoteTransport;
+        const coordinator = new RemoteWorkspaceCoordinator(remoteTransport);
+        const handle = await factory.start({
+          sessionId: id,
+          deviceId: device.id,
+          deviceName: device.name,
+          rootId: root.id,
+          rootLabel: root.label,
+          capabilities,
+          tools,
+          coordinator,
+          emit: (type, text) => this.emit(session, type, text),
+        });
+        if (session.stopOperation || this.shuttingDown) {
+          await this.stopLateRuntime(handle);
+          throw new Error("remote workspace session was stopped while starting");
+        }
+        session.threadId = handle.threadId;
+        session.resumable = handle.canResume?.() ?? true;
+        session.handle = handle;
+        session.unregister = coordinator.register({
+          sessionId: id,
+          threadId: handle.threadId,
+          executorDeviceId: device.id,
+          executorName: device.name,
+          rootId: root.id,
+          capabilities,
+          tools,
+        });
+        this.status(session, "ready", `${input.profile} is ready on ${device.name}/${root.label}`);
+        return this.publicSession(session);
+      } catch (error) {
+        let reported = error;
+        if (session.status !== "stopped") {
+          try {
+            this.status(session, "failed", error instanceof Error ? error.message : "remote workspace session failed to start");
+          } catch (persistenceError) {
+            reported = persistenceError;
+          }
+        }
+        session.unregister?.();
+        session.unregister = null;
+        await session.handle?.stop().catch(() => {});
+        session.handle = null;
+        await session.closeTransport?.().catch(() => {});
+        session.closeTransport = null;
+        session.remoteTransport = null;
+        throw reported;
       }
-      session.unregister?.();
-      session.unregister = null;
-      await session.handle?.stop().catch(() => {});
-      session.handle = null;
-      await session.closeTransport?.().catch(() => {});
-      session.closeTransport = null;
-      session.remoteTransport = null;
-      throw reported;
+    } finally {
+      releaseRuntime();
     }
   }
 
@@ -690,43 +703,48 @@ export class RemoteWorkspaceSessionService {
     }
     const factory = this.runtimes.get(session.profile);
     if (!factory) throw new Error(`remote workspace ${session.profile} runtime is not installed on the hub`);
-    const available = await factory.available();
-    if (this.shuttingDown) throw new Error("remote workspace hub is stopping");
-    if (!available.available) throw new Error(available.reason ?? `remote workspace ${session.profile} runtime is unavailable`);
-    const coordinator = new RemoteWorkspaceCoordinator(session.remoteTransport);
-    const handle = await factory.start({
-      sessionId: session.id,
-      deviceId: session.deviceId,
-      deviceName: session.deviceName,
-      rootId: session.rootId,
-      rootLabel: session.rootLabel,
-      capabilities: [...session.capabilities],
-      tools: [...session.tools],
-      resumeThreadId: session.threadId,
-      coordinator,
-      emit: (type, text) => this.emit(session, type, text),
-    });
-    if (this.shuttingDown || session.stopOperation) {
-      await this.stopLateRuntime(handle);
-      throw new Error("remote workspace session was stopped while resuming");
-    }
+    const releaseRuntime = this.reserveRuntime(session.deviceId);
     try {
-      session.unregister = coordinator.register({
+      const available = await factory.available();
+      if (this.shuttingDown) throw new Error("remote workspace hub is stopping");
+      if (!available.available) throw new Error(available.reason ?? `remote workspace ${session.profile} runtime is unavailable`);
+      const coordinator = new RemoteWorkspaceCoordinator(session.remoteTransport);
+      const handle = await factory.start({
         sessionId: session.id,
-        threadId: handle.threadId,
-        executorDeviceId: session.deviceId,
-        executorName: session.deviceName,
+        deviceId: session.deviceId,
+        deviceName: session.deviceName,
         rootId: session.rootId,
+        rootLabel: session.rootLabel,
         capabilities: [...session.capabilities],
         tools: [...session.tools],
+        resumeThreadId: session.threadId,
+        coordinator,
+        emit: (type, text) => this.emit(session, type, text),
       });
-    } catch (error) {
-      await handle.stop().catch(() => {});
-      throw error;
+      if (this.shuttingDown || session.stopOperation) {
+        await this.stopLateRuntime(handle);
+        throw new Error("remote workspace session was stopped while resuming");
+      }
+      try {
+        session.unregister = coordinator.register({
+          sessionId: session.id,
+          threadId: handle.threadId,
+          executorDeviceId: session.deviceId,
+          executorName: session.deviceName,
+          rootId: session.rootId,
+          capabilities: [...session.capabilities],
+          tools: [...session.tools],
+        });
+      } catch (error) {
+        await handle.stop().catch(() => {});
+        throw error;
+      }
+      session.threadId = handle.threadId;
+      session.handle = handle;
+      this.status(session, "ready", `${session.profile} resumed on ${session.deviceName}/${session.rootLabel}`);
+    } finally {
+      releaseRuntime();
     }
-    session.threadId = handle.threadId;
-    session.handle = handle;
-    this.status(session, "ready", `${session.profile} resumed on ${session.deviceName}/${session.rootLabel}`);
   }
 
   private refreshOfflineStates(): void {

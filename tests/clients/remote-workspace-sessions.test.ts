@@ -47,6 +47,9 @@ function deferred(): {
 function createHarness(options: {
   promptGate?: ReturnType<typeof deferred>;
   startGate?: ReturnType<typeof deferred>;
+  availableGate?: ReturnType<typeof deferred>;
+  onAvailable?: () => void;
+  deviceIds?: string[];
   onStart?: () => void;
   lazyResumable?: boolean;
   eventsAtStart?: number;
@@ -55,6 +58,7 @@ function createHarness(options: {
   onStop?: (call: number) => Promise<void>;
   closeError?: Error;
 } = {}): Harness {
+  const deviceIds = options.deviceIds ?? [DEVICE_ID];
   let online = true;
   let stops = 0;
   let opens = 0;
@@ -69,7 +73,7 @@ function createHarness(options: {
     const state = { online: true };
     transportStates.push(state);
     return {
-      isOnline: deviceId => state.online && deviceId === DEVICE_ID,
+      isOnline: deviceId => state.online && deviceIds.includes(deviceId),
       async invoke(request) {
         if (!state.online) throw new Error("transport offline");
         invocations.push({ tool: request.tool, rootId: request.rootId });
@@ -86,8 +90,8 @@ function createHarness(options: {
     },
   };
   const hub = {
-    listDevices: () => [{
-      id: DEVICE_ID,
+    listDevices: () => deviceIds.map(id => ({
+      id,
       name: "Build box",
       platform: "linux",
       capabilities: ["workspace.read", "workspace.write", "workspace.exec"],
@@ -95,13 +99,17 @@ function createHarness(options: {
       online,
       createdAt: "2026-01-01T00:00:00.000Z",
       lastSeenAt: null,
-    }],
-    connection: (deviceId: string) => online && deviceId === DEVICE_ID ? connection : null,
+    })),
+    connection: (deviceId: string) => online && deviceIds.includes(deviceId) ? connection : null,
   } as unknown as RemoteWorkspaceHub;
 
   const factory: RemoteWorkspaceRuntimeFactory = {
     profile: "codex",
-    async available() { return { available: true, version: "test" }; },
+    async available() {
+      options.onAvailable?.();
+      if (options.availableGate) await options.availableGate.promise;
+      return { available: true, version: "test" };
+    },
     async start({ coordinator, emit, resumeThreadId }) {
       options.onStart?.();
       if (options.startGate) await options.startGate.promise;
@@ -158,6 +166,81 @@ function createHarness(options: {
 }
 
 describe("Remote Workspace session service", () => {
+  for (const operation of ["create", "resume"] as const) {
+    for (const scope of ["device", "global"] as const) {
+      test(`${operation} reserves ${scope} capacity before awaiting runtime availability`, async () => {
+        const deviceIds = scope === "device" ? [DEVICE_ID] : [DEVICE_ID, "device-2", "device-3"];
+        const limit = scope === "device" ? 4 : 8;
+        const store = new MemorySessionStore();
+        if (operation === "resume") {
+          const seed = createHarness({ sessionStore: store });
+          await seed.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+          await seed.service.shutdown();
+          const template = store.state!.sessions[0]!;
+          store.state!.sessions = Array.from({ length: limit + 1 }, (_, index) => ({
+            ...structuredClone(template), id: `resume-${index}`, threadId: `thread-${index}`,
+            deviceId: deviceIds[index % deviceIds.length]!,
+          }));
+        }
+        const gate = deferred();
+        const entered = deferred();
+        let availableCalls = 0;
+        const harness = createHarness({
+          deviceIds, sessionStore: store, availableGate: gate,
+          onAvailable: () => { if (++availableCalls === limit) entered.resolve(); },
+        });
+        const call = (index: number) => operation === "create"
+          ? harness.service.create({ profile: "codex", deviceId: deviceIds[index % deviceIds.length]!, rootId: ROOT_ID })
+          : harness.service.prompt(`resume-${index}`, "Resume");
+        const admitted = Array.from({ length: limit }, (_, index) => call(index));
+        try {
+          await entered.promise;
+          await expect(call(limit)).rejects.toThrow(scope === "device" ? "executor session limit" : "active session limit");
+          expect(availableCalls).toBe(limit);
+          gate.resolve();
+          await Promise.all(admitted);
+          expect(harness.runtimeStarts()).toHaveLength(limit);
+        } finally {
+          gate.resolve();
+          await Promise.allSettled(admitted);
+          await harness.service.stopAll();
+        }
+      });
+    }
+  }
+
+  test("failed availability releases every pending runtime reservation", async () => {
+    const gate = deferred();
+    const harness = createHarness({ availableGate: gate });
+    const calls = Array.from({ length: 4 }, () => harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID }));
+    const results = Promise.allSettled(calls);
+    await expect(harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID })).rejects.toThrow("executor session limit");
+    gate.reject(new Error("availability probe failed"));
+    expect((await results).every(result => result.status === "rejected")).toBe(true);
+    await expect(harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID })).rejects.toThrow("availability probe failed");
+    expect(harness.runtimeStarts()).toHaveLength(0);
+  });
+
+  test.each(["stop", "shutdown"] as const)("%s owns a runtime returned after resume cancellation", async action => {
+    const store = new MemorySessionStore();
+    const first = createHarness({ sessionStore: store });
+    const created = await first.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+    await first.service.shutdown();
+    const gate = deferred();
+    const entered = deferred();
+    const resumed = createHarness({ sessionStore: store, startGate: gate, onStart: entered.resolve });
+    const prompt = resumed.service.prompt(created.id, "Resume").then(() => "resolved", () => "rejected");
+    await entered.promise;
+    const stopping = action === "stop" ? resumed.service.stop(created.id) : resumed.service.shutdown();
+    gate.resolve();
+    await stopping;
+    expect(await prompt).toBe("rejected");
+    expect(resumed.stopCalls()).toBe(1);
+    expect(resumed.closedSessions).toEqual([created.id]);
+    expect(resumed.invocations).toEqual([]);
+    expect(resumed.service.get(created.id)?.status).toBe(action === "stop" ? "stopped" : "waiting_for_executor");
+  });
+
   test("binds one model session to the selected executor root", async () => {
     const harness = createHarness();
     const created = await harness.service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });

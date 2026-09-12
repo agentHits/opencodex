@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdirSync,
   linkSync,
@@ -30,6 +31,7 @@ import {
   type RemoteWorkspaceTransport,
 } from "../../src/remote-control";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { repoPath } from "../helpers/repo-root";
 
 const roots: string[] = [];
 
@@ -136,6 +138,37 @@ function responseValue(response: Awaited<ReturnType<RemoteWorkspaceCoordinator["
 }
 
 describe("remote workspace coordinator and executor", () => {
+  test.skipIf(process.platform === "win32")("refuses FIFO read and write preconditions without blocking", () => {
+    const state = fixture();
+    execFileSync("mkfifo", [join(state.executorRoot, "pipe")]);
+    const child = spawnSync(process.execPath, ["--eval", `
+      import { RemoteWorkspaceExecutor } from ${JSON.stringify(repoPath("src/remote-control/workspace-executor.ts"))};
+      const executor = new RemoteWorkspaceExecutor({ deviceId: "fifo-device", roots: [{ id: "root", path: ${JSON.stringify(state.executorRoot)} }] });
+      const results = [];
+      for (const tool of ["read_file", "write_file"]) {
+        results.push(await executor.invoke({ requestId: tool, sessionId: "session", executorDeviceId: "fifo-device", rootId: "root", tool,
+          arguments: tool === "read_file" ? { path: "pipe" } : { path: "pipe", content: "x", expectedSha256: null } }));
+      }
+      console.log(JSON.stringify(results));
+    `], { encoding: "utf8", timeout: 5_000 });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(0);
+    const results = JSON.parse(child.stdout) as RemoteWorkspaceToolResult[];
+    expect(results).toHaveLength(2);
+    for (const result of results) {
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("file identity");
+    }
+  });
+
+  test("marks an oversized encoded tool result as failed consistently", async () => {
+    const state = fixture();
+    writeFileSync(join(state.executorRoot, "project", "large.txt"), "x".repeat(REMOTE_WORKSPACE_MAX_TOOL_RESULT_BYTES));
+    const response = await state.coordinator.handle(state.request("read_file", { path: "project/large.txt" }));
+    expect(response.result.success).toBe(false);
+    expect(responseValue(response)).toEqual({ ok: false, error: "remote workspace tool result exceeded the coordinator limit" });
+  });
+
   test("publishes only the namespaced client-executed tools and isolates the coordinator cwd", () => {
     expect(REMOTE_WORKSPACE_DYNAMIC_TOOLS).toHaveLength(1);
     expect(REMOTE_WORKSPACE_DYNAMIC_TOOLS[0].name).toBe(REMOTE_WORKSPACE_TOOL_NAMESPACE);
