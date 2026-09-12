@@ -217,9 +217,7 @@ export function modelDisplayNamesConfigError(
     return `${field} must contain at most ${MODEL_DISCOVERY_MAX_MODELS} entries`;
   }
   for (const [modelId, displayName] of entries) {
-    if (!isValidModelDiscoveryModelId(modelId) || ["__proto__", "prototype", "constructor"].includes(modelId)) {
-      return `${field} keys must be valid non-reserved model ids`;
-    }
+    if (!isValidModelDiscoveryModelId(modelId)) return `${field} keys must be valid model ids`;
     const safeModelId = JSON.stringify(redactSecretString(modelId));
     if (typeof displayName !== "string") return `${field}.${safeModelId} must be a string`;
     const trimmed = displayName.trim();

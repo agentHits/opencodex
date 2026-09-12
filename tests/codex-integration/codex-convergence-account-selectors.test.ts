@@ -759,7 +759,7 @@ test("provider-scoped auto-review overrides win on routed rows in both writers",
 
     writeAutoReviewModel("gpt-5.5");
     writeCatalog([
-      { ...nativeEntry(), auto_review_model_override: "static/deepseek-v4-flash" },
+      { ...nativeEntry(), slug: "gpt-5.5", auto_review_model_override: "static/deepseek-v4-flash" },
       generatedRoutedEntry("static/deepseek-v4-flash"),
       generatedRoutedEntry("static/glm-5.2"),
     ]);
