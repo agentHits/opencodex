@@ -157,7 +157,7 @@ describe("issue #1001 — forced-answer passes must produce usable output", () =
       };
     }
 
-    async function drivePasses(passes: AdapterEvent[][], seen: OcxParsedRequest[] = [], ordinaryTool = false) {
+    async function drivePasses(passes: AdapterEvent[][], seen: OcxParsedRequest[] = [], ordinaryTool = false, liveOutput = false) {
       const response = await runWithWebSearch({
         parsed: parseRequest({ model: "routed/model", input: "hi", stream: true, tools: [{ type: "web_search" }, ...(ordinaryTool ? [{ type: "function", name: "fixture", parameters: { type: "object", properties: {} } }] : [])] }),
         adapter: sequenceAdapter(passes, seen),
@@ -166,6 +166,7 @@ describe("issue #1001 — forced-answer passes must produce usable output", () =
         selectedForwardHeaders: new Headers({ authorization: "Bearer token" }),
         settings: { model: "gpt-5.6-luna", reasoning: "low", timeoutMs: 30_000 },
         maxSearches: 1,
+        streamRoutedModelOutput: liveOutput,
       });
       return collectSse(response.body!);
     }
@@ -217,7 +218,7 @@ describe("issue #1001 — forced-answer passes must produce usable output", () =
             ...(partial ? [{ type: "text_delta" as const, text: "partial answer" }] : []),
             { type: "done", stopReason },
           ];
-          const frames = await drivePasses([webSearchFirstPass, terminalPass, [{ type: "done" }]], seen);
+          const frames = await drivePasses([webSearchFirstPass, terminalPass, [{ type: "done" }]], seen, false, true);
           expect(seen).toHaveLength(2);
           expect(frames.filter(frame => ["response.incomplete", "response.completed", "response.failed"].includes(frame.event ?? "")).map(frame => frame.event)).toEqual(["response.incomplete"]);
           const terminalResponse = frames.find(frame => frame.event === "response.incomplete")!.data.response as { incomplete_details: { reason: string } };
