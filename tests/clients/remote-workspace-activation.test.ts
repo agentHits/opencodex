@@ -24,11 +24,11 @@ test("disabled management status and mutations never resolve optional services",
     get remoteWorkspaceSessions() { throw new Error("must not resolve sessions"); },
   };
   const url = new URL("http://127.0.0.1:10100/api/remote-workspace");
-  const status = await handleManagementAPI(new Request(url), url, config, deps, "gui-session");
+  const status = await handleManagementAPI(new Request(url, { headers: { host: url.host } }), url, config, deps, "gui-session");
   expect(status?.status).toBe(200);
   expect(await status?.json()).toMatchObject({ available: false, devices: [], sessions: [] });
   const mutationUrl = new URL(`${url}/pairing`);
-  const mutation = await handleManagementAPI(new Request(mutationUrl, { method: "POST" }), mutationUrl, config, deps, "gui-session");
+  const mutation = await handleManagementAPI(new Request(mutationUrl, { method: "POST", headers: { host: mutationUrl.host } }), mutationUrl, config, deps, "gui-session");
   expect(mutation?.status).toBe(404);
 });
 
@@ -39,6 +39,7 @@ test("an admin token cannot initialize a consent-bearing workspace mutation", as
     get remoteWorkspaceSessions() { throw new Error("must not resolve sessions"); },
   };
   const url = new URL("http://127.0.0.1:10100/api/remote-workspace/pairing");
-  const result = await handleManagementAPI(new Request(url, { method: "POST" }), url, config, deps, "admin-token");
+  const result = await handleManagementAPI(new Request(url, { method: "POST", headers: { host: url.host } }), url, config, deps, "admin-token");
   expect(result?.status).toBe(403);
+  expect(await result?.json()).toEqual({ error: "A dashboard session is required for Remote Workspace changes." });
 });
