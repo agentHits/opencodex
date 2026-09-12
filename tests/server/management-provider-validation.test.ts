@@ -749,11 +749,12 @@ describe("provider management validation", () => {
       modelAdapters: { "provider-image-model": "openai-chat" },
       modelPreferHostedTools: { "provider-image-model": ["image_generation"] },
     })).toContain("requires the openai-responses wire");
+    // Explicit custom-gateway preferences no longer inherit the retired native Spark rule.
     expect(providerManagementConfigError("custom", {
       adapter: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
       modelPreferHostedTools: { "gpt-5.3-codex-spark": ["image_generation"] },
-    })).toContain("does not support");
+    })).toBeNull();
     expect(providerManagementConfigError("custom-forward", {
       adapter: "openai-responses",
       baseUrl: "https://chatgpt.com/backend-api/codex",
