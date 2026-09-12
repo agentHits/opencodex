@@ -1025,6 +1025,21 @@ describe("bounded multipart encrypted task recovery", () => {
     expect(restoreCachedEncryptedAgentTasks(req, input(), routedConfig())).toBe(0);
   });
 
+  test("accepts exactly 32 whole parts without deduplicating ciphertext", async () => {
+    let sends = 0;
+    let forwarded: string[] = [];
+    globalThis.fetch = (async (_url, init) => {
+      sends++;
+      const body = JSON.parse(String(init?.body));
+      forwarded = body.input[0].content.slice(1).map((part: { encrypted_content: string }) => part.encrypted_content);
+      return new Response(recoverySse("All repeated parts retained."));
+    }) as typeof fetch;
+    const tokens = Array.from({ length: 32 }, () => FERNET_TASK);
+    expect(await recoverEncryptedAgentTaskWithResult(new Request("http://localhost/v1/responses", { headers: codexHeaders() }), multipart(tokens), {}, routedConfig())).toEqual({ recovered: true });
+    expect(forwarded).toEqual(tokens);
+    expect(sends).toBe(1);
+  });
+
   test("refuses malformed slots, nonconsecutive runs, and count/byte overflow without a fetch", async () => {
     let sends = 0;
     globalThis.fetch = (async () => { sends++; return new Response(recoverySse("must not run")); }) as typeof fetch;
@@ -1032,7 +1047,10 @@ describe("bounded multipart encrypted task recovery", () => {
     const tooLargeRaw = Buffer.alloc(57 + 16 * 131072, 0x5a);
     tooLargeRaw[0] = 0x80;
     const token = tooLargeRaw.toString("base64").replaceAll("+", "-").replaceAll("/", "_");
-    const cases = [multipart(Array.from({ length: 33 }, () => FERNET_TASK)), multipart([token]),
+    const boundedRaw = Buffer.alloc(57 + 16 * 50000, 0x5a);
+    boundedRaw[0] = 0x80;
+    const boundedToken = boundedRaw.toString("base64").replaceAll("+", "-").replaceAll("/", "_");
+    const cases = [multipart(Array.from({ length: 33 }, () => FERNET_TASK)), multipart([token]), multipart([boundedToken, boundedToken]),
       agentMessage([{ type: "input_text", text: ROUTING_ENVELOPE }, { type: "encrypted_content", encrypted_content: FERNET_TASK }, { type: "encrypted_content", encrypted_content: 123 }]),
       agentMessage([{ type: "input_text", text: ROUTING_ENVELOPE }, { type: "encrypted_content", encrypted_content: FERNET_TASK }, { type: "input_text", text: "" }, { type: "encrypted_content", encrypted_content: SECOND_FERNET_TASK }]),
     ];
@@ -1044,7 +1062,7 @@ describe("bounded multipart encrypted task recovery", () => {
     expect(sends).toBe(0);
   });
 
-  test("revalidates full input identity after asynchronous recovery", async () => {
+  test.each(["author", "header", "later-token"] as const)("revalidates %s after asynchronous recovery", async mutation => {
     let release!: (response: Response) => void;
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
@@ -1053,7 +1071,10 @@ describe("bounded multipart encrypted task recovery", () => {
     const input = multipart();
     const pending = recoverEncryptedAgentTaskWithResult(req, input, {}, routedConfig());
     await ready;
-    (input[0] as { author: string }).author = "changed-author";
+    const item = input[0] as { author: string; content: Array<Record<string, unknown>> };
+    if (mutation === "author") item.author = "changed-author";
+    else if (mutation === "header") item.content[0]!.text = ROUTING_ENVELOPE.replace("NEW_TASK", "MESSAGE");
+    else item.content[2]!.encrypted_content = FERNET_TASK;
     release(new Response(recoverySse("Must not replace changed task.")));
     expect(await pending).toEqual({ recovered: false, reason: "input_changed" });
     expect((input[0] as { type: string }).type).toBe("agent_message");
