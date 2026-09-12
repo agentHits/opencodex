@@ -21,8 +21,12 @@ Some adapters share another adapter's routed-tool semantics while retaining inde
 - `devin` is the cloud half of the same family and is also direct. It streams Cognition's
   `ApiServerService/GetChatMessage` over Connect-RPC from `runTurn` with hand-written protobuf
   framing, so like Cursor and `devin-cli` it never travels the `buildRequest`/`parseStream` path.
-  The two share a name and nothing else: separate transports, separate credentials, separate
-  adapters.
+  The `devin-cli` PRESET streams over this same adapter: the installed CLI's own
+  `credentials.toml` holds an ordinary `devin-session-token`, so that provider imports the token
+  rather than spawning a child, and the two rows differ only in where the credential came from —
+  a browser sign-in versus a signed-in local CLI. The ACP adapter above remains registered and is
+  selected by a custom-named row, never by the `devin-cli` id, because `routedProviderConfig` pins
+  the adapter from the registry for any registry id.
 
 The registry records those relationships with `contractParent`. A parent relationship does **not** mean the registry recursively constructs a parent adapter and injects it into the child. Azure and MiMo keep owning their existing internal composition. This avoids making production constructors depend on test/conformance needs and keeps this authority refactor behavior-neutral.
 
@@ -56,3 +60,10 @@ so the schema is not something a user can fix from configuration (issue #2673).
 ## Truncated tool finalization
 
 The bridge keeps an open function, custom, or tool-search call incomplete when an adapter ends with a recognized truncated stop reason. Streaming emits no argument/input completion frame for that open call, and buffered JSON applies the same status. A call already closed by its own tool-call end retains its completed state. The response remains incomplete, partial output is preserved, and truncated compaction never replaces history.
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).

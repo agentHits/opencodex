@@ -328,14 +328,14 @@ describe("truncated done preserves open tool integrity (#4312)", () => {
         };
         const args = kind === "custom_tool_call" ? "partial input" : '{"arg":"unfinished';
         const events: AdapterEvent[] = [
-          { type: "text", text: "partial answer" },
+          { type: "text_delta", text: "partial answer" },
           { type: "tool_call_start", id: "call_fixture", name: "fixture" },
           { type: "tool_call_delta", arguments: args },
           { type: "done", stopReason },
         ];
         async function* source(): AsyncGenerator<AdapterEvent> { yield* events; }
         const text = await new Response(bridgeToResponsesSSE(
-          source(), "fixture/model", undefined, undefined, undefined, undefined, 2_000, options,
+          source(), "fixture/model", undefined, options.freeformToolNames, options.toolSearchToolNames,
         )).text();
         const frames = text.split("\n\n").flatMap(frame => {
           const data = frame.split("\n").find(line => line.startsWith("data: "))?.slice(6);
