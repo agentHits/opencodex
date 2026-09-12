@@ -3074,10 +3074,13 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // that ignores the error and writes it back preserves what the operator configured.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
+      const config = normalizeApiKeyIds(salvaged.parsed);
+      const warnings = degradedListenerWarnings(parsed, config);
       return {
-        config: normalizeApiKeyIds(salvaged.parsed),
+        config,
         source: "fallback",
         error: schemaDiagnosticsError(result.error),
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
 

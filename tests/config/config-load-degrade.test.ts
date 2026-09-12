@@ -184,3 +184,19 @@ test.each([undefined, { enabled: false }])("absent or disabled listeners do not 
     expect(messages).not.toContain("managementIngress ignored");
   } finally { warn.mockRestore(); }
 });
+
+test("salvaged diagnostics retain listener warnings alongside the routing error", () => {
+  const bytes = JSON.stringify({ ...candidate(undefined),
+    routingProfiles: { bad: { candidates: [{ provider: "xai", model: "model" }] } },
+    unauthenticatedLoopbackListener: { enabled: "true" },
+    hub: { managementIngress: { enabled: true, port: 70000 } },
+  });
+  writeFileSync(getConfigPath(), bytes);
+  const diagnostics = readConfigDiagnostics();
+  expect(diagnostics.source).toBe("fallback");
+  expect(diagnostics.error).toContain("routingProfiles");
+  expect(diagnostics.config.providers.xai.note).toBe("keep me");
+  expect(diagnostics.warnings?.join("\n")).toContain("unauthenticatedLoopbackListener ignored");
+  expect(diagnostics.warnings?.join("\n")).toContain("hub.managementIngress ignored");
+  expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
+});

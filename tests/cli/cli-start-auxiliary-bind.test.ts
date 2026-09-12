@@ -35,12 +35,14 @@ for (const listener of ["unauthenticatedLoopbackListener", "hub.managementIngres
           PATH: process.env.PATH ?? "", NO_PROXY: "127.0.0.1,localhost" },
         stdout: "pipe", stderr: "pipe",
       });
-      const deadline = setTimeout(() => child.kill(), DEADLINE);
+      let timedOut = false;
+      const deadline = setTimeout(() => { timedOut = true; child.kill(); }, DEADLINE);
       try {
         const [code, stdout, stderr] = await Promise.all([
           child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
         ]);
         const output = stdout + stderr;
+        expect(timedOut, "CLI must exit on its own before the watchdog").toBe(false);
         expect(code).not.toBe(0);
         expect(output).toContain(`${listener} at 127.0.0.1:${auxiliaryPort}`);
         expect(output).not.toContain("picking another");
