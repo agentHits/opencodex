@@ -8,6 +8,7 @@ import {
   restoreMuseToolNamesInJson,
   rewriteMuseToolNamesForUpstream,
 } from "../../src/responses/muse-tool-name-alias";
+import { expandPreviousResponseInput } from "../../src/responses/state";
 import { handleResponses } from "../../src/server/responses";
 import type { OcxConfig } from "../../src/types";
 import { withTestTranslatorBudget } from "../helpers/translator-budget";
@@ -329,6 +330,7 @@ describe("muse tool-name inbound restore through handleResponses", () => {
   test("undeclared-tool guard does not fire on a continuation that echoes the hashed name", async () => {
     const savedFetch = globalThis.fetch;
     let turn = 1;
+    const outboundBodies: Array<Record<string, unknown>> = [];
     const item = {
       type: "function_call",
       id: "fc_1",
@@ -337,7 +339,8 @@ describe("muse tool-name inbound restore through handleResponses", () => {
       arguments: "{}",
       status: "completed",
     };
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (_input, init) => {
+      outboundBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       if (turn === 2) {
         return new Response(JSON.stringify({
           id: "resp_turn2",
@@ -369,7 +372,29 @@ describe("muse tool-name inbound restore through handleResponses", () => {
       const turn1Text = await turn1.text();
       expect(turn1Text).toContain('"name":"' + original + '"');
       expect(turn1Text).not.toContain('"name":"' + wire + '"');
-      await Bun.sleep(50);
+
+      const deadline = Date.now() + 2_000;
+      let cachedInput: Array<Record<string, unknown>> | undefined;
+      while (Date.now() < deadline) {
+        const expanded = expandPreviousResponseInput({
+          previous_response_id: "resp_turn1",
+          input: [{ type: "function_call_output", call_id: "c1", output: "ok" }],
+        }) as { input?: Array<Record<string, unknown>> };
+        const items = expanded.input ?? [];
+        if (items.some(entry => entry.type === "function_call" && entry.call_id === "c1")) {
+          cachedInput = items;
+          break;
+        }
+        await Bun.sleep(5);
+      }
+      if (!cachedInput) {
+        throw new Error("continuation cache did not record resp_turn1");
+      }
+      expect(cachedInput).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "search" }),
+        expect.objectContaining({ type: "function_call", id: "fc_1", call_id: "c1", name: original }),
+        expect.objectContaining({ type: "function_call_output", call_id: "c1", output: "ok" }),
+      ]));
 
       const response = await handleResponses(new Request("http://localhost/v1/responses", {
         method: "POST",
@@ -388,6 +413,13 @@ describe("muse tool-name inbound restore through handleResponses", () => {
       const json = await response.json() as { output: Array<Record<string, unknown>>; error?: unknown };
       expect(json.error).toBeUndefined();
       expect(json.output[0]).toMatchObject({ type: "function_call", name: original });
+      expect(outboundBodies).toHaveLength(2);
+      const replayed = outboundBodies[1]!.input as Array<Record<string, unknown>>;
+      expect(replayed).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "search" }),
+        expect.objectContaining({ type: "function_call", id: "fc_1", call_id: "c1", name: wire }),
+        expect.objectContaining({ type: "function_call_output", call_id: "c1", output: "ok" }),
+      ]));
     } finally {
       globalThis.fetch = savedFetch;
     }

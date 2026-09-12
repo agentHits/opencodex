@@ -328,11 +328,12 @@ Muse Spark's Responses sanitizer also drops the provider-rejected `search_conten
 unrelated models.
 
 Direct Meta Muse / Meta Model Responses (`https://api.meta.ai/v1`) also rejects function tool
-names longer than 64 characters. After namespace flattening, `src/responses/muse-tool-name-alias.ts`
-rewrites those identities on the `api.meta.ai` host only — every model, including default
-`muse-spark-1.3` — and records `convertedMuseToolNameAliases` on the adapter request. Restore
-runs hashed-to-original before namespace restore and before the undeclared-tool guard, covering
-stream payloads, non-stream JSON, continuation cache, inspection, and failover rebuilds.
+names longer than 64 characters or containing characters outside `[a-zA-Z0-9_-]`. After namespace
+flattening, `src/responses/muse-tool-name-alias.ts` rewrites those identities on the `api.meta.ai`
+host only — every model, including default `muse-spark-1.3` — and records
+`convertedMuseToolNameAliases` on the adapter request. Restore runs hashed-to-original before
+namespace restore and before the undeclared-tool guard, covering stream payloads, non-stream JSON,
+continuation cache, inspection, and failover rebuilds.
 Restore matches the tool identity on `function_call`, `custom_tool_call`, `function`, and
 `custom` objects and on `response.function_call_arguments.{done,delta}`, whose `name` sits
 outside any item and is read directly by the undeclared-tool guard.
