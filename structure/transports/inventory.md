@@ -31,6 +31,8 @@ shares the 12-image active cap. Bounded source labels are emitted in active user
 root pruning cannot erase attachment provenance; the same text participates in token estimation.
 Native Composer/MCP behavior and text-only historical replay remain unchanged.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## Provider diagnostic outbound safety
 
 Provider connection tests and live model discovery share the GET-only provider outbound wrapper.
@@ -61,5 +63,3 @@ executor contract. Main-request migration must not treat that branch as fixed-tr
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
-
-The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.

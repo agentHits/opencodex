@@ -61,6 +61,8 @@ a running app discarded a key. Local disconnect does not revoke the hub key or r
 external copies. Model-list snapshot version 1 remains a read-only contract, not a new lifecycle
 or profile-upload API. Thinking replay and prompt caching remain separate in #3719.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## Claude Desktop config-library resolution
 
 The Desktop profile writer and the management status probe share
@@ -79,5 +81,3 @@ testable on any host: stubbing `process.platform` does not propagate to `os.plat
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
-
-The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.

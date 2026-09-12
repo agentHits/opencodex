@@ -484,6 +484,8 @@ use the `[ocx:<adapter>:<event>]` prefix, go to the proxy terminal, and are buff
 `ocx debug provider logs` / `ocx debug provider logs -f`. Usage JSONL tails with
 `ocx debug usage logs [-f]`. Separate from provider buffered logs above.
 
+The shared Responses path follows the [bounded multipart recovery contract](subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## Remote credentials and bounded sessions
 
 Data keys authorize only the data matrix and authenticated catalog. Admin credentials authorize ordinary management and key rotation but cannot mint, exchange, or refresh a `gui-session`. Pairing grants are digest-only, origin-bound, one-use, capped at 128 live grants, burned after five grant failures, and source-limited after ten failures in ten minutes with at most 1,024 source buckets. `POST /api/session/logout` invalidates only the current origin/CSRF-authorized browser session.
@@ -515,5 +517,3 @@ survives availability drift, while complete/native custom orders await explicit 
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
-
-The shared Responses path follows the [bounded multipart recovery contract](subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.

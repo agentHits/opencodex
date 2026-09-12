@@ -123,6 +123,8 @@ branches that return the original target failure keep that response.
 `recovery_unavailable` includes cache/singleflight capacity and does not prove an
 upstream request was attempted. No retry or broader envelope acceptance is enabled.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## Voice diagnostic metadata
 
 `src/server/live.ts` owns optional `OCX_LIVE_FRAME_LOG` diagnostics for both sideband directions.
@@ -136,5 +138,3 @@ client responsibilities.
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
-
-The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.

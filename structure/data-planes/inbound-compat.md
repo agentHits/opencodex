@@ -67,6 +67,8 @@ releasing its lock, so upstream translation cannot continue after failed JSON co
 response finalizer continues to own retained response bytes. These are projection rules, not new
 refusal policy or changes to ordinary content/tool semantics.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## MiniMax Anthropic-compatible clients
 
 The MiniMax platform CLI's text resource posts Anthropic Messages to
@@ -93,5 +95,3 @@ falling back to OpenCodex guesses, and the integration does not write the remove
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
-
-The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.

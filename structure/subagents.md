@@ -94,6 +94,20 @@ are not added to that provider's declared ladder.
 
 Full derivation with per-line citations: `devlog/_plan/260816_codexrs_multiagent_v2_and_history_perf/013_five_cap_v1_vs_v2.md`.
 
+## Multipart encrypted task recovery
+
+`src/server/responses/agent-task-recovery.ts` admits at most 32 consecutive, individually complete
+Fernet-shaped parts with a combined 2 MiB ciphertext limit. Every encrypted slot must belong to
+that run. The existing credential admission precedes cache access; the cache key includes an
+unambiguous ordered sequence. One fixed-endpoint request forwards separate parts, and assignment
+replacement compares the complete original item snapshot before splicing the run. Recovery output
+is model-transcribed plaintext, not cryptographic fidelity proof, and no internal outage retry is added.
+
+`src/server/responses/encrypted-payload.ts` uses bounded concatenation only to recognize otherwise
+unreadable split-token shapes. The sanitizer preserves just those fragment objects and continues
+normalizing independent plaintext slots. Detection never authorizes reconstruction or recovery;
+other fragment layouts and mixed readable content retain their documented residual boundaries.
+
 ## Subagents
 
 New non-OAuth provider registrations carry `initialModelSelection` with a unique
@@ -202,17 +216,3 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
-
-## Multipart encrypted task recovery
-
-`src/server/responses/agent-task-recovery.ts` admits at most 32 consecutive, individually complete
-Fernet-shaped parts with a combined 2 MiB ciphertext limit. Every encrypted slot must belong to
-that run. The existing credential admission precedes cache access; the cache key includes an
-unambiguous ordered sequence. One fixed-endpoint request forwards separate parts, and assignment
-replacement compares the complete original item snapshot before splicing the run. Recovery output
-is model-transcribed plaintext, not cryptographic fidelity proof, and no internal outage retry is added.
-
-`src/server/responses/encrypted-payload.ts` uses bounded concatenation only to recognize otherwise
-unreadable split-token shapes. The sanitizer preserves just those fragment objects and continues
-normalizing independent plaintext slots. Detection never authorizes reconstruction or recovery;
-other fragment layouts and mixed readable content retain their documented residual boundaries.
