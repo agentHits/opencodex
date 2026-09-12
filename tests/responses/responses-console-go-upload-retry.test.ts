@@ -164,14 +164,34 @@ describe("Console destination and translated recovery controls", () => {
     expect(new URL(outbound[0]!).search).toBe("?tenant=fixture");
   });
 
-  test("a canonical row name cannot authorize another host", async () => {
+  test("a canonical row name cannot authorize a noncanonical generation path", async () => {
     const cfg = config();
-    cfg.providers["opencode-go"] = { ...cfg.providers.go!, baseUrl: "https://other.example.test/v1" };
-    let sends = 0;
-    globalThis.fetch = (async () => { sends++; return refusal(); }) as typeof fetch;
+    cfg.providers["opencode-go"] = {
+      ...cfg.providers.go!,
+      responsesPath: "/unrelated",
+      chatCompletionsPath: "/unrelated",
+    };
+    const outbound: string[] = [];
+    globalThis.fetch = (async input => { outbound.push(String(input)); return refusal(); }) as typeof fetch;
     const response = await handleResponses(request(false, "opencode-go"), cfg, { model: "", provider: "" });
     expect(response.status).toBe(400);
-    expect(sends).toBe(1);
+    // Canonical row names normalize their base URL. A configured send path survives
+    // that normalization and reaches the effective-destination recovery gate.
+    expect(outbound).toEqual(["https://opencode.ai/zen/go/v1/unrelated"]);
+    expect(await response.text()).toContain("Invalid upload request.");
+  });
+
+  test("normalization to the canonical endpoint keeps its bounded recovery", async () => {
+    const cfg = config();
+    cfg.providers["opencode-go"] = { ...cfg.providers.go!, baseUrl: "https://other.example.test/v1" };
+    const outbound: string[] = [];
+    globalThis.fetch = (async input => { outbound.push(String(input)); return refusal(); }) as typeof fetch;
+    const response = await handleResponses(request(false, "opencode-go"), cfg, { model: "", provider: "" });
+    expect(response.status).toBe(400);
+    expect(outbound).toEqual([
+      "https://opencode.ai/zen/go/v1/responses",
+      "https://opencode.ai/zen/go/v1/responses",
+    ]);
     expect(await response.text()).toContain("Invalid upload request.");
   });
 
