@@ -401,3 +401,7 @@ successful main usage refresh clears the runtime mark.
 
 Canonical forwarding alone can apply the optional client-output safety-buffering hint filter;
 API-key and custom forward destinations preserve their metadata. See [Responses transport](../transports/responses.md).
+
+## Paginated history writer boundary
+
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](../codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.

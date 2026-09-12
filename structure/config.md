@@ -199,3 +199,13 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 `dropCodexSafetyBuffering` is an optional boolean, default false. Invalid API candidates reject;
 malformed persisted values stay disabled. It controls only the allowlisted client-output hints
 described in [Responses transport](transports/responses.md), not upstream policy or model selection.
+
+## Paginated history writer boundary
+
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+The Cline client keeps connection settings and models in a separate native file pair; client path overrides and reversible writes follow [Cline paired files](clients/integrations.md#cline-paired-files).
+
+`claudeCode.stabilizePromptCache` is a default-off operator setting for
+[translated instruction stabilization](data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
+Config JSON preserves the boolean; only literal true activates the role-changing transform.

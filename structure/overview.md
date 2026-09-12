@@ -109,3 +109,5 @@ see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-
 
 Optional Codex transport-hint suppression is scoped to canonical Responses client output;
 its defaults and exclusions are owned by [Responses transport](transports/responses.md).
+
+Cline CLI is a managed file integration: its provider settings and catalog share one recoverable journal operation. The [paired-file contract](clients/integrations.md#cline-paired-files) defines its stop/restart requirement.

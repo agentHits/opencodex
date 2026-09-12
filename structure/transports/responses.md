@@ -529,3 +529,6 @@ safety_buffering fields. Pull/eager client output boundaries compose this with p
 normalization; refusal/error semantics, retryability, cancellation and captured EOF errors remain
 intact. Internal inspection observes original upstream frames. Native codex.response.metadata.headers
 WebSocket metadata and compact are excluded. This does not disable upstream safety enforcement.
+
+Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.
