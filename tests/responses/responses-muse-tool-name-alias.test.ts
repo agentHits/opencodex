@@ -55,24 +55,36 @@ describe("muse tool-name alias algorithm", () => {
     expect(wire).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
   });
 
-  test("empty after sanitize falls back to a tool_ prefix plus hash of the original", () => {
+  test("all-unsafe characters keep the underscore prefix plus hash of the original", () => {
     const original = "!!!";
-    expect(museWireToolName(original)).toBe("tool_" + sha8(original));
+    // sanitize("!!!") is "___", which is truthy, so the "tool" fallback does not fire.
+    expect(museWireToolName(original)).toBe("____" + sha8(original));
+    expect(museWireToolName(original)).toBe(hashedName(original));
+  });
+
+  test("empty input falls back to a tool_ prefix plus hash of the original", () => {
+    expect(museWireToolName("")).toBe("tool_" + sha8(""));
+    expect(museWireToolName("")).toBe(hashedName(""));
   });
 
   test("two long names sharing a 55-char prefix stay distinct", () => {
-    const prefix = "mcp__plugin_android-emulator_android-emulator__and";
+    const prefix = "mcp__plugin_android-emulator_android-emulator__android_";
     expect(prefix.length).toBe(55);
-    const a = prefix + "_install_app_extra";
-    const b = prefix + "_uninstall_extra";
+    const a = prefix + "install_app_extra_padding";
+    const b = prefix + "uninstall_app_extra_pad";
     expect(a.length).toBeGreaterThan(64);
     expect(b.length).toBeGreaterThan(64);
+    const sanitizedPrefix = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 55);
+    expect(sanitizedPrefix(a)).toBe(prefix);
+    expect(sanitizedPrefix(b)).toBe(prefix);
     const plan = buildMuseToolNameAliasPlan([a, b]);
     const wireA = plan.wireByOriginal.get(a)!;
     const wireB = plan.wireByOriginal.get(b)!;
     expect(wireA).not.toBe(wireB);
     expect(wireA).toBe(hashedName(a));
     expect(wireB).toBe(hashedName(b));
+    expect(wireA.length).toBeLessThanOrEqual(64);
+    expect(wireB.length).toBeLessThanOrEqual(64);
     expect(plan.aliases.get(wireA)).toBe(a);
     expect(plan.aliases.get(wireB)).toBe(b);
   });
@@ -199,9 +211,9 @@ describe("muse tool-name inbound restore through handleResponses", () => {
   const wire = hashedName(original);
   const config = {
     port: 0,
-    defaultProvider: "meta-muse",
+    defaultProvider: "fixture",
     providers: {
-      "meta-muse": {
+      fixture: {
         adapter: "openai-responses",
         baseUrl: "https://api.meta.ai/v1",
         authMode: "key",
@@ -230,7 +242,7 @@ describe("muse tool-name inbound restore through handleResponses", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: "meta-muse/muse-spark-1.3",
+          model: "fixture/muse-spark-1.3",
           stream: false,
           input: "search",
           tools: [{ type: "function", name: original, parameters: { type: "object" } }],
@@ -264,7 +276,7 @@ describe("muse tool-name inbound restore through handleResponses", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: "meta-muse/muse-spark-1.3",
+          model: "fixture/muse-spark-1.3",
           stream: true,
           input: "search",
           tools: [{ type: "function", name: original, parameters: { type: "object" } }],
@@ -311,7 +323,7 @@ describe("muse tool-name inbound restore through handleResponses", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: "meta-muse/muse-spark-1.3",
+          model: "fixture/muse-spark-1.3",
           stream: true,
           input: "search",
           tools: [{ type: "function", name: original, parameters: { type: "object" } }],
@@ -327,7 +339,7 @@ describe("muse tool-name inbound restore through handleResponses", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: "meta-muse/muse-spark-1.3",
+          model: "fixture/muse-spark-1.3",
           stream: false,
           previous_response_id: "resp_turn1",
           input: [
