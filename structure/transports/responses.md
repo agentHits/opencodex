@@ -471,6 +471,10 @@ retried. Guarded paths: the ChatGPT passthrough and generic adapter fetch in
 fallback. Adapters with their own `fetchResponse` (kiro, cursor, google) keep their own retry
 policies; kiro imports the shared abort/sleep helpers from this module.
 
+## Console upload rejection recovery
+
+`src/providers/opencode-zen-rate-limit.ts` recognizes the complete Console upload-rejection envelope only at the effective HTTPS opencode.ai Zen/Go generation endpoint. A provider row name cannot authorize another destination. The two recovery loops in `src/server/responses/core.ts` wait 800 ms and replay the captured serialized request once; cancellation, nonreplayable responses, other errors and a second upload rejection keep their failure semantics. The recovery kind is persisted as `console-go-upload-retry` and has a localized Logs label.
+
 ## Same-provider combo quota fallback
 
 For a failover combo with multiple models on the same Codex-login OpenAI provider, a pre-stream
