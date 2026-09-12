@@ -317,3 +317,7 @@ index 8cf1246979..4d2c63fdf1 100644
     *
 
 ```
+
+## Hint P revalidation
+
+Previous D: presentation source complete; final hosted CI remains in delivery. This branch starts from the common docs checkpoint bd34120180 and baseline product 69e3dcda. Original #3652 does not apply cleanly because relay upstreamError handling changed. Carry nonconflicting hunks and manually adapt relay/core/config hunks, preserving cancellation and error capture. Independent H1-H3 plan reflection ALIGNED remains applicable.

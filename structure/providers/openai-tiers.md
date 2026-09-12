@@ -398,3 +398,6 @@ model settings, and noncanonical `openai` rows never receive that recovery path.
 `GET /api/codex-auth/accounts?refresh=1` treats missing main credentials, HTTP 401, and allowlisted
 terminal 403 codes as `needsReauth`; generic permission failures remain non-terminal, and a
 successful main usage refresh clears the runtime mark.
+
+Canonical forwarding alone can apply the optional client-output safety-buffering hint filter;
+API-key and custom forward destinations preserve their metadata. See [Responses transport](../transports/responses.md).

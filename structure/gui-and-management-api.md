@@ -530,3 +530,6 @@ Missing, invalid or expired evidence is unknown. `gui/src/pages/Combos.tsx` wake
 expiry, including a deadline crossed before effects run, rechecks activation and visibility, and
 refreshes quota with Combo data while preserving drafts. Each successful quota snapshot also
 advances the observation clock, so a retained older row cannot defer evaluation of a fresh row.
+
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](transports/responses.md).

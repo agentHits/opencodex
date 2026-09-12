@@ -195,3 +195,7 @@ Client connection metadata stores a stable `apiKeyId` and a non-secret rotation 
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
+
+`dropCodexSafetyBuffering` is an optional boolean, default false. Invalid API candidates reject;
+malformed persisted values stay disabled. It controls only the allowlisted client-output hints
+described in [Responses transport](transports/responses.md), not upstream policy or model selection.

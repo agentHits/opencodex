@@ -150,6 +150,7 @@ import {
 } from "./relay";
 export {
   consumeForInspection,
+  codexSafetyBufferingFilterOptions,
   relaySseWithFailedTail,
   relaySseWithHeartbeat,
   relayWithAbort,

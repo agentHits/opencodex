@@ -520,3 +520,12 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+## Optional client transport hints
+
+`dropCodexSafetyBuffering` defaults to false. Canonical OpenAI forward Responses can remove only
+the two safety-buffering response headers, matching response.metadata events and top-level
+safety_buffering fields. Pull/eager client output boundaries compose this with policy failure
+normalization; refusal/error semantics, retryability, cancellation and captured EOF errors remain
+intact. Internal inspection observes original upstream frames. Native codex.response.metadata.headers
+WebSocket metadata and compact are excluded. This does not disable upstream safety enforcement.
