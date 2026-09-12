@@ -198,3 +198,7 @@ Native Codex advertisements still follow display priority; private guidance rank
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.

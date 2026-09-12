@@ -89,3 +89,7 @@ copies an authoritative catalog context window into `limit.context` and a nonemp
 reasoning ladder into `thinking.effortOptions`. Missing capabilities stay absent instead of
 falling back to OpenCodex guesses, and the integration does not write the removed
 `thinking.effort` / `defaultEffort` fields because MCode owns the active effort per session.
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.

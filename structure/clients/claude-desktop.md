@@ -75,3 +75,7 @@ away from. Resolution stays a pure function of (env, platform, home) so the Wind
 testable on any host: stubbing `process.platform` does not propagate to `os.platform()` under Bun.
 
 > Decision record: [ADR-0046](../decisions/ADR-0046-claude-desktop-config-library-resolution.md)
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.
