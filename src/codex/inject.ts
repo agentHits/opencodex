@@ -902,7 +902,11 @@ export interface CodexInjectResult {
 }
 
 class CodexHistoryPreflightRefusal extends Error {}
-class CodexRestoreRefusal extends Error {}
+class CodexRestoreRefusal extends Error {
+  constructor(readonly config: CodexRestoreConfigResult) {
+    super(config.message);
+  }
+}
 let historyArtifactStageForTests: ((stage: string) => void) | undefined;
 export function setHistoryArtifactStageForTests(hook: typeof historyArtifactStageForTests): void {
   historyArtifactStageForTests = hook;
@@ -1912,6 +1916,13 @@ export function skippedRestoreEnvelope(success: boolean, message: string): Codex
   };
 }
 
+/** Config was attempted and failed; downstream artifacts were never attempted. */
+function failedConfigRestoreEnvelope(config: CodexRestoreConfigResult): CodexNativeRestoreResult {
+  const result = skippedRestoreEnvelope(false, config.message);
+  result.artifacts.config = config;
+  return result;
+}
+
 /** The config/profile half of a native restore, reported as one artifact. */
 function restoreCodexConfigInline(kind = "sync"): CodexRestoreConfigResult {
   const preImages = captureCodexPreImages();
@@ -2005,7 +2016,7 @@ export async function restoreNativeCodexAsync(
     return await restoreNativeCodexAsyncImpl(options);
   } catch (error) {
     if (!(error instanceof CodexRestoreRefusal)) throw error;
-    return skippedRestoreEnvelope(false, error.message);
+    return failedConfigRestoreEnvelope(error.config);
   }
 }
 
@@ -2085,7 +2096,7 @@ async function restoreNativeCodexAsyncImpl(
         try {
           restored = restoreCodexConfigInline(eligibility.kind);
           // Throw inside N so the published remove transition rolls back too.
-          if (restored.state === "failed") throw new CodexRestoreRefusal(restored.message);
+          if (restored.state === "failed") throw new CodexRestoreRefusal(restored);
         } catch (error) {
           const compensated = restoreCodexPreImages(preImages);
           if (!compensated.complete) throw new CodexPartialWriteError(compensated.unrestored);
@@ -2129,7 +2140,7 @@ async function restoreNativeCodexAsyncImpl(
     config = restoreCodexConfigInline(eligibility.kind);
   }
 
-  if (config.state === "failed") return skippedRestoreEnvelope(false, config.message);
+  if (config.state === "failed") return failedConfigRestoreEnvelope(config);
   const catalog = restoreCodexCatalogArtifact(options.revalidateDesiredState === true, journaledCatalogPath);
   const outcome = await runCodexHistoryJob({
     ...resolveCodexHistoryJobTarget(),
@@ -2186,7 +2197,7 @@ export function restoreNativeCodex(options: { skipHistory?: boolean; revalidateD
   // catalog we actually wrote (#1798).
   const journaledCatalogPath = journaledInjectedCatalogPath();
   const config = restoreCodexConfigInline();
-  if (config.state === "failed") return skippedRestoreEnvelope(false, config.message);
+  if (config.state === "failed") return failedConfigRestoreEnvelope(config);
   const catalog = restoreCodexCatalogArtifact(options.revalidateDesiredState === true, journaledCatalogPath);
   // Design B (loopback) steady state: threads are already tagged openai, so prove the
   // no-op with a readonly probe instead of write-opening a DB the Codex app may hold

@@ -188,23 +188,40 @@ test("a client that gives up before dispatch releases without reaching upstream"
   expect(calls).toBe(0);
 });
 
-test("cancelling during credential selection dispatches nothing and releases the turn", async () => {
+test("cancelling during credential selection dispatches nothing", async () => {
   let calls = 0;
   setFetch(async () => { calls++; return Response.json({ value: "ok" }); });
   const controller = new AbortController();
   duringSelection = () => controller.abort();
-  let leaseReleased = 0;
-  const lease = { release: () => { leaseReleased++; } } as unknown as Parameters<typeof handleContextHistory>[4];
   const response = await handleContextHistory(
     contextRequest(JSON.stringify({ context: { session_id: "root" } }), { authorization: "Bearer test" }, controller.signal),
-    config, logContext(), "alpha/notes/v2/write_file", lease, keyAdmission);
-  lease!.release();
+    config, logContext(), "alpha/notes/v2/write_file", undefined, keyAdmission);
   // Selection is inside the deadline, so a client that leaves during it is reported as a hangup
-  // and nothing reaches upstream. The admitted turn is still handed back exactly once.
+  // and nothing reaches upstream. Listener-owned lease release is covered separately.
   expect(response.status).toBe(499);
   expect(selection).toBeDefined();
   expect(calls).toBe(0);
-  expect(leaseReleased).toBe(1);
+});
+
+test.each(["body", "selection"])("disabling the feature during %s prevents dispatch", async stage => {
+  let calls = 0;
+  setFetch(async () => { calls++; return Response.json({}); });
+  const body = JSON.stringify({ context: { session_id: "root" } });
+  if (stage === "selection") duringSelection = () => setContextFeature(false);
+  const req = stage === "body"
+    ? new Request("http://localhost/v1/alpha/notes/v2/write_file", {
+        method: "POST", headers: { authorization: "Bearer test" },
+        body: new ReadableStream({ pull(controller) {
+          setContextFeature(false);
+          controller.enqueue(new TextEncoder().encode(body));
+          controller.close();
+        } }, { highWaterMark: 0 }),
+      })
+    : contextRequest(body);
+  const response = await handleContextHistory(req, config, logContext(),
+    "alpha/notes/v2/write_file", undefined, keyAdmission);
+  expect(response.status).toBe(404);
+  expect(calls).toBe(0);
 });
 
 test("a key withdrawn during the request cannot dispatch on its earlier admission", async () => {
@@ -247,7 +264,10 @@ test("an admission without a caller principal cannot reach context history", asy
       contextRequest(JSON.stringify({ context: { session_id: "root" } })),
       config, logContext(), "alpha/notes/v2/read_file", undefined, admission);
     expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ error: { code: "context_principal_required" } });
+    expect(await response.json()).toEqual({ error: {
+      type: "permission_error", code: "permission_denied",
+      message: "Context history requires an opencodex API key on the request; admission alone carries no caller identity",
+    } });
   }
   expect(selection).toBe(before);
 });

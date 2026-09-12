@@ -136,6 +136,8 @@ async function relayContextHistory(
     })) {
       headers.set(key, value);
     }
+    // Check the assembled outbound headers, including configured provider headers.
+    validateForwardAdmissionCredential(headers, config);
     // Recheck actual wire identity after async selection/materialization. A replaced
     // account slot or login must not receive another physical account's history.
     const currentOwner = getContextSessionOwner(principalId, sessionId, candidate.provider.baseUrl);
@@ -143,8 +145,6 @@ async function relayContextHistory(
       || !contextSessionOwnerMatches(owner, headers) || !contextSessionOwnerMatches(currentOwner, headers)) {
       return formatErrorResponse(409, "context_account_unavailable", "Context account identity changed; start a new session");
     }
-    // Check the assembled outbound headers, including configured provider headers.
-    validateForwardAdmissionCredential(headers, config);
   } catch (err) {
     const cancelled = cancellationResponse(req, deadline);
     if (cancelled) return cancelled;
@@ -171,6 +171,8 @@ async function relayContextHistory(
     return formatErrorResponse(401, "authentication_error",
       "opencodex API key changed during this request; retry with current credentials");
   }
+  // The operator may disable the feature while body or credential IO is pending.
+  if (!contextRelayActivated()) return formatErrorResponse(404, "not_found", "Unknown context endpoint");
   let response: Response | undefined;
   try {
     response = await fetch(`${candidate.provider.baseUrl}/${endpoint}`, {

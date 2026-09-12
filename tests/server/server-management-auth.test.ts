@@ -1,3 +1,5 @@
+import { request as httpRequest } from "node:http";
+import { getActiveTurnCount } from "../../src/server/lifecycle";
 // Holds INV-AUTH-01 from structure/overview.md; keep the id here if this file is split or renamed.
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { SERVER_BUDGET_MS } from "../helpers/test-budget";
@@ -651,6 +653,33 @@ describe("management and data-plane credential separation", () => {
         expect(management.status).toBe(404);
       }
     } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("canceling an incomplete context body releases the actual listener turn", async () => {
+    enableContextRelay();
+    saveConfig(remoteConfig());
+    const server = startServer(0);
+    const baseline = getActiveTurnCount();
+    const request = httpRequest(new URL("/v1/alpha/notes/v2/write_file", server.url), {
+      method: "POST", headers: { authorization: "Bearer data-secret", "content-length": "1000" },
+    });
+    request.on("error", () => {}); // Destroying this deliberately unfinished request resets the socket.
+    const waitForCount = async (expected: number) => {
+      const deadline = Date.now() + 5000;
+      while (getActiveTurnCount() !== expected && Date.now() < deadline) {
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      expect(getActiveTurnCount()).toBe(expected);
+    };
+    try {
+      request.write("{"); // Never end the body: the server is waiting inside the bounded parser.
+      await waitForCount(baseline + 1);
+      request.destroy();
+      await waitForCount(baseline);
+    } finally {
+      request.destroy();
       await server.stop(true);
     }
   });

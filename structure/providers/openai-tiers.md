@@ -449,3 +449,7 @@ expired, evicted or restart-lost ownership fails closed before account selection
 that starts on route entry, before the body is read and before credential selection, so an
 unfinished body cannot hold an admitted turn. Client cancellation and deadline expiry are reported
 separately, nothing is dispatched upstream after either, and notes writes are never retried.
+
+Context relay dispatch rechecks the native experimental opt-in after body and credential waits.
+A disabled gate prevents upstream dispatch even when the request entered while enabled. Final
+materialized headers pass the proxy-credential exclusion check before owner matching.
