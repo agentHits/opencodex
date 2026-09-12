@@ -59,3 +59,5 @@ redirect blocking, but cannot inherit DNS classification or peer pinning without
 executor contract. Main-request migration must not treat that branch as fixed-transport equivalent.
 
 The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`; its isolated owner and support limits are documented in [Remote Workspace](../remote-workspace.md).
+
+Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.

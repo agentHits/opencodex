@@ -279,6 +279,7 @@ export class RemoteWorkspaceSessionFileStore implements RemoteWorkspaceSessionSt
 }
 
 export class RemoteWorkspaceSessionService {
+  private shuttingDown = false;
   private readonly sessions = new Map<string, LiveSession>();
   private readonly runtimes = new Map<RemoteWorkspaceAgentProfile, RemoteWorkspaceRuntimeFactory>();
   private sequence = 0;
@@ -358,6 +359,7 @@ export class RemoteWorkspaceSessionService {
     rootId: string;
     accessMode?: RemoteWorkspaceAccessMode;
   }): Promise<RemoteWorkspaceSessionSummary> {
+    if (this.shuttingDown) throw new Error("remote workspace hub is stopping");
     this.pruneRetainedSessions();
     const liveCount = [...this.sessions.values()].filter(session => session.handle !== null).length;
     if (liveCount >= MAX_LIVE_SESSIONS) throw new Error("remote workspace active session limit reached");
@@ -370,6 +372,7 @@ export class RemoteWorkspaceSessionService {
     const factory = this.runtimes.get(input.profile);
     if (!factory) throw new Error(`remote workspace ${input.profile} runtime is not installed on the hub`);
     const available = await factory.available();
+    if (this.shuttingDown) throw new Error("remote workspace hub is stopping");
     if (!available.available) throw new Error(available.reason ?? `remote workspace ${input.profile} runtime is unavailable`);
     const device = this.hub.listDevices().find(candidate => candidate.id === input.deviceId);
     if (!device) throw new Error("remote workspace device not found");
@@ -556,6 +559,7 @@ export class RemoteWorkspaceSessionService {
   }
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     const active = [...this.sessions.values()].filter(session => session.status !== "stopped");
     await Promise.all(active.map(async session => {
       if (session.stopOperation) {
@@ -661,6 +665,7 @@ export class RemoteWorkspaceSessionService {
     const factory = this.runtimes.get(session.profile);
     if (!factory) throw new Error(`remote workspace ${session.profile} runtime is not installed on the hub`);
     const available = await factory.available();
+    if (this.shuttingDown) throw new Error("remote workspace hub is stopping");
     if (!available.available) throw new Error(available.reason ?? `remote workspace ${session.profile} runtime is unavailable`);
     const coordinator = new RemoteWorkspaceCoordinator(session.remoteTransport);
     const handle = await factory.start({

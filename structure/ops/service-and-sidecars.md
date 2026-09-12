@@ -132,3 +132,5 @@ Binary detection decodes only the supplied buffer view; malformed UTF-8 can itse
 so the flag does not identify the peer responsible for corruption. Existing diagnostic files are
 not rewritten. Audio devices, WebRTC media negotiation, captions and spoken handoff delivery remain
 client responsibilities.
+
+Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.

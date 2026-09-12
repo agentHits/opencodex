@@ -1,3 +1,4 @@
+import { remoteWorkspaceEnabled } from "../remote-control/workspace-activation";
 import { markActivity } from "../lib/sidecar-tracker";
 import { knownModelIdsForProvider } from "../router";
 import {
@@ -253,6 +254,7 @@ const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
 // class could inject a header break or a control character into a response we control.
 const REMOTE_CATALOG_KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const GUI_PAIRING_EXCHANGE_BODY_LIMIT = 4 * 1024;
+const REMOTE_WORKSPACE_PAIRING_BODY_LIMIT = 32 * 1024;
 
 /**
  * Read at most `limit` bytes of a request body, or refuse.
@@ -875,7 +877,10 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
    */
   function managementIngressRouteAllowed(url: URL, req: Request): boolean {
     const rawPath = url.pathname;
-    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") return false;
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      return remoteWorkspaceEnabled(config) && rawPath === "/remote-workspace/agent";
+    }
+    if (rawPath === "/remote-workspace/pair") return remoteWorkspaceEnabled(config) && req.method === "POST";
     if (rawPath === "/opencodex-session") return req.method === "GET" || req.method === "POST";
     if (rawPath.startsWith("/api/")) return true;
     if (req.method !== "GET" && req.method !== "HEAD") return false;
@@ -1071,6 +1076,24 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   }
   let backgroundLifecycle: ReturnType<typeof acquireServerBackgroundLifecycle> | null = null;
   let unregisterQuotaAutoRefresh: (() => void) | null = null;
+  let remoteWorkspaceStopping = false;
+  let remoteWorkspaceShutdown: (() => Promise<void>) | undefined;
+  const managementApiDeps: ManagementApiDeps = {
+    ...deps.managementApi,
+    remoteWorkspaceStopping: () => remoteWorkspaceStopping,
+    onRemoteWorkspaceShutdown: shutdown => { remoteWorkspaceShutdown = shutdown; },
+  };
+  let workspaceRuntimeFlight: Promise<typeof import("../remote-control/workspace-runtime")> | undefined;
+  const loadRemoteWorkspaceRuntime = () => {
+    workspaceRuntimeFlight ??= import("../remote-control/workspace-runtime");
+    remoteWorkspaceShutdown = async () => {
+      const runtime = await workspaceRuntimeFlight!;
+      const sessions = deps.managementApi?.remoteWorkspaceSessions ?? runtime.initializedRemoteWorkspaceSessionsForConfig(config);
+      const hub = deps.managementApi?.remoteWorkspaceHub ?? runtime.initializedRemoteWorkspaceHubForConfig(config);
+      try { await sessions?.shutdown(); } finally { hub?.closeAllConnections(); }
+    };
+    return workspaceRuntimeFlight;
+  };
   try {
     backgroundLifecycle = acquireServerBackgroundLifecycle(applyPolicy);
     unregisterQuotaAutoRefresh = (deps.registerCodexQuotaAutoRefreshWorker
@@ -1169,6 +1192,132 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
           status: 204,
           headers: managementPreflight ? managementCorsHeaders(req, config) : corsHeaders(req, policy),
         });
+      }
+
+      // An OCX-only executor exchanges one short-lived pairing code for a device-scoped
+      // token. This is intentionally outside /api: management auth belongs to the browser
+      // that created the grant, while the new device owns only that one-time code.
+      if (url.pathname === "/remote-workspace/pair" && req.method === "POST") {
+        if (!remoteWorkspaceEnabled(config)) {
+          return Response.json({ error: "Remote Workspace is not enabled on this OpenCodex instance." }, { status: 404 });
+        }
+        // Browser JavaScript must use the authenticated dashboard route. Refusing Origin-bearing
+        // requests leaves this exchange to an explicit OCX device process and avoids turning a
+        // copied pairing code into a cross-site enrollment action.
+        if (req.headers.get("origin") !== null) {
+          return Response.json({ error: "Remote Workspace device pairing does not accept browser-origin requests." }, {
+            status: 403,
+            headers: { "cache-control": "no-store" },
+          });
+        }
+        const [{ remoteWorkspaceHubForConfig }, { RemoteWorkspacePairingRateLimitError }] = await Promise.all([
+          loadRemoteWorkspaceRuntime(),
+          import("../remote-control/workspace-hub"),
+        ]);
+        if (remoteWorkspaceStopping) return Response.json({ error: "Remote Workspace is stopping." }, { status: 503 });
+        const hub = deps.managementApi?.remoteWorkspaceHub ?? remoteWorkspaceHubForConfig(config);
+        // A loopback socket alone cannot prove that Tailscale Serve supplied its identity header:
+        // another local process can connect directly and forge it. Pairing therefore uses only the
+        // kernel-observed peer on every listener; proxied management users intentionally share the
+        // loopback bucket rather than gaining a header-rotation bypass.
+        const peer = requestServer.requestIP(req)?.address ?? "unknown";
+        const pairingSource = `${ingress}:${peer}`;
+        const rateLimitResponse = (error: unknown): Response | null => {
+          if (!(error instanceof RemoteWorkspacePairingRateLimitError)) return null;
+          return Response.json({ error: "Remote Workspace pairing is temporarily rate limited." }, {
+            status: 429,
+            headers: {
+              "cache-control": "no-store",
+              "retry-after": String(error.retryAfterSeconds),
+            },
+          });
+        };
+        try {
+          // Check the existing source block before reading or parsing an attacker-controlled body.
+          // pairDevice checks again after the await and records only code-shaped authentication
+          // failures, so malformed JSON cannot allocate one limiter entry per request.
+          hub.assertPairingSourceAllowed(pairingSource);
+        } catch (error) {
+          const limited = rateLimitResponse(error);
+          if (limited) return limited;
+          throw error;
+        }
+        const declaredLength = Number(req.headers.get("content-length") ?? "0");
+        if (!Number.isFinite(declaredLength) || declaredLength > REMOTE_WORKSPACE_PAIRING_BODY_LIMIT) {
+          return Response.json({ error: "Remote Workspace pairing body is too large." }, { status: 413 });
+        }
+        const text = await readBoundedRequestText(req, REMOTE_WORKSPACE_PAIRING_BODY_LIMIT);
+        if (text === null) return Response.json({ error: "Remote Workspace pairing body is too large." }, { status: 413 });
+        let body: unknown;
+        try { body = JSON.parse(text); }
+        catch { return Response.json({ error: "Invalid Remote Workspace pairing request." }, { status: 400 }); }
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return Response.json({ error: "Invalid Remote Workspace pairing request." }, { status: 400 });
+        }
+        const record = body as Record<string, unknown>;
+        const required = ["code", "name", "platform", "publicKey", "roots"];
+        const allowed = new Set([...required, "capabilities"]);
+        if (required.some(key => !Object.hasOwn(record, key))
+          || Object.keys(record).some(key => !allowed.has(key))) {
+          return Response.json({ error: "Invalid Remote Workspace pairing request." }, { status: 400 });
+        }
+        try {
+          const paired = hub.pairDevice(record, pairingSource);
+          return Response.json(paired, { status: 201, headers: { "cache-control": "no-store" } });
+        } catch (error) {
+          const limited = rateLimitResponse(error);
+          if (limited) return limited;
+          const message = error instanceof Error ? error.message : "Remote Workspace pairing failed.";
+          const conflict = /already in use|limit reached/i.test(message);
+          return Response.json({ error: message }, {
+            status: conflict ? 409 : 401,
+            headers: { "cache-control": "no-store" },
+          });
+        }
+      }
+
+      // Each executor holds one device-scoped bearer and opens one outbound WSS. The token is
+      // authenticated only at upgrade and never enters ws.data; subsequent frames are bound to
+      // the device identity and per-session signed E2EE handshake.
+      if (url.pathname === "/remote-workspace/agent" && req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        if (!remoteWorkspaceEnabled(config) || req.headers.get("origin") !== null) {
+          return Response.json({ error: "Remote Workspace agent upgrade refused." }, { status: 403 });
+        }
+        const authorization = req.headers.get("authorization") ?? "";
+        const match = /^Bearer (ocxrw_[A-Za-z0-9_-]{43})$/.exec(authorization);
+        if (!match) return Response.json({ error: "Remote Workspace device authentication required." }, { status: 401 });
+        const { remoteWorkspaceHubForConfig } = await loadRemoteWorkspaceRuntime();
+        const { RemoteWorkspaceHubAgentConnection } = await import("../remote-control/workspace-agent-connection");
+        if (remoteWorkspaceStopping) return Response.json({ error: "Remote Workspace is stopping." }, { status: 503 });
+        const hub = deps.managementApi?.remoteWorkspaceHub ?? remoteWorkspaceHubForConfig(config);
+        const device = hub.authenticateDeviceToken(match[1]!);
+        if (!device) return Response.json({ error: "Remote Workspace device authentication failed." }, { status: 401 });
+        const upgraded = requestServer.upgrade(req, {
+          data: {
+            kind: "remote-workspace-agent",
+            remoteWorkspaceOpen: socket => {
+              const connection = new RemoteWorkspaceHubAgentConnection({
+                deviceId: device.id,
+                devicePublicKey: device.publicKey,
+                hubIdentity: hub.identity(),
+                capabilities: device.capabilities,
+                onCapabilities: capabilities => hub.updateDeviceCapabilities(device.id, capabilities),
+                socket: {
+                  send: value => {
+                    if (socket.send(value) === 0) throw new Error("remote workspace socket send dropped");
+                  },
+                  close: (code, reason) => socket.close(code, reason),
+                },
+              });
+              hub.attachConnection(device.id, connection);
+              socket.data.remoteWorkspaceClose = () => hub.detachConnection(device.id, connection);
+              return connection;
+            },
+          } satisfies WsData,
+        });
+        return upgraded
+          ? undefined as unknown as Response
+          : Response.json({ error: "Remote Workspace WebSocket upgrade failed." }, { status: 426 });
       }
 
       // Responses WebSocket (phase 120.2). Codex upgrades the same /v1/responses path; auth is
@@ -1303,7 +1452,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
             }), req, config);
           }
         }
-        const mgmtResponse = await handleManagementAPI(req, url, config, deps.managementApi, principal, managementSessionControl);
+        const mgmtResponse = await handleManagementAPI(req, url, config, managementApiDeps, principal, managementSessionControl);
         if (mgmtResponse) return withManagementCors(mgmtResponse, req, config);
         return withManagementCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);
       }
@@ -2296,6 +2445,19 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
       // Text frames. response.processed is a no-op ack. close() aborts the upstream (RC2 parity).
       // Live sideband sockets (kind=live-sideband) are a transparent bidirectional relay instead.
       open(ws: ServerWebSocket<WsData>) {
+        if (ws.data.kind === "remote-workspace-agent") {
+          const open = ws.data.remoteWorkspaceOpen;
+          if (!open) {
+            ws.close(1011, "remote workspace connection unavailable");
+            return;
+          }
+          try {
+            ws.data.remoteWorkspaceConnection = open(ws);
+          } catch {
+            ws.close(1011, "remote workspace connection failed");
+          }
+          return;
+        }
         if (ws.data.kind === "live-sideband") {
           if (!ws.data.liveTurnAdmissionLease) {
             closeLiveSideband(ws, 1013, "server busy");
@@ -2312,6 +2474,14 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         registerCodexWebSocket(ws);
       },
       message(ws: ServerWebSocket<WsData>, raw: string | Buffer) {
+        if (ws.data.kind === "remote-workspace-agent") {
+          try {
+            ws.data.remoteWorkspaceConnection?.receive(raw);
+          } catch {
+            ws.close(1008, "remote workspace protocol error");
+          }
+          return;
+        }
         if (ws.data.kind === "live-sideband") {
           if (ws.data.liveClosing) return;
           const rawBytes = webSocketFrameBytes(raw);
@@ -2490,6 +2660,10 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         })();
       },
       close(ws: ServerWebSocket<WsData>) {
+        if (ws.data.kind === "remote-workspace-agent") {
+          ws.data.remoteWorkspaceClose?.();
+          return;
+        }
         if (ws.data.kind === "live-sideband") {
           closeLiveSideband(ws);
           return;
@@ -2560,6 +2734,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   Object.defineProperty(server, "stop", {
     configurable: true,
     value: async (closeActiveConnections?: boolean): Promise<void> => {
+      remoteWorkspaceStopping = true;
       // The orchestration lives in `runListenerShutdown` so its two competing properties —
       // cleanup completes, failure propagates — are testable without a live socket.
       await runListenerShutdown(
@@ -2571,6 +2746,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
           ...(managementIngressRef
             ? [() => managementIngressRef.stop(closeActiveConnections)]
             : []),
+          async () => { await remoteWorkspaceShutdown?.(); },
           async () => {
             try {
               userCostOverlayReconciler?.stop();
@@ -2627,7 +2803,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   if (managementIngressServer) {
     const managementPort = managementIngressServer.port ?? managementIngressPort;
     console.log(`🔒 Hub management ingress active on http://127.0.0.1:${managementPort}`);
-    console.log(`   GUI and /api/* only; data, health, readiness, and WebSockets are disabled.`);
+    console.log(`   GUI and /api/*; opted-in Remote Workspace pairing/agent only; data, health, and readiness are disabled.`);
   }
 
   // Prime pool-account quota in the background so the rotation engine has real

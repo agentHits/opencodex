@@ -31,7 +31,10 @@ export interface WsData {
   /** Fixed-size logical session lane derived at the HTTP upgrade boundary. */
   sessionLaneId?: string;
   /** Discriminator: Responses reframing vs transparent live/realtime sideband relay. */
-  kind?: "responses" | "live-sideband";
+  kind?: "responses" | "live-sideband" | "remote-workspace-agent";
+  remoteWorkspaceConnection?: { receive(raw: string | Uint8Array): void };
+  remoteWorkspaceOpen?: (socket: ServerWebSocket<WsData>) => { receive(raw: string | Uint8Array): void };
+  remoteWorkspaceClose?: () => void;
   liveUpstream?: WebSocket;
   liveUpstreamUrl?: string;
   liveUpstreamHeaders?: Record<string, string>;

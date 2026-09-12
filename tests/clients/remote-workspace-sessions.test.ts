@@ -350,3 +350,20 @@ test("read-only capability grant is forwarded on initial open and reconnect", as
   expect(harness.sessionGrants).toEqual([["workspace.read"], ["workspace.read"]]);
   await harness.service.stop(created.id);
 });
+
+
+test("availability completing after shutdown cannot create a new session", async () => {
+  const gate = deferred();
+  let started = false;
+  const service = new RemoteWorkspaceSessionService({} as RemoteWorkspaceHub, [{
+    profile: "codex",
+    async available() { await gate.promise; return { available: true }; },
+    async start() { started = true; throw new Error("must not start"); },
+  }]);
+  const outcome = service.create({ profile: "codex", deviceId: DEVICE_ID, rootId: ROOT_ID });
+  await service.shutdown();
+  gate.resolve();
+  await expect(outcome).rejects.toThrow("stopping");
+  expect(started).toBe(false);
+  expect(service.list()).toEqual([]);
+});

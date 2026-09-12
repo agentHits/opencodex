@@ -77,3 +77,5 @@ testable on any host: stubbing `process.platform` does not propagate to `os.plat
 > Decision record: [ADR-0046](../decisions/ADR-0046-claude-desktop-config-library-resolution.md)
 
 The unregistered executor CLI module stores Remote Workspace state separately from client configuration; see [Remote Workspace](../remote-workspace.md).
+
+Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.

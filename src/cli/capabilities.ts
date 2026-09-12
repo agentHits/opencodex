@@ -96,6 +96,85 @@ export const HEAD_CAPABILITIES: readonly HeadCapability[] = [
  */
 export const CAPABILITIES: readonly Capability[] = [
   {
+    "command": [
+      "remote-workspace",
+      "pair"
+    ],
+    "summary": "Enroll this executor with one Hub using a one-time code from stdin and locally approved roots.",
+    "routes": [],
+    "flags": [
+      {
+        "name": "--json",
+        "value": "boolean",
+        "summary": "Emit the public local executor status."
+      },
+      {
+        "name": "--pairing-code-stdin",
+        "value": "boolean",
+        "summary": "Read the one-time pairing code from stdin."
+      },
+      {
+        "name": "--root",
+        "value": "string",
+        "summary": "Approve an absolute workspace directory; repeatable."
+      },
+      {
+        "name": "--toolchain-root",
+        "value": "string",
+        "summary": "Approve a read-only toolchain directory; repeatable."
+      },
+      {
+        "name": "--executor-helper",
+        "value": "string",
+        "summary": "Select a reviewed native helper file."
+      },
+      {
+        "name": "--name",
+        "value": "string",
+        "summary": "Name this executor."
+      }
+    ],
+    "mutates": true,
+    "json": "payload",
+    "details": [
+      "Executor-local operation; Hub consent and session control stay in the dashboard."
+    ]
+  },
+  {
+    "command": [
+      "remote-workspace",
+      "agent"
+    ],
+    "summary": "Keep the paired executor connected to its Hub.",
+    "routes": [],
+    "flags": [],
+    "mutates": true,
+    "json": "none",
+    "details": [
+      "Executor-local operation; Hub consent and session control stay in the dashboard."
+    ]
+  },
+  {
+    "command": [
+      "remote-workspace",
+      "status"
+    ],
+    "summary": "Read local executor enrollment and available capabilities without printing credentials.",
+    "routes": [],
+    "flags": [
+      {
+        "name": "--json",
+        "value": "boolean",
+        "summary": "Emit the public local executor status."
+      }
+    ],
+    "mutates": false,
+    "json": "payload",
+    "details": [
+      "Executor-local operation; Hub consent and session control stay in the dashboard."
+    ]
+  },
+  {
     command: ["models", "price"],
     summary: "Read the saved manual price for an exact provider/model selector.",
     routes: [{ method: "GET", path: "/api/providers/{provider}/model-costs" }],

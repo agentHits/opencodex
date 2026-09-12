@@ -36,3 +36,5 @@ surfaces, run through all 3 stages in order.
 - Design methodology: Product-Personality-Selection (dev-uiux-design §1)
 - 6 design dials: mood, lightness, density, shape, typography, motion
 - 7 axes total: design → domain → feature/data/security/ops/cost (derived)
+
+Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](remote-workspace.md) owns that integration.

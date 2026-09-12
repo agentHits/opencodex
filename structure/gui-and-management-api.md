@@ -513,3 +513,5 @@ the resource's generation fence, and Most used reads usage only on explicit Appl
 survives availability drift, while complete/native custom orders await explicit replacement.
 
 The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`; its isolated owner and support limits are documented in [Remote Workspace](remote-workspace.md).
+
+Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](remote-workspace.md) owns that integration.

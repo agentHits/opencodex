@@ -1,6 +1,6 @@
 # Remote Workspace
 
-`src/remote-control/` owns Remote Workspace contracts, explicit executor construction and Hub session adapters. No module is registered with server startup in this layer. Existing Remote Hub provider routing remains in `src/remote/` and is a separate capability.
+`src/remote-control/` owns Remote Workspace contracts, explicit executor construction and Hub session adapters. The server exposes this surface only with Hub role and OCX_REMOTE_WORKSPACE_ENABLED=1. The side-effect-free activation guard loads no services. Existing Remote Hub provider routing remains in `src/remote/` and is a separate capability.
 
 `src/remote-control/protocol.ts` owns frame and identity contracts. `src/remote-control/crypto.ts` implements signed handshakes and directional encryption. `src/remote-control/workspace-agent-protocol.ts` parses bounded control messages; `src/remote-control/workspace-rpc-framing.ts` bounds reassembly allocation, count and expiry. Importing these modules starts no process or timer; incomplete reassembly owns expiry timers after an explicit call.
 
@@ -10,8 +10,14 @@
 
 `src/remote-control/workspace-hub.ts`, `src/remote-control/workspace-device.ts` and `src/remote-control/workspace-sessions.ts` own separate persisted state. `src/remote-control/workspace-secret-store.ts` requires private permissions and rejects access failures rather than treating them as first-run absence. Publication reuses `src/config/atomic-write.ts`; workspace file publication uses the remote-workspace publisher in `src/lib/windows-atomic-replace.ts`.
 
-`src/remote-control/workspace-runtime.ts` is the lazy composition owner for Hub services. Codex, Claude and Pi adapters keep model processes on the Hub and expose selected remote tools. Their source configuration is not evidence of live CLI confinement. `src/cli/remote-workspace.ts` contains explicit executor pair/agent/status handling; it is not yet registered by this layer.
+`src/remote-control/workspace-runtime.ts` is the lazy composition owner for Hub services. Codex, Claude and Pi adapters keep model processes on the Hub and expose selected remote tools. Their source configuration is not evidence of live CLI confinement. `src/cli/remote-workspace.ts` contains registered executor pair/agent/status handling; the machine-readable entries live in `src/cli/capabilities.ts`.
 
 The optional terminal prototype in `src/remote-control/host.ts` invokes only a caller-supplied factory after authenticated traffic. `src/remote-control/relay.ts` routes opaque prototype envelopes after caller authorization. Neither is a production terminal service.
 
 Regression coverage lives in `tests/clients/remote-workspace-session-binding.test.ts`, `tests/clients/remote-workspace-secret-store.test.ts` and the adjacent protocol, agent-wire, device, hub, sessions and command-runner tests. Real CLI and native confinement tests require their explicit environments; generic suite success does not certify those paths. Windows command support remains unavailable pending a verified lifecycle owner.
+
+`src/server/index.ts` admits the opt-in pair exchange and bearer-authenticated agent upgrade after Origin and role checks. The unauthenticated loopback companion does not expose either endpoint. `src/server/management-api.ts` answers disabled workspace status before importing services; mutations require a dashboard session. `src/server/management/remote-workspace-routes.ts` reads bounded management JSON and uses the initialized Hub/session services.
+
+The listener retains an awaited shutdown callback only after optional activation. It refuses initialization once stop begins and awaits session shutdown before closing Hub connections in a finally path. `src/server/ws-bridge.ts` carries structural receive/open/close callbacks without importing concrete workspace services.
+
+`gui/src/pages/RemoteWorkspace.tsx` defaults to read-only access, displays actual effective capabilities, and keeps Stop available while a prompt is pending. Error retries preserve draft text. The UI explains explicit Hub opt-in in each locale; no historical screenshot is evidence of the current surface.

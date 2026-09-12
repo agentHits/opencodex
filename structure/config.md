@@ -197,3 +197,5 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
 
 The unregistered executor CLI module stores Remote Workspace state separately from client configuration; see [Remote Workspace](remote-workspace.md).
+
+Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](remote-workspace.md) owns that integration.

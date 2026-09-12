@@ -28,6 +28,20 @@ These answer in the CLI head and never reach the proxy, so they work with nothin
 
 Safe to run at any time; none of these change state.
 
+### `ocx remote-workspace status`
+
+Read local executor enrollment and available capabilities without printing credentials.
+
+Drives no management route.
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit the public local executor status. |
+
+JSON mode: `payload`.
+
+- Executor-local operation; Hub consent and session control stay in the dashboard.
+
 ### `ocx models price`
 
 Read the saved manual price for an exact provider/model selector.
@@ -372,6 +386,35 @@ JSON mode: `payload`.
 ## State-changing capabilities
 
 Each of these writes. Check the flags column before running one unattended.
+
+### `ocx remote-workspace pair`
+
+Enroll this executor with one Hub using a one-time code from stdin and locally approved roots.
+
+Drives no management route.
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit the public local executor status. |
+| `--pairing-code-stdin` | boolean | Read the one-time pairing code from stdin. |
+| `--root` | string | Approve an absolute workspace directory; repeatable. |
+| `--toolchain-root` | string | Approve a read-only toolchain directory; repeatable. |
+| `--executor-helper` | string | Select a reviewed native helper file. |
+| `--name` | string | Name this executor. |
+
+JSON mode: `payload`.
+
+- Executor-local operation; Hub consent and session control stay in the dashboard.
+
+### `ocx remote-workspace agent`
+
+Keep the paired executor connected to its Hub.
+
+Drives no management route.
+
+JSON mode: `none`.
+
+- Executor-local operation; Hub consent and session control stay in the dashboard.
 
 ### `ocx models set-price`
 
@@ -769,6 +812,6 @@ JSON mode: `payload`.
 
 ## Counts
 
-- declared capabilities: 41
-- of those, state-changing: 20
+- declared capabilities: 44
+- of those, state-changing: 22
 - head-resolved invocations: 2
