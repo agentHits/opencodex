@@ -106,9 +106,9 @@ function reveals(): HTMLElement[] {
   return [...win.document.querySelectorAll<HTMLElement>(".provider-catalog-note-more")] as unknown as HTMLElement[];
 }
 
-test("only the row whose note the clamp hides grows a reveal control", async () => {
+test("every nonempty note has a reveal even when a narrow row clips short text", async () => {
   await mountCatalog();
-  expect(reveals()).toHaveLength(1);
+  expect(reveals()).toHaveLength(2);
   // The control is a sibling of the row button, never a child of it: a button nested in
   // a button is invalid HTML the parser may hoist out of the row.
   const wrap = reveals()[0]!.parentElement!;
@@ -129,4 +129,15 @@ test("the reveal opens the full note and does not select the provider", async ()
 
   const noteText = win.document.querySelector(".provider-note-text")?.textContent ?? "";
   expect(noteText).toBe(LONG_NOTE);
+});
+
+test("closing the popup returns keyboard focus to its reveal button", async () => {
+  await mountCatalog();
+  const trigger = reveals()[0]!;
+  trigger.focus();
+  await act(async () => { trigger.click(); });
+  const close = win.document.querySelector(".provider-note-card .btn-icon") as unknown as HTMLElement;
+  await act(async () => { close.click(); });
+  expect(win.document.querySelector(".provider-note-card")).toBeNull();
+  expect(win.document.activeElement).toBe(trigger);
 });
