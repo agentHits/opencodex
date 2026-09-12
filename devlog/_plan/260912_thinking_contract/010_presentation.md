@@ -318,3 +318,5 @@ Explicit wire reasoning.summary:"none" wins. A client that serializes configured
 ## Presentation P revalidation
 
 Prior D: roadmap locked; next presentation implementation. Both source patches apply to baseline; combined application requires keeping the newer no-rewrite expectation. Shared classifier signatures remain current. Implement CCA-only provider default by recomputing parsed.options.hideThinkingSummary from raw summary each final route for inboundWire responses; other inbound types preserve their existing flag. Missing raw request leaves original hide flag authoritative. CCA Gemini classification records boolean in existing per-request adapter closure on each build; default false.
+
+C review corrections: fixture summary emission now depends on includeThoughts; provider false + client auto does not request upstream summaries. Signature regression exercises actual SSE and JSON serializers, visible/hidden modes, a tool-ending first turn, exact signature and real matching functionResponse. Final-answer behavior is covered separately by bridge and combo tests.

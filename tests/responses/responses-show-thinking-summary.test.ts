@@ -96,7 +96,7 @@ describe("showThinkingSummary provider option", () => {
   });
 
   for (const stream of [false, true]) for (const [summary, providerFlag, visible] of [
-    [undefined, undefined, true], ["none", true, false], [undefined, false, false], ["auto", false, true],
+    [undefined, undefined, true], ["none", true, false], [undefined, false, false], ["auto", false, false], ["auto", true, true],
   ] as const) test(`CCA summary=${summary} provider=${providerFlag} stream=${stream}`, async () => {
     const home = mkdtempSync(join(tmpdir(), "ocx-show-thinking-"));
     const prevHome = process.env.OPENCODEX_HOME;
@@ -120,10 +120,11 @@ describe("showThinkingSummary provider option", () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       seen.push(String(input));
       requests.push(JSON.parse(String(init?.body)));
+      const requestedThoughts = requests.at(-1)?.request.generationConfig?.thinkingConfig?.includeThoughts === true;
       const payload = {
         response: {
           candidates: [{
-            content: { parts: [{ thought: true, text: "cca-think" }, { text: "OK" }] },
+            content: { parts: [...(requestedThoughts ? [{ thought: true, text: "cca-think" }] : []), { text: "OK" }] },
             finishReason: "STOP",
           }],
           usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15, thoughtsTokenCount: 3 },

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createGoogleAdapter } from "../../../src/adapters/google";
 import { chatCompletionsToResponsesBody } from "../../../src/chat/inbound";
-import { buildResponseJSON } from "../../../src/bridge";
+import { bridgeToResponsesSSE, buildResponseJSON } from "../../../src/bridge";
 import { withTestTranslatorBudget } from "../../helpers/translator-budget";
 import { parseRequest } from "../../../src/responses/parser";
 import type { AdapterEvent, OcxParsedRequest } from "../../../src/types";
@@ -659,7 +659,7 @@ describe("CCA thought summary provenance and replay", () => {
   const cca = { adapter: "google", googleMode: "cloud-code-assist", baseUrl: "https://daily-cloudcode-pa.googleapis.com",
     apiKey: "fixture-key", project: "fixture-project", showThinkingSummary: true } as const;
   const signature = "CiQAx-summary-tool-signature-0123456789abcdef";
-  for (const stream of [false, true]) test(`Gemini summary retains tool signature, stream=${stream}`, async () => {
+  for (const stream of [false, true]) for (const hideThinkingSummary of [false, true]) test(`Gemini signature stream=${stream} hidden=${hideThinkingSummary}`, async () => {
     const adapter = withTestTranslatorBudget(createGoogleAdapter(cca));
     const parsed = parsedWith([{ role: "user", content: "lookup" }], [
       { name: "lookup", description: "look up", parameters: { type: "object", properties: {} } },
@@ -669,7 +669,6 @@ describe("CCA thought summary provenance and replay", () => {
     const payload = { response: { candidates: [{ content: { parts: [
       { thought: true, text: "Provider summary", thoughtSignature: signature },
       { functionCall: { name: "lookup", args: {} } },
-      { text: "Final answer" },
     ] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 2 } } };
     const events: AdapterEvent[] = [];
     if (stream) {
@@ -681,15 +680,24 @@ describe("CCA thought summary provenance and replay", () => {
     const call = events.find(event => event.type === "tool_call_start");
     expect(call?.type === "tool_call_start" && call.providerMetadata?.google?.thoughtSignature).toBe(signature);
     expect(events.at(-1)?.type).toBe("done");
-    const output = buildResponseJSON(events, parsed.modelId);
-    expect(JSON.stringify(output)).toContain('"summary_text","text":"Provider summary"');
-    expect(JSON.stringify(output)).toContain("Final answer");
+    let output: Record<string, unknown>;
+    if (stream) {
+      async function* replay() { yield* events; }
+      const text = await new Response(bridgeToResponsesSSE(replay(), parsed.modelId, { hideThinkingSummary })).text();
+      const payloads = text.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+      output = payloads.find(frame => frame.type === "response.completed").response;
+      expect(text.includes("response.reasoning_summary_text.delta")).toBe(!hideThinkingSummary);
+    } else output = buildResponseJSON(events, parsed.modelId, { hideThinkingSummary });
+    expect(JSON.stringify(output).includes("Provider summary")).toBe(!hideThinkingSummary);
+    if (!Array.isArray(output.output)) throw new Error("missing Responses output");
     const continuation = parseRequest({ model: parsed.modelId, input: [
-      ...(output.output as unknown[]), { type: "function_call_output", call_id: call && "id" in call ? call.id : "", output: "result" },
+      ...output.output, { type: "function_call_output", call_id: call && "id" in call ? call.id : "", output: "result" },
     ] });
     const next = JSON.parse((await withTestTranslatorBudget(createGoogleAdapter(cca)).buildRequest(continuation)).body);
     const parts = next.request.contents.flatMap((turn: { parts: unknown[] }) => turn.parts);
     expect(parts).toContainEqual(expect.objectContaining({ functionCall: expect.objectContaining({ name: "lookup" }), thoughtSignature: signature }));
+    expect(parts).toContainEqual(expect.objectContaining({ functionResponse: expect.objectContaining({ name: "lookup", response: { result: "result" } }) }));
+    expect(JSON.stringify(next)).not.toContain("no tool result");
   });
 
   test("reused adapter resets Gemini summary provenance for a CCA non-Gemini model", async () => {
