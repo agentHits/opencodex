@@ -256,20 +256,10 @@ instead of growing memory without a bound.
 
 ## Default reasoning effort
 
-`defaultEffort` supplies `reasoning.effort` only when all of these are true:
+`defaultEffort` fills an absent `reasoning.effort` when the combo has a non-null default and the selected target has a known, nonempty supported ladder. If the target supports the configured value, it is retained; otherwise the highest supported rung at or below it is used, or the lowest supported rung when none is lower. Unknown or empty ladders omit the default.
 
-1. the combo has a non-null default;
-2. the caller did not set an effort; and
-3. the selected target's catalog advertises that exact effort.
+The default-injection step preserves existing effort and other reasoning fields. Capability normalization can separately remove unsupported effort/thinking controls as described below. Supported defaults are `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`; omit the field or use `null` to disable default injection.
 
-If the request has no `reasoning` object, opencodex creates one. If `reasoning` exists without an
-`effort` property, it preserves the other fields and adds the default. A caller-provided effort is
-never overwritten.
-
-When target capability is unknown or does not include the configured effort, opencodex omits the
-default and leaves the target's own behavior unchanged. Supported values are `low`, `medium`,
-`high`, `xhigh`, `max`, and `ultra`; omit the field or set it to `null` to leave effort entirely to
-the caller and target.
 
 ### Mixed-capability groups (`reasoningEffortMode`)
 

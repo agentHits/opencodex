@@ -165,15 +165,10 @@ combo 失败分为 **跳转** 失败和 **终止** 失败。
 
 ## 默认推理力度
 
-只有在以下所有条件都满足时，`defaultEffort` 才会提供 `reasoning.effort`：
+当 combo 配置了非 null 默认值且目标支持列表已知且非空时，`defaultEffort` 会填充省略的 `reasoning.effort`。目标支持配置值时保留该值，否则选择不高于配置值的最高支持档位；若不存在更低档位，则使用最低支持档位。未知或空列表不会注入默认值。
 
-1. combo 有一个非空默认值；
-2. 调用方没有设置 effort；并且
-3. 选中的目标目录明确声明了该精确的 effort。
+默认值注入保留已有 effort 和其他 reasoning 字段。下述能力归一化可单独移除不支持的 effort/thinking 控制。默认值支持 `low`、`medium`、`high`、`xhigh`、`max`、`ultra`；省略字段或设为 `null` 可关闭注入。
 
-如果请求没有 `reasoning` 对象，opencodex 会创建一个。如果 `reasoning` 存在但没有 `effort` 属性，它会保留其他字段并添加默认值。调用方提供的 effort 永远不会被覆盖。
-
-当目标能力未知，或者不包含配置的 effort 时，opencodex 会省略默认值，并保持目标自身行为不变。支持的值是 `low`、`medium`、`high`、`xhigh`、`max` 和 `ultra`；省略该字段或将其设为 `null`，就会把 effort 完全交给调用方和目标。
 
 ## 混合 reasoning 能力
 

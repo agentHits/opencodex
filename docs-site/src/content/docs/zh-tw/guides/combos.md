@@ -177,15 +177,10 @@ Failover 是刻意受限的。它有助於目標特定的可用性、認證、�
 
 ## 預設推理 effort
 
-`defaultEffort` 僅在以下全為真時提供 `reasoning.effort`：
+當 combo 設定非 null 預設值且目標支援清單已知且非空時，`defaultEffort` 會補入省略的 `reasoning.effort`。目標支援設定值時保留該值，否則選擇不高於設定值的最高支援層級；若沒有更低層級，則使用最低支援層級。未知或空清單不會注入預設值。
 
-1. combo 有非 null 預設值；
-2. 呼叫者未設定 effort；且
-3. 所選目標的目錄宣告該精確 effort。
+預設值補入會保留既有 effort 與其他 reasoning 欄位。下述能力正規化可另外移除不支援的 effort/thinking 控制。預設值支援 `low`、`medium`、`high`、`xhigh`、`max`、`ultra`；省略欄位或設為 `null` 可關閉注入。
 
-若請求沒有 `reasoning` 物件，opencodex 建立一個。若 `reasoning` 存在但無 `effort` 屬性，它保留其他欄位並加入預設值。呼叫者提供的 effort 永不被覆寫。
-
-當目標能力未知或不包含設定的 effort 時，opencodex 省略預設值並保持目標自身行為不變。支援的值為 `low`、`medium`、`high`、`xhigh`、`max` 與 `ultra`；省略欄位或設為 `null` 可將 effort 完全交給呼叫者與目標。
 
 ## 混合 reasoning 能力
 

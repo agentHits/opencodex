@@ -145,15 +145,10 @@ ocx combo set balanced \
 
 ## 기본 reasoning effort
 
-`defaultEffort`는 다음 조건이 모두 참일 때만 `reasoning.effort`를 채웁니다.
+`defaultEffort`는 콤보 기본값이 null이 아니고, 선택한 대상의 지원 목록이 알려져 있으며 비어 있지 않을 때 생략된 `reasoning.effort`를 채웁니다. 설정값을 지원하면 그대로 사용합니다. 그렇지 않으면 설정값 이하의 가장 높은 지원 단계를 사용하고, 그런 단계가 없으면 가장 낮은 지원 단계를 사용합니다. 지원 목록이 없거나 비어 있으면 기본값을 생략합니다.
 
-1. 콤보에 null이 아닌 기본값이 있습니다.
-2. 호출자가 effort를 설정하지 않았습니다.
-3. 선택된 대상의 카탈로그가 그 정확한 effort를 광고합니다.
+기본값 주입은 기존 effort와 다른 reasoning 필드를 보존합니다. 아래의 capability 정규화는 별도로 지원되지 않는 effort·thinking 제어를 제거할 수 있습니다. 기본값은 `low`, `medium`, `high`, `xhigh`, `max`, `ultra`이며, 필드를 생략하거나 `null`로 설정하면 주입하지 않습니다.
 
-요청에 `reasoning` 객체가 없으면 opencodex가 새로 만듭니다. `reasoning`은 있지만 `effort` 속성이 없으면 다른 필드는 그대로 두고 기본값만 추가합니다. 호출자가 준 effort는 절대 덮어쓰지 않습니다.
-
-대상 기능을 알 수 없거나 설정한 effort를 포함하지 않으면 opencodex는 기본값을 생략하고 대상의 동작은 그대로 둡니다. 지원 값은 `low`, `medium`, `high`, `xhigh`, `max`, `ultra`입니다. effort를 호출자와 대상에 완전히 맡기려면 이 필드를 생략하거나 `null`로 설정하십시오.
 
 ## 서로 다른 reasoning capability
 

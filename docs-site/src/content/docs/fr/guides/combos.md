@@ -218,20 +218,10 @@ Le basculement est intentionnellement limité. Il facilite la disponibilité, l'
 
 ## Effort de raisonnement par défaut
 
-`defaultEffort` fournit `reasoning.effort` uniquement lorsque toutes ces conditions sont vraies :
+`defaultEffort` complète un `reasoning.effort` absent si le combo possède une valeur par défaut non nulle et si la liste des niveaux acceptés par la cible est connue et non vide. La valeur configurée est conservée si elle est acceptée ; sinon, le niveau accepté le plus élevé ne la dépassant pas est choisi, ou le niveau le plus bas si aucun n’est inférieur. Une liste inconnue ou vide n’ajoute aucune valeur par défaut.
 
-1. le combo a un défaut non nul ;
-2. l'appelant n'a pas fait d'effort ; et
-3. le catalogue de la cible sélectionnée annonce cet effort précis.
+Cette étape conserve un effort existant et les autres champs reasoning. La normalisation des capacités ci-dessous peut supprimer séparément les paramètres effort/thinking non acceptés. Valeurs possibles : `low`, `medium`, `high`, `xhigh`, `max`, `ultra` ; l’absence du champ ou `null` désactive l’ajout.
 
-Si la requête n'a pas d'objet `reasoning`, opencodex en crée un. Si `reasoning` existe sans
-`effort`, il préserve les autres champs et ajoute la valeur par défaut. Un effort fourni par l’appelant n’est
-jamais écrasé.
-
-Lorsque la capacité cible est inconnue ou n'inclut pas l'effort configuré, opencodex omet le
-par défaut et laisse le comportement de la cible inchangé. Les valeurs prises en charge sont `low`, `medium`,
-`high`, `xhigh`, `max` et `ultra` ; omettez le champ ou réglez-le sur `null` pour laisser l'effort entièrement à
-l'appelant et la cible.
 
 ## Capacités reasoning mixtes
 

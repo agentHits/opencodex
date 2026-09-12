@@ -249,22 +249,10 @@ veya politika retlerini gizlemez.
 
 ## Varsayılan akıl yürütme çabası
 
-`defaultEffort`, yalnızca bunların tümü doğru olduğunda `reasoning.effort`
-sağlar:
+`defaultEffort`, combo varsayılanı null değilse ve hedefin desteklenen seviye listesi bilinen ve boş olmayan bir listeyse eksik `reasoning.effort` değerini doldurur. Yapılandırılmış değer destekleniyorsa korunur; değilse bu değeri aşmayan en yüksek desteklenen seviye, böyle bir seviye yoksa en düşük desteklenen seviye kullanılır. Liste bilinmiyor veya boşsa varsayılan eklenmez.
 
-1. kombonun boş olmayan (non-null) bir varsayılanı vardır;
-2. arayan bir çaba ayarlamamıştır; ve
-3. seçilen hedefin kataloğu tam olarak bu çabayı bildirmektedir.
+Varsayılan ekleme mevcut effort ve diğer reasoning alanlarını korur. Aşağıdaki yetenek normalizasyonu desteklenmeyen effort/thinking denetimlerini ayrıca kaldırabilir. Desteklenen varsayılanlar: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`; alanı atlamak veya `null` kullanmak eklemeyi kapatır.
 
-İstekte bir `reasoning` nesnesi yoksa opencodex bir tane oluşturur. Bir `effort`
-özelliği olmadan `reasoning` varsa diğer alanları korur ve varsayılanı ekler.
-Arayan tarafından sağlanan bir çabanın üzerine asla yazılmaz.
-
-Hedef yeteneği bilinmediğinde veya yapılandırılan çabayı içermediğinde opencodex
-varsayılanı atlar ve hedefin kendi davranışını değiştirmeden bırakır.
-Desteklenen değerler `low`, `medium`, `high`, `xhigh`, `max` ve `ultra`'dır;
-çabayı tamamen arayana ve hedefe bırakmak için alanı atlayın veya `null` olarak
-ayarlayın.
 
 ## Farklı reasoning yetenekleri
 
