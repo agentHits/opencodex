@@ -219,8 +219,9 @@ describe("issue #1001 — forced-answer passes must produce usable output", () =
           ];
           const frames = await drivePasses([webSearchFirstPass, terminalPass, [{ type: "done" }]], seen);
           expect(seen).toHaveLength(2);
-          expect(frames.filter(frame => ["response.incomplete", "response.completed", "response.failed"].includes(frame.event)).map(frame => frame.event)).toEqual(["response.incomplete"]);
-          expect(frames.find(frame => frame.event === "response.incomplete")!.data.response.incomplete_details.reason).toBe(reason);
+          expect(frames.filter(frame => ["response.incomplete", "response.completed", "response.failed"].includes(frame.event ?? "")).map(frame => frame.event)).toEqual(["response.incomplete"]);
+          const terminalResponse = frames.find(frame => frame.event === "response.incomplete")!.data.response as { incomplete_details: { reason: string } };
+          expect(terminalResponse.incomplete_details.reason).toBe(reason);
           if (partial) expect(frames.filter(frame => frame.event === "response.output_text.delta").map(frame => frame.data.delta).join("")).toBe("partial answer");
         });
       }
