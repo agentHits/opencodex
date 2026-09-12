@@ -420,3 +420,26 @@ successful main usage refresh clears the runtime mark.
 ## Paginated history writer boundary
 
 `src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](../codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+## Context relay ownership
+
+`src/codex/context-owner.ts` records which account actually served a root session, taken from the
+final materialized outbound headers of an accepted model attempt, after refresh and failover.
+Entries are bounded, process-local and expiring, and are keyed by the admission principal that
+`src/server/auth-cors.ts` mints for the matched opencodex API key, plus the destination and the
+root session. Two keys therefore cannot observe or overwrite each other's ownership even when both
+resolve to one ChatGPT workspace, and rotating a key mints a new principal instead of inheriting
+the previous holder's sessions. Loopback admission mints no principal and can neither own nor read
+a session.
+
+A workspace id identifies an organization, so an entry also binds the stable user claim carried by
+the accepted credential. That claim is read without signature verification, which is why upstream
+acceptance stays the evidence: a credential proving a different user does not continue the session,
+conflicting claims are never recorded, and an entry with no proven user continues only for the
+exact accepted credential. Conflicting observations stay ambiguous, and ambiguous, unknown,
+expired, evicted or restart-lost ownership fails closed before account selection or upstream I/O.
+
+`src/server/context-history.ts` relays the native history and notes endpoints under one deadline
+that starts on route entry, before the body is read and before credential selection, so an
+unfinished body cannot hold an admitted turn. Client cancellation and deadline expiry are reported
+separately, nothing is dispatched upstream after either, and notes writes are never retried.

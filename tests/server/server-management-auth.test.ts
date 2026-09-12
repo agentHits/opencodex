@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfigPath, saveConfig } from "../../src/config";
+import { clearContextSessionOwnersForTests } from "../../src/codex/context-owner";
 import { startServer } from "../../src/server";
 import { readCodexAccountRecord, saveCodexAccountCredential } from "../../src/codex/account-store";
 import type { OcxConfig } from "../../src/types";
@@ -618,6 +619,71 @@ describe("management and data-plane credential separation", () => {
       resetHardenedStateForTests();
       if (previousUsername === undefined) delete process.env.USERNAME;
       else process.env.USERNAME = previousUsername;
+    }
+  });
+
+  test("Codex backend aliases retain data-plane authentication and cannot enter management", async () => {
+    saveConfig(remoteConfig());
+    const server = startServer(0);
+    try {
+      for (const token of [undefined, "admin-secret", "data-secret"]) {
+        const headers: Record<string, string> = token ? { "x-opencodex-api-key": token } : {};
+        const models = await fetch(new URL("/backend-api/codex/models", server.url), { headers });
+        expect(models.status).toBe(token === "data-secret" ? 200 : 401);
+        const context = await fetch(new URL("/backend-api/codex/alpha/notes/v2/read_file", server.url), {
+          method: "POST", headers, body: "{}",
+        });
+        expect(context.status).toBe(token === "data-secret" ? 400 : 401);
+        const management = await fetch(new URL("/backend-api/codex/api/config", server.url), { headers });
+        expect(management.status).toBe(404);
+      }
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("context bearer admission reaches body validation without accepting foreign credentials", async () => {
+    saveConfig(remoteConfig());
+    const server = startServer(0);
+    try {
+      for (const prefix of ["/v1", "/backend-api/codex"]) {
+        for (const token of ["data-secret", "admin-secret", "foreign-secret"]) {
+          const response = await fetch(new URL(`${prefix}/alpha/notes/v2/read_file`, server.url), {
+            method: "POST", headers: { authorization: `Bearer ${token}` }, body: "{}",
+          });
+          expect(response.status).toBe(token === "data-secret" ? 400 : 401);
+          if (token === "data-secret") expect(await response.text()).toContain("context.session_id");
+        }
+      }
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("authenticated context without a successful model owner fails closed on both listener prefixes", async () => {
+    const cfg = remoteConfig();
+    cfg.providers.openai = { adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", authMode: "forward", codexAccountMode: "pool" };
+    saveConfig(cfg); clearContextSessionOwnersForTests();
+    const originalFetch = globalThis.fetch;
+    let upstreamCalls = 0;
+    globalThis.fetch = Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]" || url.hostname === "0.0.0.0") return originalFetch(input, init);
+      upstreamCalls++; throw new Error("unknown context owner must not reach upstream");
+    }, { preconnect: originalFetch.preconnect });
+    const server = startServer(0);
+    try {
+      for (const prefix of ["/v1", "/backend-api/codex"]) {
+        const response = await fetch(new URL(`${prefix}/alpha/notes/v2/read_file`, server.url), {
+          method: "POST", headers: { authorization: "Bearer data-secret" },
+          body: JSON.stringify({ context: { session_id: "unknown-root" } }),
+        });
+        expect(response.status).toBe(409);
+        expect(await response.text()).toContain("context_account_unavailable");
+      }
+      expect(upstreamCalls).toBe(0);
+    } finally {
+      await server.stop(true); globalThis.fetch = originalFetch; clearContextSessionOwnersForTests();
     }
   });
 

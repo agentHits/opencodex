@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { initialModelSelection } from "../providers/initial-model-selection";
 import { extractAccountId } from "../oauth/chatgpt";
 import { formatErrorResponse } from "../bridge";
@@ -353,9 +353,29 @@ function secretEquals(actual: string, expected: string | undefined): boolean {
  */
 export type DataPlaneAdmissionSource = "loopback" | "dedicated" | "bearer" | "x-api-key";
 
+/**
+ * Process-local, salted identity of the admission secret that was actually matched.
+ *
+ * Context-relay ownership is partitioned by this value, so two operators holding different
+ * keys cannot reach each other's sessions even when both resolve to the same upstream
+ * workspace. `source` is deliberately excluded: the same key arriving as a bearer or in the
+ * dedicated header is one principal. Rotating or replacing a secret mints a new principal and
+ * drops continuity, which is the safe direction — a reused key id or a replaced environment
+ * secret must not inherit the previous holder's sessions. Loopback admission carries no caller
+ * identity and mints nothing, so the relay refuses it rather than treating every local process
+ * as one user.
+ */
+const CONTEXT_PRINCIPAL_SALT = randomBytes(32);
+
+function mintContextPrincipal(kind: string, keyId: string, credential: string): string {
+  return createHmac("sha256", CONTEXT_PRINCIPAL_SALT)
+    .update(kind).update("\0").update(keyId).update("\0").update(credential)
+    .digest("hex");
+}
+
 export type DataPlaneAdmission =
-  | { kind: "configured"; keyId: string; source: DataPlaneAdmissionSource }
-  | { kind: "environment"; source: DataPlaneAdmissionSource }
+  | { kind: "configured"; keyId: string; source: DataPlaneAdmissionSource; contextPrincipalId?: string }
+  | { kind: "environment"; source: DataPlaneAdmissionSource; contextPrincipalId?: string }
   | { kind: "loopback"; source: "loopback" };
 
 /**
@@ -374,15 +394,24 @@ export function resolveDataPlaneAdmissionSecret(
 ): DataPlaneAdmission | null {
   const actual = token.trim();
   if (!actual) return null;
-  if (secretEquals(actual, configuredApiAuthToken(config))) return { kind: "environment", source };
+  if (secretEquals(actual, configuredApiAuthToken(config))) {
+    return { kind: "environment", source, contextPrincipalId: mintContextPrincipal("environment", "", actual) };
+  }
   for (const k of config.apiKeys ?? []) {
-    if (secretEquals(actual, k.key)) return { kind: "configured", keyId: k.id, source };
+    if (secretEquals(actual, k.key)) {
+      return { kind: "configured", keyId: k.id, source, contextPrincipalId: mintContextPrincipal("configured", k.id, actual) };
+    }
     const pending = k.pendingRotation;
     if (pending && Date.parse(pending.expiresAt) > Date.now() && secretEquals(actual, pending.key)) {
-      return { kind: "configured", keyId: k.id, source };
+      return { kind: "configured", keyId: k.id, source, contextPrincipalId: mintContextPrincipal("configured", k.id, pending.key) };
     }
   }
   return null;
+}
+
+/** The principal an authenticated admission belongs to, or undefined for loopback. */
+export function contextPrincipalIdOf(admission: DataPlaneAdmission | undefined): string | undefined {
+  return admission && "contextPrincipalId" in admission ? admission.contextPrincipalId : undefined;
 }
 
 /** Whether `token` is a data-plane admission secret. */
