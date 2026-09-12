@@ -8,3 +8,5 @@ Hosted CI exposed incomplete Cline registration follow-through and restore fixtu
 - Non-goals: no runtime restore/auth changes, test skips, weaker error/preservation assertions, new dependencies, local tests/build/typecheck/install, release or deployment.
 - Verification: git diff --check for text; independent source review of Cline and restore slices; final-head hosted CI must execute the unchanged failure paths and pass before completion. Local product execution remains NOT RUN.
 - Stop: the original named failures pass at the published final head and no new blocking finding remains. An unrelated CI failure is investigated separately, not waived here.
+
+The shared baseline also includes the independently reviewed Combo reactivation correction from #4385. It explicitly runs the actual activation callback and preserves the cached quota evidence, dirty draft and Save-state assertions. This known scheduling defect must not remain in the baseline supplied to other campaign PRs. The #4385 source commit is preserved by merge; close that duplicate delivery only after this combined baseline lands.
