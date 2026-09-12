@@ -52,14 +52,14 @@ describe("quota-inactive catalog rows (#1711)", () => {
   });
 
   test("display-only reports cannot mark a catalog row inactive", () => {
-    replaceCachedProviderQuotas([{ provider: "alpha", source: "display", quota: exhausted(), updatedAt: NOW }]);
+    replaceCachedProviderQuotas([{ provider: "alpha", label: "Alpha", source: "display", quota: exhausted(), updatedAt: NOW }]);
     expect(quotaInactiveReason(config(), [{ provider: "alpha" }], NOW)).toBeUndefined();
   });
 
   test.each(["apiKey", "baseUrl", "adapter"] as const)("bound evidence stops marking inactivity after %s changes", field => {
     const current = config();
     const provider = current.providers.alpha!;
-    const report: ProviderQuotaReport = { provider: "alpha", source: "inference", quota: exhausted(), updatedAt: NOW };
+    const report: ProviderQuotaReport = { provider: "alpha", label: "Alpha", source: "inference", quota: exhausted(), updatedAt: NOW };
     const binding = providerQuotaRoutingBinding("alpha", provider);
     expect(binding).not.toBeNull();
     const evidence = new WeakMap<ProviderQuotaReport, ProviderQuotaRoutingEvidence>();

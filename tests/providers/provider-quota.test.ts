@@ -768,13 +768,13 @@ describe("fetchProviderQuotaReports", () => {
     // credential-bound helper directly: the binding resolves for BOTH calls (same single-key
     // provider and probed credential), so the only variable left is the projection itself.
     const provider = keyQuotaConfig("openrouter", "https://openrouter.ai/api/v1").providers.openrouter!;
-    const exhausted = { monthlyPercent: 100 };
+    const exhausted = { monthlyPercent: 100, updatedAt: Date.now() };
 
     const omitted = publishKeyReportForTests("openrouter", "openrouter:key-info", exhausted, provider, "openrouter-secret");
     expect(omitted.report?.quota.monthlyPercent).toBe(100);
     expect(omitted.routing).toBeUndefined();
 
-    const projected = { monthlyPercent: 100 };
+    const projected = { monthlyPercent: 100, updatedAt: Date.now() };
     const explicit = publishKeyReportForTests(
       "openrouter", "openrouter:key-info", exhausted, provider, "openrouter-secret", projected,
     );
