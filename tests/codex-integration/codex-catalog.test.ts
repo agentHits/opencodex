@@ -9,6 +9,7 @@ import { isGpt56NativeSlug } from "../../src/codex/catalog/effort";
 import { nativeOpenAiContextTier, nativeOpenAiMaxInputTokens } from "../../src/codex/catalog";
 import { shouldUpgradeToUpstreamEntry } from "../../src/codex/catalog/metadata";
 import { applyNativeVisibility, augmentRoutedModelsWithMetadata, augmentRoutedModelsWithRegistryOpenAiApiRows, buildCatalogEntries, buildComboCatalogOmission, catalogModelSlug, clampCatalogModelsToCodexSupport, clampEntryToCodexSupportedEfforts, clampedDefaultEffort, CODEX_ACCOUNT_BOUND_CATALOG_KIND, CODEX_NATIVE_ALIAS_CATALOG_KIND, comboCatalogOmissionReason, deriveComboCatalogModel, exactComboCatalogSlugs, filterCatalogVisibleModels, filterSupportedNativeSlugs, gatherRoutedModels as gatherRoutedModelsDirect, isDatedVariantId, isMediaGenerationModelId, loadBundledCodexCatalog, materializeBundledCodexCatalog, mergeCatalogEntriesForSync, NATIVE_DAYBREAK_BLUE_MODEL, NATIVE_GPT6_ASTRA_MODEL, NATIVE_OPENAI_MODELS, nativeDefaultReasoningEffort, nativeInputModalities, nativeOpenAiCapabilitySourceSlug, nativeOpenAiContextWindow, nativeReasoningEfforts, normalizeRoutedCatalogEntry, resetCatalogRuntimeStateForTests, resetOpenAiApiCatalogWarningStateForTests, resolveComboCatalogMember, shouldExposeRoutedModel, upstreamNativeEntry } from "../../src/codex/catalog";
+import { accountBoundNativeOpenAiSlugsBySelector, observedAccountBoundNativeEntries } from "../../src/codex/catalog";
 import { applyProviderConfigHints, fetchProviderModels, mergeConfiguredModelsIntoLiveCatalog } from "../../src/codex/catalog/provider-fetch";
 import {
   CODEX_CUSTOM_MODEL_CATALOG_KIND,
@@ -2920,6 +2921,33 @@ describe("legacy custom-model catalog ownership", () => {
       slug: "custom-provider/removed-model",
       opencodex_catalog_kind: "future-model-v2",
     }));
+  });
+
+  test("a persisted row for a retired native is not re-observed back into the catalog", () => {
+    const retiredAccountRow = {
+      // A stale on-disk row for a retired native is the one way membership removal can be undone:
+      // an observation admits any native NOT in the supported set, which a retired slug also is not.
+      ...nativeTemplate(),
+      slug: "team/gpt-5.4",
+      display_name: "team / GPT-5.4",
+      supported_in_api: true,
+      opencodex_catalog_kind: CODEX_ACCOUNT_BOUND_CATALOG_KIND,
+    };
+    const retiredBareRow = {
+      ...nativeTemplate(),
+      slug: "gpt-5.4-mini",
+      display_name: "GPT-5.4-Mini",
+      supported_in_api: true,
+    };
+    const bySelector = accountBoundNativeOpenAiSlugsBySelector(
+      { codexAccounts: { team: { accountId: "acct_team" } } } as never,
+      [retiredAccountRow, retiredBareRow] as never,
+    );
+    for (const slugs of bySelector.values()) {
+      expect(slugs).not.toContain("gpt-5.4");
+      expect(slugs).not.toContain("gpt-5.4-mini");
+    }
+    expect(observedAccountBoundNativeEntries([retiredBareRow] as never)).toEqual([]);
   });
 
   test("legacy evidence cannot claim account-selector or combo rows", () => {

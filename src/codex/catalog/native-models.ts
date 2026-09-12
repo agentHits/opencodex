@@ -164,6 +164,24 @@ export const NATIVE_OPENAI_MODELS = [
 export const SUPPORTED_NATIVE_OPENAI_SLUGS = new Set(NATIVE_OPENAI_MODELS);
 
 /**
+ * Natives this runtime used to ship that upstream has since retired.
+ *
+ * Leaving `NATIVE_OPENAI_MODELS` is not enough on its own. An account-bound observation admits
+ * any native it sees that is NOT already in `SUPPORTED_NATIVE_OPENAI_SLUGS` — that is how a
+ * genuinely new upstream model reaches one entitled account before this repo knows about it. A
+ * retired slug fails that same membership test, so a stale `selector/gpt-5.4` row persisted in a
+ * user's catalog or models cache would be re-observed as an unknown native and synthesized
+ * straight back into the picker, one sync after the removal took it out.
+ *
+ * This set is the difference between the two cases: unknown-and-new is admitted, known-and-dead
+ * is refused. It is deliberately explicit rather than a version heuristic, because the only
+ * thing that makes a slug retired is upstream withdrawing it.
+ */
+export const RETIRED_NATIVE_OPENAI_MODELS: ReadonlySet<string> = new Set([
+  "gpt-5.4", "gpt-5.4-mini",
+]);
+
+/**
  * Natives that retain the physical main account as a read-free sentinel during a native-main
  * drain, instead of reading as unavailable and letting the subagent fallback chain advance.
  *

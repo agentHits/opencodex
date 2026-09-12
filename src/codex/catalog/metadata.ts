@@ -48,6 +48,7 @@ import {
   NATIVE_OPENAI_MODELS,
   SELF_DESCRIBED_NATIVE_OPENAI_MODELS,
   SUPPORTED_NATIVE_OPENAI_SLUGS,
+  RETIRED_NATIVE_OPENAI_MODELS,
   hasNativeOpenAiCapabilityMetadata,
   isNativeOpenAiCapabilityAliasModel,
   nativeOpenAiAliasPresentation,
@@ -63,6 +64,7 @@ export {
   NATIVE_OPENAI_MODELS,
   SELF_DESCRIBED_NATIVE_OPENAI_MODELS,
   SUPPORTED_NATIVE_OPENAI_SLUGS,
+  RETIRED_NATIVE_OPENAI_MODELS,
   hasNativeOpenAiCapabilityMetadata,
   isNativeOpenAiCapabilityAliasModel,
   nativeOpenAiAliasPresentation,
@@ -694,6 +696,10 @@ function hasNativeCatalogRowShape(entry: RawEntry): boolean {
 function observedAccountBoundNativeSlug(entry: RawEntry): string | undefined {
   const accountBound = trustedAccountBoundNativeCatalogSlug(entry);
   const slug = accountBound ?? (typeof entry.slug === "string" ? entry.slug : "");
+  // A retired native is refused at this one choke point rather than at each call site: every
+  // observation path funnels through here, and an admitted retired slug comes back as a real
+  // catalog row — bare or account-qualified — with capabilities synthesized from the template.
+  if (RETIRED_NATIVE_OPENAI_MODELS.has(slug)) return undefined;
   if (!isAccountBoundOpenAiNativeSlug(slug)
     || (entry.supported_in_api !== true && !(slug === NATIVE_RESERVE_MODEL && entry.supported_in_api === false))
     || (slug === NATIVE_RESERVE_MODEL && entry[RESERVE_METADATA_SOURCE_FIELD] !== undefined
