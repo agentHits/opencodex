@@ -434,7 +434,7 @@ describe("accountPoolStrategy new-session routing", () => {
       expect(resolveCodexAccountForThread("zero-reset", config, later)).toBe("a");
     }
     recordCodexUpstreamOutcome(config, "a", 429, { now: now + 2, resetAt: now / 1000 + 300 });
-    expect(pickAlternateCodexAccount(config, "a", now + 3)).not.toBe("a");
+    expect(pickAlternateCodexAccount(config, "a", now + 3)).toBe("b");
   });
 
   test("reset-first keeps affinity until either window reaches the threshold", () => {

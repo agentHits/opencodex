@@ -9,3 +9,5 @@ Source search: accountPoolStrategy, normalizeAccountPoolStrategy, resetAtToMs, p
 Co-authored-by: Terry Tan <tmy1995hflc@gmail.com>
 
 C source audit found threshold=0/cacheAffinity=true could still rebind at100%. Accepted and fixed with early disabled-threshold return before reset-first affinity evaluation; new preview/resolve/all100 fixtures cover both cache settings. Failure recovery stays separate. Local suites NOT RUN; source re-audit and hosted CI pending.
+
+Independent C re-audit PASS at eddc8c7b08; nonblocking oracle improvement accepted: assert actual alternate b, excluding null as a false recovery result. Hosted/runtime acceptance remains pending.
