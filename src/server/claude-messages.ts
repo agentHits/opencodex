@@ -30,7 +30,6 @@ import {
 import { clearableDeadline, idleDeadline } from "../lib/abort";
 import { estimateTokens } from "../lib/token-estimate";
 import { NoEligiblePolicyCandidateError, UnknownRoutingPolicyError, routeModel } from "../router";
-import { registryEntryForProviderDestination } from "../providers/registry";
 import { evidenceFromBody } from "../routing/request-evidence";
 import { resolveWireProtocolOverride } from "./adapter-resolve";
 import type { OcxConfig } from "../types";
@@ -798,19 +797,13 @@ async function handleClaudeMessagesWithBudget(
   // Native ChatGPT passthrough (openai-responses forward) accepts only Codex-shaped
   // bodies: it 400s on sampling params ("Unsupported parameter: max_output_tokens",
   // verified live 2026-07-11). Strip them for that route; routed providers keep them.
-  let nativeRoute = false;
-  let opencodeGoRoute = false;
   try {
     const route = routeModel(config, internalBody.model as string, evidenceFromBody(internalBody));
-    // Match the fixed key-auth destination before per-model wire overrides, including
-    // renamed Go providers without treating custom or lookalike URLs as Go.
-    opencodeGoRoute = registryEntryForProviderDestination(route.provider)?.id === "opencode-go";
     // Settle the wire once so the sampling decision below reads the effective
     // adapter rather than the provider-wide default (#404).
     route.provider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, "anthropic");
     logCtx.routeDecision = route.routeDecision;
     if (route.provider.adapter === "openai-responses") {
-      nativeRoute = true;
       delete internalBody.max_output_tokens;
       delete internalBody.temperature;
       delete internalBody.top_p;
@@ -890,18 +883,6 @@ async function handleClaudeMessagesWithBudget(
     ?? normalizeLogConversationId(req.headers.get("x-opencode-session"))
     ?? metadataGoLane
     ?? getOrAllocateRequestSessionLane(req);
-  if (nativeRoute && !opencodeGoRoute) {
-    // ChatGPT-backend prompt-cache affinity rides the session_id HEADER (codex
-    // clients always send their session uuid; devlog 090 follow-up: body-level
-    // prompt_cache_key alone still yielded cached_tokens:0). Claude Code never sends
-    // the header, so synthesize a stable per-session uuid from the same cache key.
-    // Use ONLY a real per-session key (metadata.user_id). The system-hash fallback
-    // key is shared across Desktop conversations, and a shared session_id's backend
-    // semantics are unproven (audit 133 R2#3): body prompt_cache_key only there.
-    if (cacheKeySource === "metadata" && !headers.has("session_id") && typeof internalBody.prompt_cache_key === "string") {
-      headers.set("session_id", uuidFromHex(internalBody.prompt_cache_key));
-    }
-  }
   let internalReq: Request;
   try {
     // The UTF-16 JSON string and the Request's UTF-8 body coexist until dispatch.
@@ -946,6 +927,7 @@ async function handleClaudeMessagesWithBudget(
     // would fire, disagreeing with the pre-flight decision above.
     inboundWire: "anthropic",
     claudeGoAffinity: { sessionLane: claudeGoSessionLane },
+    claudeNativeSessionId: metadataGoLane,
     stripClaudeMainAuthForNoncanonicalForward: true,
     ...(trustedClaudeMainAuth ? { trustedClaudeMainAuth } : {}),
     // Claude's internal stored-main enrichment is not an original caller credential.

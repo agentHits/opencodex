@@ -106,3 +106,10 @@ allocation supplies the lane. `src/server/responses/core.ts` applies it only at 
 canonical Go transport, including combo selection and failover. No Go-only replay header
 reaches non-Go destinations. Shared system cache keys never become conversation identity.
 The request-scoped fallback is stable across retries and distinct across client requests.
+
+Claude metadata also supplies a private native-session value. Only the final canonical ChatGPT
+attempt receives it, in copied forwarding headers; an explicit underscore session, hyphenated
+session or thread header suppresses synthesis. Refresh and alternate-account retries retain
+that value. Original request headers stay unchanged so policy fallback cannot promote a generated
+native identifier into a noncanonical replay. Go preliminary selection does not suppress the
+final native affinity, and shared-system keys do not provide either conversation value.
