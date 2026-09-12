@@ -683,7 +683,8 @@ describe("CCA thought summary provenance and replay", () => {
     let output: Record<string, unknown>;
     if (stream) {
       async function* replay() { yield* events; }
-      const text = await new Response(bridgeToResponsesSSE(replay(), parsed.modelId, { hideThinkingSummary })).text();
+      const text = await new Response(bridgeToResponsesSSE(replay(), parsed.modelId,
+        undefined, undefined, undefined, undefined, undefined, { hideThinkingSummary })).text();
       const payloads = text.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
       output = payloads.find(frame => frame.type === "response.completed").response;
       expect(text.includes("response.reasoning_summary_text.delta")).toBe(!hideThinkingSummary);
