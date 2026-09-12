@@ -299,3 +299,21 @@ test("plan exclusion is visible without presenting the account as the next autom
   });
   expect(cardFor(account.email).textContent).not.toContain(en["codexAuth.planExcluded"]);
 });
+
+
+test("eligible next-session badge coexists with reset tickets while plan exclusion only removes selection", async () => {
+  const eligible = { ...account, plan: "plus", quota: { weeklyPercent: 10, resetCredits: 2, updatedAt: Date.now() } };
+  await mountPool(makeController({ accounts: [mainAccount, eligible], activeId: eligible.id }));
+  const current = cardFor(account.email);
+  expect([...current.querySelectorAll(".badge")].some(el => el.textContent === en["codexAuth.nextSession"])).toBe(true);
+  expect(current.querySelector(".badge-clickable")).not.toBeNull();
+  await act(async () => {
+    root!.render(<LanguageProvider><CodexAccountPool apiBase="" controller={makeController({
+      accounts: [mainAccount, { ...eligible, selectionExcludedReason: "plan_excluded", selectionExcludedPlan: "free" }],
+      activeId: eligible.id,
+    })} /></LanguageProvider>);
+  });
+  const excluded = cardFor(account.email);
+  expect([...excluded.querySelectorAll(".badge")].some(el => el.textContent === en["codexAuth.nextSession"])).toBe(false);
+  expect(excluded.querySelector(".badge-clickable")).not.toBeNull();
+});
