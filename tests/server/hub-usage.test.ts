@@ -32,7 +32,7 @@ beforeEach(() => {
   saveConfig(config());
   const rows = ["client-0", "client-1"].map((apiKeyId, i) => ({
     timestamp: Date.now(), requestId: `request-${i}`, provider: "fixture", model: `model-${i}`,
-    surface: "codex", apiKeyId, admissionKind: "configured", accountLogLabel: "private-account",
+    surface: "codex", apiKeyId, admissionKind: "configured", accountLogLabel: "oabcdef",
     status: 200, durationMs: 1, usageStatus: "reported", usage: { inputTokens: 2, outputTokens: 1 }, totalTokens: 3,
   }));
   writeFileSync(join(home, "usage.jsonl"), rows.map(row => JSON.stringify(row)).join("\n") + "\n");
@@ -48,6 +48,8 @@ afterEach(async () => {
 });
 
 test("loopback hub reads only the explicitly authenticated key and strips account attribution", async () => {
+  const unscoped = await aggregates.getUsageAggregate();
+  expect(unscoped.accumulator.summarize("all", Date.now(), "codex").accounts.map(row => row.accountLogLabel)).toContain("oabcdef");
   server = startServer(0);
   for (let i = 0; i < KEYS.length; i++) {
     const response = await fetch(new URL("/v1/usage?range=all", server.url), { headers: { "x-opencodex-api-key": KEYS[i]! } });
@@ -55,7 +57,7 @@ test("loopback hub reads only the explicitly authenticated key and strips accoun
     const body = await response.json();
     expect(body).toMatchObject({ source: "hub", scope: "client", summary: { requests: 1, totalTokens: 3 } });
     expect(body.models.map((row: { model: string }) => row.model)).toEqual([`model-${i}`]);
-    expect(JSON.stringify(body)).not.toContain("private-account");
+    expect(JSON.stringify(body)).not.toContain("oabcdef");
     expect(body).not.toHaveProperty("accounts");
     expect(body.filter).not.toHaveProperty("apiKeyId");
     expect(response.headers.get("cache-control")).toBe("no-store");

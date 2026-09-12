@@ -56,3 +56,25 @@ test("every DTO level drops management-only fields", () => {
   expect(result).not.toBeNull();
   expect(JSON.stringify(result)).not.toContain("private");
 });
+
+
+test("header deadline aborts an unresponsive hub transport", async () => {
+  let aborted = false;
+  await expect(fetchHubUsage("https://hub.example.test", "client-key", new URLSearchParams(), {
+    timeoutMs: 10,
+    fetchImpl: ((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => { aborted = true; reject(init!.signal!.reason); }, { once: true });
+    })) as typeof fetch,
+  })).rejects.toThrow("did not complete");
+  expect(aborted).toBe(true);
+});
+
+test("stalled hub usage body is cancelled at the inactivity deadline", async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+  await expect(fetchHubUsage("https://hub.example.test", "client-key", new URLSearchParams(), {
+    timeoutMs: 10,
+    fetchImpl: (async () => new Response(body, { headers: { "content-type": "application/json" } })) as typeof fetch,
+  })).rejects.toThrow("stalled");
+  expect(cancelled).toBe(true);
+});
