@@ -194,3 +194,18 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+## Scoped provider quota for Combo selection
+
+`src/providers/quota.ts` publishes routing evidence only when a producer explicitly supplies its
+inference-wide projection. A matching credential alone does not grant veto authority. Display-only
+account, model-group, search and legacy MCP windows remain visible but cannot exclude a provider.
+The private WeakMap binds provider name, adapter, destination and captured credential; neither
+credential nor binding enters report JSON.
+
+`src/providers/quota-routing-cache.ts` rechecks the live single key, effective authentication,
+static credential headers and key-pool size. Unknown, invalid, future or 30-minute-old evidence
+cannot rank or veto a provider. `src/combos/resolve.ts` uses that same scoped getter for selection,
+reset-window ordering and catalog inactivity. Changing a key, destination or adapter invalidates
+the old binding; restoring the same configuration may reuse still-fresh evidence. Account admission,
+cooldowns and response-driven retry remain authoritative.
