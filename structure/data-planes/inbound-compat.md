@@ -21,6 +21,8 @@ take the Chat -> Responses -> Chat bridge below. `parallel_tool_calls` is emitte
 parallel tools (or pinned false by the existing provider opt-out contract).
 Combo/policy routes and requests that need Responses-only hosted tools, continuation, background,
 or storage semantics retain the existing Chat -> Responses -> Chat bridge.
+Chat-to-Responses traffic that lands on `api.meta.ai` inherits the same 64-character tool-name
+aliasing as native Responses; see [`responses.md`](../transports/responses.md).
 
 The direct SSE relay accepts CRLF and arbitrary transport chunk boundaries while retaining at most
 one bounded event. EOF with an unterminated event and an event above the translator limit are typed

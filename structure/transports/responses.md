@@ -327,6 +327,14 @@ Muse Spark's Responses sanitizer also drops the provider-rejected `search_conten
 `indexed_web_access` fields from plain `web_search` tools while preserving preview tools and
 unrelated models.
 
+Direct Meta Muse / Meta Model Responses (`https://api.meta.ai/v1`) also rejects function tool
+names longer than 64 characters. After namespace flattening, `src/responses/muse-tool-name-alias.ts`
+rewrites those identities on the `api.meta.ai` host only — every model, including default
+`muse-spark-1.3` — and records `convertedMuseToolNameAliases` on the adapter request. Restore
+runs hashed-to-original before namespace restore and before the undeclared-tool guard, covering
+stream payloads, non-stream JSON, continuation cache, inspection, and failover rebuilds.
+Arguments, user text, and schema property names are never rewritten.
+
 > Decision record: [ADR-0042](../decisions/ADR-0042-responses-http-sse.md)
 
 > Decision record: [ADR-0043](../decisions/ADR-0043-responses-http-sse.md)

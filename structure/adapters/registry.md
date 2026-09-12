@@ -11,6 +11,8 @@ Runtime adapter construction has one authority: `src/adapters/registry.ts`.
 Some adapters share another adapter's routed-tool semantics while retaining independent runtime construction:
 
 - `azure` and `azure-openai` inherit the `openai-responses` contract.
+  The inherited contract includes Meta Muse's host-gated 64-character tool-name alias when the
+  constructed send URL is `api.meta.ai` (`src/responses/muse-tool-name-alias.ts`).
 - `mimo-free` inherits the `openai-chat` contract.
 - `cursor` stays direct because its `runTurn` transport and gated native-file fallback are distinct.
 - `devin-cli` stays direct for the same reason, one layer further out: it has no HTTP transport at
