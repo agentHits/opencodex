@@ -360,6 +360,7 @@ test("Combos evaluates fresh exhaustion beside a retained older quota row withou
       .find(row => row.querySelector(".combos-workspace-rail-name")?.textContent === "combo/alpha");
     expect(rail).toBeDefined();
     await act(async () => { rail!.click(); });
+    await act(async () => { await new Promise<void>(resolve => testWindow.setTimeout(resolve, 0)); });
     const alias = container.querySelector<HTMLInputElement>("#cwi-edit-alias")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!.set!.call(alias, "kept-draft");
