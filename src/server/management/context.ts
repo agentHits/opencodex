@@ -28,7 +28,7 @@ export type RemoteWorkspaceHubApi = Pick<RemoteWorkspaceHub,
   | "authenticateDeviceToken" | "attachConnection" | "updateDeviceCapabilities"
   | "detachConnection" | "listDevices" | "revokeDevice" | "closeAllConnections">;
 export type RemoteWorkspaceSessionsApi = Pick<RemoteWorkspaceSessionService,
-  "availability" | "list" | "create" | "prompt" | "stop" | "shutdown">;
+  "availability" | "list" | "create" | "prompt" | "submitPrompt" | "stop" | "shutdown">;
 
 export interface ManagementApiDeps {
   remoteWorkspaceHub?: RemoteWorkspaceHubApi;

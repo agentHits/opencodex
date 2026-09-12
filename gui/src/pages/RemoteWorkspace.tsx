@@ -129,7 +129,11 @@ export default function RemoteWorkspace({ apiBase, hubOrigin }: { apiBase: strin
     : availableProfiles[0] ?? selectedProfile;
   const remoteSessions = state?.sessions ?? [];
   const fallbackSession = [...remoteSessions].reverse().find(session => session.status !== "stopped");
-  const wantedSessionId = selectedSessionId || localSession?.id || fallbackSession?.id;
+  const candidate = remoteSessions.find(session => session.id === selectedSessionId)
+    ?? (localSession?.id === selectedSessionId ? localSession : null)
+    ?? fallbackSession
+    ?? localSession;
+  const wantedSessionId = candidate?.id;
   const polledSession = remoteSessions.find(session => session.id === wantedSessionId);
   const selectedLocal = localSession?.id === wantedSessionId ? localSession : null;
   const selectedSession = selectedLocal && (!polledSession

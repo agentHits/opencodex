@@ -235,6 +235,34 @@ test("202 acceptance stays busy over an older ready poll and does not resubmit",
   expect(sends).toBe(1);
 });
 
+test("a pruned explicit selection still compares the fallback acceptance cursor", async () => {
+  let pruned = false;
+  const snapshot = readySnapshot();
+  const fallback = { ...snapshot.sessions[0]!, id: "44444444-4444-4444-8444-444444444444", rootLabel: "Fallback session" };
+  const old = { ...snapshot.sessions[0]!, status: "stopped", rootLabel: "Older session" };
+  const accepted = { ...fallback, status: "running", events: [{ sequence: 3, at: "2026-01-01T00:00:01Z", type: "status", text: "Turn accepted" }] };
+  Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/prompt")) return jsonResponse(accepted, 202);
+    return jsonResponse({ ...snapshot, sessions: pruned ? [fallback] : [old, fallback] });
+  });
+  const { host, act, button } = await mountRemotePage("/pruned-selection-fixture");
+  await act(async () => { (host.querySelector('button[aria-label="Sessions"]') as HTMLButtonElement).click(); });
+  const option = [...win.document.querySelectorAll('[role="option"]')].find(element => element.textContent?.includes("Older session"));
+  expect(option).toBeDefined();
+  await act(async () => { (option as unknown as HTMLButtonElement).click(); });
+  pruned = true;
+  await act(async () => { button("Refresh").click(); });
+  const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+  const type = async (value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(win.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, value);
+    textarea.dispatchEvent(new win.Event("input", { bubbles: true }) as never);
+  });
+  await type("fallback turn");
+  await act(async () => { button("Send").click(); });
+  await type("next turn");
+  expect(button("Send").disabled).toBe(true);
+});
+
 test("lost acceptance keeps the draft and reports uncertainty without retrying", async () => {
   let sends = 0;
   Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL) => {

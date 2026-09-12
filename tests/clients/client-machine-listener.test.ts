@@ -108,7 +108,7 @@ describe("client machine listener", () => {
       load: () => null,
       save: state => { if (observeCompletion && state.sessions.some(session => session.status === "ready")) terminal(); },
     });
-    const hubConfig = { port: 0, runtimeRole: "hub", defaultProvider: "none", providers: {} } as OcxConfig;
+    const hubConfig = { port: 0, hostname: "0.0.0.0", runtimeRole: "hub", hub: { managementPublicOrigin: "https://hub.example.test" }, defaultProvider: "none", providers: {} } as OcxConfig;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       const created = await sessions.create({ profile: "codex", deviceId, rootId });
@@ -117,6 +117,7 @@ describe("client machine listener", () => {
         state: connection("relay"), managementAuthState: authState(),
         fetchImpl: (async (input, init) => {
           const request = new Request(String(input), init);
+          request.headers.set("Host", new URL(request.url).host);
           return await handleManagementAPI(request, new URL(request.url), hubConfig, {
             remoteWorkspaceHub: hub, remoteWorkspaceSessions: sessions,
           }, "gui-session") ?? new Response(null, { status: 404 });
@@ -124,6 +125,7 @@ describe("client machine listener", () => {
       });
       servers.push(server);
       const local = await guiHeaders(server, true);
+      hubConfig.corsAllowOrigins = [local.get("Origin")!];
       const headers = new Headers({
         Origin: local.get("Origin")!, "Content-Type": "application/json",
         "X-OpenCodex-Machine-Session": local.get("X-OpenCodex-API-Key")!,
