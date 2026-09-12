@@ -1158,6 +1158,7 @@ export const en = {
   "modal.tab.local": "Local",
   "modal.tab.paid": "Paid",
   "modal.noteMore": "Show full description",
+  "modal.searchResults": "{count} results across {tiers}",
   "modal.accountsHint": "Sign in to ChatGPT/Codex, OAuth providers, and API-key accounts here. OpenAI is built in — log in rather than adding it again.",
   "modal.accountsCodexAuthLink": "Codex Auth",
   "modal.notListed": "Provider not listed? Add a custom one",

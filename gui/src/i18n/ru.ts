@@ -1126,6 +1126,7 @@ export const ru: Record<TKey, string> = {
   "modal.tab.local": "Локальные",
   "modal.tab.paid": "Платные",
   "modal.noteMore": "Показать полное описание",
+  "modal.searchResults": "{count} результатов в {tiers}",
   "modal.accountsHint": "Здесь можно войти в аккаунты ChatGPT/Codex и OAuth-провайдеров, а также в аккаунты с API-ключами. Провайдер OpenAI уже встроен — просто войдите, а не добавляйте его заново.",
   "modal.accountsCodexAuthLink": "Аутентификация Codex",
   "modal.notListed": "Нет нужного провайдера? Добавьте свой",

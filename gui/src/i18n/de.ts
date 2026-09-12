@@ -1902,6 +1902,7 @@ export const de: Record<TKey, string> = {
   "modal.tab.local": "Lokal",
   "modal.tab.paid": "Bezahlt",
   "modal.noteMore": "Vollständige Beschreibung anzeigen",
+  "modal.searchResults": "{count} Ergebnisse in {tiers}",
   "modal.accountsHint": "Hier ChatGPT/Codex, OAuth-Provider und API-Key-Konten anmelden. OpenAI ist eingebaut — anmelden statt erneut hinzufügen.",
   "modal.accountsCodexAuthLink": "Codex Auth",
   "modal.notListed": "Provider nicht dabei? Eigenen hinzufügen",
