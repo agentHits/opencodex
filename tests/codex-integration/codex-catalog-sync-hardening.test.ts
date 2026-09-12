@@ -25,7 +25,17 @@ function runScript(
     },
     encoding: "utf8",
   });
-  return { stdout: result.stdout?.trim() ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
+  const diagnostics = [result.stderr ?? ""];
+  if (result.error) {
+    const code = "code" in result.error ? String(result.error.code) : result.error.name;
+    diagnostics.push(`[spawn error: ${code}] ${result.error.stack ?? result.error.message}`);
+  }
+  if (result.signal) diagnostics.push(`[spawn signal] ${result.signal}`);
+  return {
+    stdout: result.stdout?.trim() ?? "",
+    stderr: diagnostics.filter(Boolean).join("\n"),
+    status: result.status ?? 1,
+  };
 }
 
 function createCodexCatalogFixture(dir: string, models = [nativeEntry("gpt-5.5", 0)]): string {
@@ -161,6 +171,7 @@ describe("Codex catalog sync hardening", () => {
     "retired Spark cannot return through %s across two sync and cache passes", source => {
       const catalogPath = join(codexHome, "catalog.json");
       const cachePath = join(codexHome, "models_cache.json");
+      const passesPath = join(opencodexHome, "retirement-sync-passes.json");
       writeFileSync(join(codexHome, "config.toml"), 'model_catalog_json = "catalog.json"\n');
       const config = {
         providers: { openai: {
@@ -183,7 +194,7 @@ describe("Codex catalog sync hardening", () => {
       writeFileSync(cachePath, JSON.stringify({ models: [future, ...(source === "account-catalog" ? [] : [observed])] }));
       const runtime = createCodexCatalogFixture(opencodexHome);
       const r = runScript(codexHome, opencodexHome, `
-        const { readFileSync } = require("node:fs");
+        const { readFileSync, writeFileSync } = require("node:fs");
         const { syncCatalogModels, invalidateCodexModelsCache } = require("./src/codex/catalog");
         const config = ${JSON.stringify(config)};
         const passes = [];
@@ -196,10 +207,12 @@ describe("Codex catalog sync hardening", () => {
             cache: JSON.parse(readFileSync(${JSON.stringify(cachePath)}, "utf8")).models,
           });
         }
-        console.log(JSON.stringify(passes));
+        // Full native instructions replicated across rows/passes exceed spawnSync's stdout
+        // capture budget. Keep the complete evidence on disk; the parent compares it unchanged.
+        writeFileSync(${JSON.stringify(passesPath)}, JSON.stringify(passes));
       `, { CODEX_CLI_PATH: runtime });
-      expect(r.status).toBe(0);
-      const passes = JSON.parse(r.stdout) as Array<{
+      expect(r.status, r.stderr).toBe(0);
+      const passes = JSON.parse(readFileSync(passesPath, "utf8")) as Array<{
         written: boolean; invalidated: boolean;
         catalog: Array<{ slug: string; opencodex_catalog_kind?: string }>;
         cache: Array<{ slug: string }>;
