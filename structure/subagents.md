@@ -204,3 +204,6 @@ Chat helper admission in `src/server/responses/core.ts` follows the
 claims stored main, after terminal vision, routed vision and search exclusions.
 
 Provider-level Combo eligibility uses explicit inference evidence for the current single credential; account-specific admission remains separate. See [scoped provider quota](runtime.md#scoped-provider-quota-for-combo-selection).
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).

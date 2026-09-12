@@ -60,3 +60,6 @@ so the schema is not something a user can fix from configuration (issue #2673).
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).

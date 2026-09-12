@@ -63,3 +63,6 @@ Chat helper admission in `src/server/responses/core.ts` follows the
 claims stored main, after terminal vision, routed vision and search exclusions.
 
 Quota publication distinguishes display reports from explicitly supplied inference projections; a credential-bound cache read validates the current destination and key. See [scoped provider quota](../runtime.md#scoped-provider-quota-for-combo-selection).
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).

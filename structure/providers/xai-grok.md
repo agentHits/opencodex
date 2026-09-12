@@ -55,3 +55,6 @@ Chat helper admission in `src/server/responses/core.ts` follows the
 claims stored main, after terminal vision, routed vision and search exclusions.
 
 Account-scoped OAuth quota remains display evidence for provider-level Combo selection; it does not acquire single-key inference-veto authority. See [scoped provider quota](../runtime.md#scoped-provider-quota-for-combo-selection).
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
