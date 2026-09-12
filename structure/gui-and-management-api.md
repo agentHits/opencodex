@@ -539,3 +539,9 @@ Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#c
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
 The connected browser shell reuses `SESSION_UNAVAILABLE_EVENT` and its shared-session readiness state. Terminal 401 recovery failure exposes pairing without a restart instruction; a newer session or aborted request cannot publish an unavailable notice. Successful pairing changes dashboard resource revalidation dependencies, so retained failed stores are explicitly refreshed. Dashboard reads distinguish authentication, permission denial, request failure, invalid payload and transport failure; protected data is hidden for authentication/denial, while other failed refreshes label retained data as stale.
+
+Cline journal Undo eligibility reads both native configuration files through the paired
+integration IO adapter. Its snapshot fingerprint cannot be checked against providers.json alone;
+[the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
+
+The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.

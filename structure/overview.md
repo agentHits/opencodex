@@ -108,3 +108,5 @@ The management quota DTO keeps Combo editing aligned with scoped inference evide
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
 
 Connected-browser pairing and dashboard failure meanings follow the [management UI contract](gui-and-management-api.md#dashboard-surfaces); machine enrollment alone does not authenticate a browser.
+
+Cline CLI is a managed file integration: its provider settings and catalog share one recoverable journal operation. The [paired-file contract](clients/integrations.md#cline-paired-files) defines its stop/restart requirement.
