@@ -38,12 +38,13 @@ the PR, not worked around by parsing `frameText`.
 ## Changes
 
 MODIFY `src/server/responses/codex-ws-wire.ts`
-- New exported type `CodexWsStageRecord = CodexWsFailureStage & {
-  closeCode: number | null; reused: boolean; ocxVersion: string;
-  bunVersion: string }` except `requestBytes` widened to
-  `number | null` (see exchange note). Extend the privacy comment:
-  numeric/boolean/semver fields only; close-reason text stays out of every
-  durable record.
+- New exported type `CodexWsStageRecord =
+  Omit<CodexWsFailureStage, "requestBytes"> & {
+  requestBytes: number | null; closeCode: number | null; reused: boolean;
+  ocxVersion: string; bunVersion: string }` (Omit, not an intersection —
+  an intersection cannot widen `requestBytes`). Extend the privacy
+  comment: numeric/boolean/semver fields only; close-reason text stays out
+  of every durable record.
 - New `markCodexWsStage(response, record)` / `readCodexWsStage(response)`
   over a `WeakMap<Response, CodexWsStageRecord>` — the same
   Response-marker seam `markCodexWsResponse` already uses.
@@ -73,17 +74,23 @@ MODIFY `src/server/responses/codex-ws-exchange.ts`
   decision, never instead of it.
 
 MODIFY `src/server/responses/ws-upstream.ts`
-- Pass `bunVersion: runtime.version` (BunRuntimeIdentity already arrives
-  as a parameter, :64) through `codexWsUpstreamFetch` into
-  `codexWsExchange`. Signature gain is one optional field.
+- Pass `bunVersion: typeof runtime === "string" ? runtime : runtime.version`
+  (the gate input at :62-64 may be a plain string) through
+  `codexWsUpstreamFetch` into `codexWsExchange`. Signature gain is one
+  optional field.
 
 MODIFY `src/server/responses/core.ts`
-- After `fetchWithHeaderTimeout` returns `upstreamResponse` (:1532-1556
-  region), `readCodexWsStage(upstreamResponse)`; when present, assign
-  onto `logCtx.activeAttempt.codexWsStage`. This covers the 504/502
-  pre-response JSON path that never reaches relay.ts, and needs no
-  relay.ts change: the relay collapse only sets `streamAborted` alongside
-  the stage. (First revision's relay.ts MODIFY is retracted.)
+- Adopt the stage onto the attempt at the handleResponses send path, not
+  only at `retryCodexPoolOnAlternateAccount` (:1532-1556 is the pool
+  retry, not the primary send): `readCodexWsStage(upstreamResponse)`;
+  when present assign `logCtx.activeAttempt.codexWsStage`. Apply at every
+  adopted `upstreamResponse`: the primary send (:5304-5320), the
+  post-retry assignment (:5824) — or once on the final response after the
+  ladder (~5758); B picks the single funnel that covers every adopted
+  response and tests it. This covers the 504/502 pre-response JSON path
+  that never reaches relay.ts, and needs no relay.ts change: the relay
+  collapse only sets `streamAborted` alongside the stage. (First
+  revision's relay.ts MODIFY is retracted.)
 
 MODIFY `src/usage/log.ts`
 - `PersistedUsageAttempt` gains `codexWsStage?: CodexWsStageRecord`
