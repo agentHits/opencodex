@@ -1,3 +1,4 @@
+import type { PoolQuotaWriter } from "./quota-types";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   CodexCredentialGenerationConflictError,
@@ -6,6 +7,7 @@ import {
   CodexCredentialRefreshStaleError,
   getCodexAccountCredential,
   getValidCodexToken,
+  capturePoolQuotaWriter,
   isCodexAccountGenerationLive,
   readCodexAccountRecord,
 } from "./account-store";
@@ -120,6 +122,7 @@ export type CodexAuthContext =
       accountId: string;
       writerGeneration: number;
       generation: number;
+      poolQuotaWriter?: PoolQuotaWriter;
       accessToken: string;
       chatgptAccountId: string;
       /** Bypass Pool selection and suppress quota/transient failover for an exact selector. */
@@ -1030,6 +1033,7 @@ export async function resolveCodexAuthContext(
       accountId,
       writerGeneration,
       generation: token.generation,
+      poolQuotaWriter: capturePoolQuotaWriter(accountId, token),
       accessToken: token.accessToken,
       chatgptAccountId: token.chatgptAccountId,
       ...(fixedAccountId !== undefined ? { fixedAccount: true } : {}),

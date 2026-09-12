@@ -1,3 +1,6 @@
+import { capturePoolQuotaWriter } from "./account-store";
+import type { PoolQuotaWriter } from "./quota-types";
+import { getAccountQuotaHistory, isValidWhamHistoryObservation } from "./quota";
 import {
   ConfigMutationLockError,
   loadConfig,
@@ -1358,6 +1361,7 @@ async function recoverPoolQuotaFrom401(ctx: {
 
   const writerGeneration = captureConfigGeneration();
   markQuotaProbeAttempted(ctx.quotaProbeEvidence, refreshed.generation);
+  const poolWriter = capturePoolQuotaWriter(accountId, refreshed);
   const replay = await fetch("https://chatgpt.com/backend-api/wham/usage", {
     headers: {
       Authorization: `Bearer ${refreshed.accessToken}`,
@@ -1376,7 +1380,7 @@ async function recoverPoolQuotaFrom401(ctx: {
     return { quota: existing ?? null, needsReauth: false, credentialGeneration: refreshed.generation };
   }
   const result = await commitPoolQuotaResponse(replay, {
-    accountId, existing, configuredPlan, generation: refreshed.generation, writerGeneration,
+    accountId, existing, configuredPlan, generation: refreshed.generation, writerGeneration, poolWriter,
     mayPublish: ctx.quotaProbeEvidence.mayPublish,
   });
   return result.freshCredentialGeneration === refreshed.generation ? {
@@ -1418,11 +1422,13 @@ async function commitPoolQuotaResponse(
     configuredPlan: string | undefined;
     generation: number;
     writerGeneration: number;
+    poolWriter?: PoolQuotaWriter;
     mayPublish?: () => boolean;
   },
 ): Promise<PoolQuotaResult> {
   const { accountId, existing, configuredPlan, generation, writerGeneration } = ctx;
   const data = (await resp.json()) as WhamUsageResponse;
+  const observedAt = Date.now();
   if (ctx.mayPublish?.() === false) {
     return { quota: getAccountQuota(accountId), needsReauth: false, credentialGeneration: generation };
   }
@@ -1440,7 +1446,8 @@ async function commitPoolQuotaResponse(
   if (!isCodexAccountGenerationLive(accountId, generation)) {
     return { quota: null, needsReauth: false, credentialGeneration: generation };
   }
-  setAccountQuotaFromParsed(accountId, quota, writerGeneration);
+  setAccountQuotaFromParsed(accountId, quota, writerGeneration, undefined, quota,
+    ctx.poolWriter && isValidWhamHistoryObservation(data) ? { writer: ctx.poolWriter, observedAt, source: "wham", raw: quota } : undefined);
   return {
     quota: getAccountQuota(accountId),
     needsReauth: false,
@@ -1464,6 +1471,7 @@ async function fetchFreshPoolAccountQuota(
   let requestCredentialGeneration = readCodexAccountRecord(accountId)?.generation;
   try {
     const { accessToken, chatgptAccountId, generation } = await getValidToken(accountId);
+    const poolWriter = capturePoolQuotaWriter(accountId, { accessToken, chatgptAccountId, generation });
     requestCredentialGeneration = generation;
     onCredentialGeneration?.(generation);
     markQuotaProbeAttempted(quotaProbeEvidence, generation);
@@ -1494,7 +1502,7 @@ async function fetchFreshPoolAccountQuota(
       return withQuotaProbeEvidence(recovered, quotaProbeEvidence);
     }
     const committed = await commitPoolQuotaResponse(resp, {
-      accountId, existing, configuredPlan, generation, writerGeneration,
+      accountId, existing, configuredPlan, generation, writerGeneration, poolWriter,
       mayPublish: quotaProbeEvidence.mayPublish,
     });
     return withQuotaProbeEvidence(committed, quotaProbeEvidence);
@@ -2524,6 +2532,19 @@ export async function handleCodexAuthAPI(
     runtimeConfig.upstreamFailoverThreshold = body.threshold;
     saveRuntimeConfig(config, runtimeConfig);
     return jsonResponse({ ok: true });
+  }
+
+  if (url.pathname === "/api/codex-auth/quota/history" && req.method === "GET") {
+    const accountId = url.searchParams.get("accountId");
+    const rawLimit = url.searchParams.get("limit");
+    if (url.searchParams.getAll("accountId").length !== 1 || !isValidCodexAccountId(accountId)
+      || url.searchParams.getAll("limit").length > 1
+      || [...url.searchParams.keys()].some(key => key !== "accountId" && key !== "limit")
+      || (rawLimit !== null && !/^(?:[1-9]|[1-9][0-9]|1[0-9]{2}|200)$/.test(rawLimit))) {
+      return jsonResponse({ error: "A stored pool accountId and optional limit from 1 to 200 are required" }, 400);
+    }
+    if (!configuredPoolAccount(getRuntimeConfig(config), accountId)) return jsonResponse({ error: "Unknown pool account" }, 404);
+    return jsonResponse({ accountId, ...getAccountQuotaHistory(accountId, rawLimit === null ? 200 : Number(rawLimit)) });
   }
 
   if (url.pathname === "/api/codex-auth/quota" && req.method === "GET") {

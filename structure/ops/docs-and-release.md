@@ -316,3 +316,5 @@ see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routi
 Private pool credential metadata follows the [quota-history publication identity contract](../providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
 
 The integrations guide documents Cline CLI as a two-file, loopback-only integration. Hosted CI validates its source-backed fixtures; the packaged dashboard exposes it through the existing client list.
+
+Pool quota producers and account commands follow the [bounded raw-observation contract](../providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.

@@ -280,3 +280,5 @@ Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#c
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
 Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
+
+Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.

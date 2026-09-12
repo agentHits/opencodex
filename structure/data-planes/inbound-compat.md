@@ -128,3 +128,5 @@ changes prompt roles, not conversation identity, and cannot guarantee upstream c
 Instruction notice extraction scans fence ranges once and walks original lines backwards with
 a decreasing cursor. It accepts exactly one ASCII space inside the token notice, preserves
 unmatched prefix bytes, and does not repeatedly scan or copy shrinking prompt prefixes.
+
+Pool quota producers and account commands follow the [bounded raw-observation contract](../providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.

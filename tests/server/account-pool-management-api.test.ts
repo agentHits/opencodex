@@ -667,6 +667,30 @@ describe("unified pool-settings contract (#695 wp5c)", () => {
     if (dir) removeTreeWithRetry(dir);
   });
 
+  test("quota history is a protected bounded cached read for stored pool accounts", async () => {
+    const config = loadConfig();
+    config.codexAccounts = [{ id: "history-row", email: "history@example.test", isMain: false }];
+    saveConfig(config);
+    const server = startServer(0);
+    try {
+      const endpoint = "/api/codex-auth/quota/history";
+      const denied = await globalThis.fetch(new URL(`${endpoint}?accountId=history-row`, server.url));
+      expect(denied.status).toBe(401);
+      await denied.text();
+      for (const query of ["", "?accountId=__main__", "?accountId=history-row&accountId=history-row", "?accountId=history-row&limit=201", "?accountId=history-row&refresh=1"]) {
+        const response = await fetch(new URL(endpoint + query, server.url));
+        expect(response.status).toBe(400);
+        await response.text();
+      }
+      const unknown = await fetch(new URL(`${endpoint}?accountId=missing`, server.url));
+      expect(unknown.status).toBe(404);
+      await unknown.text();
+      const response = await fetch(new URL(`${endpoint}?accountId=history-row&limit=1`, server.url));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ accountId: "history-row", observations: [], retention: { maxObservations: 200, maxAgeDays: 30 }, truncated: false });
+    } finally { await server.stop(true); }
+  });
+
   test("every kind answers with the same keys and declares what it supports", async () => {
     const server = startServer(0);
     try {

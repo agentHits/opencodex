@@ -1,3 +1,4 @@
+import { getAccountQuotaHistory } from "../../src/codex/quota";
 import { clearComboSelectionState, clearComboTargetCooldowns } from "../../src/combos";
 import { sessionLaneIdFromRequest } from "../../src/server/request-log-conversation";
 /**
@@ -1226,6 +1227,30 @@ describe("compact alternate-account attempt (#913)", () => {
           releaseSpy.mockRestore();
         }
       }
+    });
+  });
+
+  test.each([false, true])("compact final quota history follows the serving account with alternate=%s", async alternate => {
+    await withPoolEnv("ocx-compact-history-", async config => {
+      let calls = 0;
+      globalThis.fetch = (async () => {
+        calls++;
+        const rejected = alternate && calls === 1;
+        return Response.json(rejected ? { error: { message: "pool exhausted" } } : completedPayload("history compact"), {
+          status: rejected ? 429 : 200,
+          headers: { "x-codex-primary-used-percent": rejected ? "100" : "25", "x-codex-primary-window-minutes": "10080" },
+        });
+      }) as typeof fetch;
+      const response = await handleResponsesCompact(compactionRequest(baseCompactionBody({})), config, { model: "", provider: "" });
+      expect(response.status).toBe(200);
+      await response.text();
+      const first = getAccountQuotaHistory("pool-a").observations;
+      expect(first).toHaveLength(1);
+      expect(first[0].windows[0].usedPercent).toBe(alternate ? 100 : 25);
+      const second = getAccountQuotaHistory("pool-b").observations;
+      expect(second).toHaveLength(alternate ? 1 : 0);
+      if (alternate) expect(second[0].windows[0].usedPercent).toBe(25);
+      expect(calls).toBe(alternate ? 2 : 1);
     });
   });
 

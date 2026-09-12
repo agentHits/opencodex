@@ -581,3 +581,9 @@ otherwise look routed.
 and rejects an entire catalog containing any other value, so `add`, `edit`, and the management API
 all refuse the bad value rather than storing something the catalog writer would have to strip later
 (#759).
+
+### Cached quota history
+
+`ocx account history openai <pool-account-id> [--limit 1-200] [--json]` reads stored observations without contacting the provider. The output separates actual observation time, WHAM or response-header source, window family and usage percentage. At most 200 observations per account are retained for 30 days, with global storage bounds.
+
+Ordinary token refresh preserves history. Reauthentication, removal or account replacement retires the old publication. Native main and probes performed before a login is published are not included. Missing history means insufficient observations, not zero usage. This command does not estimate token capacity or spend quota.

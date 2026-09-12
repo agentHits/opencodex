@@ -545,3 +545,5 @@ integration IO adapter. Its snapshot fingerprint cannot be checked against provi
 [the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
 
 The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.
+
+Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.

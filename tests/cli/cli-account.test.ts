@@ -586,6 +586,22 @@ afterEach(() => {
 });
 
 describe("ocx account CLI (issue #180 matrix)", () => {
+  test("history reads one cached endpoint and rejects invalid arguments before I/O", async () => {
+    let calls = 0;
+    const deps: AccountDeps = { baseUrl: "http://127.0.0.1:10100", fetchImpl: (async input => {
+      calls++;
+      expect(String(input)).toBe("http://127.0.0.1:10100/api/codex-auth/quota/history?accountId=pool-a&limit=2");
+      return Response.json({ accountId: "pool-a", observations: [], retention: { maxObservations: 200, maxAgeDays: 30 }, truncated: false });
+    }) as typeof fetch };
+    const result = await run(["history", "openai", "pool-a", "--limit", "2", "--json"], deps);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).observations).toEqual([]);
+    for (const args of [["anthropic", "pool-a"], ["openai", "__main__"], ["openai", "pool-a", "--limit", "201"], ["openai", "pool-a", "--unknown"]]) {
+      expect((await run(["history", ...args], deps)).code).toBe(1);
+    }
+    expect(calls).toBe(1);
+  });
+
   test.each([100, 12])("pending validation stays visible at %s percent usage without exposing raw health details", async weeklyPercent => {
     codexAccounts = [{ id: "pending", email: "p***@example.test", quota: { weeklyPercent },
       health: { status: "warning", reason: "validation_pending", message: RAW_SENTINEL } }];

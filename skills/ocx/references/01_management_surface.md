@@ -104,6 +104,23 @@ Recently detected quota resets and whether reset notifications are enabled.
 
 JSON mode: `payload`.
 
+### `ocx account history`
+
+Cached quota observations for one stored Codex pool account.
+
+| Method | Route |
+|---|---|
+| GET | `/api/codex-auth/quota/history` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit the bounded observation history. |
+| `--limit` | number | Return the newest 1 to 200 observations. |
+
+JSON mode: `payload`.
+
+- Use account history openai <pool-account-id>. Reads cached observations only; no refresh or warmup. Native main is not included.
+
 ### `ocx account list`
 
 Codex OAuth accounts with pool priority and pause state.
@@ -769,6 +786,6 @@ JSON mode: `payload`.
 
 ## Counts
 
-- declared capabilities: 41
+- declared capabilities: 42
 - of those, state-changing: 20
 - head-resolved invocations: 2
