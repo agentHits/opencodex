@@ -290,6 +290,42 @@ describe("muse tool-name inbound restore through handleResponses", () => {
     }
   });
 
+  // #4410: the undeclared-tool guard reads `name` straight off this event, outside any
+  // function_call item, so a hashed alias here would still look like an undeclared tool.
+  test("streamed response.function_call_arguments.done restores the original name", async () => {
+    const savedFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      const item = { type: "function_call", name: wire, call_id: "c1", arguments: "{}", status: "completed" };
+      const upstream = [
+        frame("response.output_item.added", { output_index: 0, item: { ...item, arguments: "", status: "in_progress" } }),
+        frame("response.function_call_arguments.done", { item_id: "fc_1", output_index: 0, name: wire, arguments: "{}" }),
+        frame("response.output_item.done", { output_index: 0, item }),
+        frame("response.completed", { response: { id: "resp_args", status: "completed", output: [item] } }),
+        "data: [DONE]",
+      ].join("\n\n") + "\n\n";
+      return new Response(upstream, { headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+    try {
+      const response = await handleResponses(new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "fixture/muse-spark-1.3",
+          stream: true,
+          input: "search",
+          tools: [{ type: "function", name: original, parameters: { type: "object" } }],
+        }),
+      }), config, { model: "", provider: "" });
+      expect(response.status).toBe(200);
+      const clientSse = await response.text();
+      expect(clientSse).toContain("response.function_call_arguments.done");
+      expect(clientSse).toContain(`"name":"${original}"`);
+      expect(clientSse).not.toContain(`"name":"${wire}"`);
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
   test("undeclared-tool guard does not fire on a continuation that echoes the hashed name", async () => {
     const savedFetch = globalThis.fetch;
     let turn = 1;

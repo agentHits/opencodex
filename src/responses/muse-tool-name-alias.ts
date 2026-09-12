@@ -249,17 +249,27 @@ export function rewriteMuseToolNamesForUpstream(body: unknown): {
   };
 }
 
+/**
+ * Payload shapes whose `name` is a tool identity the client (and the undeclared-tool guard)
+ * reads. `response.function_call_arguments.done` carries the name outside any `function_call`
+ * item, so a hashed alias there would still reach the guard as an undeclared tool.
+ */
+function isMuseToolIdentityType(type: unknown): boolean {
+  return type === "function_call"
+    || type === "custom_tool_call"
+    || type === "function"
+    || type === "custom"
+    || type === "response.function_call_arguments.done"
+    || type === "response.function_call_arguments.delta";
+}
+
 function restoreNamedIdentity(
   value: Record<string, unknown>,
   aliases: MuseToolNameAliases,
 ): { value: Record<string, unknown>; changed: boolean } {
   let restored = value;
   let changed = false;
-  if (
-    (value.type === "function_call" || value.type === "custom_tool_call"
-      || value.type === "function" || value.type === "custom")
-    && typeof restored.name === "string"
-  ) {
+  if (isMuseToolIdentityType(value.type) && typeof restored.name === "string") {
     const original = aliases.get(restored.name);
     if (original && original !== restored.name) {
       restored = { ...restored, name: original };
