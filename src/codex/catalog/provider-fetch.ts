@@ -600,6 +600,7 @@ function providerCatalogFingerprint(name: string, prov: OcxProviderConfig): Reco
     maxOut: prov.modelMaxOutputTokens ?? null,
     autoCompact: prov.modelAutoCompactTokenLimits ?? null,
     inMod: prov.modelInputModalities ?? null,
+    capabilities: prov.modelCapabilities ?? null,
     re: prov.modelReasoningEfforts ?? null,
     defRe: prov.modelDefaultReasoningEfforts ?? null,
     rsSum: prov.modelSupportsReasoningSummaries ?? null,

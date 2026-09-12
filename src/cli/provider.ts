@@ -224,6 +224,9 @@ async function handleAdd(args: string[]): Promise<void> {
   }
 
   const existingProvider = config.providers[name];
+  if (existingProvider?.modelCapabilities !== undefined && provConfig.modelCapabilities === undefined) {
+    provConfig.modelCapabilities = structuredClone(existingProvider.modelCapabilities);
+  }
   const { initializeProviderModelSelection } = await import("../providers/initial-model-selection");
   initializeProviderModelSelection(name, provConfig, existingProvider, config);
   config.providers[name] = provConfig;

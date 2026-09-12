@@ -128,3 +128,5 @@ changes prompt roles, not conversation identity, and cannot guarantee upstream c
 Instruction notice extraction scans fence ranges once and walks original lines backwards with
 a decreasing cursor. It accepts exactly one ASCII space inside the token notice, preserves
 unmatched prefix bytes, and does not repeatedly scan or copy shrinking prompt prefixes.
+
+The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.

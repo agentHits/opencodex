@@ -1,3 +1,4 @@
+import { modelCapabilitiesConfigError } from "../config/provider-validation";
 import { timingSafeEqual } from "node:crypto";
 import { initialModelSelection } from "../providers/initial-model-selection";
 import { extractAccountId } from "../oauth/chatgpt";
@@ -588,6 +589,8 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
     return "provider must be a plain object";
   }
   const raw = provider as Record<string, unknown>;
+  const capabilitiesError = modelCapabilitiesConfigError(raw.modelCapabilities);
+  if (capabilitiesError) return capabilitiesError;
   const pinsError = providerReasoningPinsConfigError(raw);
   if (pinsError) return pinsError;
   for (const field of FORBIDDEN_PROVIDER_RUNTIME_FIELDS) {
@@ -833,6 +836,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   contextWindow: "editor",
   modelContextWindows: "editor",
   modelInputModalities: "editor",
+  modelCapabilities: "editor",
   modelMaxInputTokens: "runtime",
   modelAutoCompactTokenLimits: "editor",
   defaultMaxOutputTokens: "editor",

@@ -91,3 +91,5 @@ The explicit sync coordinator also accepts Cline CLI as a separate file integrat
 `claudeCode.stabilizePromptCache` is a default-off operator setting for
 [translated instruction stabilization](../data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
+
+The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.

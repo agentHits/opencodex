@@ -1,3 +1,4 @@
+import { modelCapabilitiesConfigError, mergeModelCapabilities, sanitizeModelCapabilitiesForLoad } from "./config/provider-validation";
 import { createHash } from "node:crypto";
 import { chmodSync, constants as fsConstants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -577,7 +578,13 @@ const modelPinnedEffortsSchema = z.unknown().superRefine((value, ctx) => {
  * Zod schema for one provider entry: known fields are validated strictly while unknown
  * fields pass through (preserved for runtime extensions).
  */
+const modelCapabilitiesSchema = z.unknown().superRefine((value, ctx) => {
+  const error = modelCapabilitiesConfigError(value);
+  if (error) ctx.addIssue({ code: "custom", message: error });
+}).transform(value => mergeModelCapabilities(undefined, value));
+
 const providerConfigSchema = z.object({
+  modelCapabilities: modelCapabilitiesSchema.optional(),
   pinnedReasoningEffort: pinnedReasoningEffortSchema.optional(),
   modelPinnedReasoningEfforts: modelPinnedEffortsSchema.optional(),
   // Validated rather than left to passthrough: an unrecognized strategy would otherwise
@@ -1907,6 +1914,23 @@ export function retryOn429PolicyConfigError(policy: unknown): string | null {
  * with a warning; strict rejection stays at the management/write boundary
  * (providerManagementConfigError).
  */
+function sanitizeCapabilityDeclarationsForLoad(parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object") return;
+  const providers = (parsed as Record<string, unknown>).providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return;
+  for (const [name, value] of Object.entries(providers)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const provider = value as Record<string, unknown>;
+    if (provider.modelCapabilities === undefined) continue;
+    if (modelCapabilitiesConfigError(provider.modelCapabilities) !== null) {
+      console.warn(`config.json provider ${JSON.stringify(redactSecretString(name))} has malformed modelCapabilities; retaining valid axes and restricting malformed input modalities to text`);
+      const repaired = sanitizeModelCapabilitiesForLoad(provider.modelCapabilities);
+      if (repaired) provider.modelCapabilities = repaired;
+      else delete provider.modelCapabilities;
+    }
+  }
+}
+
 function sanitizeModelCostsForLoad(parsed: unknown): void {
   if (!parsed || typeof parsed !== "object") return;
   const root = parsed as Record<string, unknown>;
@@ -2403,6 +2427,7 @@ export function loadConfig(): OcxConfig {
     sanitizeModelDisplayNamesForLoad(parsed);
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
+    sanitizeCapabilityDeclarationsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       const config = normalizeApiKeyIds(result.data as OcxConfig);
@@ -3027,6 +3052,7 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     sanitizeModelDisplayNamesForLoad(parsed);
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
+    sanitizeCapabilityDeclarationsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       return validFileConfigDiagnostics(normalizeApiKeyIds(result.data as OcxConfig), parsed);

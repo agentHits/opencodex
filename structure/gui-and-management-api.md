@@ -543,3 +543,5 @@ integration IO adapter. Its snapshot fingerprint cannot be checked against provi
 [the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
 
 The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.
+
+The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.

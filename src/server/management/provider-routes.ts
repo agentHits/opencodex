@@ -1,3 +1,4 @@
+import { modelCapabilitiesConfigError, mergeModelCapabilities } from "../../config/provider-validation";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -287,6 +288,9 @@ function providerEditorCandidate(
     if (provider.modelPinnedReasoningEfforts !== undefined) {
       provider.modelPinnedReasoningEfforts = validated.config.providers[name]!.modelPinnedReasoningEfforts;
     }
+    const capabilities = validated.config.providers[name]!.modelCapabilities;
+    if (capabilities === undefined) delete provider.modelCapabilities;
+    else provider.modelCapabilities = capabilities;
   }
   return { ok: true, config: candidate, removedProviders };
 }
@@ -488,6 +492,14 @@ function applyProviderPatchFields(
     } else {
       return { error: "contextWindow must be a positive safe integer or null" };
     }
+    touched = true;
+  }
+  if (Object.hasOwn(rawBody, "modelCapabilities")) {
+    const error = modelCapabilitiesConfigError(rawBody.modelCapabilities, true);
+    if (error) return { error };
+    const capabilities = mergeModelCapabilities(next.modelCapabilities, rawBody.modelCapabilities);
+    if (capabilities === undefined) delete next.modelCapabilities;
+    else next.modelCapabilities = capabilities;
     touched = true;
   }
   if (Object.hasOwn(rawBody, "modelContextWindows")) {
@@ -784,6 +796,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       models: p.models ?? [],
       contextWindow: p.contextWindow,
       modelContextWindows: p.modelContextWindows,
+      modelCapabilities: p.modelCapabilities,
       pinnedReasoningEffort: p.pinnedReasoningEffort,
       modelPinnedReasoningEfforts: p.modelPinnedReasoningEfforts,
       modelAutoCompactTokenLimits: p.modelAutoCompactTokenLimits,
@@ -1117,6 +1130,11 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // completed during that wait remains authoritative instead of being overwritten by the
     // older ownership snapshot used to admit this POST.
     restorePersistedAliasOverlays(prov, config.providers[name]);
+    const capabilities = Object.hasOwn(body.provider, "modelCapabilities")
+      ? mergeModelCapabilities(undefined, prov.modelCapabilities)
+      : mergeModelCapabilities(config.providers[name]?.modelCapabilities, undefined);
+    if (capabilities === undefined) delete prov.modelCapabilities;
+    else prov.modelCapabilities = capabilities;
     // The add/edit form omits wire choices. Read after DNS so a concurrent switch
     // remains authoritative, including the marker that protects it on the next boot.
     if (name === "xai") {
