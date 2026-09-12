@@ -55,13 +55,23 @@ mock.module("../../src/server/responses",()=>({codexLogAccountId:()=>"test",deco
 mock.module("../../src/server/lifecycle",()=>({codexAccountSelectionForTurn:()=>()=>undefined}));
 const { handleContextHistory, contextSelectionHeaders } = await import("../../src/server/context-history");
 const destination = "https://chatgpt.com/backend-api/codex";
-function seedOwner(sessionId: string, kind: "stored" | "caller" = "stored", account = "test-only", now?: number) {
+let issuedTokens = 0;
+// A real ChatGPT credential carries a stable user claim; ownership continuity across a refresh
+// depends on it, so a test that models a refresh has to issue distinct tokens for one user.
+function userToken(user: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    iat: ++issuedTokens, "https://api.openai.com/auth": { chatgpt_user_id: user },
+  }), "utf8").toString("base64url");
+  return `header.${payload}.signature`;
+}
+function seedOwner(sessionId: string, kind: "stored" | "caller" = "stored", account = "test-only",
+  now?: number, token = "test-only") {
   const auth = kind === "caller" ? { kind: "main", accountId: null } : {
     kind: "pool", accountId: "test-account", chatgptAccountId: account,
     accessToken: "test-only", generation: 1, writerGeneration: 0,
   };
   recordContextSessionOwner("principal-a", new Headers({ "session-id": sessionId }), destination,
-    auth as CodexAuthContext, new Headers({ authorization: "Bearer test-only", "chatgpt-account-id": account }), false, now);
+    auth as CodexAuthContext, new Headers({ authorization: `Bearer ${token}`, "chatgpt-account-id": account }), false, now);
 }
 const originalFetch=globalThis.fetch;
 function setFetch(handler: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): void {
@@ -295,7 +305,10 @@ test("unknown, expired and conflicting owners fail before selecting or sending",
 test("stored token refresh is accepted but physical account replacement is refused", async () => {
   let calls = 0;
   setFetch(async () => { calls++; return new Response("{}"); });
-  outgoingBearer = "refreshed-test-token";
+  // Same person, new token: that is what a refresh looks like, and it stays the same owner.
+  clearContextSessionOwnersForTests();
+  seedOwner("root", "stored", "test-only", undefined, userToken("user-a"));
+  outgoingBearer = userToken("user-a");
   const body = '{"context":{"session_id":"root"}}';
   expect((await handleContextHistory(contextRequest(body), config, logContext(), "alpha/notes/v2/read_file", undefined, keyAdmission)).status).toBe(200);
   outgoingAccount = "replacement-account";
@@ -321,6 +334,6 @@ test("caller owner uses Direct request credentials and cannot authorize proxy-be
 test("a context root conflicting with protocol headers is rejected without selection", async () => {
   const response = await handleContextHistory(contextRequest('{"context":{"session_id":"root"}}', {
     authorization: "Bearer test", "session-id": "another-root",
-  }), config, logContext(), "alpha/notes/v2/read_file");
+  }), config, logContext(), "alpha/notes/v2/read_file", undefined, keyAdmission);
   expect(response.status).toBe(409); expect(selection).toBeUndefined();
 });

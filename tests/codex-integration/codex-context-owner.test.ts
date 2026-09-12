@@ -17,11 +17,16 @@ const stored = (id = "slot-a", account = "physical-a"): CodexAuthContext => ({
 const caller: CodexAuthContext = { kind: "main", accountId: null };
 beforeEach(clearContextSessionOwnersForTests);
 
+let issuedTokens = 0;
 const userToken = (user: string | undefined, second?: string) => {
   const auth: Record<string, string> = {};
   if (user !== undefined) auth.chatgpt_user_id = user;
   if (second !== undefined) auth.user_id = second;
-  const payload = Buffer.from(JSON.stringify({ "https://api.openai.com/auth": auth }), "utf8").toString("base64url");
+  // iat varies per call so two tokens for the same person are genuinely different credentials,
+  // which is what a refresh looks like and what the fingerprint rules are about.
+  const payload = Buffer.from(JSON.stringify({
+    iat: ++issuedTokens, "https://api.openai.com/auth": auth,
+  }), "utf8").toString("base64url");
   return `header.${payload}.signature`;
 };
 
@@ -93,12 +98,17 @@ describe("context session ownership", () => {
   test("stored ownership survives token and generation refresh for the same proven user", () => {
     const issued = outbound("physical-a", userToken("user-a"));
     const renewed = outbound("physical-a", userToken("user-a"));
+    expect(renewed.get("authorization")).not.toBe(issued.get("authorization"));
     recordContextSessionOwner(principal, root(), destination, stored(), issued, false, start);
     const refreshed = { ...stored(), generation: 2, accessToken: "refreshed" } as CodexAuthContext;
     recordContextSessionOwner(principal, root(), destination, refreshed, renewed, false, start + 1);
     const owner = getContextSessionOwner(principal, "root", destination, start + 2)!;
     expect(owner.ambiguous).toBe(false);
+    // A stored credential is minted by the proxy for the account it selected, so either token
+    // of the same proven person is accepted; a different person in that workspace is not.
     expect(contextSessionOwnerMatches(owner, renewed)).toBe(true);
+    expect(contextSessionOwnerMatches(owner, issued)).toBe(true);
+    expect(contextSessionOwnerMatches(owner, outbound("physical-a", userToken("user-b")))).toBe(false);
   });
 
   test("a userless credential cannot rebind an entry by sharing its workspace", () => {
@@ -128,12 +138,15 @@ describe("context session ownership", () => {
     const issued = outbound("physical-a", userToken("user-a"));
     recordContextSessionOwner(principal, root(), destination, caller, issued, false, start);
     const refreshed = outbound("physical-a", userToken("user-a"));
+    expect(refreshed.get("authorization")).not.toBe(issued.get("authorization"));
     // Same person, but this bearer has never been accepted upstream for this session.
     expect(contextSessionOwnerMatches(getContextSessionOwner(principal, "root", destination, start)!, refreshed)).toBe(false);
     recordContextSessionOwner(principal, root(), destination, caller, refreshed, false, start + 1);
     const owner = getContextSessionOwner(principal, "root", destination, start + 1)!;
     expect(owner.ambiguous).toBe(false);
     expect(contextSessionOwnerMatches(owner, refreshed)).toBe(true);
+    // A caller bearer is not ours to reissue, so the superseded one stops being the credential.
+    expect(contextSessionOwnerMatches(owner, issued)).toBe(false);
     expect(contextSessionOwnerMatches(owner, outbound())).toBe(false);
   });
 
