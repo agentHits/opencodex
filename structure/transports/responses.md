@@ -511,3 +511,5 @@ deprecated, sunset, decommissioned, or no longer available). An unrelated applic
 not retried.
 
 > Decision record: [ADR-0071](../decisions/ADR-0071-combo-streaming-commit-boundary.md)
+
+Console upload-rejection recovery excludes query-bearing and fragment-bearing destinations even when their host and generation path match the canonical endpoint.

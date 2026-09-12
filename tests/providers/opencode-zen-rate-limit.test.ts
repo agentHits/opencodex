@@ -263,6 +263,8 @@ describe("Console Go transient upload refusal", () => {
     for (const outboundUrl of [
       "http://opencode.ai/zen/go/v1/responses",
       "https://opencode.ai:8443/zen/go/v1/responses",
+      "https://opencode.ai/zen/go/v1/responses?tenant=fixture",
+      "https://opencode.ai/zen/go/v1/responses#fragment",
       "https://opencode.ai.evil.test/zen/go/v1/responses",
       "https://opencode.ai/zen-other/v1/responses",
       "https://opencode.ai/zen/go/v1/models",

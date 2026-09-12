@@ -183,6 +183,7 @@ export function isConsoleGoDestination(outboundUrl: string | undefined): boolean
     const url = new URL(outboundUrl);
     return url.protocol === "https:" && url.hostname === "opencode.ai"
       && url.port === "" && url.username === "" && url.password === ""
+      && url.search === "" && url.hash === ""
       && /^\/zen\/(?:go\/)?v1\/(?:responses|chat\/completions|messages)$/.test(url.pathname);
   } catch {
     return false;

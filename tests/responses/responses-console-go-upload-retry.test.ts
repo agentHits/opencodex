@@ -153,6 +153,17 @@ describe("Console Go transient upload refusal recovery", () => {
 
 
 describe("Console destination and translated recovery controls", () => {
+  test("a query-bearing Console destination never authorizes another POST", async () => {
+    const cfg = config();
+    cfg.providers.go!.baseUrl = "https://opencode.ai/zen/go/v1?tenant=fixture";
+    const outbound: string[] = [];
+    globalThis.fetch = (async input => { outbound.push(String(input)); return refusal(); }) as typeof fetch;
+    const response = await handleResponses(request(), cfg, { model: "", provider: "" });
+    expect(response.status).toBe(400);
+    expect(outbound).toHaveLength(1);
+    expect(new URL(outbound[0]!).search).toBe("?tenant=fixture");
+  });
+
   test("a canonical row name cannot authorize another host", async () => {
     const cfg = config();
     cfg.providers["opencode-go"] = { ...cfg.providers.go!, baseUrl: "https://other.example.test/v1" };
