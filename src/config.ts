@@ -574,15 +574,15 @@ const modelPinnedEffortsSchema = z.unknown().superRefine((value, ctx) => {
   Object.entries(value as Record<string, string>).map(([key, effort]) => [key.trim(), effort]),
 ));
 
-/**
- * Zod schema for one provider entry: known fields are validated strictly while unknown
- * fields pass through (preserved for runtime extensions).
- */
 const modelCapabilitiesSchema = z.unknown().superRefine((value, ctx) => {
   const error = modelCapabilitiesConfigError(value);
   if (error) ctx.addIssue({ code: "custom", message: error });
 }).transform(value => mergeModelCapabilities(undefined, value));
 
+/**
+ * Zod schema for one provider entry: known fields are validated strictly while unknown
+ * fields pass through (preserved for runtime extensions).
+ */
 const providerConfigSchema = z.object({
   modelCapabilities: modelCapabilitiesSchema.optional(),
   pinnedReasoningEffort: pinnedReasoningEffortSchema.optional(),
@@ -1905,15 +1905,6 @@ export function retryOn429PolicyConfigError(policy: unknown): string | null {
   return `retryOn429.${field} is invalid (${first.message})`;
 }
 
-/**
- * Load-time degradation for `providers.<name>.modelCosts`, mirroring
- * {@link sanitizeRetryOn429ForLoad}. A hand-edited malformed display-price row
- * must not fail the whole config parse — that would back up config.json and
- * fall back to defaults, dropping otherwise valid providers and the default
- * route for a typo in a non-runtime display field. Invalid rows are dropped
- * with a warning; strict rejection stays at the management/write boundary
- * (providerManagementConfigError).
- */
 function sanitizeCapabilityDeclarationsForLoad(parsed: unknown): void {
   if (!parsed || typeof parsed !== "object") return;
   const providers = (parsed as Record<string, unknown>).providers;
@@ -1931,6 +1922,15 @@ function sanitizeCapabilityDeclarationsForLoad(parsed: unknown): void {
   }
 }
 
+/**
+ * Load-time degradation for `providers.<name>.modelCosts`, mirroring
+ * {@link sanitizeRetryOn429ForLoad}. A hand-edited malformed display-price row
+ * must not fail the whole config parse — that would back up config.json and
+ * fall back to defaults, dropping otherwise valid providers and the default
+ * route for a typo in a non-runtime display field. Invalid rows are dropped
+ * with a warning; strict rejection stays at the management/write boundary
+ * (providerManagementConfigError).
+ */
 function sanitizeModelCostsForLoad(parsed: unknown): void {
   if (!parsed || typeof parsed !== "object") return;
   const root = parsed as Record<string, unknown>;
