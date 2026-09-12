@@ -305,3 +305,6 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 [quota cache contract](../providers/openai-tiers.md#quota-cache-and-short-window-history).
 
 The Combo guides describe the distinction between display quota and single-credential inference evidence used by routing. See [scoped provider quota](../runtime.md#scoped-provider-quota-for-combo-selection).
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).

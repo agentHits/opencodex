@@ -515,3 +515,18 @@ survives availability drift, while complete/native custom orders await explicit 
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+## Combo editor routing quota
+
+`src/server/management/provider-routes.ts` projects `routingQuota` after each quota read using the
+current provider configuration and [scoped inference evidence](runtime.md#scoped-provider-quota-for-combo-selection).
+The DTO carries only state, observation time and an exclusive `validUntil`; cached display reports
+and private credential bindings are unchanged. Known states expire within 30 minutes; exhaustion
+may expire earlier when the runtime predicate clears at a reset boundary, accounting for other
+windows and persistent USD blockers.
+
+`gui/src/combo-workspace-data.ts` accepts only this projection for quota-based Save/Create blocking.
+Missing, invalid or expired evidence is unknown. `gui/src/pages/Combos.tsx` wakes at the rendered
+expiry, including a deadline crossed before effects run, rechecks activation and visibility, and
+refreshes quota with Combo data while preserving drafts. Each successful quota snapshot also
+advances the observation clock, so a retained older row cannot defer evaluation of a fresh row.

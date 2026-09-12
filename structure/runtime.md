@@ -209,3 +209,6 @@ cannot rank or veto a provider. `src/combos/resolve.ts` uses that same scoped ge
 reset-window ordering and catalog inactivity. Changing a key, destination or adapter invalidates
 the old binding; restoring the same configuration may reuse still-fresh evidence. Account admission,
 cooldowns and response-driven retry remain authoritative.
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
