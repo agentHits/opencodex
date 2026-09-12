@@ -47,6 +47,8 @@ Translated Claude timeline reminders use the Chat adapter's
 on its exact supported route. This is separate from trailing-notice stabilization
 and from native Chat message passthrough.
 
+For shared JSON request-body parsing, see [request-copy accounting](../transports/responses.md#request-copy-accounting).
+
 ## Chat Completions inbound native path
 
 `POST /v1/chat/completions` sends eligible `openai-chat` routes directly to the provider's Chat

@@ -7,6 +7,8 @@ Codex WebSocket quota-family normalization remains generic; retired-model eviden
 by the [OpenAI quota owner](../providers/openai-tiers.md#public-provider-contract), not by
 removing support for non-default WebSocket quota families.
 
+For shared JSON request-body parsing, see [request-copy accounting](responses.md#request-copy-accounting).
+
 ## Heartbeat and stall deadline
 
 The HTTP/SSE bridge emits an SSE comment-line keep-alive (`: opencodex heartbeat`) during upstream

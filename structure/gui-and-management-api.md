@@ -3,6 +3,8 @@
 The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+For shared JSON request-body parsing, see [request-copy accounting](transports/responses.md#request-copy-accounting).
+
 ## Dashboard serving
 
 The bundled React dashboard is built into `gui/dist` and served by the same Bun proxy. `ocx gui`
