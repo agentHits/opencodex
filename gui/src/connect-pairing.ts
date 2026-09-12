@@ -1,7 +1,8 @@
-import { createElement, useState, type ChangeEvent, type FormEvent } from "react";
+import { createElement, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import type { ApiTarget } from "./api-targets";
 import { useT } from "./i18n/shared";
-import { submitConnectPairing } from "./connect-pairing-transport";
+import { PairingError, submitConnectPairing } from "./connect-pairing-transport";
+import { useCopyFeedback } from "./components/use-copy-feedback";
 
 export function ConnectPairingForm({
   target,
@@ -13,26 +14,41 @@ export function ConnectPairingForm({
   const t = useT();
   const [grant, setGrant] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<PairingError["kind"] | null>(null);
+  const activeRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => activeRequest.current?.abort(), []);
+  const copyFeedback = useCopyFeedback<string>();
+  const command = `ocx gui pair --origin "${window.location.origin}"`;
+  const copied = copyFeedback.outcomeFor(command);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
     setBusy(true);
-    setError(false);
+    setError(null);
+    const controller = new AbortController();
+    activeRequest.current = controller;
     try {
-      await submitConnectPairing(target, grant);
-      onConnected();
-    } catch {
-      setError(true);
+      await submitConnectPairing(target, grant, undefined, controller.signal);
+      if (!controller.signal.aborted) onConnected();
+    } catch (failure) {
+      if (!controller.signal.aborted) setError(failure instanceof PairingError ? failure.kind : "unreachable");
     } finally {
-      setBusy(false);
+      if (!controller.signal.aborted) setBusy(false);
+      if (activeRequest.current === controller) activeRequest.current = null;
     }
   };
 
   return createElement("section", { className: "card connect-pairing", "aria-labelledby": "connect-pairing-title" },
     createElement("h2", { id: "connect-pairing-title" }, t("connection.pairing.title")),
-    createElement("p", null, t(target.transport === "relay" ? "connection.pairing.relayWarning" : "connection.pairing.body")),
+    createElement("p", null, t("connection.pairing.hub"), ": ", createElement("code", null, target.serverOrigin)),
+    createElement("p", null, t("connection.pairing.getCode")),
+    createElement("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, createElement("code", null, command)),
+    createElement("button", { type: "button", className: "btn btn-ghost", onClick: () => copyFeedback.copy(command, command) },
+      t(copied === "copied" ? "startup.copied" : "startup.copy")),
+    copied === "unavailable" ? createElement("p", { role: "status" }, t("prov.linkCopyUnavailable")) : null,
+    createElement("p", null, t("connection.pairing.askOperator")),
+    createElement("p", null, t("connection.pairing.notApiKey")),
     createElement("form", { onSubmit: submit, className: "api-form-row" },
       createElement("label", { htmlFor: "connect-pairing-code", className: "field-label" }, t("connection.pairing.code")),
       createElement("input", {
@@ -44,12 +60,17 @@ export function ConnectPairingForm({
         spellCheck: false,
         disabled: busy,
         className: "input mono",
-        "aria-invalid": error || undefined,
+        "aria-invalid": Boolean(error) || undefined,
         "aria-describedby": error ? "connect-pairing-error" : undefined,
       }),
       createElement("button", { type: "submit", className: "btn btn-primary", disabled: busy || !grant.trim() },
         t(busy ? "connection.pairing.submitting" : "connection.pairing.submit")),
-      error ? createElement("p", { id: "connect-pairing-error", className: "alert alert-err", role: "alert" }, t("connection.pairing.error")) : null,
+      error ? createElement("p", { id: "connect-pairing-error", className: "alert alert-err", role: "alert" },
+        t(error === "invalid-code" ? "connection.pairing.notApiKey"
+          : error === "unreachable" ? "connection.pairing.networkError"
+          : error === "request-failed" ? "connection.pairing.requestError"
+          : error === "invalid-response" ? "connection.pairing.responseError" : "connection.pairing.error")) : null,
     ),
+    target.transport === "relay" ? createElement("p", { className: "text-muted" }, t("connection.pairing.relayWarning")) : null,
   );
 }

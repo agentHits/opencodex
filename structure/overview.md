@@ -106,3 +106,5 @@ would pass while the rule was violated.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
+
+Connected-browser pairing and dashboard failure meanings follow the [management UI contract](gui-and-management-api.md#dashboard-surfaces); machine enrollment alone does not authenticate a browser.

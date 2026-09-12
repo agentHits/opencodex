@@ -51,6 +51,7 @@ export type DashboardOverviewPoll = {
   health: HealthData | null;
   providers: ProviderInfo[];
   error: boolean;
+  failure?: "auth" | "denied" | "request" | "invalid" | "unavailable";
 };
 
 /** Multi-agent extras — slower peers must not gate status/uptime/provider counts. */
@@ -252,16 +253,33 @@ export async function fetchDashboardOverview(
   apiBase: string,
   signal: AbortSignal,
 ): Promise<DashboardOverviewPoll> {
+  const failed = (failure: DashboardOverviewPoll["failure"]): DashboardOverviewPoll => ({ health: null, providers: [], error: true, failure });
+  let hRes: Response;
+  let pRes: Response;
   try {
-    const [hRes, pRes] = await Promise.all([
+    [hRes, pRes] = await Promise.all([
       fetch(`${apiBase}/api/system/health`, { signal }),
       fetch(`${apiBase}/api/providers`, { signal }),
     ]);
+  } catch (error) {
+    if (isAbortError(error, signal)) throw error;
+    return failed("unavailable");
+  }
+  if (hRes.status === 403 || pRes.status === 403) return failed("denied");
+  if (hRes.status === 401 || pRes.status === 401) return failed("auth");
+  if (!hRes.ok || !pRes.ok) return failed("request");
+  try {
     const health = await requireJson<HealthData>(hRes);
     const providers = await requireJson<ProviderInfo[]>(pRes);
+    if (!health || typeof health.status !== "string" || typeof health.version !== "string"
+      || !Number.isFinite(health.uptime) || health.uptime < 0
+      || !Array.isArray(providers) || providers.some(row => !row || typeof row.name !== "string"
+        || typeof row.adapter !== "string" || typeof row.baseUrl !== "string" || typeof row.hasApiKey !== "boolean"
+        || (row.defaultModel !== undefined && typeof row.defaultModel !== "string"))) return failed("invalid");
     return { health, providers, error: false };
-  } catch {
-    return { health: null, providers: [], error: true };
+  } catch (error) {
+    if (isAbortError(error, signal)) throw error;
+    return failed("invalid");
   }
 }
 

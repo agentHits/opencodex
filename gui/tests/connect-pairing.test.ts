@@ -5,7 +5,7 @@ import { act, createElement } from "react";
 test("App mounts the relay pairing form and installs only the returned shared session", async () => {
   const keys = ["window", "document", "navigator", "sessionStorage", "localStorage", "fetch", "confirm", "alert", "IS_REACT_ACT_ENVIRONMENT", "__APP_VERSION__"] as const;
   const previous = Object.fromEntries(keys.map(key => [key, Reflect.get(globalThis, key)]));
-  const win = new Window({ url: "http://localhost/#usage" });
+  const win = new Window({ url: "http://localhost/#dashboard" });
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: win },
     document: { configurable: true, value: win.document },
@@ -33,6 +33,9 @@ test("App mounts the relay pairing form and installs only the returned shared se
     document.head.append(meta);
   }
 
+  let authorized = false;
+  let rejectSession = false;
+  let authenticatedHealthReads = 0;
   let pairingRequest: { method: string; body: string; headers: Headers } | null = null;
   const sessionHtml = [
     '<meta name="opencodex-session-token" content="ocx_session_hub">',
@@ -51,9 +54,21 @@ test("App mounts the relay pairing form and installs only the returned shared se
       hubReachability: "unknown",
     });
     if (url.pathname === "/api/machine/hub-relay/opencodex-session" && init?.method === "POST") {
+      authorized = true; rejectSession = false;
       pairingRequest = { method: init.method, body: String(init.body), headers };
       return new Response(sessionHtml, { headers: { "Content-Type": "text/html" } });
     }
+    if (url.pathname.endsWith("/opencodex-session")) return new Response(null, { status: 401 });
+    if (url.pathname.endsWith("/api/system/health")) {
+      if (!authorized || rejectSession) return new Response(null, { status: 401 });
+      expect(headers.get("x-opencodex-api-key")).toBe("ocx_session_hub");
+      authenticatedHealthReads++;
+      return Response.json({ status: "ok", version: "0.0.0-test", uptime: 30 });
+    }
+    if (url.pathname.endsWith("/api/providers")) return Response.json([
+      { name: "fixture", adapter: "openai-chat", baseUrl: "https://fixture.example.test", hasApiKey: false },
+    ]);
+    if (url.pathname.endsWith("/api/models")) return Response.json([]);
     if (url.pathname === "/healthz") return Response.json({ version: "0.0.0-test" });
     if (url.pathname.endsWith("/api/usage")) return Response.json({
       range: "30d", surface: "all", since: null, generatedAt: Date.now(),
@@ -85,6 +100,11 @@ test("App mounts the relay pairing form and installs only the returned shared se
   installApiAuthFetch();
   const { default: App } = await import("../src/App");
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: win.fetch });
+  const resources = await import("../src/client-resource");
+  resources.clearClientResourceStoresForTests();
+  resources.setClientResourceData("dashboard-overview:http://localhost/api/machine/hub-relay", {
+    health: null, providers: [], error: true, failure: "auth",
+  });
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   try {
@@ -94,6 +114,10 @@ test("App mounts the relay pairing form and installs only the returned shared se
       if (Date.now() >= deadline) throw new Error("pairing form did not mount from App");
       await act(async () => { await new Promise(resolve => win.setTimeout(resolve, 10)); });
     }
+    expect(container.textContent).toContain("https://hub.example.test");
+    expect(container.textContent).toContain('ocx gui pair --origin "http://localhost"');
+    expect(container.textContent).not.toContain("ocx start");
+    expect(container.querySelector(".dashboard-workspace-shell")).toBeNull();
     const input = container.querySelector("#connect-pairing-code") as HTMLInputElement;
     Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value")!.set!.call(input, `ocx_pair_${"a".repeat(43)}`);
     await act(async () => { input.dispatchEvent(new win.Event("input", { bubbles: true })); });
@@ -108,8 +132,36 @@ test("App mounts the relay pairing form and installs only the returned shared se
     expect(pairingRequest?.body).toBe(JSON.stringify({ grant: `ocx_pair_${"a".repeat(43)}` }));
     expect(pairingRequest?.headers.get("x-opencodex-machine-session")).toBe("ocx_session_machine");
     expect(pairingRequest?.headers.get("x-opencodex-api-key")).toBeNull();
+    const refreshDeadline = Date.now() + 5_000;
+    while (authenticatedHealthReads === 0 || !container.querySelector(".dashboard-workspace-shell")) {
+      if (Date.now() >= refreshDeadline) throw new Error("pairing did not refresh the retained failed dashboard store");
+      await act(async () => { await new Promise<void>(resolve => setImmediate(resolve)); });
+    }
+    await act(async () => {
+      resources.setClientResourceData("dashboard-overview:http://localhost/api/machine/hub-relay", {
+        health: null, providers: [], error: true, failure: "unavailable",
+      });
+    });
+    expect(container.querySelector(".dashboard-workspace-shell")).not.toBeNull();
+    expect(container.textContent).toContain("Showing the last received data");
+    expect(container.textContent).not.toContain("ocx start");
+    await act(async () => {
+      resources.setClientResourceData("dashboard-overview:http://localhost/api/machine/hub-relay", {
+        health: null, providers: [], error: true, failure: "denied",
+      });
+    });
+    expect(container.querySelector(".dashboard-workspace-shell")).toBeNull();
+    expect(container.textContent).toContain("not permitted to read the dashboard");
+    expect(container.textContent).not.toContain("ocx start");
+    rejectSession = true;
+    await act(async () => { expect((await fetch("http://localhost/api/machine/hub-relay/api/system/health")).status).toBe(401); });
+    expect(container.querySelector("#connect-pairing-code")).not.toBeNull();
+    expect(container.querySelector(".dashboard-workspace-shell")).toBeNull();
+    expect(container.textContent).not.toContain("ocx start");
+
   } finally {
     await act(async () => { root.unmount(); });
+    resources.clearClientResourceStoresForTests();
     container.remove();
     win.close();
     for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value: previous[key] });
@@ -160,4 +212,34 @@ test("a refused pairing renders an accessible error without clearing the pasted 
     win.close();
     for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value: previous[key] });
   }
+});
+
+
+test("a cancelled pairing body cannot install its obsolete session", async () => {
+  const { submitConnectPairing } = await import("../src/connect-pairing-transport");
+  const controller = new AbortController();
+  let release!: (text: string) => void;
+  let reading!: () => void;
+  const started = new Promise<void>(resolve => { reading = resolve; });
+  const response = new Response("");
+  response.text = () => new Promise<string>(resolve => { release = resolve; reading(); });
+  const pending = submitConnectPairing({ id: "shared", baseUrl: "https://hub.example.test",
+    serverOrigin: "https://hub.example.test", bootstrapPath: "https://hub.example.test/opencodex-session", transport: "direct" },
+    `ocx_pair_${"a".repeat(43)}`, (async () => response) as typeof fetch, controller.signal);
+  await started;
+  controller.abort();
+  release('<meta name="opencodex-session-token" content="ocx_session_obsolete">');
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+});
+
+test("pairing reports refusal, server failure and network failure separately", async () => {
+  const { submitConnectPairing } = await import("../src/connect-pairing-transport");
+  const target = { id: "shared" as const, baseUrl: "https://hub.example.test", serverOrigin: "https://hub.example.test",
+    bootstrapPath: "https://hub.example.test/opencodex-session", transport: "direct" as const };
+  for (const [status, kind] of [[403, "refused"], [503, "request-failed"]] as const) {
+    await expect(submitConnectPairing(target, `ocx_pair_${"a".repeat(43)}`,
+      (async () => new Response(null, { status })) as typeof fetch)).rejects.toMatchObject({ kind });
+  }
+  await expect(submitConnectPairing(target, `ocx_pair_${"a".repeat(43)}`,
+    (async () => { throw new Error("network"); }) as typeof fetch)).rejects.toMatchObject({ kind: "unreachable" });
 });
