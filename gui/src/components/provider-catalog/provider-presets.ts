@@ -119,6 +119,20 @@ export function filterPresets(presets: CatalogPreset[], query: string): CatalogP
   return presets.filter(p => p.label.toLowerCase().includes(q) || p.id.toLowerCase().includes(q));
 }
 
+/**
+ * Longest note that still fits the two-line clamp on a catalog row at the modal width.
+ * Deliberately a character count rather than a layout read: `scrollHeight > clientHeight`
+ * needs a ref on every row plus a resize observer, and it makes the decision impossible
+ * to test without a DOM. Erring slightly long only costs a reveal control on a row that
+ * did not strictly need one.
+ */
+export const NOTE_CLAMP_CHARS = 90;
+
+/** True when a note is long enough that the clamp hides part of it. */
+export function noteNeedsReveal(note: string | undefined): boolean {
+  return (note?.trim().length ?? 0) > NOTE_CLAMP_CHARS;
+}
+
 const SPONSOR_RANK: Record<NonNullable<CatalogPreset["sponsor"]>, number> = { main: 0, standard: 1 };
 
 /**

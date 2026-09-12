@@ -10,6 +10,7 @@ import {
   bucketPresets,
   pinSponsors,
   filterPresets,
+  noteNeedsReveal,
   type CatalogPreset,
   type CatalogTier,
 } from "./provider-presets";
@@ -50,6 +51,7 @@ export default function ProviderCatalog({
   initialTier = "free",
   onSelectPreset,
   onSelectCustom,
+  onShowNote,
   accountRows = EMPTY_ACCOUNT_ROWS,
   accountStatus = EMPTY_ACCOUNT_STATUS,
   busyProvider = null,
@@ -66,6 +68,8 @@ export default function ProviderCatalog({
   initialTier?: CatalogTier;
   onSelectPreset: (preset: CatalogPreset) => void;
   onSelectCustom: () => void;
+  /** Open the full-note popup for a row whose note is clamped. Owned by the modal. */
+  onShowNote?: (preset: CatalogPreset) => void;
   /** Accounts-tab login rows; empty (default) degrades to preset-only rendering. */
   accountRows?: AccountLoginRow[];
   accountStatus?: Record<string, AccountLoginStatus>;
@@ -164,21 +168,35 @@ export default function ProviderCatalog({
           <div className="muted text-control provider-catalog-empty">{t("modal.catalogLoading")}</div>
         )}
         {tier !== "accounts" && rows.map(p => (
-          <button type="button" key={p.id} className="list-row" onClick={() => onSelectPreset(p)}>
-            {/*
-              The one list a user reads to CHOOSE a provider, and until now the only
-              provider surface with no marks at all. `CatalogPreset.id` is the
-              registry id, so this reuses `providerIconSrc` and, with it, the
-              mask/plate decision the rail already owns -- a mark cannot be legible
-              in the workspace and invisible here.
-            */}
-            <ProviderIcon name={p.id} adapter={p.adapter} cls="provider-icon provider-icon-sm" />
-            <div>
-              <div className="title">{p.label}</div>
-              <div className="sub"><code className="chip">{p.adapter}</code>{p.note ? ` · ${p.note}` : ""}</div>
-            </div>
-            <div className="provider-catalog-badges">{badges(p)}</div>
-          </button>
+          // The reveal control is a SIBLING of the row button, never a child of it: the row
+          // is already a <button>, and a button inside a button is invalid HTML that the
+          // parser may hoist out of the row -- at which point `stopPropagation` never runs.
+          <div key={p.id} className="provider-catalog-row-wrap">
+            <button type="button" className="list-row" onClick={() => onSelectPreset(p)}>
+              {/*
+                The one list a user reads to CHOOSE a provider, and until now the only
+                provider surface with no marks at all. `CatalogPreset.id` is the
+                registry id, so this reuses `providerIconSrc` and, with it, the
+                mask/plate decision the rail already owns -- a mark cannot be legible
+                in the workspace and invisible here.
+              */}
+              <ProviderIcon name={p.id} adapter={p.adapter} cls="provider-icon provider-icon-sm" />
+              <div>
+                <div className="title">{p.label}</div>
+                <div className="sub"><code className="chip">{p.adapter}</code>{p.note ? ` · ${p.note}` : ""}</div>
+              </div>
+              <div className="provider-catalog-badges">{badges(p)}</div>
+            </button>
+            {onShowNote && noteNeedsReveal(p.note) && (
+              <button
+                type="button"
+                className="link-btn provider-catalog-note-more"
+                onClick={() => onShowNote(p)}
+              >
+                {t("modal.noteMore")}
+              </button>
+            )}
+          </div>
         ))}
         {tier !== "accounts" && !presetsLoading && rows.length === 0 && (
           <div className="muted text-control provider-catalog-empty">{t("modal.noMatch")}</div>

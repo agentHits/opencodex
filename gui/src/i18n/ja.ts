@@ -1070,6 +1070,7 @@ export const ja: Record<TKey, string> = {
   "modal.tab.free": "無料",
   "modal.tab.local": "ローカル",
   "modal.tab.paid": "有料",
+  "modal.noteMore": "説明をすべて表示",
   "modal.accountsHint": "ChatGPT/Codex、OAuth プロバイダー、API キーアカウントにここからサインインします。OpenAI は組み込み済み — 再度追加せずログインしてください。",
   "modal.accountsCodexAuthLink": "Codex 認証",
   "modal.notListed": "プロバイダーが載っていませんか? カスタムを追加",
