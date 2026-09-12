@@ -7,7 +7,7 @@ Codex-native retirement is scoped to OpenAI catalog/quota evidence. Shared Respo
 retains xAI provider behavior; see
 [the catalog boundary](../catalog.md#shared-catalog).
 
-For shared JSON request-body parsing, see [request-copy accounting](../transports/responses.md#request-copy-accounting).
+Shared parsing and streaming follow the [request-copy](../transports/responses.md#request-copy-accounting) and [stream-buffer accounting](../transports/responses.md#stream-buffer-accounting) contracts.
 
 ## xAI Grok hardening (official Grok Build contract parity)
 

@@ -10,6 +10,8 @@ namespace handling retain their provider contract; the bounded native scope live
 Cursor's direct adapter does not enter the OpenAI Chat serializer's
 [OpenCode Go instruction ordering](chat-compat.md#opencode-go-chronological-instructions).
 
+Shared parsing and streaming follow the [request-copy](../transports/responses.md#request-copy-accounting) and [stream-buffer accounting](../transports/responses.md#stream-buffer-accounting) contracts.
+
 ## Cursor Native Exec
 
 Cursor's experimental live transport can receive server-driven local read/write/delete/ls/grep,

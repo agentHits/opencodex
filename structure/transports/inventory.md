@@ -6,7 +6,7 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 The Chat adapter's [OpenCode Go instruction ordering](../providers/chat-compat.md#opencode-go-chronological-instructions)
 changes translated message placement only; endpoint selection and transport stay with their existing owners.
 
-For shared JSON request-body parsing, see [request-copy accounting](responses.md#request-copy-accounting).
+Shared parsing and streaming follow the [request-copy](responses.md#request-copy-accounting) and [stream-buffer accounting](responses.md#stream-buffer-accounting) contracts.
 
 ## Transport inventory
 
