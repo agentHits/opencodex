@@ -1960,6 +1960,7 @@ export const zh: Record<TKey, string> = {
   "modal.tab.free": "免费",
   "modal.tab.local": "本地",
   "modal.tab.paid": "付费",
+  "modal.noteMore": "查看完整说明",
   "modal.accountsHint": "在此登录 ChatGPT/Codex、OAuth 与 API 密钥账户。OpenAI 为内置提供商 — 请登录，无需再次添加。",
   "modal.accountsCodexAuthLink": "Codex 认证",
   "modal.notListed": "没有你要的提供商？添加自定义",

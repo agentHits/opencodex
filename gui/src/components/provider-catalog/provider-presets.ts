@@ -119,6 +119,12 @@ export function filterPresets(presets: CatalogPreset[], query: string): CatalogP
   return presets.filter(p => p.label.toLowerCase().includes(q) || p.id.toLowerCase().includes(q));
 }
 
+/** Every nonempty note has a full-text route: rendered clipping depends on width,
+ * adapter chips and badges, so no character threshold can safely hide the control. */
+export function noteNeedsReveal(note: string | undefined): boolean {
+  return !!note?.trim();
+}
+
 const SPONSOR_RANK: Record<NonNullable<CatalogPreset["sponsor"]>, number> = { main: 0, standard: 1 };
 
 /**

@@ -1979,6 +1979,7 @@ export const ko: Record<TKey, string> = {
   "modal.tab.free": "무료",
   "modal.tab.local": "로컬",
   "modal.tab.paid": "유료",
+  "modal.noteMore": "설명 전체 보기",
   "modal.accountsHint": "여기서 ChatGPT/Codex, OAuth, API 키 계정에 로그인하세요. OpenAI는 기본 제공 — 다시 추가하지 말고 로그인하세요.",
   "modal.accountsCodexAuthLink": "Codex 인증",
   "modal.notListed": "찾는 프로바이더가 없나요? 직접 추가",

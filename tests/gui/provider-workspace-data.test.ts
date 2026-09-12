@@ -34,6 +34,7 @@ import {
   bucketPresets,
   filterPresets,
   presetTier,
+  noteNeedsReveal,
   type CatalogPreset,
 } from "../../gui/src/components/provider-catalog/provider-presets";
 import { isLocalProvider, providerKind } from "../../gui/src/provider-workspace/kind";
@@ -564,6 +565,14 @@ describe("add-provider catalog presets (WP050a)", () => {
     expect(filterPresets(rows, "nvidia").map(p => p.id)).toEqual(["nvidia"]);
     expect(filterPresets(rows, "NIM").map(p => p.id)).toEqual(["nvidia"]);
     expect(filterPresets(rows, "").map(p => p.id)).toEqual(["nvidia", "groq"]);
+  });
+
+  test("every nonempty note remains readable regardless of rendered width", () => {
+    expect(noteNeedsReveal("Local — key usually blank")).toBe(true);
+    expect(noteNeedsReveal("Short")).toBe(true);
+    expect(noteNeedsReveal("x".repeat(1126))).toBe(true);
+    expect(noteNeedsReveal(undefined)).toBe(false);
+    expect(noteNeedsReveal("   ")).toBe(false);
   });
 
 });

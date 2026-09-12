@@ -1,5 +1,5 @@
 import { usageSummary30dResourceKey } from "../usage-summary-resource";
-import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { IconX } from "../icons";
 import { useT } from "../i18n/shared";
 import { useKeyedClientResource } from "../client-resource";
@@ -12,6 +12,7 @@ import {
 import { oauthTosRisk } from "../oauth-tos-risk";
 import OAuthTosWarningModal from "./OAuthTosWarningModal";
 import ProviderCatalog from "./provider-catalog/ProviderCatalog";
+import ProviderNoteModal from "./provider-catalog/ProviderNoteModal";
 import type { AccountLoginRow, AccountLoginStatus } from "./provider-catalog/ProviderCatalog";
 import type { CatalogPreset } from "./provider-catalog/provider-presets";
 import type { CatalogLoginHint } from "./provider-catalog/login-hint-visibility";
@@ -62,6 +63,9 @@ export default function AddProviderModal({
   const aliveRef = useRef(true);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  // The full-note popup is owned here, not in the catalog: it has to render as a sibling
+  // of this overlay, and its open state has to be visible to the Escape handler below.
+  const [notePreset, setNotePreset] = useState<Preset | null>(null);
 
   const oauthPoll = useKeyedClientResource(
     `add-provider-oauth:${apiBase}`,
@@ -125,11 +129,14 @@ export default function AddProviderModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !oauthTosPending) onClose();
+      // This listener is on `window` and does not read `defaultPrevented`, so a native
+      // <dialog> cancel does not stop it. Every stacked overlay has to be named here or
+      // Escape closes the whole add-provider modal out from under it.
+      if (e.key === "Escape" && !oauthTosPending && !notePreset) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, oauthTosPending]);
+  }, [onClose, oauthTosPending, notePreset]);
 
   const presetDescription = (candidate: Preset): string | undefined => {
     const key = codexPresetDescriptionKey(candidate);
@@ -258,6 +265,7 @@ export default function AddProviderModal({
             initialTier={initialTier}
             onSelectPreset={p => choosePreset(p)}
             onSelectCustom={() => choosePreset(fallbackPresets[0]!)}
+            onShowNote={p => setNotePreset(p)}
             accountRows={accountRows}
             accountStatus={accountStatus}
             busyProvider={accountBusy}
@@ -337,6 +345,16 @@ export default function AddProviderModal({
           dispatch({ type: "set-oauth-tos-pending", providerId: null });
           void loginOAuth(id, oauthSetters);
         }}
+      />
+    )}
+    {notePreset?.note && (
+      <ProviderNoteModal
+        key={notePreset.id}
+        providerId={notePreset.id}
+        label={notePreset.label}
+        adapter={notePreset.adapter}
+        note={notePreset.note}
+        onClose={() => setNotePreset(null)}
       />
     )}
     </>
