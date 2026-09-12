@@ -1123,6 +1123,7 @@ export const ru: Record<TKey, string> = {
   "modal.freeTierDefault": "API-ключ не нужен. Работает из коробки.",
   "modal.tab.accounts": "Аккаунты",
   "modal.tab.free": "Бесплатные",
+  "modal.tab.local": "Локальные",
   "modal.tab.paid": "Платные",
   "modal.accountsHint": "Здесь можно войти в аккаунты ChatGPT/Codex и OAuth-провайдеров, а также в аккаунты с API-ключами. Провайдер OpenAI уже встроен — просто войдите, а не добавляйте его заново.",
   "modal.accountsCodexAuthLink": "Аутентификация Codex",

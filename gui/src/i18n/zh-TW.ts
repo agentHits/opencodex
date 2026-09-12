@@ -921,6 +921,7 @@ export const zhTW: Record<TKey, string> = {
   "modal.freeTierDefault": "無需 API 金鑰，開箱即用。",
   "modal.tab.accounts": "帳號",
   "modal.tab.free": "免費",
+  "modal.tab.local": "本地",
   "modal.tab.paid": "付費",
   "modal.accountsHint": "在此登入 ChatGPT/Codex、OAuth 與 API 金鑰帳號。OpenAI 為內建供應商 — 請登入，無需再次新增。",
   "modal.accountsCodexAuthLink": "Codex 認證",

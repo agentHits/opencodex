@@ -520,17 +520,40 @@ describe("add-provider catalog presets (WP050a)", () => {
     expect(presetTier(preset({ id: "xai", auth: "oauth" }))).toBe("paid");
   });
 
-  test("bucketPresets partitions all three tiers preserving input order", () => {
+  test("bucketPresets partitions all four catalog tabs preserving input order", () => {
     const rows = [
       preset({ id: "venice" }),
       preset({ id: "openai", adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", auth: "forward" }),
       preset({ id: "nvidia", freeTier: true }),
       preset({ id: "groq" }),
+      preset({ id: "ollama", auth: "local", baseUrl: "http://localhost:11434/v1" }),
+      preset({ id: "vllm", baseUrl: "http://127.0.0.1:8000/v1" }),
     ];
     const buckets = bucketPresets(rows);
     expect(buckets.accounts.map(p => p.id)).toEqual(["openai"]);
     expect(buckets.free.map(p => p.id)).toEqual(["nvidia"]);
     expect(buckets.paid.map(p => p.id)).toEqual(["venice", "groq"]);
+    // The Local tab is a catalog-only split: a loopback base URL alone is enough, and a
+    // local row must not also appear under Free even though `presetTier` still calls it free.
+    expect(buckets.local.map(p => p.id)).toEqual(["ollama", "vllm"]);
+    expect(presetTier(rows[4]!)).toBe("free");
+  });
+
+  // A forward guard, not a live case: `isAccountProvider` requires the exact ChatGPT base
+  // URL, so no row is both accounts-tier and loopback today. This pins the ordering so a
+  // future widening of that classifier cannot quietly move an account row into Local.
+  test("the accounts classifier outranks the local peel", () => {
+    const buckets = bucketPresets([
+      preset({
+        id: "openai",
+        adapter: "openai-responses",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        auth: "forward",
+      }),
+      preset({ id: "lm-studio", auth: "local", baseUrl: "http://localhost:1234/v1" }),
+    ]);
+    expect(buckets.accounts.map(p => p.id)).toEqual(["openai"]);
+    expect(buckets.local.map(p => p.id)).toEqual(["lm-studio"]);
   });
 
   test("search matches label and id only, never adapter or baseUrl", () => {

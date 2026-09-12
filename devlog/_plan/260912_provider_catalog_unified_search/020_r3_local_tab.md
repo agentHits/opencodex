@@ -37,6 +37,17 @@ relabelling.
 - An empty Local tab on a machine with no local runtime configured is fine — the
   catalog is a preset list, and Ollama/vLLM presets are always present.
 
+## What actually moves (verified against `src/providers/registry.ts`)
+
+Four catalog rows change tab, all Free → Local: `ollama`, `vllm` and `lm-studio`
+(`authKind: "local"` plus a loopback base URL) and `litellm` (`authKind: "key"` with
+`keyOptional` and `localhost:4000`). LiteLLM is the non-obvious one — people browse it
+under Free today as a self-hosted key-optional gateway — and moving it is intended: it
+runs on the user's machine, which is what the tab is for. `presetTier` still returns
+`"free"` for all four, so the workspace Free count and the rail are unchanged.
+`openai` stays Accounts, `ollama-cloud` stays Paid (it is not loopback), and `devin-cli`
+is local but is not a catalog preset at all.
+
 ## Verification (remote CI only)
 
 `tests/gui/provider-catalog-tiers.test.ts` (new, pure): local presets bucket to
