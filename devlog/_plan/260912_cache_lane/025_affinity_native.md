@@ -13,3 +13,5 @@ MODIFY tests/providers/opencode-go-session-header.test.ts: real handler random/f
 MODIFY structure/data-planes/inbound-compat.md final affinity contract to describe private native lane at final canonical destination; mapped links already exist. Preserve source authors. C source audit + diff check, then exact final-tip hosted run tracked in verification cycle. D records missed earlier review scenario and repair head.
 
 Test placement amendment: NEW tests/claude-integration/claude-native-affinity.test.ts and both layout mappings instead of enlarging the existing 600-line Go suite. Same real-handler matrix plus policy wrapper with real core and controlled trace.
+
+C review correction: normalizeLogConversationId hashes its input, so native projection retains raw validated UUID separately; only metadataGoLane uses normalized hash. Preserve fixed historical UUID oracle, no cache-identity migration.

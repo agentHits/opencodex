@@ -869,12 +869,13 @@ async function handleClaudeMessagesWithBudget(
   }
   // Carry Go identity out of band: a combo's preflight target may differ from its
   // actual dispatch/fallback target. Never add Go-only identity to replay headers.
-  const metadataGoLane = cacheKeySource === "metadata"
+  const claudeNativeSessionId = cacheKeySource === "metadata"
     && typeof internalBody.prompt_cache_key === "string"
     && isRec(anthropicBody)
     && conversationIdFromClaudeMetadata(isRec(anthropicBody.metadata) ? anthropicBody.metadata : undefined) !== undefined
-    ? normalizeLogConversationId(uuidFromHex(internalBody.prompt_cache_key))
+    ? uuidFromHex(internalBody.prompt_cache_key)
     : undefined;
+  const metadataGoLane = normalizeLogConversationId(claudeNativeSessionId);
   // Without any valid conversation identity, fall back to the request-scoped lane
   // allocated on the admitted client request (#4172): stable across retries and
   // route reconstruction, distinct per request, and never derived from a shared
@@ -927,7 +928,7 @@ async function handleClaudeMessagesWithBudget(
     // would fire, disagreeing with the pre-flight decision above.
     inboundWire: "anthropic",
     claudeGoAffinity: { sessionLane: claudeGoSessionLane },
-    claudeNativeSessionId: metadataGoLane,
+    claudeNativeSessionId,
     stripClaudeMainAuthForNoncanonicalForward: true,
     ...(trustedClaudeMainAuth ? { trustedClaudeMainAuth } : {}),
     // Claude's internal stored-main enrichment is not an original caller credential.
