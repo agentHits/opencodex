@@ -2398,9 +2398,9 @@ test("context Direct bearer admission uses real stored-main materialization and 
     authMode: "forward", codexAccountMode: "direct",
   };
   const token = liveJwt();
-  const admission = { kind: "environment", source: "bearer" } as const;
+  const admission = { kind: "environment", source: "bearer", contextPrincipalId: "principal-a" } as const;
   clearContextSessionOwnersForTests();
-  recordContextSessionOwner(new Headers({ "session-id": "synthetic-root" }), cfg.providers.openai.baseUrl,
+  recordContextSessionOwner("principal-a", new Headers({ "session-id": "synthetic-root" }), cfg.providers.openai.baseUrl,
     { kind: "main", accountId: null }, new Headers({ authorization: `Bearer ${token}`, "chatgpt-account-id": "stored_main_acc" }), true);
   const request = () => new Request("http://localhost/v1/alpha/notes/v2/read_file", {
     method: "POST", headers: { authorization: "Bearer ocx_data_test_admission", "openai-beta": "responses=experimental", cookie: "synthetic=private" },

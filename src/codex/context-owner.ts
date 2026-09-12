@@ -66,6 +66,21 @@ function callerCredentialIdentity(headers: Headers): string | undefined {
   return digest("caller-credential", JSON.stringify([authorization.slice(7), account]));
 }
 
+/**
+ * Whether two accepted observations describe the same owner.
+ *
+ * A proven stable user may present a refreshed credential. Without that proof on BOTH sides the
+ * only continuity evidence left is the credential itself, because a workspace id is shared by
+ * everyone in the organization and would otherwise let one member rebind another session.
+ */
+function sameOwnerIdentity(prior: ContextSessionOwner, next: ContextSessionOwner): boolean {
+  if (prior.kind !== next.kind) return false;
+  if (prior.physicalIdentity !== next.physicalIdentity) return false;
+  return prior.userIdentity !== undefined && next.userIdentity !== undefined
+    ? prior.userIdentity === next.userIdentity
+    : prior.callerCredentialIdentity === next.callerCredentialIdentity;
+}
+
 function remove(key: string): void {
   const prior = owners.get(key);
   if (!prior) return;
@@ -95,7 +110,12 @@ export function recordContextSessionOwner(
   if (!destinationKey || !credential) return;
   const physical = physicalIdentity(outboundHeaders);
   const user = stableUserIdentity(outboundHeaders);
-  if (user.conflict) return;
+  if (user.conflict) {
+    // An accepted credential naming two different users is evidence of nobody. Whatever entry
+    // this session already had stops being trustworthy at that moment.
+    markContextSessionAmbiguous(principalId, root, now);
+    return;
+  }
   let owner: ContextSessionOwner;
   if (auth.kind !== "main" || substituteMainCredential) {
     if (!physical) return;
@@ -115,19 +135,10 @@ export function recordContextSessionOwner(
   const key = digest("root-session", `${principalId}\u0000${root}`);
   const prior = owners.get(key);
   if (prior) {
-    const samePhysical = prior.owner.physicalIdentity !== undefined && physical !== undefined
-      ? prior.owner.physicalIdentity === physical
-      : prior.owner.kind === "caller" && owner.kind === "caller"
-        && prior.owner.physicalIdentity === undefined && owner.physicalIdentity === undefined
-        && prior.owner.callerCredentialIdentity === owner.callerCredentialIdentity;
-    // Same workspace, different person is exactly the case a workspace id cannot see. Treat a
-    // changed stable user as conflicting ownership, and treat a credential that stopped proving
-    // one as unable to continue an entry that had it.
-    const sameUser = prior.owner.userIdentity === owner.userIdentity;
+    // Same workspace, different person is exactly the case a workspace id cannot see, and a
+    // credential proving nobody must not inherit an entry just by sharing that id.
     if (prior.owner.ambiguous || prior.destination !== destinationKey
-      || prior.owner.kind !== owner.kind || !samePhysical || !sameUser) {
-      // Once two accepted attempts prove conflicting ownership, no later write can
-      // silently choose which account contains this session's history.
+      || !sameOwnerIdentity(prior.owner, owner)) {
       owner = { ...prior.owner, ambiguous: true };
     }
   }
@@ -166,12 +177,23 @@ export function contextSessionOwnerMatches(owner: ContextSessionOwner, headers: 
   const user = stableUserIdentity(headers);
   if (user.conflict) return false;
   if (owner.physicalIdentity !== physicalIdentity(headers)) return false;
-  // A proven stable user survives an ordinary token refresh. Without one, only the exact
-  // credential that upstream already accepted may continue the session.
-  return owner.userIdentity !== undefined
-    ? owner.userIdentity === user.identity
-    : user.identity === undefined
-      && owner.callerCredentialIdentity === callerCredentialIdentity(headers);
+  if (owner.userIdentity !== user.identity) return false;
+  // A stored credential was minted by this proxy for the account it selected, so a proven user
+  // may present a refreshed token. A caller-supplied bearer is not ours: it becomes this
+  // session credential only when a model turn was accepted with it, so history has to present
+  // exactly that credential rather than any token carrying the same claims.
+  return owner.kind === "stored" && owner.userIdentity !== undefined
+    ? true
+    : owner.callerCredentialIdentity === callerCredentialIdentity(headers);
+}
+
+/** Poison an entry whose accepted evidence stopped being coherent. */
+function markContextSessionAmbiguous(principalId: string, root: string | null, now: number): void {
+  if (!validId(root)) return;
+  const key = digest("root-session", principalId + "\u0000" + root);
+  const prior = owners.get(key);
+  if (!prior || prior.owner.ambiguous) return;
+  owners.set(key, { ...prior, owner: Object.freeze({ ...prior.owner, ambiguous: true }), touchedAt: now });
 }
 
 export function clearContextSessionOwnersForTests(): void {

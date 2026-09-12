@@ -106,15 +106,15 @@ test("successful explicit account A owns context while active B remains selected
   expect((await notes(cfg, "root-explicit")).status).toBe(200);
   expect(sent.map(row => row.headers.get("chatgpt-account-id"))).toEqual(["physical-a", "physical-a"]);
   expect(cfg.activeCodexAccountId).toBe("pool-b");
+  // These synthetic tokens carry no user claim, so a replaced credential is a different owner
+  // fingerprint: history waits for an accepted model turn instead of trusting the workspace id.
   install("pool-a", "physical-a", "renewed-a-token");
-  expect((await notes(cfg, "root-explicit")).status).toBe(200);
-  expect(sent.at(-1)!.headers.get("authorization")).toBe("Bearer renewed-a-token");
+  expect((await notes(cfg, "root-explicit")).status).toBe(409);
   install("pool-a", "replacement-a");
   expect((await notes(cfg, "root-explicit")).status).toBe(409);
-  expect(sent).toHaveLength(3);
   clearContextSessionOwnersForTests();
   expect((await notes(cfg, "root-explicit")).status).toBe(409);
-  expect(sent).toHaveLength(3);
+  expect(sent).toHaveLength(2);
 });
 
 test("failed account A then successful B records only the serving account", async () => {

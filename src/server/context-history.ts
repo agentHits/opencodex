@@ -47,10 +47,12 @@ export function contextSelectionHeaders(headers: Headers, sessionId: string): He
 export async function handleContextHistory(
   req: Request, config: OcxConfig, logCtx: RequestLogContext,
   endpoint: string, turnAdmissionLease?: AdmissionLease, admission?: DataPlaneAdmission,
+  revalidateAdmission?: () => DataPlaneAdmission | null,
 ): Promise<Response> {
   const deadline = clearableDeadline(RELAY_DEADLINE_MS, req.signal);
   try {
-    return await relayContextHistory(req, config, logCtx, endpoint, deadline, turnAdmissionLease, admission);
+    return await relayContextHistory(req, config, logCtx, endpoint, deadline, turnAdmissionLease,
+      admission, revalidateAdmission);
   } finally {
     deadline.clear();
   }
@@ -60,6 +62,7 @@ async function relayContextHistory(
   req: Request, config: OcxConfig, logCtx: RequestLogContext,
   endpoint: string, deadline: ClearableDeadline,
   turnAdmissionLease?: AdmissionLease, admission?: DataPlaneAdmission,
+  revalidateAdmission?: () => DataPlaneAdmission | null,
 ): Promise<Response> {
   if (!contextEndpoint("/v1/" + endpoint) || req.method !== "POST") {
     return formatErrorResponse(404, "not_found", "Unknown context endpoint");
@@ -157,6 +160,13 @@ async function relayContextHistory(
   // Nothing is dispatched after cancellation; a notes write is not replayable.
   const cancelledBeforeDispatch = cancellationResponse(req, deadline);
   if (cancelledBeforeDispatch) return cancelledBeforeDispatch;
+  // Body reading and credential selection are both waits, and a key can be revoked, rotated or
+  // replaced during them. Re-resolve admission against the receiving listener policy and require
+  // the same principal, so a withdrawn key cannot dispatch on a snapshot taken minutes earlier.
+  if (revalidateAdmission && contextPrincipalIdOf(revalidateAdmission() ?? undefined) !== principalId) {
+    return formatErrorResponse(401, "authentication_error",
+      "opencodex API key changed during this request; retry with current credentials");
+  }
   let response: Response | undefined;
   try {
     response = await fetch(`${candidate.provider.baseUrl}/${endpoint}`, {

@@ -62,10 +62,16 @@ describe("context session ownership", () => {
     expect(contextSessionOwnerMatches(bare, outbound("physical-a", userToken("user-a")))).toBe(false);
   });
 
-  test("conflicting user claims in one accepted credential are never recorded", () => {
+  test("conflicting user claims are never recorded and poison an existing entry", () => {
     recordContextSessionOwner(principal, root(), destination, stored(),
       outbound("physical-a", userToken("user-a", "user-b")), false, start);
     expect(getContextSessionOwner(principal, "root", destination, start)).toBeUndefined();
+
+    recordContextSessionOwner(principal, root("seeded"), destination, stored(),
+      outbound("physical-a", userToken("user-a")), false, start);
+    recordContextSessionOwner(principal, root("seeded"), destination, stored(),
+      outbound("physical-a", userToken("user-a", "user-b")), false, start + 1);
+    expect(getContextSessionOwner(principal, "seeded", destination, start + 1)?.ambiguous).toBe(true);
   });
 
   test("an unauthenticated admission owns nothing", () => {
@@ -84,13 +90,22 @@ describe("context session ownership", () => {
     expect(JSON.stringify(owner)).not.toContain("accepted-a");
   });
 
-  test("stored ownership survives token and generation refresh within the same physical account", () => {
-    recordContextSessionOwner(principal, root(), destination, stored(), outbound(), false, start);
+  test("stored ownership survives token and generation refresh for the same proven user", () => {
+    const issued = outbound("physical-a", userToken("user-a"));
+    const renewed = outbound("physical-a", userToken("user-a"));
+    recordContextSessionOwner(principal, root(), destination, stored(), issued, false, start);
     const refreshed = { ...stored(), generation: 2, accessToken: "refreshed" } as CodexAuthContext;
-    recordContextSessionOwner(principal, root(), destination, refreshed, outbound("physical-a", "refreshed"), false, start + 1);
+    recordContextSessionOwner(principal, root(), destination, refreshed, renewed, false, start + 1);
     const owner = getContextSessionOwner(principal, "root", destination, start + 2)!;
     expect(owner.ambiguous).toBe(false);
-    expect(contextSessionOwnerMatches(owner, outbound("physical-a", "refreshed"))).toBe(true);
+    expect(contextSessionOwnerMatches(owner, renewed)).toBe(true);
+  });
+
+  test("a userless credential cannot rebind an entry by sharing its workspace", () => {
+    recordContextSessionOwner(principal, root(), destination, stored(), outbound(), false, start);
+    recordContextSessionOwner(principal, root(), destination, stored(),
+      outbound("physical-a", "another-userless-token"), false, start + 1);
+    expect(getContextSessionOwner(principal, "root", destination, start + 1)?.ambiguous).toBe(true);
   });
 
   test("stored identity must match the accepted outbound account", () => {
@@ -110,8 +125,10 @@ describe("context session ownership", () => {
   });
 
   test("only an accepted same-account model turn authorizes a rotated caller token", () => {
-    recordContextSessionOwner(principal, root(), destination, caller, outbound(), false, start);
-    const refreshed = outbound("physical-a", "refreshed");
+    const issued = outbound("physical-a", userToken("user-a"));
+    recordContextSessionOwner(principal, root(), destination, caller, issued, false, start);
+    const refreshed = outbound("physical-a", userToken("user-a"));
+    // Same person, but this bearer has never been accepted upstream for this session.
     expect(contextSessionOwnerMatches(getContextSessionOwner(principal, "root", destination, start)!, refreshed)).toBe(false);
     recordContextSessionOwner(principal, root(), destination, caller, refreshed, false, start + 1);
     const owner = getContextSessionOwner(principal, "root", destination, start + 1)!;

@@ -50,7 +50,7 @@ const realRouting = await import("../../src/codex/routing");
 mock.module("../../src/codex/routing",()=>({...realRouting, formatCodexProviderForLog:()=>"openai-test"}));
 mock.module("../../src/providers/openai-sidecar",()=>({listOpenAiForwardSidecarCandidates:()=>[{providerName:"openai",provider:{baseUrl:"https://chatgpt.com/backend-api/codex"},accountMode}]}));
 class ForwardAdmissionCredentialError extends Error {}
-mock.module("../../src/server/auth-cors",()=>({ForwardAdmissionCredentialError,validateForwardAdmissionCredential:(h:Headers)=>{validated++;if(!h.has("authorization") || h.get("authorization") === "Bearer ocx_data_test_admission")throw new ForwardAdmissionCredentialError("test credential missing");}}));
+mock.module("../../src/server/auth-cors",()=>({ForwardAdmissionCredentialError,contextPrincipalIdOf:(a?:{contextPrincipalId?:string})=>a?.contextPrincipalId,validateForwardAdmissionCredential:(h:Headers)=>{validated++;if(!h.has("authorization") || h.get("authorization") === "Bearer ocx_data_test_admission")throw new ForwardAdmissionCredentialError("test credential missing");}}));
 mock.module("../../src/server/responses",()=>({codexLogAccountId:()=>"test",decodeRequestErrorResponse:()=>new Response("invalid json",{status:400})}));
 mock.module("../../src/server/lifecycle",()=>({codexAccountSelectionForTurn:()=>()=>undefined}));
 const { handleContextHistory, contextSelectionHeaders } = await import("../../src/server/context-history");
@@ -60,7 +60,7 @@ function seedOwner(sessionId: string, kind: "stored" | "caller" = "stored", acco
     kind: "pool", accountId: "test-account", chatgptAccountId: account,
     accessToken: "test-only", generation: 1, writerGeneration: 0,
   };
-  recordContextSessionOwner(new Headers({ "session-id": sessionId }), destination,
+  recordContextSessionOwner("principal-a", new Headers({ "session-id": sessionId }), destination,
     auth as CodexAuthContext, new Headers({ authorization: "Bearer test-only", "chatgpt-account-id": account }), false, now);
 }
 const originalFetch=globalThis.fetch;
@@ -147,6 +147,36 @@ test("network failures and client cancellation do not retry writes", async () =>
   setFetch(async () => { calls++; controller.abort(); throw new Error("test canceled"); });
   expect((await handleContextHistory(contextRequest(body, { authorization: "Bearer test" }, controller.signal), config, logContext(), "alpha/notes/v2/write_file", undefined, keyAdmission)).status).toBe(499);
   expect(calls).toBe(2);
+});
+
+test("a client that gives up before dispatch releases without reaching upstream", async () => {
+  let calls = 0;
+  setFetch(async () => { calls++; return Response.json({}); });
+  const controller = new AbortController();
+  controller.abort();
+  const response = await handleContextHistory(
+    contextRequest(JSON.stringify({ context: { session_id: "root" } }), { authorization: "Bearer test" }, controller.signal),
+    config, logContext(), "alpha/notes/v2/write_file", undefined, keyAdmission);
+  // The deadline starts before the body is read, so cancellation there is reported as the client
+  // hanging up rather than as a parse failure, and nothing is written upstream.
+  expect(response.status).toBe(499);
+  expect(calls).toBe(0);
+});
+
+test("a key withdrawn during the request cannot dispatch on its earlier admission", async () => {
+  let calls = 0;
+  setFetch(async () => { calls++; return Response.json({ value: "ok" }); });
+  seedOwner("root-revalidate");
+  const body = JSON.stringify({ context: { session_id: "root-revalidate" } });
+  const response = await handleContextHistory(contextRequest(body), config, logContext(),
+    "alpha/notes/v2/read_file", undefined, keyAdmission, () => null);
+  expect(response.status).toBe(401);
+  expect(calls).toBe(0);
+
+  const rotated = { kind: "configured", keyId: "synthetic-key", source: "dedicated", contextPrincipalId: "principal-b" } as const;
+  expect((await handleContextHistory(contextRequest(body), config, logContext(),
+    "alpha/notes/v2/read_file", undefined, keyAdmission, () => rotated)).status).toBe(401);
+  expect(calls).toBe(0);
 });
 
 test("an admission without a caller principal cannot reach context history", async () => {
