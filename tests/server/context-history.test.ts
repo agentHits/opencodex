@@ -17,7 +17,7 @@ let outgoingBearer = "test-only";
 let outgoingAccount = "test-only";
 let accountMode = "pool";
 let validated=0;
-let probe=false;let released=0;let directError=false;
+let probe=false;let released=0;let directError=false;let duringSelection:(()=>void)|undefined;
 const errors = {
   CodexAccountCooldownError: class extends Error {},
   CodexMainSubstitutionUnavailableError: class extends Error {},
@@ -29,7 +29,7 @@ const errors = {
 };
 mock.module("../../src/codex/auth-context",()=>({
   ...errors,
-  resolveCodexAuthContext:async(headers: Headers, _config: OcxConfig, mode: string, options: Selection["options"])=>{selection={headers,mode,options};if(directError)throw new errors.CodexDirectAuthenticationError();return {kind:"pool",accountId:"test-account",...(probe?{probeLeaseId:"test-probe"}:{})};},
+  resolveCodexAuthContext:async(headers: Headers, _config: OcxConfig, mode: string, options: Selection["options"])=>{selection={headers,mode,options};duringSelection?.();if(directError)throw new errors.CodexDirectAuthenticationError();return {kind:"pool",accountId:"test-account",...(probe?{probeLeaseId:"test-probe"}:{})};},
   isCodexAuthContextUsable:()=>true,
   releaseCodexAuthContextProbeLease:()=>{released++;},
   materializeCodexUpstreamAuth: (_headers: Headers, _auth: unknown, options: { config: OcxConfig; modelId: string; admission?: DataPlaneAdmission; substituteMainCredential?: boolean }) => {
@@ -78,7 +78,7 @@ function setFetch(handler: (input: string | URL | Request, init?: RequestInit) =
   globalThis.fetch = Object.assign(handler, { preconnect: originalFetch.preconnect });
 }
 afterAll(()=>{clearContextSessionOwnersForTests();globalThis.fetch=originalFetch;mock.restore();});
-beforeEach(()=>{clearContextSessionOwnersForTests();for (const id of ["root", "root-test", "s"]) seedOwner(id);outgoingAccount="test-only";globalThis.fetch=originalFetch;materialized=undefined;materializationError=undefined;selection=undefined;validated=0;materializationOptions=undefined;outgoingBearer="test-only";accountMode="pool";probe=false;released=0;directError=false;});
+beforeEach(()=>{clearContextSessionOwnersForTests();for (const id of ["root", "root-test", "s"]) seedOwner(id);outgoingAccount="test-only";globalThis.fetch=originalFetch;materialized=undefined;materializationError=undefined;selection=undefined;validated=0;materializationOptions=undefined;outgoingBearer="test-only";accountMode="pool";probe=false;released=0;directError=false;duringSelection=undefined;});
 
 describe("context relay contract",()=>{
   test("selects root shared lane but sends original body and protocol headers",async()=>{
@@ -171,6 +171,25 @@ test("a client that gives up before dispatch releases without reaching upstream"
   // hanging up rather than as a parse failure, and nothing is written upstream.
   expect(response.status).toBe(499);
   expect(calls).toBe(0);
+});
+
+test("cancelling during credential selection dispatches nothing and releases the turn", async () => {
+  let calls = 0;
+  setFetch(async () => { calls++; return Response.json({ value: "ok" }); });
+  const controller = new AbortController();
+  duringSelection = () => controller.abort();
+  let leaseReleased = 0;
+  const lease = { release: () => { leaseReleased++; } } as unknown as Parameters<typeof handleContextHistory>[4];
+  const response = await handleContextHistory(
+    contextRequest(JSON.stringify({ context: { session_id: "root" } }), { authorization: "Bearer test" }, controller.signal),
+    config, logContext(), "alpha/notes/v2/write_file", lease, keyAdmission);
+  lease!.release();
+  // Selection is inside the deadline, so a client that leaves during it is reported as a hangup
+  // and nothing reaches upstream. The admitted turn is still handed back exactly once.
+  expect(response.status).toBe(499);
+  expect(selection).toBeDefined();
+  expect(calls).toBe(0);
+  expect(leaseReleased).toBe(1);
 });
 
 test("a key withdrawn during the request cannot dispatch on its earlier admission", async () => {
