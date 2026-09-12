@@ -71,6 +71,8 @@ The hub-management socket is enabled only by `runtimeRole: "hub"` plus
 `hub.managementIngress.enabled`, always binds `127.0.0.1`, and default-denies everything except
 GUI, session bootstrap/exchange, and `/api/*`.
 
+Auxiliary listener bind failures carry the listener key and effective address through `AuxiliaryListenerBindError` in `src/server/ports.ts`. `src/cli/index.ts` reports them without retrying the public port. Startup still rolls back every earlier socket synchronously.
+
 A failed optional bind initiates rollback of every earlier socket; normal stop joins all bound
 sockets before lifecycle release. The existing launchd/systemd installer remains the service owner
 and continues loading the data token from `service-api-token`; hub mode adds no service-manager

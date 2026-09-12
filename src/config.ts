@@ -1959,6 +1959,26 @@ function warnDegradedHostname(rawParsed: unknown, validated: OcxConfig): void {
   }
 }
 
+function degradedListenerWarnings(rawParsed: unknown, validated: OcxConfig): string[] {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw) return [];
+  const warnings: string[] = [];
+  if (raw.unauthenticatedLoopbackListener !== undefined && validated.unauthenticatedLoopbackListener === undefined) {
+    warnings.push("unauthenticatedLoopbackListener ignored: invalid listener configuration; repair config.json before enabling the listener");
+  }
+  const hub = rawConfigRecord(raw.hub);
+  if (hub?.managementIngress !== undefined && validated.hub?.managementIngress === undefined) {
+    warnings.push("hub.managementIngress ignored: invalid management listener configuration; repair config.json before enabling the listener");
+  }
+  return warnings;
+}
+
+function warnDegradedListeners(rawParsed: unknown, validated: OcxConfig): void {
+  for (const warning of degradedListenerWarnings(rawParsed, validated)) {
+    console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+  }
+}
+
 /**
  * Companion to {@link warnDegradedStreamMode} for a malformed selection-order map.
  * Priority is a preference, so the schema drops the whole map rather than failing
@@ -2409,6 +2429,7 @@ export function loadConfig(): OcxConfig {
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedStreamMode(parsed, config);
       warnDegradedHostname(parsed, config);
+      warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2438,6 +2459,7 @@ export function loadConfig(): OcxConfig {
       const config = normalizeApiKeyIds(retryResult.data as OcxConfig);
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedHostname(parsed, config);
+      warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2463,6 +2485,7 @@ export function loadConfig(): OcxConfig {
         const config = normalizeApiKeyIds(salvaged.parsed);
         warnInheritedFastWireConflicts(configPath, config);
         warnDegradedHostname(parsed, config);
+        warnDegradedListeners(parsed, config);
         warnDegradedApiKeys(parsed, config);
         warnDegradedCodexAccountPriorities(parsed, config);
         warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2597,6 +2620,7 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   const warnings = configPlaceholderWarnings(normalized);
   warnings.push(...inheritedFastWireConflictProviderNames(normalized).map(inheritedFastWireConflictWarning));
   warnings.push(...degradedCodexAccountPriorityWarnings(rawParsed, normalized));
+  warnings.push(...degradedListenerWarnings(rawParsed, normalized));
   const quotaAutoRefreshWarning = degradedCodexQuotaAutoRefreshWarning(rawParsed, normalized);
   if (quotaAutoRefreshWarning) warnings.push(quotaAutoRefreshWarning);
   if (rawEffort !== undefined && !isClaudeSubagentEffort(rawEffort)) {

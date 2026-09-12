@@ -132,3 +132,5 @@ Binary detection decodes only the supplied buffer view; malformed UTF-8 can itse
 so the flag does not identify the peer responsible for corruption. Existing diagnostic files are
 not rewritten. Audio devices, WebRTC media negotiation, captions and spoken handoff delivery remain
 client responsibilities.
+
+Auxiliary listener startup failures report their own effective address and do not trigger public-port retries; the synchronous rollback contract is described in [Runtime](../runtime.md#lifecycle).

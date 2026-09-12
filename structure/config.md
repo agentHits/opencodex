@@ -55,6 +55,8 @@ matters for maintainers is which groups exist and who resolves them:
 Env values are resolved through `src/config.ts`, so a config value naming an env var never persists
 the secret itself.
 
+Malformed optional data-loopback and nested hub-management listener blocks are disabled in memory and reported by load-time warnings and read-only config diagnostics. The warning names only the field; unrelated providers and keys survive. Explicit writes remain strictly validated.
+
 ## Config injection
 
 `src/codex/inject.ts` writes one of two forms. The choice is not cosmetic: it decides whether Codex

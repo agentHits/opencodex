@@ -1,3 +1,4 @@
+import { AuxiliaryListenerBindError } from "./ports";
 import { markActivity } from "../lib/sidecar-tracker";
 import { knownModelIdsForProvider } from "../router";
 import {
@@ -2525,7 +2526,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         } catch {
           /* the original bind error is the one worth reporting */
         }
-        throw error;
+        throw new AuxiliaryListenerBindError("unauthenticatedLoopbackListener", loopbackListenerPort, "127.0.0.1", error);
       }
     }
     if (managementIngressPort !== null) {
@@ -2542,7 +2543,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
           if (!bound) continue;
           try { void bound.stop(true); } catch { /* report the original bind error */ }
         }
-        throw error;
+        throw new AuxiliaryListenerBindError("hub.managementIngress", managementIngressPort, "127.0.0.1", error);
       }
     }
   } catch (error) {

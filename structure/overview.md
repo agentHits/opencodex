@@ -103,3 +103,5 @@ would pass while the rule was violated.
 
 - **INV-HOME-01** — `CODEX_HOME` wins over `~/.codex` when present and valid.
 - **INV-SLUG-01** — Routed model slugs use `provider/model`.
+
+Listener startup diagnostics follow [the runtime lifecycle contract](runtime.md#lifecycle); malformed optional listener blocks follow [config loading](config.md#config-surface).

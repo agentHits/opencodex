@@ -722,3 +722,5 @@ For a service rollback, stop the branch service and repair the prior release aga
   session, not a client data key.
 - **Outstanding revocation after disconnect:** use the hub dashboard's **Integrations → API Keys**
   page. It is the sole post-disconnect revocation path.
+
+If an auxiliary listener cannot bind, startup names `unauthenticatedLoopbackListener` or `hub.managementIngress` and the actual address. Correct that listener or free its address; changing only the public proxy port does not repair a fixed auxiliary port. Malformed hand-edited listener blocks warn and remain disabled while unrelated settings are preserved.
