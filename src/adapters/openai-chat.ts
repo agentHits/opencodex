@@ -1665,7 +1665,7 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
           ...(tierLog ? { tierLog } : {}),
         };
       };
-      if (hasShrinkableOpenAIChatImages(messages) || (incoming?.imageTierBias ?? 0) > 0) {
+      if (hasShrinkableOpenAIChatImages(messages)) {
         return normalizeOpenAIChatImages(messages, { tierBias: incoming?.imageTierBias }).then(finish, finish);
       }
       return finish();
