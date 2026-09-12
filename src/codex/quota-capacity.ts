@@ -7,7 +7,11 @@ export const CAPACITY_ASSUMPTIONS = [
   "Account log labels are assumed stable within each observation interval.",
   "This low-confidence effective-token estimate is not a provider token limit or lower bound.",
 ] as const;
-export type CapacityReason = "insufficient_intervals" | "ledger_unavailable" | "ledger_truncated" | "identity_unavailable" | "identity_changed" | "ambiguous_usage";
+export const CAPACITY_REASONS = ["insufficient_intervals", "ledger_unavailable", "ledger_truncated", "identity_unavailable", "identity_changed", "ambiguous_usage"] as const;
+export type CapacityReason = typeof CAPACITY_REASONS[number];
+export function parseCapacityReason(value: unknown): CapacityReason | undefined {
+  return CAPACITY_REASONS.find(reason => reason === value);
+}
 export interface CodexCapacityResult {
   status: "estimated" | "insufficient-evidence";
   estimates: Array<{ window: QuotaHistoryWindow["window"]; estimatedTokens: number; sampleCount: number; confidence: "low" }>;
@@ -85,7 +89,8 @@ export function estimateCodexQuotaCapacity(
       samples.sort((a, b) => a - b);
       const middle = Math.floor(samples.length / 2);
       const median = samples.length % 2 ? samples[middle] : samples[middle - 1] / 2 + samples[middle] / 2;
-      estimates.push({ window: windowName, estimatedTokens: Math.round(median), sampleCount: samples.length, confidence: "low" });
+      const estimatedTokens = Math.round(median);
+      if (estimatedTokens > 0) estimates.push({ window: windowName, estimatedTokens, sampleCount: samples.length, confidence: "low" });
     }
   }
   return estimates.length ? { status: "estimated", estimates, assumptions: [...CAPACITY_ASSUMPTIONS] }

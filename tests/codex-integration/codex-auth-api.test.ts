@@ -1075,6 +1075,13 @@ describe("codex-auth API", () => {
     const body = await result!.json() as { observations: unknown[]; capacity: { status: string; estimates: unknown[] } };
     expect(body.observations).toHaveLength(1);
     expect(body.capacity.estimates).toEqual([{ window: "weekly", estimatedTokens: 10000, sampleCount: 1, confidence: "low" }]);
+    const stored = usageHistoryModule.readUsageEntries();
+    expect(stored).toHaveLength(1);
+    stored[0].attempts![0].model = "   ";
+    writeFileSync(usageHistoryModule.usageLogPath(), JSON.stringify(stored[0]) + "\n");
+    const blankModel = request();
+    const blankResult = await handleCodexAuthAPI(blankModel, new URL(blankModel.url), config);
+    expect((await blankResult!.json()).capacity).toMatchObject({ status: "insufficient-evidence", estimates: [] });
     const originalRead = usageHistoryModule.readUsageSnapshotForManagement;
     const read = spyOn(usageHistoryModule, "readUsageSnapshotForManagement").mockImplementation(async () => {
       const snapshot = await originalRead();

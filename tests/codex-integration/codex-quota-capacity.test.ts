@@ -58,3 +58,9 @@ describe("observed effective quota capacity", () => {
     expect(estimateCodexQuotaCapacity(points, Array.from({ length: 10001 }, () => entry()), label, shared).reason).toBe("ledger_truncated");
   });
 });
+
+
+test("a positive fractional inference never publishes zero capacity after rounding", () => {
+  const small = entry({ attempts: [attempt({ usage: { inputTokens: 0.1, outputTokens: 0 } })] });
+  expect(estimateCodexQuotaCapacity([point(1000, 0), point(2000, 90)], [small], label, shared).status).toBe("insufficient-evidence");
+});

@@ -2569,7 +2569,7 @@ export async function handleCodexAuthAPI(
         else if (!usage.revision) capacity = insufficientCodexCapacity("ledger_unavailable");
         else if (usage.truncatedPrefixBytes > 0 || usage.entriesTruncated || usage.entriesDropped > 0) capacity = insufficientCodexCapacity("ledger_truncated");
         else capacity = estimateCodexQuotaCapacity(allHistory.observations, usage.entries, label,
-          model => { const scope = codexQuotaScopeForModel(model); return scope !== "spark" && scope !== "reserve"; });
+          model => codexQuotaScopeForModel(model) === "shared");
       } catch { capacity = insufficientCodexCapacity("ledger_unavailable"); }
     }
     if (!configuredPoolAccount(getRuntimeConfig(config), accountId)) return jsonResponse({ error: "Unknown pool account" }, 404);

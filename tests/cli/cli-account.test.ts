@@ -586,6 +586,19 @@ afterEach(() => {
 });
 
 describe("ocx account CLI (issue #180 matrix)", () => {
+  test.each(["estimated", "insufficient-evidence"] as const)("human and JSON history preserve capacity status %s", async status => {
+    const capacity = status === "estimated" ? { status, estimates: [{ window: "weekly", estimatedTokens: 10000, sampleCount: 2, confidence: "low" }] }
+      : { status, reason: "ledger_truncated", estimates: [] };
+    const deps: AccountDeps = { baseUrl: "http://127.0.0.1:10100", fetchImpl: (async () => Response.json({ observations: [{
+      observedAt: 1_800_000_000_000, source: "wham", windows: [{ family: "account", window: "weekly", usedPercent: 20 }],
+    }], capacity })) as typeof fetch };
+    const human = await run(["history", "openai", "pool-a"], deps);
+    expect(human.code).toBe(0);
+    expect(human.stdout).toContain(status === "estimated" ? "~10000 reported tokens / 100%\t2 samples" : "insufficient evidence (ledger_truncated)");
+    const json = await run(["history", "openai", "pool-a", "--json"], deps);
+    expect(JSON.parse(json.stdout).capacity).toEqual(capacity);
+  });
+
   test("human quota history renders populated rows and safely handles oversized reset dates", async () => {
     const result = await run(["history", "openai", "pool-a"], { baseUrl: "http://127.0.0.1:10100", fetchImpl: (async () => Response.json({
       observations: [{ observedAt: 1_800_000_000_000, source: "wham", windows: [

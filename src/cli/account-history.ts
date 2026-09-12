@@ -1,3 +1,4 @@
+import { parseCapacityReason } from "../codex/quota-capacity";
 import { isValidCodexAccountId } from "../codex/account-id";
 import { apiError, apiJson, proxyUnreachable, resolveBaseUrl, type AccountDeps } from "./account-api";
 
@@ -50,6 +51,10 @@ export async function cmdAccountHistory(args: string[], deps: AccountDeps): Prom
         console.log(`${estimate.window}\t~${estimate.estimatedTokens} reported tokens / 100%\t${estimate.sampleCount} samples`);
       }
     }
+  }
+  if (capacity && typeof capacity === "object" && "status" in capacity && capacity.status === "insufficient-evidence") {
+    const reason = "reason" in capacity ? parseCapacityReason(capacity.reason) : undefined;
+    console.log(`Effective capacity: insufficient evidence${reason ? ` (${reason})` : ""}.`);
   }
   return 0;
 }
