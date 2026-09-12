@@ -152,7 +152,7 @@ recorded here because a rebuttal is a decision rather than an omission.
 `missing-identity` without it. That fixes device-to-device consistency but not the case that
 actually matters: an existing user who imported a credential has a row keyed by email, and
 an `accountId`-keyed device login would not match it. The fold keeps email as the slot key,
-which is also the choice the import path documents at `src/oauth/meta-muse.ts:316-319`.
+which is also the choice the import path documents at `src/oauth/meta-muse.ts:305-307`.
 
 An earlier pair of reviewers with a broader packet returned nothing across four wait
 cycles and was retired; the packets above were narrowed and re-dispatched. That retirement
