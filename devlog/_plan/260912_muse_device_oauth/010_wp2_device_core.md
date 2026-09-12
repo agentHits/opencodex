@@ -1,0 +1,493 @@
+# wp2 — device-authorization core
+
+One new file. No existing file changes in this phase, so nothing user-visible moves yet:
+`020` wires it in. Written to be executable as-is; deviations found while building are
+amended here at wp3's P rather than left implicit.
+
+**NEW** `src/oauth/meta-muse-device.ts`
+**NEW** `tests/providers/meta-muse-device.test.ts` (specified in `040`)
+
+## Contract
+
+```ts
+loginMetaMuseDevice(ctrl: OAuthController, deps?: MuseDeviceDeps): Promise<OAuthCredentials>
+```
+
+Three network steps, each with its own error kind: device authorization, poll, mint. The
+returned credential carries the `LLM|` key in `access`/`refresh` (unchanged bearer
+contract, `002` §A) and the account token in `muse.oauthAccessToken`.
+
+`sleep` and `now` are injected. That is the difference between testing eight poll
+branches in milliseconds and paying real seconds per branch the way
+`tests/oauth/chatgpt-device-auth.test.ts:102-113` currently must.
+
+## File body
+
+```ts
+/**
+ * Meta Muse Code device-authorization login.
+ *
+ * `./meta-muse` imports the credential the vendor's CLI already minted. This module
+ * produces one: Meta's OIDC device grant, then the subscription key mint that turns the
+ * resulting account token into the `LLM|` Model API key our request path sends as a
+ * bearer.
+ *
+ * Protocol source: devlog/_plan/260912_muse_device_oauth/001_reference_measurements.md.
+ * It is second-party, not vendor documentation, so every response is parsed defensively
+ * and every failure names a kind instead of throwing a bare string.
+ *
+ * Two properties are load-bearing and easy to lose in a later edit:
+ *
+ * 1. NO RESPONSE BODY REACHES AN ERROR MESSAGE. These endpoints can echo request
+ *    material, the mint response literally contains the API key, and these messages reach
+ *    CLI output, the dashboard and issue reports. Status codes only — the same discipline
+ *    as `deviceError` in ./chatgpt-device.
+ * 2. THE ACCOUNT TOKEN IS NOT A BEARER FOR THE MODEL API. Measured 2026-09-03: it 401s
+ *    with `invalid_api_key` while the sibling key returns 200
+ *    (devlog/_fin/260903_muse_spark_plan_oauth/003 §B). It exists here only to mint and
+ *    to read subscription usage.
+ */
+import type { OAuthController, OAuthCredentials } from "./types";
+import { sanitizeApiKeyValue } from "../providers/api-keys";
+
+/** Meta's own Muse Code client. Public in its device-approval URL; not a secret. */
+const CLIENT_ID = "1031625952748946";
+const DEVICE_AUTHORIZATION_URL = "https://auth.meta.com/oidc/device/authorization/";
+const DEVICE_TOKEN_URL = "https://auth.meta.com/oidc/device/token/";
+const MUSE_KEY_URL = "https://api.meta.ai/muse-code/key";
+const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
+const API_VERSION = "1.0.0";
+
+/** Shown when the response omits a verification URI. Observed 2026-09-03 from `muse login`. */
+const VERIFICATION_FALLBACK_URL = "https://auth.meta.com/oauth/device/";
+
+const REQUEST_TIMEOUT_MS = 20_000;
+const DEFAULT_FLOW_TTL_MS = 15 * 60_000;
+/** A hostile or corrupt `expires_in` must not park a login for hours. */
+const MAX_FLOW_TTL_MS = 30 * 60_000;
+const DEFAULT_POLL_INTERVAL_MS = 5_000;
+/** Floor: a zero or string interval would otherwise hot-loop an auth endpoint. */
+const MIN_POLL_INTERVAL_MS = 1_000;
+const SLOW_DOWN_INCREMENT_MS = 5_000;
+const MAX_POLL_INTERVAL_MS = 60_000;
+
+export type MuseDeviceErrorKind =
+  | "device-authorization"
+  | "device-token"
+  | "device-denied"
+  | "device-expired"
+  | "cancelled"
+  | "mint-http"
+  | "mint-rate-limited"
+  | "mint-invalid"
+  | "subscription-inactive"
+  | "entitlement-required"
+  | "missing-api-key"
+  | "missing-identity";
+
+export class MuseDeviceLoginError extends Error {
+  readonly name = "MuseDeviceLoginError";
+  readonly kind: MuseDeviceErrorKind;
+  readonly status?: number;
+  /** Where the user resolves an entitlement problem. Vendor-supplied, never a local path. */
+  readonly actionUrl?: string;
+  readonly retryAfterMs?: number;
+  constructor(
+    kind: MuseDeviceErrorKind,
+    message: string,
+    extra: { status?: number; actionUrl?: string; retryAfterMs?: number; cause?: unknown } = {},
+  ) {
+    super(message, extra.cause === undefined ? undefined : { cause: extra.cause });
+    this.kind = kind;
+    if (extra.status !== undefined) this.status = extra.status;
+    if (extra.actionUrl !== undefined) this.actionUrl = extra.actionUrl;
+    if (extra.retryAfterMs !== undefined) this.retryAfterMs = extra.retryAfterMs;
+  }
+}
+
+/** Injected so tests never touch the network or a real clock. */
+export interface MuseDeviceDeps {
+  fetchImpl?: typeof fetch;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  now?: () => number;
+}
+
+export interface MuseDeviceAuthorization {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  intervalMs: number;
+  expiresAtMs: number;
+}
+
+export interface MuseKeyPayload {
+  apiKey?: string;
+  requirePayment?: boolean;
+  actionUrl?: string;
+  userEmail?: string;
+  userId?: string;
+  isSubsActive?: boolean;
+  subsTierName?: string;
+  /** Raw `subs_usage` object, api_key-free by construction. Parsed by muse-key-quota. */
+  subsUsage?: Record<string, unknown>;
+}
+
+function text(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Upstream may send `interval` as a number or a string. A string reaches `setTimeout` as
+ * 0 and turns the poll into a hot loop, so coerce, floor and cap it.
+ */
+function normalizeIntervalMs(raw: unknown): number {
+  const seconds = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_POLL_INTERVAL_MS;
+  return Math.min(MAX_POLL_INTERVAL_MS, Math.max(MIN_POLL_INTERVAL_MS, Math.round(seconds * 1000)));
+}
+
+function normalizeTtlMs(raw: unknown): number {
+  const seconds = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_FLOW_TTL_MS;
+  return Math.min(MAX_FLOW_TTL_MS, Math.round(seconds * 1000));
+}
+
+/** RFC 7231 `Retry-After`: delta-seconds or an HTTP date. Clamped to the poll ceiling. */
+function retryAfterMs(header: string | null, now: number): number | undefined {
+  const raw = text(header ?? undefined);
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(MAX_POLL_INTERVAL_MS, Math.round(seconds * 1000));
+  }
+  const at = Date.parse(raw);
+  if (!Number.isFinite(at)) return undefined;
+  return Math.min(MAX_POLL_INTERVAL_MS, Math.max(0, at - now));
+}
+
+async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw cancelled();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(cancelled());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function cancelled(): MuseDeviceLoginError {
+  return new MuseDeviceLoginError("cancelled", "Muse Code login cancelled");
+}
+
+function requestSignal(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+/** Step 1: ask Meta for a user code. */
+export async function requestMuseDeviceAuthorization(
+  deps: MuseDeviceDeps = {},
+  signal?: AbortSignal,
+): Promise<MuseDeviceAuthorization> {
+  const now = deps.now ?? Date.now;
+  const response = await (deps.fetchImpl ?? fetch)(DEVICE_AUTHORIZATION_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "x-api-version": API_VERSION,
+    },
+    body: new URLSearchParams({ client_id: CLIENT_ID }).toString(),
+    redirect: "error",
+    signal: requestSignal(signal),
+  });
+  if (!response.ok) {
+    throw new MuseDeviceLoginError(
+      "device-authorization",
+      `Muse Code device authorization request failed: HTTP ${response.status}`,
+      { status: response.status },
+    );
+  }
+  const payload = record(await response.json().catch(() => undefined));
+  const deviceCode = text(payload?.device_code);
+  const userCode = text(payload?.user_code);
+  if (!deviceCode || !userCode) {
+    throw new MuseDeviceLoginError(
+      "device-authorization",
+      "Muse Code device authorization response is missing the device or user code",
+      { status: response.status },
+    );
+  }
+  return {
+    deviceCode,
+    userCode,
+    verificationUri: text(payload?.verification_uri) ?? VERIFICATION_FALLBACK_URL,
+    ...(text(payload?.verification_uri_complete)
+      ? { verificationUriComplete: text(payload?.verification_uri_complete) as string }
+      : {}),
+    intervalMs: normalizeIntervalMs(payload?.interval),
+    expiresAtMs: now() + normalizeTtlMs(payload?.expires_in),
+  };
+}
+
+/**
+ * Step 2: poll until approval.
+ *
+ * RFC 8628 signals state with an `error` code in a non-2xx body, so the CODE decides, not
+ * the status. An unrecognized code is terminal: retrying a permanent failure just hammers
+ * an auth endpoint until the grant expires. A 429 is treated as `slow_down` with
+ * `Retry-After` honoured, because that is what it means here.
+ */
+export async function pollMuseDeviceToken(
+  authorization: MuseDeviceAuthorization,
+  deps: MuseDeviceDeps = {},
+  signal?: AbortSignal,
+): Promise<string> {
+  const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? defaultSleep;
+  let intervalMs = authorization.intervalMs;
+  while (true) {
+    if (signal?.aborted) throw cancelled();
+    const remaining = authorization.expiresAtMs - now();
+    if (remaining <= 0) {
+      throw new MuseDeviceLoginError("device-expired", "Muse Code device authorization expired before approval");
+    }
+    const response = await (deps.fetchImpl ?? fetch)(DEVICE_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "x-api-version": API_VERSION,
+      },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        device_code: authorization.deviceCode,
+        grant_type: DEVICE_GRANT_TYPE,
+      }).toString(),
+      redirect: "error",
+      signal: requestSignal(signal),
+    });
+    const payload = record(await response.json().catch(() => undefined));
+    if (response.ok) {
+      // Checked again after the round trip: a single poll can outlive the grant, and
+      // accepting a token minted against an expired code just moves the failure later.
+      if (authorization.expiresAtMs - now() <= 0) {
+        throw new MuseDeviceLoginError("device-expired", "Muse Code device authorization expired before approval");
+      }
+      const accessToken = text(payload?.access_token);
+      if (!accessToken) {
+        throw new MuseDeviceLoginError(
+          "device-token",
+          "Muse Code device token response is missing an access token",
+          { status: response.status },
+        );
+      }
+      return accessToken;
+    }
+    const code = text(payload?.error)?.toLowerCase();
+    if (code === "access_denied") {
+      throw new MuseDeviceLoginError("device-denied", "Muse Code login was denied in the browser", {
+        status: response.status,
+      });
+    }
+    if (code === "expired_token") {
+      throw new MuseDeviceLoginError("device-expired", "Muse Code device code expired; start the login again", {
+        status: response.status,
+      });
+    }
+    if (code === "slow_down" || response.status === 429) {
+      const advised = retryAfterMs(response.headers.get("retry-after"), now());
+      intervalMs = Math.min(
+        MAX_POLL_INTERVAL_MS,
+        Math.max(advised ?? 0, intervalMs + SLOW_DOWN_INCREMENT_MS),
+      );
+    } else if (code !== "authorization_pending") {
+      throw new MuseDeviceLoginError(
+        "device-token",
+        `Muse Code device token poll failed: HTTP ${response.status}`,
+        { status: response.status },
+      );
+    }
+    // Never sleep past the deadline: that is how a 15-minute grant becomes a 20-minute wait.
+    const wait = Math.min(intervalMs, Math.max(0, authorization.expiresAtMs - now()));
+    if (wait <= 0) {
+      throw new MuseDeviceLoginError("device-expired", "Muse Code device authorization expired before approval");
+    }
+    await sleep(wait, signal);
+  }
+}
+
+/**
+ * Step 3: mint the subscription key.
+ *
+ * `onboard` is sent only during an interactive login. Meta's key endpoint is rate-limited
+ * and returns the SAME key for an account, so any caller that already holds one must not
+ * come back here (`020` enforces that on refresh; `030` reuses this function read-only).
+ */
+export async function mintMuseApiKey(
+  accountAccessToken: string,
+  options: { onboard?: boolean } = {},
+  deps: MuseDeviceDeps = {},
+  signal?: AbortSignal,
+): Promise<MuseKeyPayload> {
+  const now = deps.now ?? Date.now;
+  const response = await (deps.fetchImpl ?? fetch)(MUSE_KEY_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accountAccessToken}`,
+      "Content-Type": "application/json",
+      "x-api-version": API_VERSION,
+    },
+    body: JSON.stringify(options.onboard ? { onboard: true } : {}),
+    redirect: "error",
+    signal: requestSignal(signal),
+  });
+  if (response.status === 429) {
+    const wait = retryAfterMs(response.headers.get("retry-after"), now());
+    throw new MuseDeviceLoginError(
+      "mint-rate-limited",
+      wait === undefined
+        ? "Meta rate-limited the Muse Code key request; wait a minute and retry"
+        : `Meta rate-limited the Muse Code key request; retry in about ${Math.ceil(wait / 1000)}s`,
+      { status: 429, ...(wait === undefined ? {} : { retryAfterMs: wait }) },
+    );
+  }
+  if (!response.ok) {
+    // Status only. The body of this endpoint can carry the key itself.
+    throw new MuseDeviceLoginError(
+      "mint-http",
+      `Muse Code key exchange failed: HTTP ${response.status}`,
+      { status: response.status },
+    );
+  }
+  const payload = record(await response.json().catch(() => undefined));
+  if (!payload) {
+    throw new MuseDeviceLoginError("mint-invalid", "Muse Code key exchange returned an unreadable response", {
+      status: response.status,
+    });
+  }
+  return {
+    ...(text(payload.api_key) ? { apiKey: text(payload.api_key) as string } : {}),
+    ...(typeof payload.require_payment === "boolean" ? { requirePayment: payload.require_payment } : {}),
+    ...(text(payload.action_url) ?? text(payload.require_payment_action_url)
+      ? { actionUrl: (text(payload.action_url) ?? text(payload.require_payment_action_url)) as string }
+      : {}),
+    ...(text(payload.user_email) ? { userEmail: (text(payload.user_email) as string).toLowerCase() } : {}),
+    ...(text(payload.user_id) ? { userId: text(payload.user_id) as string } : {}),
+    ...(typeof payload.is_subs_active === "boolean" ? { isSubsActive: payload.is_subs_active } : {}),
+    ...(text(payload.subs_tier_name) ? { subsTierName: text(payload.subs_tier_name) as string } : {}),
+    ...(record(payload.subs_usage) ? { subsUsage: record(payload.subs_usage) as Record<string, unknown> } : {}),
+  };
+}
+
+/**
+ * Turn a mint payload into the error it deserves, or return the validated key.
+ *
+ * Four distinct outcomes the reference collapses into fewer: an inactive subscription is
+ * not a missing key, a payment requirement is not an auth failure, and a key that fails
+ * the `LLM|` grammar is not a server error.
+ */
+export function museApiKeyFromPayload(payload: MuseKeyPayload): string {
+  if (payload.isSubsActive === false) {
+    throw new MuseDeviceLoginError(
+      "subscription-inactive",
+      "This Meta account has no active Muse Code subscription. Subscribe at https://dev.meta.ai, then log in again.",
+      { status: 403 },
+    );
+  }
+  const apiKey = sanitizeApiKeyValue(payload.apiKey);
+  if (!apiKey) {
+    if (payload.requirePayment === true || payload.actionUrl) {
+      throw new MuseDeviceLoginError(
+        "entitlement-required",
+        payload.actionUrl
+          ? `Meta requires a subscription or payment method before it will issue a Muse Code key: ${payload.actionUrl}`
+          : "Meta requires a subscription or payment method before it will issue a Muse Code key.",
+        { ...(payload.actionUrl ? { actionUrl: payload.actionUrl } : {}) },
+      );
+    }
+    throw new MuseDeviceLoginError("missing-api-key", "Meta returned no Muse Code API key for this account");
+  }
+  if (!/^LLM\|\d+\|[A-Za-z0-9_-]{10,}$/.test(apiKey)) {
+    throw new MuseDeviceLoginError(
+      "mint-invalid",
+      "Meta returned a Muse Code key in an unexpected format; log in again",
+    );
+  }
+  return apiKey;
+}
+
+/** Run the whole grant. */
+export async function loginMetaMuseDevice(
+  ctrl: OAuthController = {},
+  deps: MuseDeviceDeps = {},
+): Promise<OAuthCredentials> {
+  const authorization = await requestMuseDeviceAuthorization(deps, ctrl.signal);
+  ctrl.onAuth?.({
+    url: authorization.verificationUriComplete ?? authorization.verificationUri,
+    instructions: `Enter code: ${authorization.userCode}`,
+    deviceCode: authorization.userCode,
+  });
+  const accountAccessToken = await pollMuseDeviceToken(authorization, deps, ctrl.signal);
+  ctrl.onProgress?.("Approved. Requesting the Muse Code subscription key...");
+  const payload = await mintMuseApiKey(accountAccessToken, { onboard: true }, deps, ctrl.signal);
+  const apiKey = museApiKeyFromPayload(payload);
+  const email = payload.userEmail;
+  const accountId = payload.userId ?? email;
+  if (!accountId) {
+    throw new MuseDeviceLoginError(
+      "missing-identity",
+      "Meta returned no stable account identity for this Muse Code key",
+    );
+  }
+  return {
+    access: apiKey,
+    // Static key: there is nothing to exchange, so refresh carries the same value. Meta
+    // rejects refresh_token grants on this client (001 §A).
+    refresh: apiKey,
+    expires: Number.MAX_SAFE_INTEGER,
+    accountId,
+    ...(email ? { email } : {}),
+    source: "oauth",
+    muse: {
+      oauthAccessToken: accountAccessToken,
+      mintedAt: (deps.now ?? Date.now)(),
+      ...(payload.subsTierName ? { tierName: payload.subsTierName } : {}),
+    },
+  };
+}
+```
+
+## Why each guard exists
+
+| Guard | Failure it prevents |
+|---|---|
+| `normalizeIntervalMs` floor and cap | A string or `0` interval hot-looping `auth.meta.com`; a huge value parking the login |
+| `normalizeTtlMs` cap at 30 min | A corrupt `expires_in` holding a poll loop open indefinitely |
+| Deadline re-check after a successful poll | Accepting a token minted against a code that expired mid-flight |
+| `Math.min(intervalMs, remaining)` | Sleeping past the grant's own deadline |
+| Unknown error code is terminal | Polling a permanently failing endpoint until expiry |
+| Status-only error text | Reflecting a response body that can contain the API key |
+| `redirect: "error"` | Forwarding an `Authorization` header to a redirect target |
+| `LLM|` grammar check | Persisting a value that will 401 on first use, the same check the import path applies |
+
+## Out of scope for wp2
+
+No registration, no credential persistence, no header change, no quota work. `src/oauth/index.ts`
+is untouched until `020`, so this module is unreachable from a user action at the end of
+this phase — which is the point: it is testable in isolation first.
