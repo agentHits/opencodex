@@ -242,6 +242,83 @@ describe("Cline journaled pair", () => {
     expect(input.store!.listOperations("cline")).toHaveLength(1);
   });
 
+  test("uncertain history or ownership never authorizes recovery writes", () => {
+    seed();
+    const store = input.store!;
+    const io = store.io();
+    const marker = clinePendingPath(store, settings);
+    expect(applyIntegration({ ...input, io: { ...io, removeFile: path => {
+      if (path === marker) throw new Error("retain marker");
+      io.removeFile(path);
+    } } }).ok).toBe(true);
+    const before = [readFileSync(settings, "utf8"), readFileSync(catalog, "utf8"), readFileSync(marker, "utf8"), readFileSync(join(store.root, "records.json"), "utf8")];
+    for (const method of ["findCommittedOperation", "readRecordsStrict"] as const) {
+      const uncertain = { ...store, [method]: () => { throw new Error("unreadable"); } };
+      expect(applyIntegration({ ...input, store: uncertain }).ok).toBe(false);
+      expect([readFileSync(settings, "utf8"), readFileSync(catalog, "utf8"), readFileSync(marker, "utf8"), readFileSync(join(store.root, "records.json"), "utf8")]).toEqual(before);
+    }
+    // Valid JSON with invalid schema is also uncertainty, not a missing commit.
+    const journal = join(store.root, "journal.jsonl");
+    const journalBefore = readFileSync(journal, "utf8");
+    writeFileSync(journal, '{}\n');
+    expect(applyIntegration(input).ok).toBe(false);
+    writeFileSync(journal, journalBefore);
+    expect([readFileSync(settings, "utf8"), readFileSync(catalog, "utf8"), readFileSync(marker, "utf8"), readFileSync(join(store.root, "records.json"), "utf8")]).toEqual(before);
+  });
+
+  test("malformed pending authority is rejected before any recovery side effect", () => {
+    seed();
+    const store = input.store!;
+    const io = store.io();
+    const marker = clinePendingPath(store, settings);
+    expect(applyIntegration({ ...input, io: { ...io, removeFile: path => {
+      if (path === marker) throw new Error("retain marker");
+      io.removeFile(path);
+    } } }).ok).toBe(true);
+    const valid = JSON.parse(readFileSync(marker, "utf8")) as IntegrationTransaction;
+    const files = [readFileSync(settings, "utf8"), readFileSync(catalog, "utf8"), readFileSync(join(store.root, "records.json"), "utf8")];
+    const variants: unknown[] = [
+      { ...valid, priorRecord: { clientId: "cline", configPath: settings } },
+      { ...valid, entry: { ...valid.entry, priorRecord: valid.record } },
+      { ...valid, entry: { ...valid.entry, resultFingerprint: "0000000000000000" } },
+      { ...valid, entry: { ...valid.entry, resultAbsent: true, resultFingerprint: "" } },
+      { ...valid, entry: { ...valid.entry, kind: ["apply"] } },
+      { ...valid, record: { ...valid.record, fragmentPaths: [["settings", "providers", "mine"]] } },
+    ];
+    for (const variant of variants) {
+      const text = JSON.stringify(variant);
+      writeFileSync(marker, text);
+      expect(applyIntegration(input).ok).toBe(false);
+      expect([readFileSync(settings, "utf8"), readFileSync(catalog, "utf8"), readFileSync(join(store.root, "records.json"), "utf8")]).toEqual(files);
+      expect(readFileSync(marker, "utf8")).toBe(text);
+    }
+  });
+
+  test("embedded NUL cannot turn malformed prior ownership into a valid recovery path", () => {
+    seed();
+    const store = input.store!;
+    const io = store.io();
+    let failedAppend = false;
+    const result = applyIntegration({ ...input, io: { ...io,
+      appendJournal: () => { failedAppend = true; throw new Error("append unavailable"); },
+      writeText: (path, text) => {
+        if (failedAppend && (path === settings || path === catalog)) throw new Error("rollback unavailable");
+        io.writeText(path, text);
+      },
+    } });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.residual).toBe(true);
+    const marker = clinePendingPath(store, settings);
+    const pending = JSON.parse(readFileSync(marker, "utf8")) as IntegrationTransaction;
+    const priorRecord = { ...pending.record!, fragmentPaths: [["settings\0providers", "opencodex"], ["catalog", "providers", "opencodex"]] };
+    const malformed = JSON.stringify({ ...pending, priorRecord, entry: { ...pending.entry, priorRecord } });
+    writeFileSync(marker, malformed);
+    const before = [readFileSync(settings, "utf8"), readFileSync(catalog, "utf8"), readFileSync(join(store.root, "records.json"), "utf8")];
+    expect(applyIntegration(input).ok).toBe(false);
+    expect([readFileSync(settings, "utf8"), readFileSync(catalog, "utf8"), readFileSync(join(store.root, "records.json"), "utf8")]).toEqual(before);
+    expect(readFileSync(marker, "utf8")).toBe(malformed);
+  });
+
   test("adapter keeps non-target IO unchanged and reads a pair as one snapshot", () => {
     seed();
     const adapter = createClineIO(input.store!.io(), settings, input.store!);

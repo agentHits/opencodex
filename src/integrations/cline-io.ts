@@ -1,8 +1,10 @@
 import { dirname, join, resolve } from "node:path";
 import { type IntegrationIO, type IntegrationTransaction, type ReadResult, type StatKind } from "./config-io";
 import type { IntegrationStateStore } from "./store";
-import { fingerprint } from "./ownership";
-import { decodeClinePair, encodeClinePair, isClineObject, type ClineRawPair } from "./cline-document";
+import { fingerprint, type OwnershipRecord } from "./ownership";
+import type { JournalEntry } from "./journal";
+import { parseClineTransaction } from "./cline-transaction";
+import { decodeClinePair, encodeClinePair, type ClineRawPair } from "./cline-document";
 
 /** Per-file atomic replacement with durable pair recovery, not simultaneous two-file visibility. */
 export class ClineTransactionError extends Error {
@@ -58,27 +60,18 @@ export function createClineIO(
     const read = base.readText(markerPath);
     if (read.kind !== "text") throw new ClineTransactionError(markerPath);
     try {
-      const value: unknown = JSON.parse(read.text);
-      if (!isClineObject(value) || !isClineObject(value.entry)
-        || value.entry.clientId !== "cline" || value.entry.configPath !== configPath
-        || typeof value.entry.opId !== "string"
-        || !(typeof value.before === "string" || value.before === null)
-        || !(typeof value.nextText === "string" || value.nextText === null)
-        || !Object.hasOwn(value, "record") || !Object.hasOwn(value, "priorRecord")) throw new Error();
-      for (const record of [value.record, value.priorRecord]) {
-        if (record !== null && (!isClineObject(record) || record.clientId !== "cline" || record.configPath !== configPath)) throw new Error();
-      }
-      decodeClinePair(value.before);
-      decodeClinePair(value.nextText);
-      return value as unknown as IntegrationTransaction;
+      return parseClineTransaction(read.text, configPath);
     } catch { throw new ClineTransactionError(markerPath); }
   };
   const committed = (pending: IntegrationTransaction, current: ClineRawPair): boolean => {
-    const operation = store.findOperation(pending.entry.opId);
+    let operation: JournalEntry | null;
+    let record: OwnershipRecord | undefined;
+    try { operation = store.findCommittedOperation(pending.entry.opId); record = store.readRecordsStrict().cline; }
+    catch { throw new ClineTransactionError(markerPath); }
     return operation !== null && operation.clientId === "cline" && operation.configPath === configPath
       && operation.resultFingerprint === pending.entry.resultFingerprint
       && encodeClinePair(current) === pending.nextText
-      && sameRecord(store.readRecords().cline, pending.record);
+      && sameRecord(record, pending.record);
   };
   const cleanup = (): void => {
     // The append is the commit boundary. Cleanup failure never rolls back a committed pair.
@@ -97,11 +90,15 @@ export function createClineIO(
       if (committed(pending, current)) cleanup();
       else {
         // A journaled but mixed/inconsistent result is not an interrupted uncommitted write.
-        if (store.findOperation(pending.entry.opId)) throw new ClineTransactionError(markerPath);
+        try {
+          if (store.findCommittedOperation(pending.entry.opId)) throw new ClineTransactionError(markerPath);
+        } catch { throw new ClineTransactionError(markerPath); }
         const before = decodeClinePair(pending.before);
         const after = decodeClinePair(pending.nextText);
         if (!keys.every(key => current[key] === before[key] || current[key] === after[key])) throw new ClineTransactionError(markerPath);
-        const record = store.readRecords().cline ?? null;
+        let record: OwnershipRecord | null;
+        try { record = store.readRecordsStrict().cline ?? null; }
+        catch { throw new ClineTransactionError(markerPath); }
         if (!sameRecord(record, pending.priorRecord) && !sameRecord(record, pending.record)) throw new ClineTransactionError(markerPath);
         try {
           writePair(before);

@@ -2079,6 +2079,8 @@ export const ja: Record<TKey, string> = {
   "api.clientConfig.clientRaycast": "Raycast",
   "api.clientConfig.clientOmo": "omo",
   "api.clientConfig.clientCline": "Cline CLI",
+  "api.clientConfig.clineBundle": "これは Cline 設定ファイルではなく、2 ファイル分のデータです。settings を providers.json に、catalog を隣の models.json にマージしてください。バックアップ付きの書き込みには統合スイッチを使ってください。",
+  "api.clientConfig.clineDownloaded": "{filename} をダウンロードしました。設定はまだ変わっていません。settings と catalog は別々の Cline ファイルに保存します。",
   "api.clientConfig.copy": "設定をコピー",
   "api.clientConfig.download": "ダウンロード",
   "api.clientConfig.loading": "クライアント設定を生成中…",

@@ -2465,6 +2465,8 @@ export const zhTW: Record<TKey, string> = {
   "api.clientConfig.clientRaycast": "Raycast",
   "api.clientConfig.clientOmo": "omo",
   "api.clientConfig.clientCline": "Cline CLI",
+  "api.clientConfig.clineBundle": "這是兩個檔案的資料包，不是 Cline 設定檔。將 settings 合併至 providers.json，將 catalog 合併至同目錄的 models.json。使用整合開關可在寫入前備份。",
+  "api.clientConfig.clineDownloaded": "已下載 {filename}，設定尚未變更。settings 與 catalog 應分別儲存至兩個 Cline 檔案。",
   "cws.tabsLabel": "Combo 詳細區段",
   "cws.field.nativeAlias": "原生 OpenAI 別名",
   "cws.field.nativeAliasHint": "讓此 combo 擁有受支援的未限定原生 OpenAI 模型 ID。帶有帳號或供應商限定的 OpenAI 路由仍保持獨立。",

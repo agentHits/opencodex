@@ -1641,6 +1641,8 @@ export const de: Record<TKey, string> = {
   "api.clientConfig.clientRaycast": "Raycast",
   "api.clientConfig.clientOmo": "omo",
   "api.clientConfig.clientCline": "Cline CLI",
+  "api.clientConfig.clineBundle": "Dies ist ein Paket für zwei Dateien, keine Cline-Einstellungsdatei. Fügen Sie settings in providers.json und catalog in die benachbarte models.json ein. Der Integrationsschalter erstellt vor dem Schreiben ein Backup.",
+  "api.clientConfig.clineDownloaded": "{filename} heruntergeladen. Noch nichts geändert; settings und catalog gehören in zwei separate Cline-Dateien.",
   "api.clientConfig.copy": "Konfiguration kopieren",
   "api.clientConfig.download": "Herunterladen",
   "api.clientConfig.loading": "Client-Konfiguration wird erstellt…",

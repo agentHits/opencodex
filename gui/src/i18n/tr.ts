@@ -2168,6 +2168,8 @@ export const tr: Record<TKey, string> = {
   "api.clientConfig.clientRaycast": "Raycast",
   "api.clientConfig.clientOmo": "omo",
   "api.clientConfig.clientCline": "Cline CLI",
+  "api.clientConfig.clineBundle": "Bu, bir Cline ayar dosyası değil, iki dosyalık bir pakettir. settings içeriğini providers.json, catalog içeriğini aynı klasördeki models.json ile birleştirin. Yazmadan önce yedek almak için entegrasyon anahtarını kullanın.",
+  "api.clientConfig.clineDownloaded": "{filename} indirildi. Henüz değişiklik yapılmadı; settings ve catalog ayrı Cline dosyalarına aittir.",
   "api.clientConfig.copy": "JSON Kopyala",
   "api.clientConfig.download": "İndir",
   "api.clientConfig.loading": "İstemci konfigürasyonu oluşturuluyor…",

@@ -2228,6 +2228,8 @@ export const en = {
   "api.clientConfig.clientRaycast": "Raycast",
   "api.clientConfig.clientOmo": "omo",
   "api.clientConfig.clientCline": "Cline CLI",
+  "api.clientConfig.clineBundle": "This is a two-file bundle, not a Cline settings file. Merge settings into providers.json and catalog into sibling models.json. Use the integration switch for a backed-up write.",
+  "api.clientConfig.clineDownloaded": "Downloaded {filename}. Nothing changed yet; settings and catalog belong in two separate Cline files.",
   "api.clientConfig.copy": "Copy config",
   "api.clientConfig.download": "Download",
   "api.clientConfig.loading": "Building client config…",

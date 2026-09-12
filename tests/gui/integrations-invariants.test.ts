@@ -117,7 +117,7 @@ describe("the client registries cannot drift apart", () => {
     expect(INTEGRATION_CLIENTS.dsh.sourcePreservingYaml?.path).toEqual([
       "llm-pi-ai", "providers", "opencodex",
     ]);
-    expect(INTEGRATION_CLIENT_IDS.filter(id => INTEGRATION_CLIENTS[id].writerLock)).toEqual(["dsh", "mcode"]);
+    expect(INTEGRATION_CLIENT_IDS.filter(id => INTEGRATION_CLIENTS[id].writerLock)).toEqual(["dsh", "mcode", "cline"]);
     expect(INTEGRATION_CLIENTS.dsh.writerLock).toEqual({ suffix: ".lock" });
     expect(INTEGRATION_CLIENTS.mcode.writerLock).toEqual({ suffix: ".lock" });
   });

@@ -1661,6 +1661,8 @@ export const zh: Record<TKey, string> = {
   "api.clientConfig.clientRaycast": "Raycast",
   "api.clientConfig.clientOmo": "omo",
   "api.clientConfig.clientCline": "Cline CLI",
+  "api.clientConfig.clineBundle": "这是两个文件的数据包，不是 Cline 设置文件。将 settings 合并到 providers.json，将 catalog 合并到同目录的 models.json。使用集成开关可在写入前备份。",
+  "api.clientConfig.clineDownloaded": "已下载 {filename}，设置尚未更改。settings 和 catalog 应分别保存到两个 Cline 文件。",
   "api.clientConfig.copy": "复制配置",
   "api.clientConfig.download": "下载",
   "api.clientConfig.loading": "正在生成客户端配置…",

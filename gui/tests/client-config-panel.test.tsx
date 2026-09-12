@@ -220,6 +220,26 @@ test("the config bytes are not rendered at rest", async () => {
   await act(async () => { root.unmount(); });
 });
 
+test("Cline details explain the two-file bundle instead of a single-file merge", async () => {
+  const config = { settings: { version: 1, providers: {} }, catalog: { version: 1, providers: {} } };
+  const envelope = {
+    ...OPENCODE_ENVELOPE,
+    client: "cline", filename: "cline-config-bundle.json",
+    destination: "/home/dev/.cline/data/settings/providers.json", apiKeyEnv: "",
+    exportHint: "Cline CLI bundle", config, text: JSON.stringify(config),
+  };
+  stubRoute(client => Response.json(client === "cline" ? envelope : OPENCODE_ENVELOPE));
+  const { root, container } = await mountPanel({ hasKeys: false });
+  await act(async () => { rowButton(container, "Cline CLI", "Details").click(); });
+  const dialog = container.querySelector("dialog")!;
+  expect(dialog.textContent).toContain("two-file bundle");
+  expect(dialog.textContent).toContain("Stop Cline");
+  expect(dialog.textContent).not.toContain("Merge this into the destination file.");
+  expect(dialog.querySelector(".awi-clientconfig-nokey")).toBeNull();
+  expect(JSON.parse(dialog.querySelector("pre")!.textContent!)).toEqual(config);
+  await act(async () => { root.unmount(); });
+});
+
 test("clients render as rows, not a switch", async () => {
   stubRoute(client => Response.json(client === "pi" ? PI_ENVELOPE : OPENCODE_ENVELOPE));
   const { root, container } = await mountPanel();

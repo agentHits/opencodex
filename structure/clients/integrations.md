@@ -187,3 +187,7 @@ or intended bytes and compatible ownership. A journaled pair must match both int
 final ownership before pending cleanup. Foreign edits retain the pending evidence and refuse.
 Undo restores both original byte strings, including individual file absence; drift requires the
 existing explicit confirmation. The journal endpoint evaluates Undo against the same pair.
+
+Recovery reads commit history and ownership through strict store methods. Unreadable or malformed
+metadata is uncertainty, never evidence that a transaction did not commit. Pending records validate
+complete ownership, exact Cline paths and result fingerprints before either native file is replaced.

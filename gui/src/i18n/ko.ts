@@ -1680,6 +1680,8 @@ export const ko: Record<TKey, string> = {
   "api.clientConfig.clientRaycast": "Raycast",
   "api.clientConfig.clientOmo": "omo",
   "api.clientConfig.clientCline": "Cline CLI",
+  "api.clientConfig.clineBundle": "이 묶음은 Cline 설정 파일 자체가 아닙니다. settings는 providers.json에, catalog는 옆의 models.json에 병합하세요. 백업을 남기려면 통합 스위치를 사용하세요.",
+  "api.clientConfig.clineDownloaded": "{filename}을 다운로드했습니다. 아직 설정은 바뀌지 않았습니다. settings와 catalog는 서로 다른 Cline 파일에 넣어야 합니다.",
   "api.clientConfig.copy": "설정 복사",
   "api.clientConfig.download": "다운로드",
   "api.clientConfig.loading": "클라이언트 설정 생성 중…",
