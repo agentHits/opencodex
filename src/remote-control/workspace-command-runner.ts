@@ -746,4 +746,3 @@ export function linuxRemoteWorkspaceCommandRunnerAvailable(
   availabilityCache.set(cacheKey, available);
   return available;
 }
-
