@@ -1074,12 +1074,20 @@ export function isCodexAccountInCooldown(accountId: string, now = Date.now()): b
  *   bumps it in {@link recordCodexUpstreamOutcome}, so the bump here is not load-bearing
  *   today and is kept so the invariant survives a future change that retains the lease.
  *
- * Returns false when the account carried no live cooldown (already expired or never set).
+ * Returns false when the account carried neither a live cooldown nor a live avoidance window.
+ * The window outlives the cooldown by design — the cooldown caps at fifteen minutes and the
+ * window runs up to six hours — so the moment an operator actually reaches for this escape
+ * hatch is usually after the cooldown lapsed and only the window is still keeping the account
+ * out of rotation. Refusing to look at the window then would leave the hatch shut in the one
+ * case it exists for.
  */
 export function clearCodexAccountCooldown(accountId: string, now = Date.now()): boolean {
   const clear = (health: CodexUpstreamHealth): CodexUpstreamHealth | null => {
     const cooldownUntil = health.cooldownUntil;
-    if (typeof cooldownUntil !== "number" || !Number.isFinite(cooldownUntil) || cooldownUntil <= now) return null;
+    const liveCooldown = typeof cooldownUntil === "number" && Number.isFinite(cooldownUntil) && cooldownUntil > now;
+    const avoidUntil = health.quotaAvoidUntil;
+    const liveAvoidance = typeof avoidUntil === "number" && Number.isFinite(avoidUntil) && avoidUntil > now;
+    if (!liveCooldown && !liveAvoidance) return null;
     const {
       cooldownUntil: _until,
       cooldownSince: _since,

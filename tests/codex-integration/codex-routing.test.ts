@@ -1046,6 +1046,28 @@ describe("codex routing", () => {
     expect(resolveCodexAccountForThread("cleared-after", config, now + 61_000, "spark")).toBe("a");
   });
 
+  test("clearing a lapsed cooldown still lifts the avoidance it left behind", () => {
+    const config = makeConfig();
+    const now = 1_800_000_000_000;
+    updateAccountQuota("a", 10);
+    updateAccountQuota("b", 20);
+    recordCodexUpstreamOutcome(config, "a", 429, {
+      now,
+      modelId: "gpt-5.3-codex-spark",
+      resetAt: Math.floor((now + 4 * 60 * 60_000) / 1_000),
+    });
+
+    // The capped cooldown is already gone and only the announced window is still holding the
+    // account out, which is exactly when an operator reaches for this button. Reading the
+    // cooldown alone made the call a no-op for the next several hours.
+    expect(isCodexAccountInCooldown("a", now + 16 * 60_000)).toBe(false);
+    expect(resolveCodexAccountForThread("lapsed-before", config, now + 16 * 60_000, "spark")).toBe("b");
+
+    expect(clearCodexAccountCooldown("a", now + 16 * 60_000)).toBe(true);
+
+    expect(resolveCodexAccountForThread("lapsed-after", config, now + 17 * 60_000, "spark")).toBe("a");
+  });
+
   test("a request the account serves releases the threads its quota refusal moved", () => {
     const config = makeConfig();
     const now = 1_800_000_000_000;
