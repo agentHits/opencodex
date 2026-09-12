@@ -91,7 +91,7 @@ export default function ClientConfigDialog({
           <CopyableExample text={envelope.destination} />
         </div>
         <div className="awi-clientconfig-line">
-          <span className="muted text-label">{t("api.clientConfig.envHint")}</span>
+          {client !== "cline" && <span className="muted text-label">{t("api.clientConfig.envHint")}</span>}
           <CopyableExample text={envelope.exportHint} />
         </div>
         <p className="muted small awi-clientconfig-merge">{t(client === "cline" ? "api.clientConfig.clineBundle" : "api.clientConfig.mergeWarning")}</p>

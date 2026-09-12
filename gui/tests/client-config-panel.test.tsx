@@ -235,6 +235,7 @@ test("Cline details explain the two-file bundle instead of a single-file merge",
   expect(dialog.textContent).toContain("two-file bundle");
   expect(dialog.textContent).toContain("Stop Cline");
   expect(dialog.textContent).not.toContain("Merge this into the destination file.");
+  expect(dialog.textContent).not.toContain("Set the key before launching");
   expect(dialog.querySelector(".awi-clientconfig-nokey")).toBeNull();
   expect(JSON.parse(dialog.querySelector("pre")!.textContent!)).toEqual(config);
   await act(async () => { root.unmount(); });

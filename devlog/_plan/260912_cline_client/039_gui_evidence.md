@@ -21,3 +21,5 @@ journaled integration recommendation and stop/restart explanation; the single-fi
 and missing-admission-key hint are absent for Cline.
 
 ![Cline two-file export instructions](evidence/cline-export.png)
+
+Export capture refreshed after removing the irrelevant Set-the-key heading. GUI tree: a070b75cabe1974e59d407c595709d1ffb3c4a58. Same synthetic harness; entry bundling took 19 ms. No local test execution.
