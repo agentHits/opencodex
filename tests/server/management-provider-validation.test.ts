@@ -5021,18 +5021,54 @@ test("model capability PATCH merges axes while strict replacement and DTO state 
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }), url, live, { createManagementConvergeCodex: catalogConvergenceFactory() }))!;
   };
-  const before = structuredClone(live.providers.caps!.modelCapabilities);
+  const before = live.providers.caps!.modelCapabilities;
+  const originalRow = before!.ModelA!;
+  const originalVideo = originalRow.video;
   expect((await request("PATCH", { modelCapabilities: { ModelA: { contextTier: "default", video: { processing: null } } } })).status).toBe(200);
   expect(live.providers.caps!.modelCapabilities).toEqual({
     ModelA: { inputModalities: ["text"], contextTier: "default" }, modela: { inputModalities: ["text", "image"] },
   });
   expect(before!.ModelA!.video).toEqual({ processing: "agentic" });
+  expect(originalRow.contextTier).toBe("long_context");
+  expect(originalVideo).toEqual({ processing: "agentic" });
+  expect(live.providers.caps!.modelCapabilities).not.toBe(before);
+  expect(live.providers.caps!.modelCapabilities!.ModelA).not.toBe(originalRow);
   expect(loadConfig().providers.caps!.modelCapabilities).toEqual(live.providers.caps!.modelCapabilities);
   const listed = await (await request("GET")).json() as Array<{ name: string; modelCapabilities?: unknown }>;
   expect(listed.find(row => row.name === "caps")!.modelCapabilities).toEqual(live.providers.caps!.modelCapabilities);
   expect(providerEditorConfigDTO(live).providers.caps!.modelCapabilities).toEqual(live.providers.caps!.modelCapabilities);
   for (const patch of [{ " ModelA ": {} }, { ModelA: { unknown: true } }, { ModelA: { inputModalities: [] } }]) {
     expect((await request("PATCH", { modelCapabilities: patch })).status).toBe(400);
+  }
+  const admitted = structuredClone(live.providers.caps!.modelCapabilities);
+  const diskBeforeReject = readFileSync(join(TEST_DIR, "config.json"), "utf8");
+  for (const patch of [JSON.parse('{"__proto__":null}'), { ModelA: { video: [] } }, { ModelA: { video: { processing: "invalid" } } }]) {
+    expect((await request("PATCH", { modelCapabilities: patch })).status).toBe(400);
+    expect(live.providers.caps!.modelCapabilities).toEqual(admitted);
+    expect(readFileSync(join(TEST_DIR, "config.json"), "utf8")).toBe(diskBeforeReject);
+  }
+  const resolved = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+  try {
+    const replacement = { adapter: "openai-chat", baseUrl: "https://example.test/v1", liveModels: false, models: ["ModelA", "modela"] };
+    expect((await request("POST", { name: "caps", provider: replacement })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities).toEqual(admitted);
+    expect((await request("POST", { name: "caps", provider: { ...replacement, modelCapabilities: {} } })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities).toBeUndefined();
+    expect((await request("PATCH", { modelCapabilities: admitted })).status).toBe(200);
+    const stale = providerEditorConfigDTO(loadConfig());
+    expect((await request("PATCH", { modelCapabilities: { ModelA: { contextTier: null } } })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities!.ModelA).toEqual({ inputModalities: ["text"] });
+    expect(live.providers.caps!.modelCapabilities!.modela).toEqual({ inputModalities: ["text", "image"] });
+    const staleEdit = structuredClone(stale);
+    staleEdit.providers.caps!.note = "stale";
+    expect((await request("PUT", { baseline: stale, next: staleEdit })).status).toBe(409);
+    expect((await request("PATCH", { modelCapabilities: { ModelA: null } })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities).toEqual({ modela: { inputModalities: ["text", "image"] } });
+    expect((await request("PATCH", { modelCapabilities: null })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities).toBeUndefined();
+    expect((await request("PATCH", { modelCapabilities: admitted })).status).toBe(200);
+  } finally {
+    resolved.mockRestore();
   }
   const baseline = providerEditorConfigDTO(loadConfig());
   const invalidNext = structuredClone(baseline);
