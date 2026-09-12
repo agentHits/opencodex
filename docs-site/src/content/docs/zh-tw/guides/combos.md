@@ -187,6 +187,12 @@ Failover 是刻意受限的。它有助於目標特定的可用性、認證、�
 
 當目標能力未知或不包含設定的 effort 時，opencodex 省略預設值並保持目標自身行為不變。支援的值為 `low`、`medium`、`high`、`xhigh`、`max` 與 `ultra`；省略欄位或設為 `null` 可將 effort 完全交給呼叫者與目標。
 
+## 混合 reasoning 能力
+
+`reasoningEffortMode` 預設為 `"strict"`，發布所有目標 effort 清單的交集，包括明確空清單。`"adaptive"` 計算交集時排除空清單，讓混合 combo 保留選擇器。未知清單在兩種模式下都不限制目錄交集。
+
+傳送時，明確空清單在兩種模式下都會移除 effort 與 thinking 控制；未知清單只在 adaptive 移除這些控制。`reasoning.summary` 與其他非 effort 欄位保持不變，已知非空目標仍按現有規則解析 effort。strict 的未知目標及一般 native Chat 的未知宣告保留呼叫者控制。預設值補入不會覆寫現有 effort，但能力正規化可移除不支援的控制。
+
 ## 加密的 v2 子代理任務
 
 Codex v2 子代理有一個重要限制（[issue #92](https://github.com/lidge-jun/opencodex/issues/92)）。原生父代只能將新生成 worker 的任務以為原生 ChatGPT 後端鑄造的密文發送。外部供應商無法讀取該 payload。
@@ -269,6 +275,7 @@ Combo 儲存於頂層 `combos` 物件中，以 combo id 為 key：
 | `strategy` | 否 | `"failover"` | 可用值為 `"failover"`、`"round-robin"`、`"random"`、`"least-used"`、`"reset-window"`。 |
 | `stickyLimit` | 否 | `1` | 僅適用於 `round-robin`：每次選擇的成功請求數，1 到 100 的整數。 |
 | `defaultEffort` | 否 | `null` | `low`、`medium`、`high`、`xhigh`、`max` 或 `ultra`；僅在呼叫者省略 effort 且目標宣告支援時套用。 |
+| `reasoningEffortMode` | 否 | `"strict"` | `strict` 或 `adaptive`；選擇混合能力交集及目標層級控制正規化。 |
 | `alias` | 否 | 無 | 可選的修剪後公開模型 id；使用上述別名規則。空值儲存為無別名。 |
 
 ## 疑難排解

@@ -1236,6 +1236,34 @@ describe("server combo failover 030 activation matrix", () => {
     expect(bodies[2]!.reasoning_effort).toBe("xhigh");
   });
 
+  test("adaptive Responses combo preserves summary after removing unsupported controls", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const upstream = serve(async request => {
+      bodies.push(await request.json() as Record<string, unknown>);
+      return Response.json(responsesSuccess("normalized", "m1"));
+    });
+    for (const reasoningEfforts of [undefined, [], ["high", "xhigh"]]) {
+      const response = await post(comboConfig({
+        a: provider("openai-responses", baseUrl(upstream), "key-a", {
+          ...(reasoningEfforts === undefined ? {} : { reasoningEfforts }),
+          modelSupportsReasoningSummaries: { m1: true },
+        }),
+      }, undefined, { reasoningEffortMode: "adaptive" }), {
+        reasoning: { effort: "xhigh", summary: "concise" },
+        reasoning_effort: "xhigh", thinking_budget: 8192, thinking: { type: "enabled" },
+      });
+      expect(response.status).toBe(200);
+    }
+    expect(bodies).toHaveLength(3);
+    for (const body of bodies.slice(0, 2)) {
+      expect(body.reasoning).toEqual({ summary: "concise" });
+      expect(body).not.toHaveProperty("reasoning_effort");
+      expect(body).not.toHaveProperty("thinking_budget");
+      expect(body).not.toHaveProperty("thinking");
+    }
+    expect(bodies[2]!.reasoning).toMatchObject({ effort: "xhigh", summary: "concise" });
+  });
+
   test("all-target exhaustion promotes the final attempt reasoning wire to the logical row", async () => {
     const a = serve(() => Response.json({ error: { message: "first overloaded" } }, { status: 503 }));
     const b = serve(() => Response.json({ error: { message: "last overloaded" } }, { status: 503 }));

@@ -233,6 +233,12 @@ par défaut et laisse le comportement de la cible inchangé. Les valeurs prises 
 `high`, `xhigh`, `max` et `ultra` ; omettez le champ ou réglez-le sur `null` pour laisser l'effort entièrement à
 l'appelant et la cible.
 
+## Capacités reasoning mixtes
+
+`reasoningEffortMode` vaut `"strict"` par défaut : le catalogue publie l’intersection des listes effort de toutes les cibles, y compris les listes explicitement vides. `"adaptive"` exclut ces listes vides pour conserver le sélecteur dans un combo mixte. Une liste inconnue ne limite l’intersection dans aucun des deux modes.
+
+À l’envoi, une liste explicitement vide supprime les paramètres effort et thinking dans les deux modes ; une liste inconnue les supprime uniquement en adaptive. `reasoning.summary` et les autres champs hors effort sont conservés. La résolution des cibles connues non vides reste inchangée. Les cibles inconnues en strict et les déclarations inconnues du native Chat ordinaire conservent les paramètres de l’appelant. L’ajout d’une valeur par défaut ne remplace pas un effort existant, mais cette normalisation peut supprimer les paramètres non pris en charge.
+
 ## Capacité d’entrée d’images / multimodale
 
 Par défaut, une combinaison publie l’**intersection** des modalités d’entrée de ses cibles : les images ne
@@ -337,6 +343,7 @@ Les combos sont stockés dans l'objet `combos` de niveau supérieur, saisi par l
 | `strategy` | Non | `"failover"` | Valeurs autorisées : `"failover"`, `"round-robin"`, `"random"`, `"least-used"` et `"reset-window"`. |
 | `stickyLimit` | Non | `1` | Nombre entier de 1 à 100 requêtes réussies par sélection à tour de rôle. S’applique uniquement à `round-robin`. |
 | `defaultEffort` | Non | `null` | `low`, `medium`, `high`, `xhigh`, `max` ou `ultra` ; appliqué uniquement lorsque l'appelant omet ses efforts et que la cible annonce son soutien. |
+| `reasoningEffortMode` | Non | `"strict"` | `strict` ou `adaptive` ; choisit l’intersection des capacités et la normalisation par cible. |
 | `imageInput` | Non | `"auto"` | `"auto"` ou `"disabled"`. `"auto"` publie les images uniquement si toutes les cibles les prennent en charge ; `"disabled"` impose le texte seul, retire les images des modalités publiées et rejette les requêtes qui en contiennent avant leur distribution. |
 | `alias` | Non | aucun | Identifiant de modèle public tronqué facultatif ; utilisez les règles d'alias ci-dessus. Une valeur vide est stockée sans alias. |
 | `nativeAlias` | Non | `false` | Autoriser explicitement un `alias` natif nu actuellement pris en charge à avoir la priorité sur le routage et le catalogue. Jamais déduit de l'alias. |

@@ -266,6 +266,12 @@ Desteklenen değerler `low`, `medium`, `high`, `xhigh`, `max` ve `ultra`'dır;
 çabayı tamamen arayana ve hedefe bırakmak için alanı atlayın veya `null` olarak
 ayarlayın.
 
+## Farklı reasoning yetenekleri
+
+`reasoningEffortMode` varsayılan olarak `"strict"` kullanır: açıkça boş listeler dahil tüm hedeflerin effort listelerinin kesişimi yayımlanır. `"adaptive"`, karma kombolarda seçiciyi korumak için boş listeleri kesişimden çıkarır. Bilinmeyen listeler her iki modda da katalog kesişimini sınırlamaz.
+
+Gönderim sırasında açıkça boş liste her iki modda effort ve thinking denetimlerini kaldırır; bilinmeyen liste bunları yalnızca adaptive modunda kaldırır. `reasoning.summary` ve effort dışındaki alanlar korunur. Bilinen, boş olmayan hedeflerin effort çözümü değişmez. strict modundaki bilinmeyen hedefler ve normal native Chat bilinmeyen bildirimleri çağıranın denetimlerini korur. Varsayılan değer ekleme mevcut effort değerini değiştirmez; yetenek normalizasyonu desteklenmeyen denetimleri kaldırabilir.
+
 ## Şifrelenmiş v2 alt ajan görevleri
 
 Codex v2 alt ajanları için önemli bir sınırlama vardır ([sorun
@@ -373,6 +379,7 @@ saklanır:
 | `strategy` | Hayır | `"failover"` | İzin verilen değerler: `"failover"`, `"round-robin"`, `"random"`, `"least-used"`, `"reset-window"`. |
 | `stickyLimit` | Hayır | `1` | Yalnızca `round-robin` için geçerlidir; seçim başına 1 ile 100 arasında başarılı istek tam sayısı. |
 | `defaultEffort` | Hayır | `null` | `low`, `medium`, `high`, `xhigh`, `max` veya `ultra`; yalnızca arayan çabayı atladığında ve hedef desteği bildirdiğinde uygulanır. |
+| `reasoningEffortMode` | Hayır | `"strict"` | `strict` veya `adaptive`; karma yetenek kesişimini ve hedefe özel normalizasyonu seçer. |
 | `alias` | Hayır | yok | İsteğe bağlı kırpılmış genel model kimliği; yukarıdaki takma ad kurallarını kullanın. Boş bir değer takma ad yok olarak saklanır. |
 | `nativeAlias` | Hayır | `false` | Şu anda desteklenen yalın bir yerel `alias`'ın yönlendirme ve katalog önceliği almasına açıkça izin verin. Asla takma addan çıkarılmaz. |
 | `displayName` | Hayır | yok | Sınırlı salt görüntüleme katalog etiketi. `nativeAlias` true olduğunda gerekli ve boş değildir. |
