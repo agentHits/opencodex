@@ -221,3 +221,7 @@ Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#c
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
 Cline CLI joins the existing export/client integration registries. Explicit CLI sync and POST /api/sync refresh its owned pair; unattended catalog refresh excludes it. See [Cline paired files](clients/integrations.md#cline-paired-files).
+
+`claudeCode.stabilizePromptCache` is a default-off operator setting for
+[translated instruction stabilization](data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
+Config JSON preserves the boolean; only literal true activates the role-changing transform.
