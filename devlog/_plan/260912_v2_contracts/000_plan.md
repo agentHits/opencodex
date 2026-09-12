@@ -25,3 +25,9 @@ wp0: P entered with own session binding; roadmap in progress. Product validation
 wp0 A: Gauss GO-WITH-FIXES (blockers=0); WP1-A01 cache ordering and WP2-A01 fragment owner folded into decade docs. Pasteur reflection ALIGNED; generic inherited-model consultation, native architect not selected.
 
 wp0 check correction: initial D was refused because the roadmap task had not yet been marked done. The subsequent P command re-entered planning; no completed cycle is claimed for that attempt. Re-audit retains the unchanged independent verdict, and a fresh docs-only B/C/D closes the actual cycle after recording its task outcome.
+
+wp1 D: plaintext implementation published as #4351, static review findings resolved; local tests NOT RUN and hosted proof deferred.
+wp2 D: independent multipart implementation published as #4364; static security review PASS. Exact-count, multiplicity, aggregate-byte and mutation regression code added. Token-split reconstruction and live backend fidelity remain issue acceptance, not claimed solved.
+wp3 D: source inspection of native Codex at 095da4b7e8b70b01afb5c6131ef926dcb8c0d85d required exact namespace/name restoration. Implementation at 7dc0bf4ea6 received independent static PASS. The earlier helper-only expectations did not establish native dispatch compatibility. Final hosted validation is wp4.
+
+Disposition: #4242/#4243 were rejected as-is after contract audit; #2496 is the credited adaptation source. #2495 remains open pending integration/retention approval and backend canary judgment. #3661 remains partial. The two carry PRs are independent dev-based siblings; no manual dependency chain or native stack was introduced. Public source/reference facts only are recorded here; detailed security audit material stays in ignored scratch.
