@@ -231,6 +231,47 @@ describe("stabilizeClaudeInstructionsForPromptCache", () => {
   });
 });
 
+describe("linear canonical notice extraction", () => {
+  for (const separator of ["\n", "\r\n", "\t", "\f", "  "]) {
+    test(`noncanonical inner separator ${JSON.stringify(separator)} is preserved`, () => {
+      const system = `System.\n\n<total_tokens>123${separator}tokens left</total_tokens>`;
+      expect(stabilizeClaudeInstructionsForPromptCache(system)).toEqual({ instructions: system, dynamicNotice: null });
+      const body = translateHarness(system).body;
+      expect(body.instructions).toBe(system);
+      expect(body.input).toHaveLength(1);
+    });
+  }
+
+  test("retains prefix trailing spaces after a successful peel and failed next candidate", () => {
+    expect(stabilizeClaudeInstructionsForPromptCache(`System.  \n\n${footer(1)}`)).toEqual({
+      instructions: "System.  ", dynamicNotice: footer(1),
+    });
+  });
+  test("CRLF separators and horizontal padding retain the canonical notice", () => {
+    expect(stabilizeClaudeInstructionsForPromptCache(`System.\r\n\r\n \t${footer(1)}\t \r\n`)).toEqual({
+      instructions: "System.", dynamicNotice: footer(1),
+    });
+  });
+  test("malformed notice before a valid suffix remains byte-for-byte", () => {
+    const prefix = `System.  \n<total_tokens>123\ntokens left</total_tokens>  `;
+    expect(stabilizeClaudeInstructionsForPromptCache(`${prefix}\n${footer(2)}`)).toEqual({
+      instructions: prefix, dynamicNotice: footer(2),
+    });
+  });
+  test("a whitespace-only trailing line and lone CR are not canonical separators", () => {
+    for (const system of [`System.\n${footer(1)}\n \n`, `System.\n${footer(1)}\r`]) {
+      expect(stabilizeClaudeInstructionsForPromptCache(system)).toEqual({ instructions: system, dynamicNotice: null });
+    }
+  });
+  test("twenty thousand notices after many fences keep only the latest without repeated prefix scans", () => {
+    const prefix = "System.\n" + ("```xml\nexample\n```\n").repeat(2_000) + "Stable.  ";
+    const notices = Array.from({ length: 20_000 }, (_, index) => footer(index));
+    expect(stabilizeClaudeInstructionsForPromptCache(`${prefix}\n\n${notices.join("\n")}`)).toEqual({
+      instructions: prefix, dynamicNotice: footer(19_999),
+    });
+  });
+});
+
 describe("anthropicToResponsesTranslation cache-stabilize wire-in", () => {
   test("ordinary caller with the exact unfenced suffix keeps instructions and input unchanged", () => {
     const latest = footer(15_000_000);

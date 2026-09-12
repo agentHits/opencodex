@@ -118,9 +118,13 @@ final native affinity, and shared-system keys do not provide either conversation
 
 `src/claude/inbound.ts` reads only literal `claudeCode.stabilizePromptCache: true` from
 its existing configuration argument. The default is off for every translated Messages caller.
-`src/claude/inbound-cache-stabilize.ts` relocates only exact trailing unfenced harness notices
+`src/claude/inbound-cache-stabilize.ts` relocates only exact single-line trailing unfenced harness notices
 into a trailing user input message; unmatched and fenced text is preserved, including an open
 fence through EOF. Native passthrough never enters this translator. Without opt-in the original
 system-parts cache-key derivation remains unchanged; with opt-in the metadata-less key uses
 stabilized instructions. Metadata-derived keys retain their existing derivation. This configuration
 changes prompt roles, not conversation identity, and cannot guarantee upstream cache reuse.
+
+Instruction notice extraction scans fence ranges once and walks original lines backwards with
+a decreasing cursor. It accepts exactly one ASCII space inside the token notice, preserves
+unmatched prefix bytes, and does not repeatedly scan or copy shrinking prompt prefixes.
