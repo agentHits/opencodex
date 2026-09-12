@@ -1017,9 +1017,12 @@ describe("Cursor overflow conversation remint", () => {
       stream: false,
       options: {},
       _cursorConversationId: "cursor_overflow_tool",
+      _clientThreadId: "overflow-tool-result",
       _cursorIdentityScope: "acct-overflow-remint",
     };
 
+    await adapter.runTurn?.(overflowTurnBody("overflow-tool-result"), { headers: new Headers() }, () => {});
+    attempts = 0;
     await adapter.runTurn?.(body, { headers: new Headers() }, () => {});
     expect(attempts).toBe(1);
   });
@@ -1057,6 +1060,7 @@ describe("Cursor overflow conversation remint", () => {
   test("does not overflow-remint after non-heartbeat output was emitted", async () => {
     clearCursorOverflowRemintForTests();
     let attempts = 0;
+    let emitPartial = false;
     const adapter = createCursorAdapter({
       ...provider,
       apiKey: "cursor-token",
@@ -1064,7 +1068,7 @@ describe("Cursor overflow conversation remint", () => {
       createTransport: () => ({
         async *run() {
           attempts += 1;
-          yield { type: "text", text: "partial" } satisfies CursorServerMessage;
+          if (emitPartial) yield { type: "text", text: "partial" } satisfies CursorServerMessage;
           throw bareOverflowError();
         },
         writeClient() {},
@@ -1072,6 +1076,9 @@ describe("Cursor overflow conversation remint", () => {
     });
 
     const body = overflowTurnBody("overflow-after-output");
+    await adapter.runTurn?.(body, { headers: new Headers() }, () => {});
+    attempts = 0;
+    emitPartial = true;
     const events: AdapterEvent[] = [];
     await adapter.runTurn?.(body, { headers: new Headers() }, event => events.push(event));
 
@@ -1113,9 +1120,11 @@ describe("Cursor overflow accounting across requests", () => {
       for (let remint = 0; remint < 3; remint++) {
         failNext = true;
         const before = attempts;
+        const priorConversation = seen[seen.length - 1];
         const events: AdapterEvent[] = [];
         await adapter.runTurn?.(body(), { headers: new Headers() }, event => events.push(event));
         expect(attempts - before).toBe(2);
+        expect(seen[seen.length - 2]).toBe(priorConversation);
         expect(seen[seen.length - 1]).not.toBe(seen[seen.length - 2]);
         expect(events.some(event => event.type === "done")).toBe(true);
       }
