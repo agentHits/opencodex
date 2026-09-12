@@ -4,10 +4,11 @@
 
 DONE. `gpt-5.4` and `gpt-5.4-mini` no longer exist on the Codex (ChatGPT OAuth) login
 surface, and every default that used to dispatch one of them now uses `gpt-5.6-luna`.
-Delivered as PR #4327 against `dev`, head `fa1fe32890`, CI 24 pass / 0 fail.
+Delivered as PR #4327 against `dev`, final head `32bd5417cb`, CI green.
 
 Commits: `a8b26e1342` (this roadmap), `5d664b1a6b` (the retirement),
-`fa1fe32890` (a combo-alias fixture CI caught).
+`fa1fe32890` (a combo-alias fixture CI caught), `fe01c0f605` (the resurrection guard a
+review caught), `32bd5417cb` (the migration extracted and tested).
 
 ## What changed against the plan
 
@@ -39,6 +40,29 @@ by pushing:
    is no visual change here, so it was waived through the repository's documented
    maintainer-comment mechanism with a note stating exactly what the `gui/src` diff is.
 
+## What the final review caught that CI did not
+
+CI was green and the change was still wrong in one place. An independent reviewer read
+the pushed diff and found that removing the slugs from `NATIVE_OPENAI_MODELS` does not
+keep them out: an account-bound observation deliberately admits any native that is NOT
+in `SUPPORTED_NATIVE_OPENAI_SLUGS`, which is how a genuinely new upstream model reaches
+one entitled account early. A retired slug fails that same test, so a stale
+`selector/gpt-5.4` row persisted in a user's catalog or models cache would have been
+re-observed as an unknown native and synthesized straight back into the picker, one sync
+after the removal took it out.
+
+`RETIRED_NATIVE_OPENAI_MODELS` is the distinction the code was missing: unknown-and-new
+is admitted, known-and-dead is refused. The guard sits in `observedAccountBoundNativeSlug`
+because every observation path funnels through it.
+
+This is the residual wp2 recorded as needing proof rather than assumption, and it is the
+reason that residual was worth writing down: no test covered it, so no test failed.
+
+The same review noted the widened startup migration had no test at all. It is now
+`src/codex/retired-model-migration.ts`, shaped like the existing
+`runClaudeAuthModeMigration`, with tests for the three stored slugs, sibling-key
+survival, idempotence, and leaving any other model alone.
+
 ## Verification and its limits
 
 The owner instructed mid-loop that the local suite must not be run on this machine; a
@@ -59,8 +83,10 @@ native with a 1M window, so the test that proved a provider cap can take `suppor
 away now only proves no native ever gets it. If a 1M native returns, that test should
 regain a positive case rather than stay an absence check.
 
-The account-namespaced cleanup question was never settled empirically.
-`isUnsupportedOpenAiNativeSlug` returns false for any slug containing `/`, so a
-persisted `selector/gpt-5.4` row is not dropped by that predicate; it merely stops
-being regenerated. A user who had one on disk is the case that would falsify the claim
-that this retirement is self-cleaning.
+The account-namespaced question turned out to be the real defect rather than a caveat,
+and it is now fixed and tested. What remains unproven is the disk side: a persisted
+`selector/gpt-5.4` row is no longer re-admitted as evidence, but
+`isUnsupportedOpenAiNativeSlug` still returns false for any slug containing `/`, so the
+stale row itself is not actively deleted from a user's catalog file. It stops being
+regenerated and stops being observed; whether it lingers in a file until the next full
+rewrite was not measured against a real installation.
