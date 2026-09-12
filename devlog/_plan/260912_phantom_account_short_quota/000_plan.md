@@ -54,8 +54,8 @@ phantom bar on the next ordinary weekly/Spark refresh; Plus/Team accounts whose
 
 ## Root cause (evidence)
 
-Live cache `~/.opencodex/codex-quota-cache.json` account `chatgpt-1786626108327`
-(plan `pro`, dashboard email s***@gmail.com) on 2026-09-12 03:05 UTC:
+Live cache `~/.opencodex/codex-quota-cache.json`, entry for the affected Pro pool account, on
+2026-09-12 03:05 UTC (account identifiers deliberately omitted: this directory is public):
 
 - `shortPercent` 4 / `shortObservedAt` 1788956674678 (2026-09-09 12:24 UTC) /
   `shortResetAt` 1788974652 (2026-09-09 17:24 UTC = KST 9월 10일 02:24) /
@@ -65,9 +65,9 @@ Live cache `~/.opencodex/codex-quota-cache.json` account `chatgpt-1786626108327`
   future) and weeklyPercent 29
 
 Peer Pro accounts in the same file have weekly + Spark customWindows and no
-account-level short. The Team account `chatgpt-1788220079695` has a *fresh*
-short tuple (`shortObservedAt === updatedAt`, reset in the future) — a real
-Plus/Team 5h window that must be kept.
+account-level short. The one Team account there has a *fresh* short tuple
+(`shortObservedAt === updatedAt`, reset in the future) — a real Plus/Team 5h
+window that must be kept.
 
 `mergeAccountQuota` (`src/codex/quota.ts`) treats absence of short* as a partial
 update and copies the entire existing short tuple, then
@@ -102,6 +102,21 @@ once carry rewrites `updatedAt`.
 ## File-change map
 
 See `010_phase1_drop_elapsed_short_carry.md`.
+
+## Accepted consequence
+
+A merge that drops an elapsed tuple also clears `fiveHourAvailable` in
+`codexQuotaAutoRefreshStatus` (`src/codex/quota-auto-refresh.ts:62-65`) until the
+window is observed again, because that flag reads `shortWindowSeconds` and
+`shortResetAt` from the same slot. Bounded on both sides: the scheduler keeps its
+own boundary (`rememberWindows` persists `nextFiveHourResetAt` and
+`dueCodexQuotaAutoRefreshWindows` prefers it over the stored quota,
+`src/codex/quota-auto-refresh.ts:78-101`), and any real Plus/Team response
+re-observes the window as an explicit incoming short, which this change never
+drops. The gap therefore only spans a credits-only or weekly-only refresh
+arriving between a reset instant and the next observation — and for a Pro
+account, where the window does not exist, clearing the flag is the correct
+outcome.
 
 ## SoT
 

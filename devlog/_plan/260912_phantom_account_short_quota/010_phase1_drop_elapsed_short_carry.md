@@ -63,7 +63,7 @@ and routing tests seed elapsed `shortResetAt` as a stored fact.
    present. (This is the live Pro failure: #4122 write path plus leftover carry.)
 2. Seed elapsed short; apply a Pro WHAM parse (weekly primary 604800s + Spark
    additional_rate_limits) → short* absent, weekly and Spark customWindows kept.
-   This is the live refresh path for chatgpt-1786626108327.
+   This is the live refresh path for the affected account.
 3. Seed elapsed short; apply weekly-only headers (10080 minutes) → short* absent,
    weekly updated.
 4. Seed live short (`shortResetAt = nowSec + 3600`); apply weekly-only headers →
