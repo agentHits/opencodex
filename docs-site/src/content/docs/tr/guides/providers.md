@@ -220,11 +220,10 @@ varsayılan geri çekilmeden sabit bir soğuma süresi ayarlar. Açık bir
 `Retry-After` soğuma süresindeki hesaplar erken araştırılmaz; sıfırlamadan
 türetilen soğuma süreleri, sağlayıcıyı boğmadan kurtarmanın algılanabilmesi için
 tempolu bir araştırma kiralama süresi alabilir. Sıfırlamadan türetilen yerel
-model soğuma süreleri bilinen bağımsız kota gruplarını da korur:
-`gpt-5.3-codex-spark`, aynı hesabın paylaşılan GPT-5.6 Terra/Luna kotasını
-denemesini engellemezken, bu paylaşılan gruptaki modeller yine de birbirini
-korur. Açık `Retry-After` ve varsayılan soğuma süreleri her zaman hesap
-genelinde kalır.
+model soğuma süreleri, paylaşılan yerel kotayı (GPT-5.6 Terra/Luna dahil)
+`gpt-reserve` kotasından ayrı tutar. Paylaşılan gruptaki modeller birbirini
+korur; sıradan bir isteğin başarısı Reserve soğuma süresini kaldırmaz.
+Açık `Retry-After` ve varsayılan soğuma süreleri her zaman hesap genelinde kalır.
 
 **Oturum bağlılığı.** Codex iş parçacığı→hesap bağlılığı işleme özeldir
 (yalnızca bellek içindedir; proxy yeniden başlatmalarında kalıcı değildir).

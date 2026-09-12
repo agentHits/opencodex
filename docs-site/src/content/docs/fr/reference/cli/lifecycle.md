@@ -40,6 +40,11 @@ Vérifie de manière idempotente qu’un proxy d’arrière-plan est actif, puis
 
 Rétablit le fonctionnement natif de Codex **sans arrêter** le proxy : les lignes de configuration injectées et les entrées routées du catalogue sont supprimées, de sorte qu’une invocation simple de `codex` utilise de nouveau Codex directement. `eject` est un alias de `restore`.
 
+Le catalogue restauré exclut les modèles natifs retirés, dont `gpt-5.3-codex-spark`,
+que leurs identifiants soient nus ou qualifiés par un compte de confiance. Cette règle
+s’applique avec ou sans sauvegarde ; la sauvegarde originale et les anciens choix de modèles
+enregistrés par l’utilisateur sont conservés.
+
 Ajoutez `back` à l’une ou l’autre forme pour rediriger une invocation simple de `codex` vers un proxy déjà actif, sans modifier le cycle de vie du proxy :
 
 ```bash

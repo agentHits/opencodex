@@ -81,9 +81,12 @@ account.
 > Decision record: [ADR-0085](../decisions/ADR-0085-public-provider-contract.md)
 
 An explicit `Retry-After` or an unclassified quota 429 is account-wide. A reset-derived native-model
-429 is advisory and remains within its confirmed quota group: `gpt-5.3-codex-spark` is separate from
-the shared native group (including GPT-5.6 Terra/Luna). This allows a same-account combo to test an
-independent quota without allowing fallbacks that share the exhausted quota.
+429 is advisory and remains within its confirmed quota group: shared native quota (including
+GPT-5.6 Terra/Luna) is separate from exact `gpt-reserve`. Ordinary success cannot clear Reserve.
+Retired Codex Spark windows are suppressed before ingestion, hydration, presence/capacity decisions
+and account/provider DTO projection; generic custom windows remain supported. Spark model-derived
+response quota/reset evidence cannot become shared quota or recovery evidence. Explicit Retry-After
+and credential/transport failures retain their ordinary handling.
 
 `pausedCodexAccountIds` is a persisted Pool eligibility boundary. A paused added account or the
 stable `__main__` alias remains visible for maintenance and quota reads, but is excluded from new
@@ -119,7 +122,7 @@ main and added Pool accounts through their respective credential contracts. Main
 publication keeps the latest successfully published observation authoritative. Pool recovery
 across a credential refresh requires the actual self/joined refresh lineage, not matching
 replacement timestamps. It preserves
-newer failures, independent Spark/Reserve scopes, explicit Retry-After, pause, pin and
+newer failures, independent Reserve scope, explicit Retry-After, pause, pin and
 selection state. Replay and `already_redeemed` are not new-reset evidence. Failed usage
 recovery leaves the cooldown in place and preserves the confirmed consume success;
 retrying usage must not require another credit.
@@ -323,6 +326,9 @@ warning. The distinction matters because silently discarding a rollback point is
 preserving a stale one would block every later migration.
 
 ## Model and wire identity
+
+Native Spark membership and its model-specific request/tool exceptions are removed; the shared
+[catalog retirement policy](../catalog.md#shared-catalog) preserves historical user selections.
 
 - `openai` exposes one group of bare native Codex ids in Pool and Direct. Changing mode does not
   change catalog, selected, requested, or wire model identity.

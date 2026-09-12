@@ -6,6 +6,11 @@
 provider, lets the selected adapter speak the upstream protocol, then bridges adapter events back to
 Responses-compatible streaming output.
 
+Retired Codex Spark has no model-specific tool or Responses Lite override. General Lite handling
+and namespace scrubbing remain shared compatibility behavior. Codex quota/reset evidence follows
+the [shared/Reserve policy](../providers/openai-tiers.md#public-provider-contract), including
+suppression of retired model-derived evidence before shared recovery.
+
 ### Credential-bearing HTTP redirects
 
 Credential/body-bearing HTTP sends use `redirect: "manual"` at the final executor boundary,

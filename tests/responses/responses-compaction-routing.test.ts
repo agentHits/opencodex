@@ -411,7 +411,7 @@ describe("native compact usage reporting", () => {
 });
 
 describe("native Codex pool compaction", () => {
-  test("keeps a Spark reset cooldown separate from a Terra compact request (#590)", async () => {
+  test("ignores a retired Spark reset without cooling later compact requests", async () => {
     const testDir = mkdtempSync(join(tmpdir(), "ocx-compact-scope-"));
     const previousOpencodexHome = process.env.OPENCODEX_HOME;
     const previousCodexHome = process.env.CODEX_HOME;
@@ -459,7 +459,7 @@ describe("native Codex pool compaction", () => {
         config,
         { model: "", provider: "" },
       );
-      expect(cooledSpark.status).toBe(429);
+      expect(cooledSpark.status).toBe(200);
 
       const terra = await handleResponsesCompact(
         compactionRequest(baseCompactionBody({ model: "gpt-5.6-terra" })),
@@ -478,7 +478,7 @@ describe("native Codex pool compaction", () => {
     }
   });
 
-  test("a cancelled Spark recovery probe releases its compact lease (#590)", async () => {
+  test("a cancelled shared recovery probe releases its compact lease (#590)", async () => {
     const testDir = mkdtempSync(join(tmpdir(), "ocx-compact-probe-"));
     const previousOpencodexHome = process.env.OPENCODEX_HOME;
     const previousCodexHome = process.env.CODEX_HOME;
@@ -505,7 +505,7 @@ describe("native Codex pool compaction", () => {
       recordCodexUpstreamOutcome(config, "pool-a", 429, {
         now,
         resetAt: Math.floor((now + 4 * 24 * 60 * 60_000) / 1_000),
-        modelId: "gpt-5.3-codex-spark",
+        modelId: "gpt-5.6-sol",
       });
       Date.now = () => probeAt;
       globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
@@ -517,7 +517,7 @@ describe("native Codex pool compaction", () => {
         },
       }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
       const pending = handleResponsesCompact(
-        compactionRequest(baseCompactionBody({ model: "gpt-5.3-codex-spark" }), abort.signal),
+        compactionRequest(baseCompactionBody({ model: "gpt-5.6-sol" }), abort.signal),
         config,
         { model: "", provider: "" },
       );
@@ -532,9 +532,9 @@ describe("native Codex pool compaction", () => {
         new Headers({ authorization: "Bearer main-token" }),
         config,
         "pool",
-        { modelId: "gpt-5.3-codex-spark" },
+        { modelId: "gpt-5.6-sol" },
       );
-      expect(nextProbe).toMatchObject({ probeQuotaScope: "spark" });
+      expect(nextProbe).toMatchObject({ probeQuotaScope: "shared" });
       releaseCodexAuthContextProbeLease(nextProbe);
     } finally {
       Date.now = originalNow;
@@ -548,7 +548,7 @@ describe("native Codex pool compaction", () => {
     }
   });
 
-  test("a Spark recovery probe releases its compact lease when connect is cancelled (#590)", async () => {
+  test("a shared recovery probe releases its compact lease when connect is cancelled (#590)", async () => {
     const testDir = mkdtempSync(join(tmpdir(), "ocx-compact-connect-probe-"));
     const previousOpencodexHome = process.env.OPENCODEX_HOME;
     const previousCodexHome = process.env.CODEX_HOME;
@@ -573,7 +573,7 @@ describe("native Codex pool compaction", () => {
       recordCodexUpstreamOutcome(config, "pool-a", 429, {
         now,
         resetAt: Math.floor((now + 4 * 24 * 60 * 60_000) / 1_000),
-        modelId: "gpt-5.3-codex-spark",
+        modelId: "gpt-5.6-sol",
       });
       Date.now = () => probeAt;
       globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
@@ -583,7 +583,7 @@ describe("native Codex pool compaction", () => {
         markFetchStarted();
       })) as typeof fetch;
       const pending = handleResponsesCompact(
-        compactionRequest(baseCompactionBody({ model: "gpt-5.3-codex-spark" }), abort.signal),
+        compactionRequest(baseCompactionBody({ model: "gpt-5.6-sol" }), abort.signal),
         config,
         { model: "", provider: "" },
       );
@@ -597,9 +597,9 @@ describe("native Codex pool compaction", () => {
         new Headers({ authorization: "Bearer main-token" }),
         config,
         "pool",
-        { modelId: "gpt-5.3-codex-spark" },
+        { modelId: "gpt-5.6-sol" },
       );
-      expect(nextProbe).toMatchObject({ probeQuotaScope: "spark" });
+      expect(nextProbe).toMatchObject({ probeQuotaScope: "shared" });
       releaseCodexAuthContextProbeLease(nextProbe);
     } finally {
       Date.now = originalNow;

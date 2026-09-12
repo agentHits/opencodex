@@ -1,5 +1,9 @@
 # Images Data Plane
 
+Hosted Responses image-tool eligibility uses the shared compatibility policy without a
+Codex Spark exception; standalone Images retain the separate relay contract below. See
+[Responses transport](../transports/responses.md#responses-httpsse).
+
 ## Standalone Images
 
 Codex's local `image_gen.imagegen` tool makes a second Images request after the model calls it:

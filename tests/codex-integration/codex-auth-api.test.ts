@@ -5997,15 +5997,12 @@ describe("manual reset cooldown recovery (#3973)", () => {
   test.each(["reset", "already_redeemed", "nothing_to_reset", "no_credit", "unknown"])(
     "only a new reset recovers, preserving pin/selection and other scopes: %s", async code => {
       const config = setup();
-      cool(config, "manual-a", "gpt-5.3-codex-spark");
       cool(config, "manual-a", "gpt-reserve");
-      const spark = getCodexQuotaHealthSnapshot("manual-a", "spark");
       const reserve = getCodexQuotaHealthSnapshot("manual-a", "reserve");
       const urls = mock(() => Response.json({ code }), () => Response.json(usage()));
       const result = await consume(config);
       expect(result?.status).toBe(200);
       expect(getCodexQuotaHealthSnapshot("manual-a", "shared") === null).toBe(code === "reset");
-      expect(getCodexQuotaHealthSnapshot("manual-a", "spark")).toEqual(spark);
       expect(getCodexQuotaHealthSnapshot("manual-a", "reserve")).toEqual(reserve);
       expect(config.activeCodexAccountId).toBe("manual-a");
       expect(pinnedCodexAccountId(config)).toBe("manual-a");

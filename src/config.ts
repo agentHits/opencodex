@@ -1304,9 +1304,6 @@ const configSchema = z.object({
   // A malformed hand edit must degrade to false without discarding providers, accounts,
   // or the exact selector map. Live writes remain strict.
   codexAccountPickerEnabled: z.boolean().optional().catch(false),
-  // Same degrade-not-reject rule: a malformed hand edit hides Spark rather than discarding the
-  // whole config. Hidden is also the default, so `catch(false)` and the default agree.
-  showCodexSparkQuota: z.boolean().optional().catch(false),
   resetCreditAutoRedeem: z.object({
     enabled: z.boolean().optional(),
     leadTimeMinutes: z.number().int().min(1).max(60).optional(),

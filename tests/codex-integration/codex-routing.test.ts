@@ -1118,16 +1118,16 @@ describe("codex routing", () => {
     recordCodexUpstreamOutcome(config, "a", 429, {
       now: now + 1,
       resetAt: Math.floor((now + 4 * 24 * 60 * 60_000) / 1_000),
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-reserve",
     });
 
-    // Spark sees its scoped cooldown and binds B without moving the global
+    // Reserve sees its scoped cooldown and binds B without moving the global
     // active account or the same thread's shared-scope affinity.
-    expect(resolveCodexAccountForThread("scoped-thread", config, now + 2, "spark")).toBe("b");
+    expect(resolveCodexAccountForThread("scoped-thread", config, now + 2, "reserve")).toBe("b");
     expect(config.activeCodexAccountId).toBe("a");
     expect(getEffectiveActiveCodexAccountId(config)).toBe("a");
     expect(resolveCodexAccountForThread("scoped-thread", config, now + 3, "shared")).toBe("a");
-    expect(resolveCodexAccountForThread("scoped-thread", config, now + 4, "spark")).toBe("b");
+    expect(resolveCodexAccountForThread("scoped-thread", config, now + 4, "reserve")).toBe("b");
   });
 
   test("429 fallback skips paused candidates", () => {
@@ -1312,7 +1312,7 @@ describe("codex routing", () => {
     recordCodexUpstreamOutcome(config, "a", 429, {
       now,
       resetAt,
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-reserve",
     });
     recordCodexUpstreamOutcome(config, "a", 429, {
       now,
@@ -1320,10 +1320,10 @@ describe("codex routing", () => {
       modelId: "gpt-5.6-terra",
     });
 
-    expect(getCodexQuotaHealthSnapshot("a", "spark", now + 1)).not.toBeNull();
+    expect(getCodexQuotaHealthSnapshot("a", "reserve", now + 1)).not.toBeNull();
     expect(getCodexQuotaHealthSnapshot("a", "shared", now + 1)).not.toBeNull();
     expect(clearCodexAccountCooldown("a", now + 1)).toBe(true);
-    expect(getCodexQuotaHealthSnapshot("a", "spark", now + 1)).toBeNull();
+    expect(getCodexQuotaHealthSnapshot("a", "reserve", now + 1)).toBeNull();
     expect(getCodexQuotaHealthSnapshot("a", "shared", now + 1)).toBeNull();
   });
 
@@ -1724,15 +1724,15 @@ describe("codex routing", () => {
       const threadId = `scoped-lru-${i}`;
       expect(resolveCodexAccountForThread(threadId, config, now + i * 3)).toBe("a");
       expect(resolveCodexAccountForThread(threadId, config, now + i * 3 + 1, "shared")).toBe("a");
-      expect(resolveCodexAccountForThread(threadId, config, now + i * 3 + 2, "spark")).toBe("a");
+      expect(resolveCodexAccountForThread(threadId, config, now + i * 3 + 2, "reserve")).toBe("a");
     }
 
     // The oldest legacy entry was evicted, while the same thread's later
-    // shared and Spark entries remain independently affined to A.
+    // shared and Reserve entries remain independently affined to A.
     config.activeCodexAccountId = "b";
     const after = now + threads * 3;
     expect(resolveCodexAccountForThread("scoped-lru-0", config, after, "shared")).toBe("a");
-    expect(resolveCodexAccountForThread("scoped-lru-0", config, after + 1, "spark")).toBe("a");
+    expect(resolveCodexAccountForThread("scoped-lru-0", config, after + 1, "reserve")).toBe("a");
     expect(resolveCodexAccountForThread("scoped-lru-0", config, after + 2)).toBe("b");
   }, STORE_BUDGET_MS);
 
@@ -1887,7 +1887,32 @@ describe("codex routing", () => {
     });
   });
 
-  test("WHAM keeps general and Spark windows separate", () => {
+  test("retired reset outcomes preserve shared health, affinity and selection", () => {
+    const config = makeConfig();
+    const now = 1_800_000_000_000;
+    updateAccountQuota("a", 10);
+    recordCodexUpstreamOutcome(config, "a", 503, {
+      now: now - CODEX_TRANSIENT_SOFT_AVOID_MS - 1, fixedAccount: true,
+    });
+    expect(resolveCodexAccountForThread("retired-reset", config, now, "shared")).toBe("a");
+    const health = getCodexUpstreamHealth("a");
+    for (const modelId of ["gpt-5.3-codex-spark", "main/gpt-5.3-codex-spark", "openai/gpt-5.3-codex-spark"]) {
+      recordCodexUpstreamOutcome(config, "a", 429, { now: now + 1, resetAt: now + 60_000, modelId });
+      expect(getCodexUpstreamHealth("a")).toBe(health);
+      expect(getCodexQuotaHealthSnapshot("a", "shared", now + 1)).toBeNull();
+      expect(getCodexQuotaHealthSnapshot("a", "reserve", now + 1)).toBeNull();
+    }
+    expect(getEffectiveActiveCodexAccountId(config)).toBe("a");
+    expect(previewCodexAccountForRequest("retired-reset", config, now + CODEX_TRANSIENT_SOFT_AVOID_MS + 1, "shared")).toBe("a");
+    recordCodexUpstreamOutcome(config, "a", 429, {
+      now: now + 2, retryAfter: "60", resetAt: now + 60_000, modelId: "gpt-5.3-codex-spark",
+    });
+    expect(getCodexQuotaHealthSnapshot("a", "shared", now + 3)?.cooldownSource).toBe("retry-after");
+    recordCodexUpstreamOutcome(config, "a", 401, { now: now + 4, modelId: "gpt-5.3-codex-spark" });
+    expect(isAccountNeedsReauth("a")).toBe(true);
+  });
+
+  test("WHAM ignores retired Spark windows and retains ordinary quota", () => {
     expect(parseUsageQuota({
       plan_type: "pro",
       rate_limit: {
@@ -1908,10 +1933,6 @@ describe("codex routing", () => {
       shortWindowSeconds: 5 * 60 * 60,
       weeklyPercent: 22,
       weeklyResetAt: 2,
-      customWindows: [
-        { label: "GPT-5.3-Codex-Spark 5h", percent: 33, resetAt: 3 },
-        { label: "GPT-5.3-Codex-Spark Weekly", percent: 44, resetAt: 4 },
-      ],
     });
   });
 
@@ -1931,13 +1952,15 @@ describe("codex routing", () => {
       }],
     });
 
+    expect(sparkOnly).toBeNull();
+    const before = getAccountQuota("a");
     setAccountQuotaFromParsed("a", sparkOnly);
+    expect(getAccountQuota("a")).toBe(before);
 
     expect(getAccountQuota("a")).toMatchObject({
       monthlyPercent: 44,
       monthlyResetAt: 4,
       monthlyIsPrimaryWindow: true,
-      customWindows: [{ label: "GPT-5.3-Codex-Spark Weekly", percent: 33, resetAt: 3 }],
     });
   });
 

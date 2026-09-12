@@ -5,7 +5,9 @@
 `POST /v1/chat/completions` sends eligible `openai-chat` routes directly to the provider's Chat
 Completions endpoint. Route selection reads the raw Chat body and the native request keeps that body
 as its wire source; a Responses projection is constructed only after the native route is declined
-and is never converted back into Chat. Request construction remains owned by `src/adapters/openai-chat.ts`, including model
+and is never converted back into Chat. Translated Codex requests inherit the
+[Responses compatibility and retired-evidence policy](../transports/responses.md#responses-httpsse),
+without introducing a model-name denylist at this inbound boundary. Request construction remains owned by `src/adapters/openai-chat.ts`, including model
 normalization, credential and provider headers, capability-specific fields, and the send URL: the
 canonical `openaiChatCompletionsUrl()` path, or `chatCompletionsPath` when the provider declares one.
 That field is the `openai-chat` mirror of `responsesPath` and exists because a per-model wire

@@ -1,5 +1,8 @@
 # Claude Desktop Integration
 
+Codex-native model discovery follows the [shared retirement policy](../catalog.md#shared-catalog).
+That projection does not migrate existing user-selected Desktop configuration or usage history.
+
 ## Connected Claude Desktop profiles
 
 Connected `ocx claude desktop apply` reads the hub's Desktop snapshot and writes the hub origin

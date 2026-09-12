@@ -10,7 +10,7 @@ import {
 } from "../../src/codex/quota";
 import { codexPoolQuotaEvidence } from "../../src/routing/quota";
 
-describe("Spark quota survives partial header updates", () => {
+describe("retired and generic quota partial updates", () => {
   it.each([1, 1000])("legacy quota updates expire short reset units (divisor %s)", divisor => {
     clearAccountQuota();
     setAccountQuotaFromParsed("legacy-expiry", { shortPercent: 4,
@@ -19,7 +19,7 @@ describe("Spark quota survives partial header updates", () => {
     expect(getAccountQuota("legacy-expiry")).toEqual({ weeklyPercent: 29, updatedAt: expect.any(Number) });
   });
 
-  it("keeps the WHAM Spark window when an ordinary response updates standard quota", () => {
+  it("drops WHAM Spark windows while ordinary headers still update standard quota", () => {
     clearAccountQuota();
     const refreshed = parseUsageQuota({
       rate_limit: { primary_window: { used_percent: 20, limit_window_seconds: 604_800 } },
@@ -34,15 +34,16 @@ describe("Spark quota survives partial header updates", () => {
       "x-codex-primary-window-minutes": "10080",
     }));
     expect(getAccountQuota("spark-partial")?.weeklyPercent).toBe(21);
-    expect(getAccountQuota("spark-partial")?.customWindows).toEqual(refreshed?.customWindows);
+    expect(refreshed).toEqual({ weeklyPercent: 20 });
+    expect(getAccountQuota("spark-partial")?.customWindows).toBeUndefined();
   });
 
   it("replaces custom windows when supplied, including an explicit empty list", () => {
     clearAccountQuota();
     setAccountQuotaFromParsed("spark-replace", {
-      customWindows: [{ label: "GPT-5.3-Codex-Spark Weekly", percent: 30 }],
+      customWindows: [{ label: "Custom weekly", percent: 30 }],
     });
-    const replacement = [{ label: "GPT-5.3-Codex-Spark Weekly", percent: 0, resetAt: 2_000_000_000 }];
+    const replacement = [{ label: "Custom weekly", percent: 0, resetAt: 2_000_000_000 }];
     setAccountQuotaFromParsed("spark-replace", { customWindows: replacement });
     expect(getAccountQuota("spark-replace")?.customWindows).toEqual(replacement);
     setAccountQuotaFromParsed("spark-replace", { weeklyPercent: 21, customWindows: [] });
@@ -52,7 +53,7 @@ describe("Spark quota survives partial header updates", () => {
   it("does not carry custom windows across an account cache clear", () => {
     clearAccountQuota();
     setAccountQuotaFromParsed("spark-clear", {
-      customWindows: [{ label: "GPT-5.3-Codex-Spark Weekly", percent: 30 }],
+      customWindows: [{ label: "Custom weekly", percent: 30 }],
     });
     clearAccountQuota("spark-clear");
     setAccountQuotaFromParsed("spark-clear", { weeklyPercent: 21 });
@@ -60,16 +61,7 @@ describe("Spark quota survives partial header updates", () => {
   });
 });
 
-/**
- * #4122 — a Spark response's 5h primary window is the MODEL's limit, not the account's.
- *
- * The header path has the routed model at every call site; without it, a Spark 5h primary was
- * filed as the account-level short tuple, so one pool account showed a 5h bar its
- * identically-limited peers did not have, and account-policy readers (main-account hard lock,
- * five-hour auto-refresh) consumed a model-specific window. The weekly reading still arrives as
- * the secondary window on the same response.
- */
-describe("Spark-model header responses attribute the 5h window to the model limit", () => {
+describe("retired Spark response headers cannot supply account quota", () => {
   const SPARK_HEADERS = {
     "x-codex-primary-used-percent": "4",
     "x-codex-primary-window-minutes": "300",
@@ -79,22 +71,21 @@ describe("Spark-model header responses attribute the 5h window to the model limi
     "x-codex-secondary-reset-at": "1789436116",
   } as const;
 
-  it("files a Spark response's 5h primary under custom windows, not the account short slot", () => {
+  it.each(["gpt-5.3-codex-spark", "main/gpt-5.3-codex-spark", "openai/gpt-5.3-codex-spark"])(
+    "ignores every standard header on retired model %s", modelId => {
     clearAccountQuota();
-    applyAccountQuotaFromUpstreamHeaders("spark-attr", new Headers(SPARK_HEADERS), undefined, undefined, {
-      modelId: "gpt-5.3-codex-spark",
-    });
+    applyAccountQuotaFromUpstreamHeaders("spark-attr", new Headers(SPARK_HEADERS), undefined, undefined, { modelId });
     const quota = getAccountQuota("spark-attr");
     expect(quota?.shortPercent).toBeUndefined();
     expect(quota?.shortResetAt).toBeUndefined();
     expect(quota?.shortWindowSeconds).toBeUndefined();
-    expect(quota?.weeklyPercent).toBe(21);
-    expect(quota?.customWindows).toEqual([{ label: "GPT-5.3-Codex-Spark 5h", percent: 4, resetAt: 1788974652 }]);
+    expect(quota).toBeNull();
   });
 
-  it("replaces the Spark 5h entry by label and keeps the WHAM-recorded Spark weekly entry", () => {
+  it("preserves ordinary quota when retired headers follow mixed legacy evidence", () => {
     clearAccountQuota();
     setAccountQuotaFromParsed("spark-merge", {
+      weeklyPercent: 9,
       customWindows: [
         { label: "GPT-5.3-Codex-Spark 5h", percent: 2, resetAt: 1788970000 },
         { label: "GPT-5.3-Codex-Spark Weekly", percent: 1, resetAt: 1789560000 },
@@ -103,10 +94,22 @@ describe("Spark-model header responses attribute the 5h window to the model limi
     applyAccountQuotaFromUpstreamHeaders("spark-merge", new Headers(SPARK_HEADERS), undefined, undefined, {
       modelId: "gpt-5.3-codex-spark",
     });
-    expect(getAccountQuota("spark-merge")?.customWindows).toEqual([
-      { label: "GPT-5.3-Codex-Spark 5h", percent: 4, resetAt: 1788974652 },
-      { label: "GPT-5.3-Codex-Spark Weekly", percent: 1, resetAt: 1789560000 },
-    ]);
+    expect(getAccountQuota("spark-merge")?.customWindows).toBeUndefined();
+    expect(getAccountQuota("spark-merge")?.weeklyPercent).toBe(9);
+  });
+
+  it("ignores retired family headers while preserving mixed ordinary headers", () => {
+    const headers = new Headers({
+      "x-codex-bengalfox-primary-used-percent": "100",
+      "x-codex-bengalfox-primary-window-minutes": "300",
+      "x-codex-bengalfox-primary-reset-at": "2000000000",
+    });
+    expect(parseUpstreamQuotaHeaders(headers)).toBeNull();
+    headers.set("x-codex-primary-used-percent", "17");
+    headers.set("x-codex-primary-window-minutes", "10080");
+    expect(parseUpstreamQuotaHeaders(headers)).toEqual({ weeklyPercent: 17 });
+    // The tombstone is exact; unrelated future/native and vendor names keep generic parsing.
+    expect(parseUpstreamQuotaHeaders(headers, { modelId: "muse-spark-1.3" })).toEqual({ weeklyPercent: 17 });
   });
 
   it("still writes the account-level short slot for a genuine 5h primary on a non-Spark model", () => {
@@ -282,7 +285,7 @@ describe("Spark-model header responses attribute the 5h window to the model limi
  *
  * This is the assertion that would have caught it: the parsers must agree about WHICH WINDOW a
  * number belongs to, whichever wire it arrived on. It compares window assignment rather than
- * whole objects, because the WHAM payload also carries provenance and Spark windows the header
+ * whole objects, because the WHAM payload also carries provenance the header
  * wire does not.
  */
 describe("quota parser parity: headers and WHAM agree on window assignment", () => {

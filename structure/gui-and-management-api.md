@@ -5,6 +5,11 @@
 The bundled React dashboard is built into `gui/dist` and served by the same Bun proxy. `ocx gui`
 starts the proxy when needed and opens `http://localhost:<port>`.
 
+Codex account panels expose no Spark quota toggle or setting. They retain quota refresh,
+pause/resume, selection order, reset-credit confirmation and Advanced settings. Account/provider
+quota DTOs suppress retired windows upstream of the generic quota renderer; see
+[OpenAI quota scopes](providers/openai-tiers.md#public-provider-contract).
+
 All ordinary HTTP responses (excluding successful WebSocket upgrades) include `X-Frame-Options: DENY` and
 `Content-Security-Policy: frame-ancestors 'none'`. This prevents another page from framing the local
 dashboard or management responses. Embedding the dashboard in an iframe is intentionally

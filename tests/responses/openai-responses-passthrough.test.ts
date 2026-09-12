@@ -2112,11 +2112,8 @@ describe("OpenAI Responses passthrough sanitization", () => {
     });
   });
 
-  test("keeps the reserved functions group intact for codex-spark, flattens MCP groups (#3217)", () => {
-    // Codex 0.147+ on Responses Lite ships every ordinary client tool inside the reserved
-    // `functions` namespace group, carried in an `additional_tools` input item. Flattening that
-    // group made the backend answer `custom_tool_call { name: "exec", namespace: "exec" }`,
-    // which codex-rs concatenates into the unroutable `execexec` and loops on.
+  test("preserves native Responses Lite namespaces, deferred tools, and reasoning", () => {
+    // Native Lite forwards both client and MCP namespaces with the caller's capabilities.
     const adapter = createResponsesPassthroughAdapter(provider);
     const functionsGroup = {
       type: "namespace",
@@ -2134,40 +2131,35 @@ describe("OpenAI Responses passthrough sanitization", () => {
       tools: [{ type: "function", name: "search", parameters: { type: "object", properties: {} } }],
     };
     const request = adapter.buildRequest({
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-5.6-sol",
       context: { messages: [] },
       stream: true,
       options: {},
       _rawBody: {
-        model: "gpt-5.3-codex-spark",
+        model: "gpt-5.6-sol",
         input: [
           { type: "additional_tools", role: "developer", tools: [functionsGroup, mcpGroup] },
           { type: "message", role: "user", content: [{ type: "input_text", text: "run pwd" }] },
         ],
         tools: [functionsGroup, mcpGroup],
+        parallel_tool_calls: true,
+        reasoning: { effort: "high", context: "all_turns", summary: "auto" },
       },
     }, { headers: new Headers({ authorization: "Bearer token" }) });
     const body = JSON.parse(request.body) as {
       tools: Array<Record<string, unknown>>;
       input: Array<{ type: string; tools?: Array<Record<string, unknown>> }>;
     };
-    const expectedGroup = {
-      type: "namespace",
-      name: "functions",
-      description: "client tools",
-      tools: [
-        { type: "custom", name: "exec", description: "shell" },
-        { type: "function", name: "wait", parameters: { type: "object", properties: {} } },
-      ],
-    };
-    // The reserved group survives as a group with its custom child; tool_search is still dropped
-    // and defer_loading still stripped inside it. The MCP group is still flattened.
-    expect(body.tools).toEqual([expectedGroup, { type: "function", name: "search", parameters: { type: "object", properties: {} } }]);
+    expect(body.tools).toEqual([functionsGroup, mcpGroup]);
     const additional = body.input.find(item => item.type === "additional_tools");
-    expect(additional?.tools).toEqual([expectedGroup, { type: "function", name: "search", parameters: { type: "object", properties: {} } }]);
+    expect(additional?.tools).toEqual([functionsGroup, mcpGroup]);
+    expect(body).toMatchObject({
+      parallel_tool_calls: true,
+      reasoning: { effort: "high", context: "all_turns", summary: "auto" },
+    });
   });
 
-  test("strips image_generation hosted tool for codex-spark passthrough", () => {
+  test("does not apply retired Spark tool or reasoning restrictions to a manually supplied id", () => {
     const adapter = createResponsesPassthroughAdapter(provider);
     const request = adapter.buildRequest({
       modelId: "gpt-5.3-codex-spark",
@@ -2176,18 +2168,33 @@ describe("OpenAI Responses passthrough sanitization", () => {
       options: {},
       _rawBody: {
         model: "gpt-5.3-codex-spark",
-        input: [],
+        input: [
+          { type: "custom_tool_call", call_id: "call_custom", name: "exec", input: "pwd" },
+          { type: "custom_tool_call_output", call_id: "call_custom", output: "workspace" },
+        ],
+        parallel_tool_calls: true,
+        reasoning: { effort: "high", context: "all_turns", summary: "auto" },
         tools: [
           { type: "function", name: "shell", parameters: {} },
           { type: "image_generation" },
+          { type: "tool_search" },
         ],
       },
     }, { headers: new Headers({ authorization: "Bearer token" }) });
     const body = JSON.parse(request.body) as { tools: { type: string }[] };
 
-    expect(body.tools).toHaveLength(1);
+    expect(body.tools).toHaveLength(3);
     expect(body.tools[0]).toMatchObject({ type: "function", name: "shell" });
-    expect(body.tools.some(t => t.type === "image_generation")).toBe(false);
+    expect(body.tools.some(t => t.type === "image_generation")).toBe(true);
+    expect(body.tools.some(t => t.type === "tool_search")).toBe(true);
+    expect(body).toMatchObject({
+      parallel_tool_calls: true,
+      reasoning: { effort: "high", context: "all_turns", summary: "auto" },
+      input: [
+        { type: "custom_tool_call", call_id: "call_custom", name: "exec", input: "pwd" },
+        { type: "custom_tool_call_output", call_id: "call_custom", output: "workspace" },
+      ],
+    });
   });
 
   test("keeps image_generation hosted tool for supported native slugs", () => {

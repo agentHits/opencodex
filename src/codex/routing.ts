@@ -18,7 +18,13 @@ import {
   seedPoolRotationAccount,
   selectPriorityTier,
 } from "./pool-rotation";
-import { CODEX_EXHAUSTED_USAGE_PERCENT, CODEX_UNKNOWN_USAGE_SCORE, getAccountQuota, resetAtToMs } from "./quota";
+import {
+  CODEX_EXHAUSTED_USAGE_PERCENT,
+  CODEX_UNKNOWN_USAGE_SCORE,
+  getAccountQuota,
+  isRetiredCodexSparkModel,
+  resetAtToMs,
+} from "./quota";
 import { codexPlanKey, isThirtyDayOnlyCodexPlan } from "./plan";
 import {
   MAIN_CODEX_ACCOUNT_ID,
@@ -199,7 +205,7 @@ export type CodexCooldownSource = "retry-after" | "reset-derived" | "default";
  * Add a new explicit group here only when its independent upstream quota is
  * confirmed, so shared limits never receive cross-model bypasses.
  */
-export type CodexQuotaScope = "shared" | "spark" | "reserve";
+export type CodexQuotaScope = "shared" | "reserve";
 
 export type CodexQuotaRecoveryProbeClaim = {
   accountId: string;
@@ -218,7 +224,7 @@ export type CodexQuotaRecoveryProbeProof = {
 /**
  * Requests without a resolved native model retain the historic one-account-per-
  * thread behavior. Requests with a known quota scope get an independent
- * affinity so a Spark failover cannot displace the same thread's Terra/Luna
+ * affinity so a Reserve failover cannot displace the same thread's Terra/Luna
  * account (and vice versa).
  */
 type BaseThreadAffinityScope = CodexQuotaScope | "legacy";
@@ -233,7 +239,6 @@ function isModelDetourAffinityScope(scope: ThreadAffinityScope): scope is ModelD
 }
 
 const NATIVE_MODEL_QUOTA_SCOPES: Readonly<Record<string, CodexQuotaScope>> = {
-  "gpt-5.3-codex-spark": "spark",
   [NATIVE_RESERVE_MODEL]: "reserve",
 };
 
@@ -688,7 +693,7 @@ export function claimDueCodexQuotaRecoveryProbes(
       { scope: undefined, health: upstreamHealth.get(account.id) },
       ...[...(quotaScopedHealth.get(account.id) ?? [])].map(([scope, health]) => ({ scope, health })),
     ].filter((entry): entry is { scope?: CodexQuotaScope; health: CodexUpstreamHealth } =>
-      // Generic WHAM evidence can recover only ordinary quota, never Spark or Reserve.
+      // Generic WHAM evidence can recover only ordinary quota, never Reserve.
       // Do not spend this account's one claim per pass on an independent scope and
       // delay the shared scope that the response can actually recover.
       (entry.scope === undefined || entry.scope === "shared")
@@ -2628,6 +2633,9 @@ export function recordCodexUpstreamOutcome(
   if (writerGeneration < lastReconciledGeneration && !liveHealthAccountIds.has(accountId)) return;
   const now = meta.now ?? Date.now();
   const outcomeClass = classifyCodexUpstreamOutcome(outcome, meta.denial);
+  // Reject retired quota evidence before stale-credential cleanup or any shared mutation.
+  if (outcomeClass === "quota" && isRetiredCodexSparkModel(meta.modelId)
+      && computeQuotaCooldown(meta).source === "reset-derived") return;
   const quotaScope = codexQuotaScopeForModel(meta.modelId);
   /*
    * Spend a stale credential failure BEFORE any branch reads health (#2892 gap 4 review).
@@ -2799,7 +2807,7 @@ export function recordCodexUpstreamOutcome(
     const { until, source } = computeQuotaCooldown(meta);
     // A reset timestamp is an advisory quota-window announcement. When the
     // selected native model belongs to a confirmed independent group, preserve
-    // it there so a different group (Spark versus the shared native quota) can
+    // it there so a different group (Reserve versus the shared native quota) can
     // still reach upstream. Explicit Retry-After/default 429s remain account-wide.
     if (source === "reset-derived" && quotaScope) {
       const prior = scopedHealthFor(accountId, quotaScope);
@@ -2824,7 +2832,7 @@ export function recordCodexUpstreamOutcome(
       });
       // The shared native scope is the existing account-wide native behavior:
       // threads must leave it and new requests should prefer an eligible account.
-      // Spark remains isolated so a same-account Terra/Luna combo fallback can run.
+      // Reserve remains isolated so a same-account Terra/Luna combo fallback can run.
       if (quotaScope === "shared" && !meta.fixedAccount) {
         clearThreadAccountMapForAccount(accountId);
         notePoolRotationFailure(POOL_KEY_CODEX, accountId);

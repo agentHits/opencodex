@@ -1,5 +1,8 @@
 # Background Service And Sidecars
 
+Service startup and restore use the [catalog retirement policy](../catalog.md#shared-catalog);
+retirement does not itself change service registration or user-selected model configuration.
+
 ## Background service command selection
 
 A bare `ocx service` is an idempotent install-or-repair command. Argument validation happens before

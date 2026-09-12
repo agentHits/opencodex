@@ -170,8 +170,8 @@ opencodex 協調 token refresh 與 Codex pool 路由，避免並行請求競爭 
 **Cooldown（Codex pool）。** 上游 `429`／quota response 會依 `Retry-After`、quota `reset` header
 （有上限）或短預設 backoff 設定 hard cooldown。明確 `Retry-After` cooldown 中的帳號不會被提前 probe；
 reset 衍生 cooldown 可能取得節流後的 probe lease，在不淹沒 provider 的情況下偵測恢復。由 reset 衍生的
-native-model cooldown 也會保留已知獨立 quota group：`gpt-5.3-codex-spark` 不會阻止同一帳號嘗試共享的
-GPT-5.6 Terra/Luna quota，而共享群組內的模型仍會互相保護。明確 `Retry-After` 與預設 cooldown 始終為
+native-model cooldown 會將共享原生 quota（含 GPT-5.6 Terra/Luna）與 `gpt-reserve` 分開。
+共享群組內的模型仍會互相保護；一般請求成功不會清除 Reserve cooldown。明確 `Retry-After` 與預設 cooldown 始終為
 account-wide。
 
 **Session affinity。** Codex thread→account affinity 只存在目前 process 記憶體，不會跨 proxy restart

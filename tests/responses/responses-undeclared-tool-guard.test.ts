@@ -1411,7 +1411,7 @@ describe("empty and absent tool catalogs", () => {
     expect(body).toContain("response.completed");
   });
 
-  test("Spark normalization cannot turn an unreadable catalog into deny-all", async () => {
+  test("unknown hosted tools do not turn an unreadable catalog into deny-all", async () => {
     const response = await post(
       false,
       [{ type: "some_future_hosted_tool" }],
@@ -1419,15 +1419,15 @@ describe("empty and absent tool catalogs", () => {
       undefined,
       config,
       [],
-      "fixture/gpt-5.3-codex-spark",
+      "fixture/gpt-5.6-sol",
     );
 
     expect(response.status).toBe(200);
-    const sparkBody = await response.json() as { output: Array<Record<string, unknown>> };
-    expect(sparkBody.output[0]).toMatchObject({ name: "apply_patch" });
+    const body = await response.json() as { output: Array<Record<string, unknown>> };
+    expect(body.output[0]).toMatchObject({ name: "apply_patch" });
   });
 
-  test("Spark normalization preserves streaming stand-down for an unreadable top-level catalog", async () => {
+  test("unknown hosted tool passthrough preserves streaming stand-down for an unreadable top-level catalog", async () => {
     const response = await post(
       true,
       [{ type: "some_future_hosted_tool" }],
@@ -1435,15 +1435,15 @@ describe("empty and absent tool catalogs", () => {
       undefined,
       config,
       [],
-      "fixture/gpt-5.3-codex-spark",
+      "fixture/gpt-5.6-sol",
     );
-    const sparkBody = await response.text();
+    const body = await response.text();
 
-    expect(sparkBody).not.toContain(UNDECLARED_TOOL_CALL_ERROR_CODE);
-    expect(sparkBody).toContain("response.completed");
+    expect(body).not.toContain(UNDECLARED_TOOL_CALL_ERROR_CODE);
+    expect(body).toContain("response.completed");
   });
 
-  test("Spark normalization preserves non-streaming stand-down for unreadable additional tools", async () => {
+  test("unknown hosted tool passthrough preserves non-streaming stand-down for unreadable additional tools", async () => {
     const response = await post(
       false,
       undefined,
@@ -1451,15 +1451,15 @@ describe("empty and absent tool catalogs", () => {
       [{ type: "some_future_hosted_tool" }],
       config,
       [],
-      "fixture/gpt-5.3-codex-spark",
+      "fixture/gpt-5.6-sol",
     );
 
     expect(response.status).toBe(200);
-    const sparkBody = await response.json() as { output: Array<Record<string, unknown>> };
-    expect(sparkBody.output[0]).toMatchObject({ name: "apply_patch" });
+    const body = await response.json() as { output: Array<Record<string, unknown>> };
+    expect(body.output[0]).toMatchObject({ name: "apply_patch" });
   });
 
-  test("Spark normalization preserves streaming stand-down for unreadable additional tools", async () => {
+  test("unknown hosted tool passthrough preserves streaming stand-down for unreadable additional tools", async () => {
     const response = await post(
       true,
       undefined,
@@ -1467,12 +1467,12 @@ describe("empty and absent tool catalogs", () => {
       [{ type: "some_future_hosted_tool" }],
       config,
       [],
-      "fixture/gpt-5.3-codex-spark",
+      "fixture/gpt-5.6-sol",
     );
-    const sparkBody = await response.text();
+    const body = await response.text();
 
-    expect(sparkBody).not.toContain(UNDECLARED_TOOL_CALL_ERROR_CODE);
-    expect(sparkBody).toContain("response.completed");
+    expect(body).not.toContain(UNDECLARED_TOOL_CALL_ERROR_CODE);
+    expect(body).toContain("response.completed");
   });
 
   test("non-streaming, tools: [] — refuses an upstream client tool call", async () => {

@@ -268,7 +268,7 @@ OpenAI도 같은 규칙을 따르며, 스위치를 켠다고 별도의 922k 모�
 조회, 불완전하거나 소진된 usage, 신원이 바뀐 계정, 더 최근의 quota 실패로는 복구하지 않습니다.
 오래된 main usage 응답은 더 최근에 반영한 관측을 덮어쓰지 않습니다. credential 갱신을 거쳤다면
 해당 인증에서 이어진 갱신인지 확인되어야 하며, 외부에서 교체된 credential은 같은 계정이어도
-복구 근거가 되지 않습니다. 명시적 `Retry-After`, Spark/Reserve 쿨다운, pause·pin·선택
+복구 근거가 되지 않습니다. 명시적 `Retry-After`, Reserve 쿨다운, pause·pin·선택
 설정도 보존됩니다. `already_redeemed`와 저장된 결과 재생은 새 reset을 증명하지 않습니다.
 
 `reset` 또는 `already_redeemed`가 확인된 뒤 usage 조회가 실패하거나 바쁘더라도 소비 응답은

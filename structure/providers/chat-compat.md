@@ -1,5 +1,9 @@
 # Chat Provider Compatibility
 
+Native Codex Spark-specific request exceptions are absent. General Lite and namespace repair
+remain shared [Responses compatibility](../transports/responses.md#responses-httpsse), including
+other providers whose models happen to share a name fragment.
+
 ## Reasoning and tool-result compatibility
 
 Kiro groups only consecutive original-message tool results whose raw call ID exactly matches

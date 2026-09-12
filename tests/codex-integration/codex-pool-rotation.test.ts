@@ -1,3 +1,4 @@
+// Reserve fixtures here exercise routing state only; they do not authorize or dispatch Reserve.
 import {
   clearPoolRotationState,
   DEFAULT_ACCOUNT_PRIORITY,
@@ -386,12 +387,12 @@ describe("accountPoolStrategy new-session routing", () => {
     recordCodexUpstreamOutcome(config, "a", 429, {
       now: now + 1,
       resetAt: Math.floor((now + 4 * 24 * 60 * 60_000) / 1_000),
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-reserve",
     });
 
-    // Spark skips A in its own ring. The next shared request still takes B,
-    // as if the Spark selection had never advanced the shared ring.
-    expect(resolveCodexAccountForThread(null, config, now + 2, "spark")).toBe("b");
+    // Reserve skips A in its own ring. The next shared request still takes B,
+    // as if the Reserve selection had never advanced the shared ring.
+    expect(resolveCodexAccountForThread(null, config, now + 2, "reserve")).toBe("b");
     expect(getEffectiveActiveCodexAccountId(config)).toBe("a");
     expect(resolveCodexAccountForThread(null, config, now + 3, "shared")).toBe("b");
   });
@@ -650,11 +651,11 @@ describe("accountPoolStrategy new-session routing", () => {
     recordCodexUpstreamOutcome(config, "b", 429, {
       now,
       resetAt,
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-reserve",
     });
 
-    // Fill-first would normally advance a → b, but b is unavailable only to Spark.
-    expect(pickAlternateCodexAccount(config, "a", now + 1, "spark")).toBe("c");
+    // Fill-first would normally advance a → b, but b is unavailable only to Reserve.
+    expect(pickAlternateCodexAccount(config, "a", now + 1, "reserve")).toBe("c");
     expect(pickAlternateCodexAccount(config, "a", now + 1, "shared")).toBe("b");
 
     recordCodexUpstreamOutcome(config, "a", 429, {
@@ -857,10 +858,10 @@ describe("selection order across rotation strategies", () => {
     recordCodexUpstreamOutcome(config, "a", 429, {
       now: now + 1,
       resetAt: Math.floor((now + 4 * 24 * 60 * 60_000) / 1_000),
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-reserve",
     });
 
-    expect(resolveCodexAccountForThread(null, config, now + 2, "spark")).toBe("b");
+    expect(resolveCodexAccountForThread(null, config, now + 2, "reserve")).toBe("b");
     expect(resolveCodexAccountForThread(null, config, now + 3, "shared")).toBe("a");
   });
 
@@ -872,7 +873,7 @@ describe("selection order across rotation strategies", () => {
     const now = 1_800_000_000_000;
     primeAllQuota();
 
-    expect(resolveCodexAccountForThread(null, config, now, "spark")).toBe("a");
+    expect(resolveCodexAccountForThread(null, config, now, "reserve")).toBe("a");
     expect(getEffectiveActiveCodexAccountId(config)).toBe("b");
   });
 
@@ -907,7 +908,7 @@ describe("selection order across rotation strategies", () => {
     primeAllQuota();
     updateAccountQuota("a", 95);
 
-    expect(resolveCodexAccountForThread(null, config, Date.now(), "spark")).toBe("b");
+    expect(resolveCodexAccountForThread(null, config, Date.now(), "reserve")).toBe("b");
     expect(config.activeCodexAccountPinned).toBe("a");
     expect(getEffectiveActiveCodexAccountId(config)).toBe("a");
   });
@@ -920,7 +921,7 @@ describe("selection order across rotation strategies", () => {
     primeAllQuota();
 
     recordCodexUpstreamOutcome(config, "a", 429, {
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-reserve",
     });
 
     expect(getEffectiveActiveCodexAccountId(config)).toBe("a");
@@ -936,7 +937,7 @@ describe("selection order across rotation strategies", () => {
     primeAllQuota();
 
     recordCodexUpstreamOutcome(config, "a", 503, {
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-reserve",
     });
 
     expect(getEffectiveActiveCodexAccountId(config)).toBe("a");
@@ -956,13 +957,13 @@ describe("selection order across rotation strategies", () => {
     const failedAt = Date.now();
 
     recordCodexUpstreamOutcome(config, "a", 503, {
-      modelId: "gpt-5.3-codex-spark",
+      modelId: "gpt-reserve",
       now: failedAt,
     });
 
     // Past the 30s soft avoid, inside the 5-minute failure window.
     const afterSoftAvoid = failedAt + CODEX_TRANSIENT_SOFT_AVOID_MS + 1_000;
-    const routed = resolveCodexAccountForThread(null, config, afterSoftAvoid, "spark");
+    const routed = resolveCodexAccountForThread(null, config, afterSoftAvoid, "reserve");
 
     // Asserted first because it is what proves the resolve reached applyFailureFailover
     // at all: "a" is selectable again by now, so only the still-tripped streak routes

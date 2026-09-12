@@ -1,5 +1,9 @@
 # xAI Grok Provider
 
+Codex-native retirement is scoped to OpenAI catalog/quota evidence. Shared Responses handling
+retains xAI provider behavior; see
+[the catalog boundary](../catalog.md#shared-catalog).
+
 ## xAI Grok hardening (official Grok Build contract parity)
 
 Grounded in the open-sourced official client (xai-org/grok-build); unit + evidence:

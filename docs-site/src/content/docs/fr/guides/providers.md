@@ -196,9 +196,9 @@ de récupération strict, déterminé par `Retry-After`, par les en-têtes `rese
 plafond prévu — ou par un bref délai de repli par défaut. Les comptes soumis à un délai `Retry-After` explicite
 ne sont pas sondés avant son expiration. Les délais calculés à partir des informations de réinitialisation
 peuvent bénéficier d'une autorisation de sondage cadencée, afin de détecter la reprise sans submerger le
-fournisseur. Pour les modèles natifs, ces délais préservent également les groupes de quotas indépendants connus :
-`gpt-5.3-codex-spark` n'empêche pas le même compte d'essayer le quota partagé de GPT-5.6 Terra/Luna, tandis
-que les modèles de ce groupe partagé continuent de se protéger mutuellement. Les délais `Retry-After` explicites
+fournisseur. Pour les modèles natifs, ces délais séparent le quota partagé (dont GPT-5.6 Terra/Luna)
+de `gpt-reserve`. Les modèles du groupe partagé continuent de se protéger mutuellement ;
+une requête ordinaire réussie ne lève pas le délai de Reserve. Les délais `Retry-After` explicites
 et les délais par défaut s'appliquent toujours à l'ensemble du compte.
 
 **Affinité de session.** L'affinité entre le fil Codex et le compte est locale au processus — uniquement en mémoire et

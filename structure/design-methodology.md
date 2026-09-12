@@ -26,6 +26,7 @@ surface list lives in `gui/src/app-routing.ts` and
 | `ocx init` CLI | Flat numbered menu, no personality | Could benefit from staged approach |
 | Add Provider modal | Functional form | Minimal styling |
 | Logs page | Dense table, monospace | Appropriate for log viewing |
+| Codex account pool | Existing dense account cards with scoped actions | Standalone title/feedback, pause/refresh next to cards; embedded actions inline. Retired Spark controls have no placeholder. |
 
 When next touching these surfaces, apply the Stage 1 design dials (mood, lightness,
 density, shape, typography, motion) before restructuring functional layout. For new

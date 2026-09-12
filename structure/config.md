@@ -55,6 +55,10 @@ matters for maintainers is which groups exist and who resolves them:
 Env values are resolved through `src/config.ts`, so a config value naming an env var never persists
 the secret itself.
 
+The former `showCodexSparkQuota` key is inert passthrough data when loading an old config.
+It is absent from the typed settings contract and cannot re-enable Spark quota through the
+management API. Retirement does not migrate user-selected model ids or erase usage history.
+
 ## Config injection
 
 `src/codex/inject.ts` writes one of two forms. The choice is not cosmetic: it decides whether Codex
@@ -176,7 +180,9 @@ hand-edited `config.json` must accept and reject the same provider shapes.
 ## Restore
 
 `ocx stop`, `ocx restore` / `ocx eject`, `ocx service stop`, and `ocx service uninstall` must strip
-opencodex config and routed catalog entries without damaging native Codex state.
+opencodex config and routed catalog entries without damaging native Codex state. Catalog restoration
+omits retired bare/account-qualified native rows even when they occur in a pristine backup;
+the backup itself is not rewritten. See the [catalog contract](catalog.md#shared-catalog).
 
 Full `ocx uninstall` config cleanup is ownership-manifest based. A fresh config directory receives a
 root-bound owner marker and an uninstall manifest before its first atomic config write. Uninstall

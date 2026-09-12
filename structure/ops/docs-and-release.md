@@ -8,6 +8,10 @@ served at the site root, with Korean under `/ko`, Simplified Chinese under `/zh-
 Manual navigation is defined in `docs-site/astro.config.mjs`. When adding a public page, update the
 sidebar and either add localized copies or intentionally accept Starlight fallback behavior.
 
+Native retirement keeps active model/quota instructions aligned across locales with the
+[catalog contract](../catalog.md#shared-catalog). Historical records and other providers
+sharing a model-name fragment remain distinct from current Codex-native support.
+
 ## GitHub Pages
 
 `.github/workflows/deploy-docs.yml` publishes the docs to:
