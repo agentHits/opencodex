@@ -31,11 +31,16 @@ let activation: { key: string; active: boolean } | undefined;
  * turning the feature off takes effect without a restart and steady-state traffic does not parse
  * TOML per request.
  */
-export function contextRelayActivated(configPath = join(getCodexHome(), "config.toml")): boolean {
+export function contextRelayActivated(configPath?: string): boolean {
   let key: string;
+  let path: string;
   try {
-    const seen = statSync(configPath);
-    key = `${configPath}:${seen.mtimeMs}:${seen.size}:${String(seen.ino)}`;
+    // Resolved here, not in a default parameter: those are evaluated before the body, so a
+    // CODEX_HOME that became unreadable while the proxy runs would throw past this try. This
+    // function is now on the model path, where that would abort a turn upstream already served.
+    path = configPath ?? join(getCodexHome(), "config.toml");
+    const seen = statSync(path);
+    key = `${path}:${seen.mtimeMs}:${seen.size}:${String(seen.ino)}`;
   } catch {
     activation = undefined;
     return false;
@@ -43,8 +48,10 @@ export function contextRelayActivated(configPath = join(getCodexHome(), "config.
   if (activation?.key === key) return activation.active;
   let active = false;
   try {
-    active = contextExperimentalEnabled(readFileSync(configPath, "utf8"));
+    active = contextExperimentalEnabled(readFileSync(path, "utf8"));
   } catch {
+    // A readable stat with an unreadable body caches false under that identity, so the feature
+    // stays off until the content itself changes. Fail-closed is the right direction here.
     active = false;
   }
   activation = { key, active };

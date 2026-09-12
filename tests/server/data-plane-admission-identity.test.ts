@@ -9,9 +9,10 @@ import {
   resolveDataPlaneAdmissionSecret,
   resolveResponsesApiAuth,
 } from "../../src/server/auth-cors";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { contextRelayActivated } from "../../src/codex/context-compat";
 import { saveConfig } from "../../src/config";
 import { startServer } from "../../src/server";
 import { buildResponsesWsData } from "../../src/server/ws-bridge";
@@ -205,6 +206,31 @@ describe("loopback binds", () => {
     expect(first).toBeString();
     expect(bearer).toBe(first!);
     expect(second).not.toBe(first!);
+  });
+
+  test("the activation gate re-reads a changed config and fails closed on a bad home", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-context-gate-"));
+    const configPath = join(home, "config.toml");
+    writeFileSync(configPath, "[features]\ncontext_management.experimental_mode = true\n");
+    expect(contextRelayActivated(configPath)).toBe(true);
+    // No reset seam here on purpose: turning the feature off has to take effect on its own,
+    // which is the whole point of keying the cache on the config identity.
+    writeFileSync(configPath, "[features]\ncontext_management.experimental_mode = false\n");
+    expect(contextRelayActivated(configPath)).toBe(false);
+    writeFileSync(configPath, "model = \"gpt-5.5\"\n");
+    expect(contextRelayActivated(configPath)).toBe(false);
+    expect(contextRelayActivated(join(home, "absent.toml"))).toBe(false);
+
+    const previous = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = join(home, "not-a-directory-here");
+    try {
+      // An unreadable CODEX_HOME is a refusal, never an exception: this runs during model turns.
+      expect(contextRelayActivated()).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previous;
+    }
+    removeTreeWithRetry(home);
   });
 
   test("a remote bind keeps naming the principal from its own admission", () => {

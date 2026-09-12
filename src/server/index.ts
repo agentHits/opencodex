@@ -206,7 +206,7 @@ import { handleImages } from "./images";
 import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveSidebandUpgrade } from "./live";
 import { handleSearch } from "./search";
 import { handleContextHistory } from "./context-history";
-import { codexCompatibleUrl, contextEndpoint } from "../codex/context-compat";
+import { codexCompatibleUrl, contextEndpoint, contextRelayActivated } from "../codex/context-compat";
 import { fetchAllModels, handleManagementAPI, VERSION, type ManagementApiDeps } from "./management-api";
 import {
   createManagementSessionControl,
@@ -1958,7 +1958,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         }), req, policy);
       }
 
-      if (contextEndpoint(url.pathname) !== undefined && req.method === "POST") {
+      if (contextEndpoint(url.pathname) !== undefined && req.method === "POST" && contextRelayActivated()) {
         // No timeout disable here. The relay is a bounded JSON round trip that owns one deadline
         // from entry; removing the idle timeout first would let an unfinished body hold an
         // admitted turn slot indefinitely, before that deadline ever starts.
