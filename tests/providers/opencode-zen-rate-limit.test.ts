@@ -256,13 +256,16 @@ describe("Console Go transient upload refusal", () => {
   });
 
   test("requires the effective canonical HTTPS endpoint", () => {
+    const userInfoUrl = new URL("https://opencode.ai/zen/go/v1/responses");
+    userInfoUrl.username = "fixture-user";
+    userInfoUrl.password = "fixture-password";
+    expect(isTransientConsoleGoUploadRejection({ status: 400, errorBody: envelope(GO_MESSAGE), outboundUrl: userInfoUrl.href })).toBe(false);
     for (const outboundUrl of [
       "http://opencode.ai/zen/go/v1/responses",
       "https://opencode.ai:8443/zen/go/v1/responses",
       "https://opencode.ai.evil.test/zen/go/v1/responses",
       "https://opencode.ai/zen-other/v1/responses",
       "https://opencode.ai/zen/go/v1/models",
-      "https://user:pass@opencode.ai/zen/go/v1/responses",
     ]) expect(isTransientConsoleGoUploadRejection({ status: 400, errorBody: envelope(GO_MESSAGE), outboundUrl })).toBe(false);
   });
 
