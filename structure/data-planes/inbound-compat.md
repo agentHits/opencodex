@@ -91,3 +91,5 @@ falling back to OpenCodex guesses, and the integration does not write the remove
 `thinking.effort` / `defaultEffort` fields because MCode owns the active effort per session.
 
 Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.
+
+Connected CLI usage follows the [client-scoped hub usage contract](../gui-and-management-api.md#usage-accounting); local management and account data remain separate.

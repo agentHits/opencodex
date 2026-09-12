@@ -375,3 +375,9 @@ and are never classified as managed.
 
 Inspect and safely modify validated OpenCodex configuration. `show` and `get` mask secrets. Import
 validates before writing and requires `--yes`.
+
+### Usage from a connected client
+
+`ocx usage` reads the connected hub with this client's enrolled data key. Human output identifies the hub source and client-key scope; `--json` returns the same scoped data. Range, surface, provider/model filters and custom `--since`/`--until` bounds remain available. Account breakdowns and other clients' records are not shared. An old or unavailable hub produces an explicit error instead of substituting local usage; upgrade the hub if it does not support this read.
+
+The read-only data-plane endpoint is `GET /v1/usage`, using `x-opencodex-api-key` with a configured client key. Environment-wide and admin keys are refused. It accepts `range`, `surface`, `provider`, `model`, `since`, and `until`; unknown/repeated options and caller-selected key IDs are rejected. Oversized skipped rows retain the explicit incomplete-history warning.

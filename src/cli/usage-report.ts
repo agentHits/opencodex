@@ -21,6 +21,8 @@ interface CostRow {
 }
 
 interface UsageReportInput {
+  source?: "hub";
+  scope?: "client";
   usageIncomplete?: true;
   usageIncompleteReason?: "oversized_rows";
   range?: string;
@@ -111,6 +113,9 @@ function describeScope(data: UsageReportInput): string {
 export function formatUsageReport(data: UsageReportInput): string[] {
   const summary = data.summary ?? {};
   const lines: string[] = [describeScope(data), ""];
+  if (data.source === "hub" && data.scope === "client") {
+    lines.push("Source: hub — this client's data key only. Account totals are not shared.", "");
+  }
   if (data.usageIncomplete === true) {
     lines.push("WARNING: Usage is incomplete; some records could not be included. Totals and rankings reflect readable records only.", "");
   }
@@ -158,7 +163,7 @@ export function formatUsageReport(data: UsageReportInput): string[] {
   // server cannot answer it honestly.
   const accountFilterActive = Boolean(data.filter?.provider || data.filter?.model);
   const accounts = (data.accounts ?? []).filter(row => row.requests > 0);
-  if (accountFilterActive) {
+  if (accountFilterActive && data.scope !== "client") {
     lines.push("");
     lines.push("ACCOUNT: not reported under a provider or model filter; run without filters for per-account totals.");
   } else if (accounts.length > 0) {

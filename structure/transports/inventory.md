@@ -59,3 +59,5 @@ redirect blocking, but cannot inherit DNS classification or peer pinning without
 executor contract. Main-request migration must not treat that branch as fixed-transport equivalent.
 
 Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.
+
+Connected CLI usage follows the [client-scoped hub usage contract](../gui-and-management-api.md#usage-accounting); local management and account data remain separate.

@@ -226,3 +226,7 @@ ocx system codex-cli-update check --json
 ### `ocx config <show|get|set|unset|validate|export|import> ...`
 
 검증된 OpenCodex configuration을 검사하고 안전하게 수정합니다. `show`와 `get`은 비밀 값을 가립니다. import는 쓰기 전에 검증하며 `--yes`가 필요합니다.
+
+### 연결된 클라이언트의 사용량
+
+`ocx usage`는 등록된 데이터 키로 허브에서 이 클라이언트의 사용량만 읽습니다. 출력에는 허브 출처와 키 범위가 표시됩니다. 기간·모델·공급자 필터와 `--since`/`--until`, `--json`을 그대로 사용할 수 있습니다. 계정별 내역과 다른 클라이언트 기록은 반환하지 않습니다. 허브가 응답하지 않거나 이 기능을 지원하지 않으면 오류를 알립니다. 로컬 기록으로 대신 표시하지 않습니다. 구형 허브라면 허브를 업데이트하세요.
