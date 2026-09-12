@@ -528,4 +528,5 @@ windows and persistent USD blockers.
 `gui/src/combo-workspace-data.ts` accepts only this projection for quota-based Save/Create blocking.
 Missing, invalid or expired evidence is unknown. `gui/src/pages/Combos.tsx` wakes at the rendered
 expiry, including a deadline crossed before effects run, rechecks activation and visibility, and
-refreshes quota with Combo data while preserving drafts.
+refreshes quota with Combo data while preserving drafts. Each successful quota snapshot also
+advances the observation clock, so a retained older row cannot defer evaluation of a fresh row.

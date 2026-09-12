@@ -312,3 +312,71 @@ test.each(["timer", "visible", "active", "commit-boundary"])("Combos expires a q
   }
   expect(expiryTimers.size).toBe(0);
 });
+
+
+test("Combos evaluates fresh exhaustion beside a retained older quota row without losing drafts", async () => {
+  const { createRoot } = await import("react-dom/client");
+  const startedAt = 1_800_000_000_000;
+  let now = startedAt;
+  const clock = spyOn(Date, "now").mockImplementation(() => now);
+  const interval = globalThis.setInterval;
+  let pollQuota: (() => void) | undefined;
+  const intervalSpy = spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 60_000 && typeof callback === "function") pollQuota = () => callback(...args);
+    return interval(callback, delay, ...args);
+  });
+  let quotaFetches = 0;
+  let completeRefresh: ((response: Response) => void) | undefined;
+  const snapshot = (fresh: boolean) => Response.json({ reports: [
+    { provider: "older", routingQuota: { state: "available", updatedAt: startedAt, validUntil: startedAt + 600_000 } },
+    { provider: "keyed", routingQuota: { state: fresh ? "exhausted" : "available",
+      updatedAt: fresh ? now : startedAt, validUntil: startedAt + 600_000 } },
+  ] });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/provider-quotas")) {
+      quotaFetches += 1;
+      if (quotaFetches === 1) return snapshot(false);
+      return new Promise<Response>(resolve => { completeRefresh = resolve; });
+    }
+    if (url.includes("/api/combos")) return Response.json({ combos: [{
+      id: "alpha", model: "combo/alpha", strategy: "failover", stickyLimit: 1,
+      targets: [{ provider: "keyed", model: "m1" }],
+    }] });
+    if (url.includes("/api/config")) return Response.json({ providers: {
+      keyed: { adapter: "openai-chat", authMode: "key", baseUrl: "https://provider.example/v1", defaultModel: "m1" },
+    } });
+    if (url.includes("/api/models")) return Response.json([
+      { provider: "keyed", id: "m1" }, { provider: "combo", id: "alpha" },
+    ]);
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => { root.render(<LanguageProvider><Combos apiBase={API_BASE} /></LanguageProvider>); });
+    const rail = [...container.querySelectorAll<HTMLButtonElement>(".combos-workspace-rail-row")]
+      .find(row => row.querySelector(".combos-workspace-rail-name")?.textContent === "combo/alpha");
+    expect(rail).toBeDefined();
+    await act(async () => { rail!.click(); });
+    const alias = container.querySelector<HTMLInputElement>("#cwi-edit-alias")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!.set!.call(alias, "kept-draft");
+      alias.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
+    });
+    expect(container.querySelector<HTMLButtonElement>("#cwi-edit-save")!.disabled).toBe(false);
+    expect(pollQuota).toBeDefined();
+    now = startedAt + 60_000;
+    await act(async () => { pollQuota!(); });
+    expect(completeRefresh).toBeDefined();
+    await act(async () => { completeRefresh!(snapshot(true)); });
+    expect(container.querySelector<HTMLInputElement>("#cwi-edit-alias")!.value).toBe("kept-draft");
+    expect(container.querySelector<HTMLButtonElement>("#cwi-edit-save")!.disabled).toBe(true);
+  } finally {
+    await act(async () => { root.unmount(); });
+    container.remove();
+    intervalSpy.mockRestore();
+    clock.mockRestore();
+  }
+});

@@ -221,10 +221,12 @@ export default function Combos({
   );
   const { state } = resource;
 
+  const [quotaNow, setQuotaClock] = useState(() => Date.now());
   const loadProviderQuotas = useCallback(async (signal?: AbortSignal): Promise<ProviderQuotasDto> => {
     const response = await fetch(`${apiBase}/api/provider-quotas`, { signal });
     if (!response.ok) throw new Error("combo quota load failed");
     const payload = await response.json() as unknown;
+    if (!signal?.aborted) setQuotaClock(Date.now());
     return payload && typeof payload === "object" && !Array.isArray(payload)
       ? payload as ProviderQuotasDto
       : {};
@@ -240,7 +242,6 @@ export default function Combos({
       enabled: active,
     },
   );
-  const [quotaNow, setQuotaClock] = useState(() => Date.now());
   const quotaReports = active && quotaResource.lastAttemptOk ? quotaResource.data?.reports : undefined;
   const providerQuotaStates = providerQuotaStatesFromReports(quotaReports, quotaNow);
   const quotaExpiry = nextProviderQuotaStateExpiration(quotaReports, quotaNow);
