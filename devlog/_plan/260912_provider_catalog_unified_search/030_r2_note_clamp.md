@@ -21,6 +21,13 @@ layout read: `scrollHeight > clientHeight` would need a ref per row plus a resiz
 observer and would make the decision untestable without a DOM. The threshold lives in
 `provider-presets.ts` as a named constant with its own unit test.
 
+> Superseded twice. `016` replaced the nested button with a sibling inside
+> `.provider-catalog-row-wrap`, because `.list-row` is already a `<button>`. And the
+> threshold shipped at **90**, not 120: at the modal width two lines hold roughly 110
+> characters minus the adapter chip, so 120 left notes in the 95-111 range visually
+> clamped with no way to read the rest. Erring short only costs a reveal on a row that
+> did not strictly need one.
+
 **Popup.** A sibling overlay with the same shape as `OAuthTosWarningModal`: a
 `role="dialog" aria-modal="true"` card rendered next to the add-provider overlay rather
 than inside it, holding the provider label, the adapter chip, the full note, and a close
@@ -29,6 +36,18 @@ button. The argument for a popup over grok's inline disclosure is in `015`.
 **Escape ordering.** `AddProviderModal`'s handler is
 `if (e.key === "Escape" && !oauthTosPending) onClose()`. The note popup joins that
 guard, so Escape closes the note first and the add-provider modal second.
+
+## The cascade trap, hit again
+
+`gui/src/styles/provider-catalog.css` is `@import`ed at the **top** of `styles.css`,
+while `.link-btn` is declared far below it at equal specificity. A bare
+`.provider-catalog-note-more` therefore loses `background`, `border`, `padding` and
+`font-size` to `.link-btn`, while the `:has()` rule that strips the row's bottom border
+does win — so the row opened at the bottom and the reveal rendered as a full-width
+underlined link floating between two rows. Vite HMR hides this by injecting the edited
+file last; a production bundle does not. The rule is qualified as
+`.link-btn.provider-catalog-note-more`, exactly as
+`.list-row.provider-catalog-account-row--waiting` already had to be.
 
 ## Verification (remote CI only)
 

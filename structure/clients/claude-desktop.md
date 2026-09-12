@@ -81,3 +81,19 @@ Usage consumers preserve positive incomplete-history metadata as specified in [u
 Connected CLI usage follows the [client-scoped hub usage contract](../gui-and-management-api.md#usage-accounting); local management and account data remain separate.
 
 Client usage transport follows [the runtime contract](../runtime.md#lifecycle), independently of Desktop inference.
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.
+
+The explicit sync coordinator also accepts Cline CLI as a separate file integration. Its [paired-file recovery](integrations.md#cline-paired-files) is owned by the generic integration journal, independently of Desktop profile snapshots.
+
+`claudeCode.stabilizePromptCache` is a default-off operator setting for
+[translated instruction stabilization](../data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
+Config JSON preserves the boolean; only literal true activates the role-changing transform.
