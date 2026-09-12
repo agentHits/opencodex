@@ -168,3 +168,5 @@ pin one legacy root owner before changing it. Sibling stores remain independent.
 precede coordinated writes under one scoped flight, and actual file state/refusals remain
 separate. Restore reconciles target intent from validated snapshot ownership without changing
 sibling policy. Profile journal views retain source-store provenance for older legacy entries.
+
+The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`; its isolated owner and support limits are documented in [Remote Workspace](../remote-workspace.md).

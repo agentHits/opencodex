@@ -75,3 +75,5 @@ away from. Resolution stays a pure function of (env, platform, home) so the Wind
 testable on any host: stubbing `process.platform` does not propagate to `os.platform()` under Bun.
 
 > Decision record: [ADR-0046](../decisions/ADR-0046-claude-desktop-config-library-resolution.md)
+
+The unregistered executor CLI module stores Remote Workspace state separately from client configuration; see [Remote Workspace](../remote-workspace.md).

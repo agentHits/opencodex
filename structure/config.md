@@ -195,3 +195,5 @@ Client connection metadata stores a stable `apiKeyId` and a non-secret rotation 
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
+
+The unregistered executor CLI module stores Remote Workspace state separately from client configuration; see [Remote Workspace](remote-workspace.md).
