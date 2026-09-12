@@ -147,6 +147,7 @@ The server exposes `POST /api/stop` which restores native Codex config, stops an
 | `src/providers/derive.ts` | Enrichment from provider presets into user config. |
 | `src/oauth/` | OAuth providers, token storage, refresh, and auth-token resolution. The login callback listener binds a per-provider FIXED loopback port, so consecutive logins reuse the same number; every response it sends ends its connection (`Connection: close`, including non-callback paths such as a stray `/favicon.ico` 404). Stopping the listener does not close an established socket, so without that a pooled client would deliver the next login's callback to the retired flow, which rejects the unknown state as a CSRF mismatch while the live flow waits. |
 | `src/adapters/openai-responses.ts` | Native OpenAI/ChatGPT Responses passthrough. |
+| `src/responses/muse-tool-name-alias.ts` | Host-gated Meta Muse 64-char tool-name alias/restore used by the Responses passthrough. |
 | `src/adapters/openai-chat.ts` | OpenAI-compatible Chat Completions bridge. |
 | `src/adapters/anthropic.ts` | Anthropic Messages bridge. |
 | `src/adapters/google.ts` | Gemini bridge. |
