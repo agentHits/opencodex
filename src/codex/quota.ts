@@ -241,13 +241,14 @@ function shortResetHasElapsed(resetAt: number | undefined, now: number): boolean
   return resetAtToMs(resetAt) <= now;
 }
 
-/** Copy a still-open short tuple. An elapsed reset is not a current window. */
+/** Display/rotation carry expires; a reset clock cannot retract hard-lock evidence. */
 function assignCarriedShort(
   next: StoredAccountQuota,
   existing: StoredAccountQuota | undefined,
   now: number,
+  policyEvidence = false,
 ): void {
-  if (!existing || shortResetHasElapsed(existing.shortResetAt, now)) return;
+  if (!existing || (!policyEvidence && shortResetHasElapsed(existing.shortResetAt, now))) return;
   if (existing.shortPercent !== undefined) next.shortPercent = existing.shortPercent;
   if (existing.shortObservedAt !== undefined) next.shortObservedAt = existing.shortObservedAt;
   if (existing.shortResetAt !== undefined) next.shortResetAt = existing.shortResetAt;
@@ -315,7 +316,7 @@ function mergeAccountQuota(
     if (existing?.monthlyPercent !== undefined) next.monthlyPercent = existing.monthlyPercent;
     if (existing?.monthlyResetAt !== undefined) next.monthlyResetAt = existing.monthlyResetAt;
     if (existing?.monthlyIsPrimaryWindow === true) next.monthlyIsPrimaryWindow = true;
-    assignCarriedShort(next, existing, updatedAt);
+    assignCarriedShort(next, existing, updatedAt, policyEvidence);
     if (existing?.customWindows !== undefined) next.customWindows = existing.customWindows;
     next.resetCredits = quota.resetCredits;
     return next;
@@ -348,10 +349,7 @@ function mergeAccountQuota(
     if (existing.monthlyIsPrimaryWindow === true) next.monthlyIsPrimaryWindow = true;
   }
 
-  const preserveKnownShort = policyEvidence
-    && quota.shortPercent === undefined
-    && finitePercent(existing?.shortPercent)
-    && !shortResetHasElapsed(existing?.shortResetAt, updatedAt);
+  const preserveKnownShort = policyEvidence && quota.shortPercent === undefined && finitePercent(existing?.shortPercent);
   if (snapshotHasShort(quota) && !preserveKnownShort) {
     if (quota.shortPercent !== undefined) {
       next.shortPercent = quota.shortPercent;
@@ -365,7 +363,7 @@ function mergeAccountQuota(
     // An elapsed reset is the exception. It describes a window that has already rolled over,
     // and carrying it republishes updatedAt, which is exactly what kept a Spark-polluted Pro
     // row alive past the six-hour disk TTL that #4122 expected to expire it.
-    assignCarriedShort(next, existing, updatedAt);
+    assignCarriedShort(next, existing, updatedAt, policyEvidence);
   }
 
   if (snapshotHasCustom(quota)) next.customWindows = quota.customWindows;
@@ -427,6 +425,7 @@ function notifyCodexQuotaSnapshot(accountId: string, next: StoredAccountQuota): 
         scope: "codex",
         accountKey: accountId,
         windows: codexWindowObservations(snapshot),
+        retainAbsentShortWindow: true,
       });
     })
     .catch(() => {

@@ -1,84 +1,34 @@
-# Phase 1 — drop elapsed account-level short carry
+# Phase 1: expire display carry without losing policy or notification evidence
 
-## IN
+## Final implementation
 
-- `src/codex/quota.ts`: carry paths in `mergeAccountQuota` (credits-only +
-  no-incoming-short else branch) and the parallel copy in `updateAccountQuota`.
-- `tests/codex-integration/codex-quota-parser-parity.test.ts`: regression rows
-  next to the #4122 Spark attribution block.
-- this unit's plan/closeout docs.
+- `src/codex/quota.ts`: `assignCarriedShort` drops expired omitted short tuples only for
+  display/rotation merges; credits-only and legacy `updateAccountQuota` use the same rule.
+  `policyEvidence` preserves the previous short tuple, including its observation clock.
+  Explicit incoming short readings retain the original merge semantics.
+- `src/codex/routing.ts`: shares `resetAtToMs` with the carry expiry comparison.
+- `src/quota/reset-observer.ts` and `src/quota/reset-seen-store.ts`: Codex-only opt-in retains
+  absent short history for reset detection without manufacturing an incoming observation.
+  Its original timestamp survives repeated partial updates and persistence. Explicit clear
+  still removes the baseline; provider replacement behavior is unchanged.
+- Structure owners document the cache contract and link to its canonical statement.
 
-## OUT
+## Regression coverage
 
-- GUI row construction (`QuotaBars`, `normalizeQuotaForPlan`).
-- Changing `getAccountQuota` to strip elapsed shorts at read time (would hide
-  the reset instant from five-hour auto-refresh).
-- Changing WHAM `parseUsageQuota` Spark-primary attribution.
-- Hydrate/persist rewrite of already-elapsed tuples except insofar as the next
-  merge persist writes the cleaned snapshot.
+- Parser parity: Spark and WHAM weekly refresh remove stale display short fields; weekly-only,
+  credits-only, future resets, explicit incoming resets, and legacy updates in seconds/ms.
+- Main hard-lock policy: expired short 99 remains blocked across credits-only, weekly-only,
+  and short metadata-only updates. A fresh short zero releases the block.
+- Reset observation: two partial writes after expiry emit nothing, the next real short
+  rollover emits exactly one scheduled notification, and explicit clear removes the baseline.
+- Reset store: retained observation time survives persistence; non-opted-in writers still
+  replace omitted windows.
 
-## Diff (quota.ts)
+## Audit corrections
 
-Add helpers beside `snapshotHasShort`:
+Independent inherited-model reviewers found two regressions in the earlier patch: display
+expiry leaked into the main-policy cache, and dropping display short fields also discarded
+notification history. Both are corrected in the final implementation above.
 
-```ts
-const RESET_AT_SECONDS_MAX = 10_000_000_000; // same split as isTerminalShortWindow
-
-function shortResetHasElapsed(resetAt: number | undefined, now: number): boolean {
-  if (typeof resetAt !== "number" || !Number.isFinite(resetAt) || resetAt <= 0) return false;
-  const resetAtMs = resetAt < RESET_AT_SECONDS_MAX ? resetAt * 1000 : resetAt;
-  return resetAtMs <= now;
-}
-
-function assignCarriedShort(next, existing, now): void {
-  if (!existing || shortResetHasElapsed(existing.shortResetAt, now)) return;
-  // copy shortPercent/shortObservedAt/shortResetAt/shortWindowSeconds when present
-}
-```
-
-Replace the four unconditional `existing.short*` assignments in the
-`creditsOnly` branch and the `else` (no incoming short) branch with
-`assignCarriedShort(next, existing, updatedAt)`.
-
-Tighten `preserveKnownShort` so an elapsed existing short is not treated as
-known policy evidence:
-
-```ts
-const preserveKnownShort = policyEvidence
-  && quota.shortPercent === undefined
-  && finitePercent(existing?.shortPercent)
-  && !shortResetHasElapsed(existing?.shortResetAt, updatedAt);
-```
-
-In `updateAccountQuota`, skip copying short* when
-`shortResetHasElapsed(existing.shortResetAt, quota.updatedAt)`.
-
-Do **not** drop an incoming snapshot that itself contains short*. Auto-refresh
-and routing tests seed elapsed `shortResetAt` as a stored fact.
-
-## Tests (parser-parity)
-
-1. Seed elapsed short + weekly; apply Spark-model 5h headers from the existing
-   `SPARK_HEADERS` fixture → short* absent, weekly 21, Spark customWindows
-   present. (This is the live Pro failure: #4122 write path plus leftover carry.)
-2. Seed elapsed short; apply a Pro WHAM parse (weekly primary 604800s + Spark
-   additional_rate_limits) → short* absent, weekly and Spark customWindows kept.
-   This is the live refresh path for the affected account.
-3. Seed elapsed short; apply weekly-only headers (10080 minutes) → short* absent,
-   weekly updated.
-4. Seed live short (`shortResetAt = nowSec + 3600`); apply weekly-only headers →
-   short* retained, weekly updated.
-5. Seed elapsed short; `setAccountQuotaFromParsed({ shortPercent, shortResetAt })`
-   as an explicit incoming short → tuple remains (incoming-has-short path).
-6. Seed elapsed short; credits-only `setAccountQuotaFromParsed({ resetCredits })`
-   → short* absent, weekly and credits kept.
-
-Red before the patch: (1) and (2) fail because the else branch recopies
-`shortPercent: 4`. Green after: those rows pass; (3) and (4) keep current
-carry/store behavior.
-
-## Accept
-
-- c1: live cache + `quota.ts` file:line + alternatives in `000_plan.md`.
-- c2: diff + the four rows above (red-green by construction; local suite NOT RUN).
-- c3/c4: PR + merge evidence in closeout.
+No red run, local suite, typecheck, build, or install was executed. Remote CI must verify the
+final pushed head; static comparison alone is not a passing execution result.

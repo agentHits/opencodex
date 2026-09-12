@@ -4,7 +4,7 @@
 
 Problem: one Codex Pro pool account still renders an account-level 5h bar
 (`5시간 리셋 9월 10일 02:24 4%`) even though Pro has no account-level 5h window and
-#4122 already stopped new Spark 5h writes into that slot. Answer: stop
+Issue #4122 already stopped new Spark 5h writes into that slot. Answer: stop
 `mergeAccountQuota` from carrying an elapsed `short*` tuple across a refresh that
 does not include a short window. What changes: the polluted Pro row drops the
 phantom bar on the next ordinary weekly/Spark refresh; Plus/Team accounts whose
@@ -17,7 +17,7 @@ phantom bar on the next ordinary weekly/Spark refresh; Plus/Team accounts whose
 - Trigger: live 2026-09-12 dashboard report on http://localhost:10100/#codex-set
   plus HOTL objective to land a merged PR on `dev`.
 - Goal: a Pro account whose refresh reports no account-level short window stops
-  showing a 5h row; the stale cache tuple stops feeding policy readers; PR merged
+  showing a 5h row; the stale display tuple is removed while existing main-policy evidence remains protected; PR merged
   to `dev` with exact-head CI.
 - Non-goals: GUI redesign; WHAM Spark-primary remapping (WHAM already files Spark
   under customWindows and is not rewriting this account's shortObservedAt);
@@ -30,10 +30,10 @@ phantom bar on the next ordinary weekly/Spark refresh; Plus/Team accounts whose
   `tests/codex-integration/codex-quota-parser-parity.test.ts`. Local
   `bun test` / `bun run typecheck` / `bun run test` / `bun run build:gui`: NOT RUN
   by standing user rule (command not executed; no exit code). Conditional paths:
-  (1) elapsed short + weekly/Spark refresh with no short* — activation: seed
-  past `shortResetAt`, apply weekly or Spark headers, observe short* absent;
+  (1) elapsed short + weekly/Spark refresh with no `short*` — activation: seed
+  past `shortResetAt`, apply weekly or Spark headers, observe `short*` absent;
   (2) live short + weekly-only refresh — activation: seed future `shortResetAt`,
-  apply weekly headers, observe short* retained; (3) incoming explicit short
+  apply weekly headers, observe `short*` retained; (3) incoming explicit short
   even if elapsed — activation: `setAccountQuotaFromParsed` with past reset,
   observe the tuple stored so auto-refresh/scorer fixtures stay intact.
 - Stop condition: fetched `origin/dev` contains the PR commit and the live
@@ -69,7 +69,7 @@ account-level short. The one Team account there has a *fresh* short tuple
 (`shortObservedAt === updatedAt`, reset in the future) — a real Plus/Team 5h
 window that must be kept.
 
-`mergeAccountQuota` (`src/codex/quota.ts`) treats absence of short* as a partial
+`mergeAccountQuota` (`src/codex/quota.ts`) treats absence of `short*` as a partial
 update and copies the entire existing short tuple, then
 `setAccountQuotaFromParsed` always sets `updatedAt = Date.now()`. Disk hydration
 (`QUOTA_DISK_MAX_AGE_MS = 6h`) keys expiry on `updatedAt`
@@ -77,7 +77,7 @@ update and copies the entire existing short tuple, then
 on. The carried `shortResetAt` is already in the past, so the rendered row is
 unreachable, not merely stale-but-plausible.
 
-#4122 (`devlog/_fin/260909_spark_short_quota_attribution`) stopped *new* Spark
+Issue #4122 (`devlog/_fin/260909_spark_short_quota_attribution`) stopped *new* Spark
 header writes into the account short slot
 (`parseUpstreamQuotaHeaders` Spark branch, `src/codex/quota.ts:466-473`) and
 explicitly left polluted entries to the six-hour TTL. That assertion is false
@@ -94,10 +94,10 @@ once carry rewrites `updatedAt`.
   explicit sub-day *primary* as short (`src/codex/quota.ts:811-814`) and Spark
   additional limits as customWindows (`src/codex/quota.ts:871`). This account's
   `shortObservedAt` is frozen on 2026-09-09 while weekly and Spark customWindows
-  keep moving, so current WHAM refreshes are not rewriting short*.
+  keep moving, so current WHAM refreshes are not rewriting `short*`.
 - auth-api synthesizing a 5h row: DTO mapping copies stored short fields
   (`src/codex/auth-api.ts:296`) and only filters Spark *custom* windows for
-  display. It does not invent short*.
+  display. It does not invent `short*`.
 
 ## File-change map
 
@@ -120,8 +120,14 @@ outcome.
 
 ## SoT
 
-`src/codex/` is owned via `structure/INDEX.md` → runtime/config docs. No
-structure paragraph currently states the short-carry rule; the executable
-contract lives in `src/codex/quota.ts` and
-`tests/codex-integration/codex-quota-parser-parity.test.ts`. This unit does not
-add a structure page (no new owned area).
+The canonical current rule is in `structure/providers/openai-tiers.md`, with links from the
+other Codex structure owners and dashboard documentation. Display expiry never removes main
+hard-lock evidence. Reset-notification history retains omitted short observations separately.
+
+## Final audit refinement
+
+The initial design also expired identity-bound policy evidence. Independent review rejected
+that behavior: an elapsed deadline plus a credits-only update is not quota recovery. The final
+patch preserves policy evidence and removes only obsolete display/rotation carry. A second
+review found that notification history needed separate retention across those display updates;
+Codex now opts into that retention without changing other provider writers.

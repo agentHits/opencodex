@@ -6,10 +6,19 @@ import {
   parseUpstreamQuotaHeaders,
   parseUsageQuota,
   setAccountQuotaFromParsed,
+  updateAccountQuota,
 } from "../../src/codex/quota";
 import { codexPoolQuotaEvidence } from "../../src/routing/quota";
 
 describe("Spark quota survives partial header updates", () => {
+  it.each([1, 1000])("legacy quota updates expire short reset units (divisor %s)", divisor => {
+    clearAccountQuota();
+    setAccountQuotaFromParsed("legacy-expiry", { shortPercent: 4,
+      shortResetAt: (Date.now() - 60_000) / divisor, shortWindowSeconds: 18_000 });
+    updateAccountQuota("legacy-expiry", 29);
+    expect(getAccountQuota("legacy-expiry")).toEqual({ weeklyPercent: 29, updatedAt: expect.any(Number) });
+  });
+
   it("keeps the WHAM Spark window when an ordinary response updates standard quota", () => {
     clearAccountQuota();
     const refreshed = parseUsageQuota({
