@@ -1172,7 +1172,7 @@ describe("combo catalog capability intersection", () => {
           adapter: "openai-chat",
           baseUrl: "https://nova.example/v1",
           liveModels: false,
-          models: ["codex/gpt-5.6-sol", "codex/gpt-5.4-mini"],
+          models: ["codex/gpt-5.6-sol", "codex/gpt-5.5"],
         },
       },
       combos: {
@@ -1182,11 +1182,14 @@ describe("combo catalog capability intersection", () => {
           displayName: "Nova1 - codex-gpt-5.6-sol",
           targets: [{ provider: "Nova1", model: "codex/gpt-5.6-sol" }],
         },
-        "nova-mini": {
-          alias: "gpt-5.4-mini",
+        // gpt-5.5 stands in for the retired gpt-5.4-mini here: same pinned shape
+        // (272k window, low..xhigh, default medium), and it is still a native, so
+        // the alias has real capabilities to fall back to.
+        "nova-old-ladder": {
+          alias: "gpt-5.5",
           nativeAlias: true,
-          displayName: "Nova1 - codex-gpt-5.4-mini",
-          targets: [{ provider: "Nova1", model: "codex/gpt-5.4-mini" }],
+          displayName: "Nova1 - codex-gpt-5.5",
+          targets: [{ provider: "Nova1", model: "codex/gpt-5.5" }],
         },
       },
     };
@@ -1201,8 +1204,8 @@ describe("combo catalog capability intersection", () => {
       reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
       defaultReasoningEffort: "low",
     });
-    expect(rows.find(row => row.provider === "combo" && row.id === "nova-mini")).toMatchObject({
-      alias: "gpt-5.4-mini",
+    expect(rows.find(row => row.provider === "combo" && row.id === "nova-old-ladder")).toMatchObject({
+      alias: "gpt-5.5",
       nativeAlias: true,
       contextWindow: 272_000,
       maxInputTokens: 272_000,
