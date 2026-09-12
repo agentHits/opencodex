@@ -1958,6 +1958,7 @@ export const zh: Record<TKey, string> = {
   "modal.freeTierDefault": "无需 API 密钥，开箱即用。",
   "modal.tab.accounts": "账户",
   "modal.tab.free": "免费",
+  "modal.tab.local": "本地",
   "modal.tab.paid": "付费",
   "modal.accountsHint": "在此登录 ChatGPT/Codex、OAuth 与 API 密钥账户。OpenAI 为内置提供商 — 请登录，无需再次添加。",
   "modal.accountsCodexAuthLink": "Codex 认证",

@@ -1142,6 +1142,7 @@ export const tr: Record<TKey, string> = {
   "modal.freeTierDefault": "API anahtarı gerekmez. Doğrudan çalışır.",
   "modal.tab.accounts": "Hesaplar",
   "modal.tab.free": "Ücretsiz",
+  "modal.tab.local": "Yerel",
   "modal.tab.paid": "Ücretli",
   "modal.accountsHint": "ChatGPT/Codex ve OAuth hesaplarına buradan giriş yapın.",
   "modal.accountsCodexAuthLink": "Codex Kimlik Doğrulaması",

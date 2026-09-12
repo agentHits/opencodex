@@ -1128,6 +1128,7 @@ export const fr: Record<TKey, string> = {
   "modal.freeTierDefault": "Aucune clé API requise. Fonctionne immédiatement.",
   "modal.tab.accounts": "Comptes",
   "modal.tab.free": "Gratuit",
+  "modal.tab.local": "Local",
   "modal.tab.paid": "Payant",
   "modal.accountsHint": "Connectez-vous ici à ChatGPT/Codex, aux fournisseurs OAuth et aux comptes avec clé API. OpenAI est intégré : connectez-vous au lieu de l’ajouter de nouveau.",
   "modal.accountsCodexAuthLink": "Codex Auth",

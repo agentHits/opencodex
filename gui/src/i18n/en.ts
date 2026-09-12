@@ -1155,6 +1155,7 @@ export const en = {
   "modal.freeTierDefault": "No API key required. Works out of the box.",
   "modal.tab.accounts": "Accounts",
   "modal.tab.free": "Free",
+  "modal.tab.local": "Local",
   "modal.tab.paid": "Paid",
   "modal.accountsHint": "Sign in to ChatGPT/Codex, OAuth providers, and API-key accounts here. OpenAI is built in — log in rather than adding it again.",
   "modal.accountsCodexAuthLink": "Codex Auth",

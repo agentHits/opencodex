@@ -7,6 +7,7 @@
  */
 
 import { providerTier, type ProviderTier, type WorkspaceProvider, type WorkspaceItem } from "../../provider-workspace/catalog";
+import { isLocalProvider } from "../../provider-workspace/kind";
 import type { ProviderPayload } from "../../provider-payload";
 
 /** Row shape returned by GET /api/provider-presets (mirrors DerivedProviderPreset). */
@@ -73,10 +74,41 @@ export function presetTier(preset: CatalogPreset): ProviderTier {
   return providerTier(preset.id, presetTierInput(preset));
 }
 
-/** Tab buckets for the catalog: accounts / free / paid, preserving input order per bucket. */
-export function bucketPresets(presets: CatalogPreset[]): Record<ProviderTier, CatalogPreset[]> {
-  const buckets: Record<ProviderTier, CatalogPreset[]> = { accounts: [], free: [], paid: [] };
-  for (const preset of presets) buckets[presetTier(preset)].push(preset);
+/**
+ * Browse tabs in the add-provider catalog. Four-way, and deliberately NOT `ProviderTier`:
+ * the workspace keeps a three-way pricing/ownership tier for badges, rail sorting and the
+ * Free count, where `isFreeProvider` folds local runtimes into free on purpose. Only the
+ * catalog needs Local as a browse destination, so the split stops at this file.
+ */
+export type CatalogTier = "accounts" | "free" | "local" | "paid";
+
+/**
+ * A local-runtime row: explicit `local` auth or a loopback base URL. Delegates to the one
+ * helper the providers rail already classifies with, so a preset and its configured
+ * counterpart can never disagree about being local.
+ */
+export function isLocalCatalogPreset(preset: CatalogPreset): boolean {
+  return isLocalProvider(presetTierInput(preset));
+}
+
+/** Tab buckets for the catalog: accounts / free / local / paid, preserving input order per bucket. */
+export function bucketPresets(presets: CatalogPreset[]): Record<CatalogTier, CatalogPreset[]> {
+  const buckets: Record<CatalogTier, CatalogPreset[]> = { accounts: [], free: [], local: [], paid: [] };
+  for (const preset of presets) {
+    // Local is peeled off AFTER `presetTier` has spoken, which is what lets `presetTier`
+    // keep returning `"free"` for Ollama and leaves the workspace Free count untouched.
+    //
+    // Accounts is checked first as a forward guard, not because the case can arise today:
+    // `isAccountProvider` requires the exact `https://chatgpt.com/backend-api/codex` base
+    // URL, so no row can be both accounts-tier and loopback. If that classifier is ever
+    // widened, this ordering is what stops a local-looking account row from being pulled
+    // out of the tab where a user logs in.
+    const tier = presetTier(preset);
+    const bucket: CatalogTier = tier === "accounts" ? "accounts"
+      : isLocalCatalogPreset(preset) ? "local"
+      : tier;
+    buckets[bucket].push(preset);
+  }
   return buckets;
 }
 

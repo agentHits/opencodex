@@ -1,7 +1,7 @@
 /**
  * ProviderCatalog — the browse surface of the add-provider modal: Accounts /
- * Free / Paid tabs over a single searchable scroll list, and account login
- * rows on the Accounts tab. Presentational: presets/usage arrive via props;
+ * Free / Local / Paid tabs over a single searchable scroll list, and account
+ * login rows on the Accounts tab. Presentational: presets/usage arrive via props;
  * view state (tab, query) lives here; selection lifts up.
  */
 import { useMemo, useState } from "react";
@@ -11,6 +11,7 @@ import {
   pinSponsors,
   filterPresets,
   type CatalogPreset,
+  type CatalogTier,
 } from "./provider-presets";
 import { shouldShowLoginHint, type CatalogLoginHint } from "./login-hint-visibility";
 import { LoginHint } from "../login-url-block";
@@ -26,7 +27,17 @@ export type AccountLoginRow = {
   href?: string;
 };
 
-export type CatalogTier = "accounts" | "free" | "paid";
+export type { CatalogTier };
+
+/** Tab order. Local sits between Free and Paid: logged in, free cloud, my machine, billed. */
+const TIER_TABS = ["accounts", "free", "local", "paid"] as const;
+
+const TIER_TAB_LABEL = {
+  accounts: "modal.tab.accounts",
+  free: "modal.tab.free",
+  local: "modal.tab.local",
+  paid: "modal.tab.paid",
+} as const;
 
 const EMPTY_USAGE_RANK: Record<string, number> = {};
 const EMPTY_ACCOUNT_ROWS: AccountLoginRow[] = [];
@@ -122,7 +133,7 @@ export default function ProviderCatalog({
   return (
     <div className="provider-catalog">
       <div className="provider-catalog-tabs" role="tablist">
-        {(["accounts", "free", "paid"] as const).map(candidate => (
+        {TIER_TABS.map(candidate => (
           <button type="button"
             key={candidate}
             role="tab"
@@ -130,7 +141,7 @@ export default function ProviderCatalog({
             className={`provider-catalog-tab${tier === candidate ? " active" : ""}`}
             onClick={() => { setTier(candidate); setQuery(""); }}
           >
-            {t(candidate === "accounts" ? "modal.tab.accounts" : candidate === "free" ? "modal.tab.free" : "modal.tab.paid")}
+            {t(TIER_TAB_LABEL[candidate])}
           </button>
         ))}
       </div>
