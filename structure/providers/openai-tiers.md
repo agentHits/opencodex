@@ -416,3 +416,9 @@ successful main usage refresh clears the runtime mark.
 WHAM and response-header producers pass the exact captured pool writer, including refreshed replay and compact outcomes. Admission rechecks credential generation and publication UUID. Same-account refresh preserves prior history; replacement/removal invalidates it. Raw invalid percentages discard the entire trusted observation before display clamping; carried windows, reset credits alone, native main and staged-login probes never become durable pool history.
 
 `GET /api/codex-auth/quota/history` and `ocx account history openai <pool-account-id>` read only cached, identity-checked observations. The optional limit is 1–200. Public results omit the internal publication UUID and credential generation. These observations are inputs for capacity estimation; percentages alone do not establish absolute token capacity.
+
+## Observed effective token capacity
+
+`src/codex/quota-capacity.ts` joins raw account-family observations with reported single-send usage attempts wholly contained within matching, unexpired reset intervals. Source, window duration and monthly-primary provenance must match; percentage delta must be at least one point. Duplicate request/attempt identities never multiply usage. Local, estimated, multi-send, independent-model and absent-attempt evidence does not supply a capacity sample.
+
+The history read API reports a median effective token estimate and interval sample count with low confidence and explicit coverage/rounding/label-continuity assumptions. It is not a provider token limit or mathematical lower bound and never affects account selection. Truncated, unavailable or excessive usage-ledger reads produce insufficient evidence while retaining history. Publication UUID and explicit unique account label are checked around the asynchronous read; identity changes discard the estimate and refresh the returned history.

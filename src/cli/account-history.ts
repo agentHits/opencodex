@@ -41,5 +41,15 @@ export async function cmdAccountHistory(args: string[], deps: AccountDeps): Prom
       console.log(`${historyDate(observation.observedAt)}\t${observation.source}\t${window.family}/${window.window}\t${window.usedPercent}%\t${historyDate(window.resetAtMs)}`);
     }
   }
+  const capacity = result.json.capacity;
+  if (capacity && typeof capacity === "object" && "status" in capacity && capacity.status === "estimated"
+    && "estimates" in capacity && Array.isArray(capacity.estimates)) {
+    console.log("Effective capacity estimate (low confidence; not a provider token limit):");
+    for (const estimate of capacity.estimates) {
+      if (estimate && Number.isFinite(estimate.estimatedTokens) && Number.isSafeInteger(estimate.sampleCount)) {
+        console.log(`${estimate.window}\t~${estimate.estimatedTokens} reported tokens / 100%\t${estimate.sampleCount} samples`);
+      }
+    }
+  }
   return 0;
 }

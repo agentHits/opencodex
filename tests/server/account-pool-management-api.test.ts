@@ -687,7 +687,7 @@ describe("unified pool-settings contract (#695 wp5c)", () => {
       await unknown.text();
       const response = await fetch(new URL(`${endpoint}?accountId=history-row&limit=1`, server.url));
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ accountId: "history-row", observations: [], retention: { maxObservations: 200, maxAgeDays: 30 }, truncated: false });
+      expect(await response.json()).toEqual({ accountId: "history-row", observations: [], retention: { maxObservations: 200, maxAgeDays: 30 }, truncated: false, capacity: { status: "insufficient-evidence", reason: "identity_unavailable", estimates: [], assumptions: expect.any(Array) } });
       const { saveCodexAccountCredential, capturePoolQuotaWriter } = await import("../../src/codex/account-store");
       const { setAccountQuotaFromParsed } = await import("../../src/codex/quota");
       const credential = { accessToken: "history-secret-access", refreshToken: "history-secret-refresh", expiresAt: Date.now() + 3600_000, chatgptAccountId: "private-history-account" };

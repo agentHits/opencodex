@@ -1,3 +1,7 @@
+import { CODEX_ACCOUNT_LOG_LABEL_RE } from "./account-label";
+import { poolQuotaHistoryIdentity } from "./account-store";
+import { estimateCodexQuotaCapacity, insufficientCodexCapacity, type CodexCapacityResult } from "./quota-capacity";
+import { readUsageSnapshotForManagement } from "../usage/log";
 import { capturePoolQuotaWriter } from "./account-store";
 import type { PoolQuotaWriter } from "./quota-types";
 import { getAccountQuotaHistory, isValidWhamHistoryObservation } from "./quota";
@@ -44,6 +48,7 @@ import {
 } from "./account-priority";
 import {
   claimDueCodexQuotaRecoveryProbes,
+  codexQuotaScopeForModel,
   claimManualResetCooldowns,
   settleManualResetCooldown,
   type ManualResetCooldownClaim,
@@ -2543,8 +2548,35 @@ export async function handleCodexAuthAPI(
       || (rawLimit !== null && !/^(?:[1-9]|[1-9][0-9]|1[0-9]{2}|200)$/.test(rawLimit))) {
       return jsonResponse({ error: "A stored pool accountId and optional limit from 1 to 200 are required" }, 400);
     }
+    const runtimeConfig = getRuntimeConfig(config);
+    const account = configuredPoolAccount(runtimeConfig, accountId);
+    if (!account) return jsonResponse({ error: "Unknown pool account" }, 404);
+    const identity = poolQuotaHistoryIdentity(accountId);
+    const allHistory = getAccountQuotaHistory(accountId);
+    const limit = rawLimit === null ? 200 : Number(rawLimit);
+    const history = { ...allHistory, observations: allHistory.observations.slice(-limit), truncated: allHistory.observations.length > limit };
+    const label = account.logLabel;
+    const labelStillUnique = () => {
+      const current = getRuntimeConfig(config);
+      return configuredPoolAccount(current, accountId)?.logLabel === label
+        && current.codexAccounts?.filter(row => codexAccountLogLabel(row) === label).length === 1;
+    };
+    let capacity: CodexCapacityResult = insufficientCodexCapacity("identity_unavailable");
+    if (identity && identity === poolQuotaHistoryIdentity(accountId) && label && CODEX_ACCOUNT_LOG_LABEL_RE.test(label) && labelStillUnique()) {
+      try {
+        const usage = await readUsageSnapshotForManagement();
+        if (poolQuotaHistoryIdentity(accountId) !== identity || !labelStillUnique()) capacity = insufficientCodexCapacity("identity_changed");
+        else if (!usage.revision) capacity = insufficientCodexCapacity("ledger_unavailable");
+        else if (usage.truncatedPrefixBytes > 0 || usage.entriesTruncated || usage.entriesDropped > 0) capacity = insufficientCodexCapacity("ledger_truncated");
+        else capacity = estimateCodexQuotaCapacity(allHistory.observations, usage.entries, label,
+          model => { const scope = codexQuotaScopeForModel(model); return scope !== "spark" && scope !== "reserve"; });
+      } catch { capacity = insufficientCodexCapacity("ledger_unavailable"); }
+    }
     if (!configuredPoolAccount(getRuntimeConfig(config), accountId)) return jsonResponse({ error: "Unknown pool account" }, 404);
-    return jsonResponse({ accountId, ...getAccountQuotaHistory(accountId, rawLimit === null ? 200 : Number(rawLimit)) });
+    if (identity !== poolQuotaHistoryIdentity(accountId) || (identity && label && !labelStillUnique())) {
+      return jsonResponse({ accountId, ...getAccountQuotaHistory(accountId, limit), capacity: insufficientCodexCapacity("identity_changed") });
+    }
+    return jsonResponse({ accountId, ...history, capacity });
   }
 
   if (url.pathname === "/api/codex-auth/quota" && req.method === "GET") {

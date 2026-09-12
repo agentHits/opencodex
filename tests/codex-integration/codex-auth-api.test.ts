@@ -1,3 +1,4 @@
+import * as usageHistoryModule from "../../src/usage/log";
 import { getAccountQuotaHistory } from "../../src/codex/quota";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { ServerWebSocket } from "bun";
@@ -1050,6 +1051,42 @@ describe("codex-auth API", () => {
       clearCodexQuotaPrimeState();
       cleanup();
     }
+  });
+
+  test("history capacity uses reported intervals and invalidates after identity changes during the ledger read", async () => {
+    const config = makeConfig();
+    seedPoolAccount(config, { id: "capacity-a", email: "capacity@example.test", plan: "plus" });
+    config.codexAccounts![0].logLabel = "pabcdef";
+    const { capturePoolQuotaWriter } = await import("../../src/codex/account-store");
+    const record = readCodexAccountRecord("capacity-a")!;
+    const writer = capturePoolQuotaWriter("capacity-a", { ...record.credential!, generation: record.generation })!;
+    const now = Date.now();
+    for (const [observedAt, weeklyPercent] of [[now - 2000, 10], [now, 20]]) {
+      const raw = { weeklyPercent, weeklyResetAt: now + 100_000 };
+      setAccountQuotaFromParsed("capacity-a", raw, undefined, undefined, raw, { writer, observedAt, source: "wham", raw });
+    }
+    usageHistoryModule.appendUsageEntry({ requestId: "capacity-request", timestamp: now - 1000, durationMs: 100, provider: "openai", model: "gpt-5.5", status: 200, usageStatus: "reported", attempts: [{
+      ordinal: 1, provider: "openai", model: "gpt-5.5", adapter: "openai-responses", status: 200, durationMs: 100, sendCount: 1,
+      recoveryKinds: [], usageStatus: "reported", accountLogLabel: "pabcdef", usage: { inputTokens: 800, outputTokens: 200, totalTokens: 1000 },
+    }] });
+    const request = () => new Request("http://localhost/api/codex-auth/quota/history?accountId=capacity-a&limit=1");
+    const req = request();
+    const result = await handleCodexAuthAPI(req, new URL(req.url), config);
+    const body = await result!.json() as { observations: unknown[]; capacity: { status: string; estimates: unknown[] } };
+    expect(body.observations).toHaveLength(1);
+    expect(body.capacity.estimates).toEqual([{ window: "weekly", estimatedTokens: 10000, sampleCount: 1, confidence: "low" }]);
+    const originalRead = usageHistoryModule.readUsageSnapshotForManagement;
+    const read = spyOn(usageHistoryModule, "readUsageSnapshotForManagement").mockImplementation(async () => {
+      const snapshot = await originalRead();
+      saveCodexAccountCredential("capacity-a", record.credential!);
+      return snapshot;
+    });
+    try {
+      const next = request();
+      const response = await handleCodexAuthAPI(next, new URL(next.url), config);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(await response!.json()).toMatchObject({ observations: [], capacity: { status: "insufficient-evidence", reason: "identity_changed", estimates: [] } });
+    } finally { read.mockRestore(); }
   });
 
   test("GET /api/codex-auth/accounts returns array with main", async () => {

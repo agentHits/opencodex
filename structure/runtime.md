@@ -229,3 +229,5 @@ Cline CLI joins the existing export/client integration registries. Explicit CLI 
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
 
 Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
+
+The account history response can include a [low-confidence effective capacity estimate](providers/openai-tiers.md#observed-effective-token-capacity); usage normalization retains local-answer provenance so local responses cannot supply samples.
