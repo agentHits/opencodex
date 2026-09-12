@@ -101,6 +101,20 @@ import type { ProviderQuota } from "./quota-types";
 /** Matches the reference implementation's own bound for the same endpoint. */
 const FAILURE_BACKOFF_MS = 5 * 60_000;
 
+/**
+ * [audit fold] Minimum spacing between two SUCCESSFUL mints for one account.
+ *
+ * A failure backoff alone is not enough. Two callers bypass the ordinary quota cache:
+ * GET /api/provider-quotas?refresh=1 (src/server/management/provider-routes.ts:747-748)
+ * and the reset poller, which forces every tick (src/quota/reset-poller.ts:83). Without
+ * this, a user holding down a refresh button would drive one key-mint per click.
+ *
+ * This TTL is deliberately NOT conditioned on forceRefresh: a forced refresh may skip a
+ * display cache, but it may not spend another mint. When the TTL holds, the probe returns
+ * null and the caller serves the row this probe already wrote to the account cache.
+ */
+const SUCCESS_TTL_MS = 5 * 60_000;
+
 export interface MuseKeyQuotaDeps {
   fetchImpl?: typeof fetch;
   now?: () => number;
@@ -108,10 +122,12 @@ export interface MuseKeyQuotaDeps {
 
 /** Keyed by account id: one account's rate limit must not silence another's. */
 const backoffUntil = new Map<string, number>();
+const lastSuccessAt = new Map<string, number>();
 
 /** Test seam only. */
 export function resetMuseKeyQuotaBackoff(): void {
   backoffUntil.clear();
+  lastSuccessAt.clear();
 }
 
 export function museKeyQuotaBackoffRemainingMs(accountId: string, now = Date.now()): number {
@@ -125,12 +141,17 @@ export async function fetchMuseKeyQuotaSnapshot(
   signal?: AbortSignal,
 ): Promise<ProviderQuota | null> {
   const now = deps.now ?? Date.now;
-  if (museKeyQuotaBackoffRemainingMs(accountId, now()) > 0) return null;
+  const at = now();
+  if (museKeyQuotaBackoffRemainingMs(accountId, at) > 0) return null;
+  // Success spacing, enforced even for a forced refresh. See SUCCESS_TTL_MS.
+  const last = lastSuccessAt.get(accountId);
+  if (last !== undefined && at - last < SUCCESS_TTL_MS) return null;
   try {
     // No `onboard`: this is a read, not a login. Onboarding on a poll would be a
     // side effect on the user's account.
     const payload = await mintMuseApiKey(oauthAccessToken, {}, deps, signal);
     backoffUntil.delete(accountId);
+    lastSuccessAt.set(accountId, now());
     if (payload.isSubsActive === false) return null;
     return museUsageWindowsToQuota(payload.subsUsage);
   } catch {
@@ -225,5 +246,6 @@ this provider, not the quota sentence; confirm it still passes rather than assum
 | Risk | Disposition |
 |---|---|
 | Calling the mint endpoint rotates the key | `001` §B records that Meta returns the same key for an account, which is why the reference reuses the endpoint the same way. If it ever rotated, the stored key would 401 and the existing reauth path would surface it; the probe still never writes a key. |
-| The probe counts against the subscription | Auth-plane call per `001` §B, backed off to at most one attempt per 5 minutes per account, and never invoked on the request path. |
+| The probe counts against the subscription | Auth-plane call per `001` §B, and rate-limited on BOTH outcomes: at most one success and one failure attempt per account per 5 minutes, enforced even when the caller forces a refresh. Never invoked on the request path. |
+| A held-down refresh button, or the reset poller, drives repeated mints | `SUCCESS_TTL_MS` ignores `forceRefresh` by design. Verified callers: `provider-routes.ts:747-748` (`?refresh=1`) and `reset-poller.ts:83` (`force=true` per tick). |
 | `subs_usage` absent on a non-onboarding mint | `museUsageWindowsToQuota` returns `null`, the wrapper returns `null`, and the passive row is served. Absence is never rendered as zero usage. |

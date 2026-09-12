@@ -65,14 +65,17 @@ grant. The existing 351 lines must pass unmodified.
 | 31 | darwin, credential present, plain login | Import wins; device stub never called |
 | 32 | darwin, no pointer | Device stub called once; its credential returned |
 | 33 | darwin, pointer without a Meta account | Device stub called |
-| 34 | Keychain read times out | Device stub called |
+| 34 | Keychain read times out | **Throws** `/within 5s/`; device stub never called (fold 2) |
 | 35 | Corrupt pointer JSON | **Throws**; device stub never called |
 | 36 | Unsupported storage backend | **Throws**; device stub never called |
 | 37 | `importLocal: "off"` (forceLogin) | Import never attempted; device stub called |
 | 38 | `OAUTH_PROVIDERS["meta-muse"].login` with `{forceLogin:true}` | Maps to `importLocal: "off"` |
 | 39 | Non-darwin, plain login | Device stub called; paste **not** the first resort |
 | 40 | Device fails, `onManualCodeInput` present | Paste path runs; `source === "manual"`; the reason names the device failure |
-| 41 | Device fails, no `onManualCodeInput` | The device error propagates unchanged |
+| 41 | Device fails, no `onManualCodeInput`, darwin | Throws; message names the device failure |
+| 41b | Device fails, no paste surface, win32 | Message contains the device reason **and** `dev.meta.ai` **and** `META_MODEL_API_KEY` (fold 3) |
+| 41c | Empty paste on win32 | Message still contains `no credential to import` (fold 3) |
+| 41d | No `loginDevice` stub, injected `fetchImpl` | The device attempt uses the injected fetch; zero real network calls (fold 1) |
 | 42 | Device cancelled | Rethrown; no paste prompt |
 | 43 | Consent warning | Still emitted before the first read, on every path including device |
 | 44 | `refreshMetaMuseToken` with a device credential | `muse` preserved; `source === "oauth"` |
@@ -92,6 +95,8 @@ grant. The existing 351 lines must pass unmodified.
 | 53 | Probe body | No `onboard` key is sent |
 | 54 | Failure engages backoff | Second call within 5 minutes performs **zero** fetches |
 | 55 | Backoff expiry | A call after 5 minutes (injected `now`) fetches again |
+| 55b | Success TTL | A second call 1 minute after a SUCCESS performs zero fetches |
+| 55c | Success TTL ignores force | The same holds when the caller forces a refresh; only injected `now` advancing past 5 minutes permits another mint |
 | 56 | Per-account isolation | Account A's backoff does not silence account B |
 | 57 | Key never escapes | The returned object has no `apiKey`/`api_key` and no value containing the canary key |
 | 58 | Never throws | A fetch that rejects yields `null`, not an exception |

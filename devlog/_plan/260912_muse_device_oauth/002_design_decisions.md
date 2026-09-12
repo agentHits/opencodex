@@ -30,13 +30,28 @@ KiroOAuthMetadata` already occupies that role at `src/oauth/types.ts:38-53`, doc
 "Never returned by management APIs; persisted only inside the protected auth-store
 boundary."
 
+**Corrected during the A-phase audit:** that sentence is true of `kiro`, but not for the
+reason this document first implied. There is no kiro-specific redactor. Outbound safety
+comes from hand-built allowlists — `OAuthAccountSummary` is assembled field by field at
+`src/oauth/index.ts:1839-1850`, and `OAuthAccessSnapshot` (`src/oauth/index.ts:85-100`)
+carries an explicitly named "safe request-routing subset". So the protection `muse`
+inherits is *construction*, and it holds only as long as nobody adds the field to either
+shape. That prohibition is written into the type docstring in `010` rather than left as a
+convention.
+
 Consequences, all desirable: zero change to any request path; an imported or pasted
 credential simply has no `muse` field, which is exactly the capability signal `030` needs
 to decide whether an on-demand quota probe is possible; and the account token never enters
 a code path that logs or projects a bearer.
 
-Falsified if: a store or management surface serializes `OAuthCredentials` wholesale to an
-untrusted consumer. `020` verifies the `kiro` field's redaction path and follows it.
+Logging is protected by a different and stronger mechanism, which is worth knowing before
+adding any credential field: `src/oauth/log.ts:31-33` rejects any field whose normalized
+name ends in `_token`, `_secret` or `_code`. `oauthAccessToken` normalizes to
+`oauth_access_token`, so it cannot be logged even by accident, and the planned
+`device_code` is covered by the same rule.
+
+Falsified if: someone adds `muse` to either allowlist, or a new surface serializes
+`OAuthCredentials` wholesale. Both are visible in review; neither is silent.
 
 ## B. How `x-api-version` reaches the wire
 
@@ -78,9 +93,21 @@ This is the one place where being stricter than the reference matters: the refer
 usage provider declares `supports()` by parsing the credential, and returns `null` when it
 cannot — the same idea, expressed as a per-call parse instead of a capability gate.
 
-Falsified if: the mint endpoint turns out to charge or to count against the subscription.
-`001` §B shows it as an auth-plane call, but this is second-party evidence, which is why
-the probe keeps a 5-minute failure backoff and is never called on the request path.
+**Hardened during the A-phase audit.** A failure backoff alone is not enough, because two
+callers bypass the ordinary quota cache: `GET /api/provider-quotas?refresh=1`
+(`src/server/management/provider-routes.ts:747-748`) and the reset poller, which calls
+`fetchProviderQuotaReports(loadConfig(), true)` on every tick
+(`src/quota/reset-poller.ts:83`). A forced refresh skips `CACHE_TTL_MS`
+(`src/providers/quota-wire.ts:13`), so a user holding down a refresh button would drive one
+key-mint request per click. The probe therefore keeps its OWN success TTL and honours it
+regardless of `forceRefresh` (`030` §C). This is the strongest reason to gate on
+capability: the probe is the only quota source in this repository that touches an endpoint
+with a side-effecting name.
+
+Falsified if: the mint endpoint turns out to charge, to count against the subscription, or
+to rotate the key. `001` §B shows it as an auth-plane call returning the same key, but that
+is second-party evidence, which is exactly why the probe is rate-limited on both success
+and failure and never runs on the request path.
 
 ## D. Why there is no PKCE here
 

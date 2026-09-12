@@ -99,6 +99,33 @@ and each is checked by a named test in `040`:
 | `staticHeaders` collides with a user header | `mergeRegistryStaticHeaders` (`src/providers/registry.ts:3494-3505`) already yields to user-claimed names |
 | Scope creep into shared login surfaces | `020` treats the shared CLI device-code rendering as an explicitly optional item, decided at wp3's P |
 
+## Audit record (wp1, A phase)
+
+Two independent grok-4.6 reviewers audited this unit against the repository, and the main
+agent audited it against the pinned test contracts. Six findings were folded; none was
+rebutted. The plan as first written would not have compiled and would have broken four
+existing tests.
+
+| # | Source | Finding | Fold |
+|---|---|---|---|
+| 1 | main | The device call did not forward the injected `fetchImpl`, so any existing test reaching it would have called `auth.meta.com` for real | `020` [fold 1]: `fetchImpl`, `sleep` and `now` are forwarded into `loginMetaMuseDevice` |
+| 2 | main | A Keychain read that times out was to become a fallthrough, breaking `meta-muse-oauth.test.ts:159-166` and, worse, starting a browser grant to solve a permissions dialog | `020` [fold 2]: it stays a throw; only a missing pointer or a pointer without a Meta account falls through |
+| 3 | main | On a host with no paste surface the device error would have replaced the existing guidance, breaking the `dev.meta.ai`, `META_MODEL_API_KEY` and `no credential to import` assertions | `020` [fold 3]: `noPasteSurfaceError` composes the device reason WITH the existing guidance |
+| 4 | reviewer B1 (FAIL) | `muse` was scheduled for wp3 while wp2 returns it, so wp2 fails to compile with TS2353 | `010`: the type moves into wp2, same commit as the module |
+| 5 | reviewer B2 | `002` implied a kiro-specific redactor protects the field; the real mechanism is hand-built allowlists | `002` §A corrected, and the prohibition is written into the type docstring |
+| 6 | reviewer B2 | A 5-minute FAILURE backoff does not stop repeated mints, because `?refresh=1` and the reset poller bypass the quota cache | `030` §C adds `SUCCESS_TTL_MS`, enforced even against a forced refresh |
+
+Reviewer B1 also confirmed as clean: `exactOptionalPropertyTypes` is off so the conditional
+spreads are valid, `sanitizeApiKeyValue` accepts `string | undefined`, the
+`AbortSignal.any` pattern matches `src/oauth/nous.ts:399`, `"oauth"` is a legal
+`OAuthCredentialSource`, and the planned `LLM|` regex is character-identical to
+`src/oauth/meta-muse.ts:270`. Reviewer B2 confirmed that `000`'s reopen framing does not
+claim vendor authorization it does not have, which was the single most important question
+in the audit.
+
+An earlier pair of reviewers with a broader packet returned nothing across four wait
+cycles and was retired; the packets above were narrowed and re-dispatched. That retirement
+is recorded because it consumed the same-agent retry.
 ## Verification posture
 
 Targeted, not suite-wide. Each implementation cycle's C runs `bun run test` against the

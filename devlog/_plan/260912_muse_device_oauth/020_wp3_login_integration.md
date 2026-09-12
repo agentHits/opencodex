@@ -1,12 +1,19 @@
 # wp3 — login integration and fallback order
 
-Four files change. After this phase `ocx login meta-muse` can complete a device grant,
+Three files change. After this phase `ocx login meta-muse` can complete a device grant,
 and an existing user's login behaves exactly as it does today.
 
-**MODIFY** `src/oauth/types.ts` — the credential field
-**MODIFY** `src/oauth/meta-muse.ts` — selection order, refresh metadata preservation
+**MODIFY** `src/oauth/meta-muse.ts` — selection order, deps forwarding, refresh metadata
 **MODIFY** `src/oauth/index.ts` — registration
 **MODIFY** `src/providers/registry.ts` — the user-visible note
+
+`src/oauth/types.ts` moved to `010` during the A-phase fold: the module that returns the
+field cannot compile without it.
+
+> **Audit folds carried into this document (A-phase):** three of this phase's original
+> claims were wrong, all found by reading the existing test file rather than trusting the
+> plan. They are marked **[fold N]** below. The claim "the existing 351-line test file
+> passes unmodified" survives only because of them.
 
 ## The selection order, and why
 
@@ -29,41 +36,21 @@ Device now precedes paste on every platform, which is the real user-visible win:
 or Linux host currently has no login at all, only a paste field
 (`src/oauth/meta-muse.ts` non-darwin branch).
 
-## `src/oauth/types.ts`
+## The credential field
 
-Add beside `KiroOAuthMetadata`, whose role this mirrors (`002` §A):
+Declared in `010` alongside the module that returns it. wp3 only consumes it, in
+`refreshMetaMuseToken` below.
 
-```ts
-/**
- * Account-scoped Muse Code data that is NOT the request bearer.
- *
- * The Model API is authenticated by the `LLM|` key in `access`; this token authenticates
- * the Meta ACCOUNT and exists only to mint that key and to read subscription usage
- * (devlog/_plan/260912_muse_device_oauth/002 §A). Keeping it out of `access` is what lets
- * every request path stay unchanged.
- */
-export interface MuseOAuthMetadata {
-  /** Meta account access token from the device grant. Never sent to api.meta.ai/v1. */
-  oauthAccessToken: string;
-  /** Epoch ms of the mint that produced the stored key. */
-  mintedAt?: number;
-  /** Subscription tier label as Meta reported it. Display only. */
-  tierName?: string;
-}
-```
+**Resolved during the A-phase fold** (it was an open verification item): `muse` stays out
+of every outbound response because those projections are hand-built allowlists, not
+redactors. `OAuthAccountSummary` is constructed field by field at
+`src/oauth/index.ts:1839-1850`; `projectOAuthAccountHealth` and `oauthAccountHealthFields`
+(`src/oauth/health.ts:59-66,166-178`) take scalar inputs and never receive a credential.
+Logging is separately safe: `src/oauth/log.ts:31-33` refuses any field whose normalized
+name ends in `_token`, and `oauthAccessToken` normalizes to `oauth_access_token`.
 
-and on `OAuthCredentials`, directly after the `kiro` field:
-
-```ts
-  /** Never returned by management APIs; persisted only inside the protected auth-store boundary. */
-  muse?: MuseOAuthMetadata;
-```
-
-**Verify before writing:** `kiro` is described with that same sentence at
-`src/oauth/types.ts:52-53`. wp3's first step is to confirm the projection path that makes
-it true — `rg -n "\\bkiro\\b" src/oauth/health.ts src/server/management/oauth-account-routes.ts`
-— and to follow it for `muse`. If `kiro` turns out to be redacted by an allowlist rather
-than by omission, `muse` joins the same allowlist and this doc is amended.
+The rule this imposes on wp3 and wp4 is therefore explicit, and `010` states it in the
+type's own docstring: never add `muse` to `OAuthAccountSummary` or `OAuthAccessSnapshot`.
 
 ## `src/oauth/meta-muse.ts`
 
@@ -97,6 +84,9 @@ export interface MuseImportDeps {
   fetchImpl?: typeof fetch;
   /** Injected so login tests exercise the order without running a grant. */
   loginDevice?: (ctrl: OAuthController) => Promise<OAuthCredentials>;
+  /** [fold 1] Forwarded into the device grant so no test can reach the network. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  now?: () => number;
 }
 ```
 
@@ -130,7 +120,15 @@ Body changes, in order:
 +   if (imported) return imported;
 + }
 +
-+ const device = deps.loginDevice ?? (c => loginMetaMuseDevice(c));
++ // [fold 1] fetchImpl/sleep/now are FORWARDED. Without this, any existing test that
++ // reaches the device path would call auth.meta.com for real: the injected fetch stops
++ // at loginMetaMuse today, and the device module carries its own deps object.
++ const device = deps.loginDevice
++   ?? (c => loginMetaMuseDevice(c, {
++     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
++     ...(deps.sleep ? { sleep: deps.sleep } : {}),
++     ...(deps.now ? { now: deps.now } : {}),
++   }));
 + try {
 +   ctrl.onProgress?.("Starting the Meta device login...");
 +   return await device(ctrl);
@@ -138,20 +136,26 @@ Body changes, in order:
 +   if (isCancellation(error)) throw error;
 +   const reason = deviceFailureReason(error);
 +   const pasted = await manualKeyCredential(ctrl, reason);
-+   if (pasted === null) throw error;
++   // [fold 3] No paste surface, or an empty paste. The refusal must KEEP the guidance
++   // the current code gives; a device error must not replace it. Composed, not substituted.
++   if (pasted === null) throw noPasteSurfaceError(platform, error);
 +   return await validatedMetaMuseCredential(pasted, ctrl, deps, undefined, "manual");
 + }
 ```
 
 The existing non-darwin and pointer/Keychain branches are not deleted. They move into
-`importFromKeychain`, which returns `null` — rather than throwing — for the three
-"nothing to import" conditions that are now a fallthrough instead of a dead end:
+`importFromKeychain`, which returns `null` — rather than throwing — only for the two
+conditions that genuinely mean "there is nothing here to import". **[fold 2]** A Keychain
+read that TIMES OUT is not one of them: a credential probably exists and the user simply
+needs to approve a prompt, so silently starting a browser grant would create a second
+login to solve a permissions dialog. `tests/providers/meta-muse-oauth.test.ts:159-166`
+already pins that refusal, and it is right.
 
 | Condition | Today | After |
 |---|---|---|
 | No pointer file | throws `Muse Code CLI credential not found` | returns `null`, device grant runs |
 | Pointer has no signed-in Meta account | throws | returns `null`, device grant runs |
-| Keychain read times out | throws | returns `null`, device grant runs |
+| Keychain read times out | throws `within 5s` | **[fold 2] still throws**, message extended with the device alternative |
 | Pointer is not valid JSON | throws | **still throws** — a corrupt file is a real fault, not an absence |
 | Unsupported storage backend | throws | **still throws** — an unmeasured shape must not be guessed past |
 | Keychain entry carries no usable key | throws | **still throws** — the import found a credential and it was bad |
@@ -172,6 +176,21 @@ why it appeared:
 | `device-denied` | "The browser approval was denied." |
 | `device-expired` | "The device code expired before approval." |
 | anything else | "The Meta device login did not complete." |
+
+**[fold 3]** `noPasteSurfaceError(platform, deviceError)` composes one message from three
+parts: the device failure reason, the platform explanation on a non-darwin host, and the
+existing pointers to https://dev.meta.ai and `META_MODEL_API_KEY`. It exists because three
+current tests assert that guidance, and they assert the right thing: a host that cannot
+paste and cannot finish a device grant needs to be told where the key lives, not just that
+a grant failed.
+
+| Existing test | Asserts | Satisfied because |
+|---|---|---|
+| `meta-muse-oauth.test.ts:220-224` | rejects with `/dev\.meta\.ai/` and `/META_MODEL_API_KEY/` on win32 and linux | Both strings stay in the composed message |
+| `meta-muse-oauth.test.ts:226-231` | an empty paste rejects with `/no credential to import/` | The platform clause, which contains that phrase, is retained for non-darwin |
+| `meta-muse-oauth.test.ts:159-166` | a blocked Keychain read rejects with `/within 5s/` in under 5s | fold 2 keeps that throw; the message is only appended to |
+| `meta-muse-oauth.test.ts:185-204` | win32 paste field, `source === "manual"`, onAuth text contains `dev.meta.ai` | The device attempt fails on the injected fetch first, then the unchanged paste path runs |
+
 
 ### 5. `refreshMetaMuseToken`
 

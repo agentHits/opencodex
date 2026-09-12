@@ -1,11 +1,52 @@
 # wp2 — device-authorization core
 
-One new file. No existing file changes in this phase, so nothing user-visible moves yet:
-`020` wires it in. Written to be executable as-is; deviations found while building are
+One new module plus the one type it needs. Nothing user-visible moves yet — `020` wires the
+module into a login. Written to be executable as-is; deviations found while building are
 amended here at wp3's P rather than left implicit.
 
 **NEW** `src/oauth/meta-muse-device.ts`
+**MODIFY** `src/oauth/types.ts` — the `muse` credential field
 **NEW** `tests/providers/meta-muse-device.test.ts` (specified in `040`)
+
+> **Audit fold (A-phase, reviewer B1):** the type was originally scheduled for wp3, which
+> does not compile. `loginMetaMuseDevice` returns an object literal typed as
+> `OAuthCredentials`, so TypeScript's excess-property check rejects `muse` with TS2353
+> until `src/oauth/types.ts` declares it. The field therefore lands in the same commit as
+> the module, and `020` no longer owns it.
+
+## `src/oauth/types.ts`
+
+Add beside `KiroOAuthMetadata`, whose role this mirrors (`002` §A):
+
+```ts
+/**
+ * Account-scoped Muse Code data that is NOT the request bearer.
+ *
+ * The Model API is authenticated by the `LLM|` key in `access`; this token authenticates
+ * the Meta ACCOUNT and exists only to mint that key and to read subscription usage
+ * (devlog/_plan/260912_muse_device_oauth/002 A). Keeping it out of `access` is what lets
+ * every request path stay unchanged.
+ *
+ * It must never be added to `OAuthAccountSummary` (src/oauth/index.ts:1803) or to
+ * `OAuthAccessSnapshot` (src/oauth/index.ts:85-100). Both are hand-built allowlists, and
+ * that construction — not a redactor — is what keeps a secret out of a response.
+ */
+export interface MuseOAuthMetadata {
+  /** Meta account access token from the device grant. Never sent to api.meta.ai/v1. */
+  oauthAccessToken: string;
+  /** Epoch ms of the mint that produced the stored key. */
+  mintedAt?: number;
+  /** Subscription tier label as Meta reported it. Display only. */
+  tierName?: string;
+}
+```
+
+and on `OAuthCredentials`, directly after the `kiro` field:
+
+```ts
+  /** Never returned by management APIs; persisted only inside the protected auth-store boundary. */
+  muse?: MuseOAuthMetadata;
+```
 
 ## Contract
 
@@ -86,7 +127,6 @@ export type MuseDeviceErrorKind =
   | "missing-identity";
 
 export class MuseDeviceLoginError extends Error {
-  readonly name = "MuseDeviceLoginError";
   readonly kind: MuseDeviceErrorKind;
   readonly status?: number;
   /** Where the user resolves an entitlement problem. Vendor-supplied, never a local path. */
@@ -98,6 +138,8 @@ export class MuseDeviceLoginError extends Error {
     extra: { status?: number; actionUrl?: string; retryAfterMs?: number; cause?: unknown } = {},
   ) {
     super(message, extra.cause === undefined ? undefined : { cause: extra.cause });
+    // Set here rather than as a class field, matching src/oauth/nous.ts:160 and :383.
+    this.name = "MuseDeviceLoginError";
     this.kind = kind;
     if (extra.status !== undefined) this.status = extra.status;
     if (extra.actionUrl !== undefined) this.actionUrl = extra.actionUrl;
