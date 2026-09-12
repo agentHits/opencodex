@@ -42,6 +42,11 @@ to gpt-live-1-codex; gpt-live-1 is an explicit alias. Dictation and Frameless ev
 separate. Coverage lives in `tests/server/audio-client.test.ts`,
 `tests/server/audio-dictation.test.ts` and `tests/server/live-call-bindings.test.ts`.
 
+Translated Claude timeline reminders use the Chat adapter's
+[OpenCode Go instruction ordering](../providers/chat-compat.md#opencode-go-chronological-instructions)
+on its exact supported route. This is separate from trailing-notice stabilization
+and from native Chat message passthrough.
+
 ## Chat Completions inbound native path
 
 `POST /v1/chat/completions` sends eligible `openai-chat` routes directly to the provider's Chat
