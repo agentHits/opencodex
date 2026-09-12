@@ -102,6 +102,14 @@ and each is checked by a named test in `040`:
 | `staticHeaders` collides with a user header | `mergeRegistryStaticHeaders` (`src/providers/registry.ts:3494-3505`) already yields to user-claimed names |
 | Scope creep into shared login surfaces | `020` treats the shared CLI device-code rendering as an explicitly optional item, decided at wp3's P |
 
+## Scope amendment (wp2 P)
+
+`src/oauth/store.ts` joins the in-scope list. It was left out originally because the
+credential field looked like a pure type change. It is not: `normalizeCredential` rebuilds
+every persisted credential field by field, so a field it does not know about is dropped
+without error. The amendment is one block in one function, and without it the rest of this
+unit is decoration.
+
 ## Audit record (wp1, A phase)
 
 Two independent grok-4.6 reviewers audited this unit against the repository, and the main
@@ -125,6 +133,26 @@ spreads are valid, `sanitizeApiKeyValue` accepts `string | undefined`, the
 `src/oauth/meta-muse.ts:270`. Reviewer B2 confirmed that `000`'s reopen framing does not
 claim vendor authorization it does not have, which was the single most important question
 in the audit.
+
+## Audit record (wp2, A phase)
+
+Five more folds: three from the main agent reading the store, two from an independent
+grok-4.6 audit of the module source. One reviewer proposal was rejected with a reason,
+recorded here because a rebuttal is a decision rather than an omission.
+
+| # | Source | Finding | Fold |
+|---|---|---|---|
+| W1 | main | `normalizeCredential` rebuilds rather than copies, so `muse` would be dropped on persist and the quota capability would be dead with no error anywhere | `010`: a `muse` block in `src/oauth/store.ts`, plus the scope amendment above |
+| W2 | main | The store matches a slot on `accountId ?? email`, so keying a device login on `user_id` would hand an existing imported user a SECOND account | `010`: email first, `user_id` moves to `muse.userId` |
+| W3 | reviewer | A 200 carrying a token was discarded when the local deadline had just passed, forcing the user to redo an approval that had already succeeded | `010`: no deadline re-check after a 200, because the server clock is authoritative and ours is not |
+| W4 | reviewer | A sleep ending exactly at the deadline skipped the final poll, wasting an approval made inside that window | `010`: poll first, check the deadline only before sleeping |
+| W5 | main | A payload carrying a usable key AND `require_payment` returned the key silently | `010`: the key is still returned, with a warning naming the action URL |
+
+**Rejected.** The reviewer proposed requiring `user_id` as `accountId` and failing
+`missing-identity` without it. That fixes device-to-device consistency but not the case that
+actually matters: an existing user who imported a credential has a row keyed by email, and
+an `accountId`-keyed device login would not match it. The fold keeps email as the slot key,
+which is also the choice the import path documents at `src/oauth/meta-muse.ts:316-319`.
 
 An earlier pair of reviewers with a broader packet returned nothing across four wait
 cycles and was retired; the packets above were narrowed and re-dispatched. That retirement

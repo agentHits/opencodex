@@ -50,6 +50,11 @@ that file currently asserts.
 | 27 | No `user_id` and no `user_email` | `kind === "missing-identity"` |
 | 28 | `user_email` only | `accountId` falls back to the lowercased email |
 | 29 | Success | `access === refresh === key`; `expires === Number.MAX_SAFE_INTEGER`; `source === "oauth"`; `muse.oauthAccessToken` set; `muse.mintedAt` from injected `now` |
+| 30a | W1 persistence | A credential round-tripped through `normalizeCredential` keeps `muse.oauthAccessToken`; without the store change it is lost, which guards the silent-drop failure |
+| 30b | W2 slot identity | With an email present the credential sets `email` and NOT `accountId`, and `muse.userId` carries `user_id`; with no email it falls back to `accountId = user_id` |
+| 30c | W3 late 200 | A 200 carrying a token after the local deadline passed is ACCEPTED, not discarded |
+| 30d | W4 final poll | A pending poll with 3s left and a 5s interval sleeps 3s and polls again rather than expiring unpolled |
+| 30e | W5 billable warning | A payload with a usable key plus `require_payment` returns the key AND emits an onProgress warning naming the action URL |
 | 30 | Separation invariant | `access` and `refresh` do **not** contain the account token, and `JSON.stringify(creds.access)` does not parse as an object |
 
 Case 30 is the regression guard for `002` §A. If a later refactor adopts the reference's

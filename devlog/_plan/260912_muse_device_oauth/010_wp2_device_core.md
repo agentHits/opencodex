@@ -6,6 +6,7 @@ amended here at wp3's P rather than left implicit.
 
 **NEW** `src/oauth/meta-muse-device.ts`
 **MODIFY** `src/oauth/types.ts` — the `muse` credential field
+**MODIFY** `src/oauth/store.ts` — teach `normalizeCredential` about that field
 **NEW** `tests/providers/meta-muse-device.test.ts` (specified in `040`)
 
 > **Audit fold (A-phase, reviewer B1):** the type was originally scheduled for wp3, which
@@ -34,6 +35,14 @@ Add beside `KiroOAuthMetadata`, whose role this mirrors (`002` §A):
 export interface MuseOAuthMetadata {
   /** Meta account access token from the device grant. Never sent to api.meta.ai/v1. */
   oauthAccessToken: string;
+  /**
+   * The stable Meta account id. Kept HERE rather than in `accountId` on purpose (wp2
+   * audit fold W2): the store keys a slot on `accountId ?? email`, and this provider
+   * import path has always supplied email only. Promoting `user_id` to `accountId` would
+   * make a device login fail to match the row an imported login already created, giving
+   * one human two accounts.
+   */
+  userId?: string;
   /** Epoch ms of the mint that produced the stored key. */
   mintedAt?: number;
   /** Subscription tier label as Meta reported it. Display only. */
@@ -46,6 +55,45 @@ and on `OAuthCredentials`, directly after the `kiro` field:
 ```ts
   /** Never returned by management APIs; persisted only inside the protected auth-store boundary. */
   muse?: MuseOAuthMetadata;
+```
+
+## `src/oauth/store.ts`
+
+> **wp2 audit fold W1 (blocker).** Declaring the type is not enough. `normalizeCredential`
+> (`src/oauth/store.ts:447-500`) does not copy a credential, it REBUILDS one field by
+> field, so any field it does not know about is silently dropped on persist. Without this
+> change the device login would appear to succeed, the account token would never reach
+> disk, and the whole on-demand quota capability in `030` would be dead with no error
+> anywhere. Found by reading the function rather than by a type error, which is exactly
+> why it matters: this failure has no compile-time signal.
+
+Add after the `kiro` block, using the same cleaning discipline it established:
+
+```ts
+  if (candidate.muse && typeof candidate.muse === "object") {
+    const muse = candidate.muse;
+    const cleanMuse = (value: unknown, max: number): string | undefined => {
+      if (typeof value !== "string") return undefined;
+      const trimmed = value.trim();
+      return trimmed && trimmed.length <= max && !/[\x00-\x1f\x7f]/.test(trimmed) ? trimmed : undefined;
+    };
+    const oauthAccessToken = cleanMuse(muse.oauthAccessToken, 4096);
+    const userId = cleanMuse(muse.userId, 128);
+    const tierName = cleanMuse(muse.tierName, 128);
+    const mintedAt = typeof muse.mintedAt === "number" && Number.isFinite(muse.mintedAt)
+      ? muse.mintedAt
+      : undefined;
+    // oauthAccessToken is the only load-bearing member: without it there is nothing to
+    // mint or probe with, and a row carrying only a tier label would be noise.
+    if (oauthAccessToken) {
+      normalized.muse = {
+        oauthAccessToken,
+        ...(userId ? { userId } : {}),
+        ...(tierName ? { tierName } : {}),
+        ...(mintedAt !== undefined ? { mintedAt } : {}),
+      };
+    }
+  }
 ```
 
 ## Contract
@@ -304,10 +352,10 @@ export async function pollMuseDeviceToken(
   let intervalMs = authorization.intervalMs;
   while (true) {
     if (signal?.aborted) throw cancelled();
-    const remaining = authorization.expiresAtMs - now();
-    if (remaining <= 0) {
-      throw new MuseDeviceLoginError("device-expired", "Muse Code device authorization expired before approval");
-    }
+    // [W4] Poll FIRST, then decide whether there is time to sleep again. The previous
+    // shape checked the deadline at the top, so a sleep ending exactly at the deadline
+    // skipped the final poll and discarded an approval the user had already completed
+    // inside that window.
     const response = await (deps.fetchImpl ?? fetch)(DEVICE_TOKEN_URL, {
       method: "POST",
       headers: {
@@ -325,11 +373,10 @@ export async function pollMuseDeviceToken(
     });
     const payload = record(await response.json().catch(() => undefined));
     if (response.ok) {
-      // Checked again after the round trip: a single poll can outlive the grant, and
-      // accepting a token minted against an expired code just moves the failure later.
-      if (authorization.expiresAtMs - now() <= 0) {
-        throw new MuseDeviceLoginError("device-expired", "Muse Code device authorization expired before approval");
-      }
+      // [W3] No deadline re-check here. If Meta answered 200 with a token, Meta accepted
+      // the device code; its clock is authoritative and ours is not. Discarding an issued
+      // token because a local deadline just passed would force the user to redo an
+      // approval that already succeeded.
       const accessToken = text(payload?.access_token);
       if (!accessToken) {
         throw new MuseDeviceLoginError(
@@ -364,12 +411,15 @@ export async function pollMuseDeviceToken(
         { status: response.status },
       );
     }
-    // Never sleep past the deadline: that is how a 15-minute grant becomes a 20-minute wait.
-    const wait = Math.min(intervalMs, Math.max(0, authorization.expiresAtMs - now()));
-    if (wait <= 0) {
+    // [W4] The deadline is checked ONLY here, before sleeping. Reaching it means the
+    // grant is spent: the loop has just polled and been told to wait longer than the
+    // grant has left. Never sleep past it, which is how a 15-minute grant becomes a
+    // 20-minute wait.
+    const remaining = authorization.expiresAtMs - now();
+    if (remaining <= 0) {
       throw new MuseDeviceLoginError("device-expired", "Muse Code device authorization expired before approval");
     }
-    await sleep(wait, signal);
+    await sleep(Math.min(intervalMs, remaining), signal);
   }
 }
 
@@ -489,9 +539,23 @@ export async function loginMetaMuseDevice(
   ctrl.onProgress?.("Approved. Requesting the Muse Code subscription key...");
   const payload = await mintMuseApiKey(accountAccessToken, { onboard: true }, deps, ctrl.signal);
   const apiKey = museApiKeyFromPayload(payload);
+  if (payload.requirePayment === true || payload.actionUrl) {
+    // [W5] A usable key AND a payment signal. Meta issued a credential but is saying the
+    // plan does not cover it. The key is returned, because refusing a working credential
+    // would be worse, but the warning is not swallowed: this is the difference between a
+    // user who knows calls may be billed per token and one who finds out on an invoice.
+    ctrl.onProgress?.(payload.actionUrl
+      ? `Meta reports this account needs a subscription or payment method: ${payload.actionUrl}`
+      : "Meta reports this account needs a subscription or payment method; treat every call as billable.");
+  }
   const email = payload.userEmail;
-  const accountId = payload.userId ?? email;
-  if (!accountId) {
+  // [W2] email FIRST, user_id only as a fallback. The store keys a slot on
+  // `accountId ?? email` (src/oauth/store.ts:744,752), and this provider import path has
+  // always supplied email alone, so promoting user_id to accountId here would make a
+  // device login MISS the row an imported login already created and hand one human two
+  // accounts. user_id is still retained, in muse.userId, where it identifies the account
+  // for the quota probe without participating in slot identity.
+  if (!email && !payload.userId) {
     throw new MuseDeviceLoginError(
       "missing-identity",
       "Meta returned no stable account identity for this Muse Code key",
@@ -503,11 +567,11 @@ export async function loginMetaMuseDevice(
     // rejects refresh_token grants on this client (001 §A).
     refresh: apiKey,
     expires: Number.MAX_SAFE_INTEGER,
-    accountId,
-    ...(email ? { email } : {}),
+    ...(email ? { email } : { accountId: payload.userId as string }),
     source: "oauth",
     muse: {
       oauthAccessToken: accountAccessToken,
+      ...(payload.userId ? { userId: payload.userId } : {}),
       mintedAt: (deps.now ?? Date.now)(),
       ...(payload.subsTierName ? { tierName: payload.subsTierName } : {}),
     },
