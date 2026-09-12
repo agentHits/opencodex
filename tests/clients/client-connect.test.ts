@@ -25,7 +25,8 @@ const TRANSACTION_PHASES = ["module_load", "module_ready", "connect_entered", "c
 type TransactionProgress = { phase: typeof TRANSACTION_PHASES[number]; elapsedMs: number };
 
 /** Only this fixed diagnostic envelope may reach a parent-side failure message. */
-function transactionProgress(stderr: string): TransactionProgress | undefined {
+function transactionProgress(stderr: unknown): TransactionProgress | undefined {
+  if (typeof stderr !== "string") return undefined;
   const tail = stderr.slice(-8192);
   for (const line of tail.split("\n").reverse()) {
     if (!line.startsWith('{"clientTransactionPhase":')) continue;
@@ -447,7 +448,7 @@ function runTransactionScenario(
       if ((stage === "success" || stage === "prior-catalog") && connected) disconnected = await disconnectClient({}, { lifecycleLockDeps: { lockPath: process.env.OPENCODEX_HOME + "/lifecycle.sqlite" } });
       const catalogAfter = existsSync(DEFAULT_CATALOG_PATH) ? readFileSync(DEFAULT_CATALOG_PATH, "utf8") : null;
       const hubStateCacheAfter = existsSync(hubStateCachePath());
-      console.log(JSON.stringify({ connected, error, coordinatorUnavailable, beforeDisconnect, artifacts, disconnected, catalogAfter, hubStateCacheBefore, hubStateCacheAfter, after: readClientConnectionState(), calls, commitFaultTriggered }));
+      writeSync(1, JSON.stringify({ connected, error, coordinatorUnavailable, beforeDisconnect, artifacts, disconnected, catalogAfter, hubStateCacheBefore, hubStateCacheAfter, after: readClientConnectionState(), calls, commitFaultTriggered }) + "\\n");
       markTransaction("result_published");
     })();
   `;
@@ -484,6 +485,9 @@ function runTransactionScenario(
 
 describe("connect transaction and offline disconnect", () => {
   test("transaction diagnostics retain only allowlisted phase and bounded elapsed evidence", () => {
+    for (const missing of [undefined, null, { secret: "private-marker-value" }]) {
+      expect(transactionProgress(missing)).toBeUndefined();
+    }
     const valid = '{"clientTransactionPhase":"connect_entered","elapsedMs":12,"secret":"private-marker-value"}';
     for (const invalid of [
       '{"clientTransactionPhase":"private-marker-value","elapsedMs":1}',
