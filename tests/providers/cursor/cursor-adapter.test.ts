@@ -1057,6 +1057,60 @@ describe("Cursor overflow conversation remint", () => {
     expect(seen).toHaveLength(1);
   });
 
+  test("isolated non-compaction helpers preserve parent remint allowance and checkpoint", async () => {
+    clearCursorOverflowRemintForTests();
+    clearCursorThreadContinuityForTests();
+    clearCursorCheckpointsForTests();
+    let attempts = 0;
+    const adapter = createCursorAdapter({ ...provider, apiKey: "cursor-token" }, {
+      createTransport: () => ({
+        async *run() {
+          attempts += 1;
+          throw bareOverflowError();
+        },
+        writeClient() {},
+      }),
+    });
+    try {
+      const owner = "overflow-isolated-helper";
+      await adapter.runTurn?.(overflowTurnBody(owner), { headers: new Headers() }, () => {});
+      expect(attempts).toBe(1);
+      const parentRef = commitCursorCheckpoint({
+        conversationId: "cursor_parent_overflow",
+        identityScope: "acct-overflow-remint",
+        modelId: "default",
+        checkpointBytes: toBinary(ConversationStateStructureSchema, create(ConversationStateStructureSchema, {
+          pendingToolCalls: ["overflow-isolation-fixture"],
+        })),
+        coveredMessageCount: 1,
+      });
+      expect(parentRef).toBeDefined();
+      const helper = overflowTurnBody(owner);
+      helper._cursorIsolateConversation = true;
+      helper._cursorConversationId = "cursor_parent_overflow";
+      helper._providerContinuation = {
+        cursor: { conversationId: "cursor_parent_overflow", checkpointUsable: true, checkpointRef: parentRef },
+      };
+      expect(helper._compactionRequest).toBeUndefined();
+      attempts = 0;
+      const events: AdapterEvent[] = [];
+      await adapter.runTurn?.(helper, { headers: new Headers() }, event => events.push(event));
+      expect(attempts).toBe(1);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ type: "error", message: expect.stringContaining("Cursor context limit exceeded") });
+      expect(getCursorCheckpoint(parentRef)?.ref).toBe(parentRef);
+      expect(lookupCursorThreadConversation(owner, "acct-overflow-remint")).toBeUndefined();
+
+      attempts = 0;
+      await adapter.runTurn?.(overflowTurnBody(owner), { headers: new Headers() }, () => {});
+      expect(attempts).toBe(4);
+    } finally {
+      clearCursorOverflowRemintForTests();
+      clearCursorThreadContinuityForTests();
+      clearCursorCheckpointsForTests();
+    }
+  });
+
   test("does not overflow-remint after non-heartbeat output was emitted", async () => {
     clearCursorOverflowRemintForTests();
     let attempts = 0;

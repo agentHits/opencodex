@@ -29,8 +29,9 @@ Credential-bearing model, image, video, and search requests do not automatically
 Cursor's first bare context overflow is surfaced to the client. Later eligible requests
 with a stable client thread may recover with up to three conversation remints per retained
 scope. The in-memory allowance expires after one idle hour, eviction, or restart. Requests
-without a stable thread, tool-result resumes, partial output, compaction and quota errors do
-not use this recovery. This does not infer whether a task is making progress.
+without a stable thread, isolated helpers, tool-result resumes, partial output, compaction
+and quota errors do not use this recovery. Continued eligible overflows keep the existing
+allowance active even after it is exhausted; they do not replenish it. This does not infer whether a task is making progress.
 
 ## Endpoint overview
 

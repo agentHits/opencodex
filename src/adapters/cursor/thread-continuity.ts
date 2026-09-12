@@ -128,8 +128,14 @@ export function markCursorOverflowSurfaced(scopeKey: string): void {
 }
 
 export function shouldSkipCursorOverflowRemint(scopeKey: string): boolean {
-  pruneOverflowRemints(now());
+  const at = now();
+  pruneOverflowRemints(at);
   const entry = overflowRemintByScope.get(scopeKey);
+  if (entry) {
+    entry.updatedAt = at;
+    overflowRemintByScope.delete(scopeKey);
+    overflowRemintByScope.set(scopeKey, entry);
+  }
   return entry?.skip === true || (entry?.remintCount ?? 0) >= CURSOR_OVERFLOW_REMINT_MAX;
 }
 
