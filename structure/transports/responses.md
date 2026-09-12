@@ -3,6 +3,8 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+Plaintext collaboration restoration treats a null namespace as absent, rejects non-string namespace types, and restores the native namespace/name pair before HTTP/WS delivery and continuation publication.
+
 ## Responses HTTP/SSE
 
 `/v1/responses` is the main Codex-facing endpoint. The server parses Responses input, routes to a
@@ -510,5 +512,3 @@ deprecated, sunset, decommissioned, or no longer available). An unrelated applic
 not retried.
 
 > Decision record: [ADR-0071](../decisions/ADR-0071-combo-streaming-commit-boundary.md)
-
-Plaintext collaboration restoration treats a null namespace as absent, rejects non-string namespace types, and restores the native namespace/name pair before HTTP/WS delivery and continuation publication.
