@@ -3937,3 +3937,35 @@ describe("combo compact failover", () => {
     expect(await response.text()).toContain("empty summary");
   });
 });
+
+
+describe("thinking-summary defaults follow the serving combo route", () => {
+  for (const firstVisible of [true, false]) for (const summary of [undefined, "none", "auto"]) {
+    test(`fallback from ${firstVisible} with summary=${summary}`, async () => {
+      const observed: Array<[string, boolean | undefined]> = [];
+      customRunTurn = async (parsed, _incoming, emit) => {
+        observed.push([parsed.modelId, parsed.options.hideThinkingSummary]);
+        if (parsed.modelId === "m1") {
+          emit({ type: "error", message: "provider unavailable", status: 503, retryable: true });
+          return;
+        }
+        emit({ type: "thinking_delta", thinking: "Actual provider summary" });
+        emit({ type: "text_delta", text: "Final fallback answer" });
+        emit({ type: "done" });
+      };
+      const config = comboConfig({
+        a: provider("test-run-turn", "https://a.test/v1", "key-a", { showThinkingSummary: firstVisible }),
+        b: provider("test-run-turn", "https://b.test/v1", "key-b", { showThinkingSummary: !firstVisible }),
+      });
+      const response = await post(config, { ...(summary ? { reasoning: { summary } } : {}) });
+      const output = JSON.stringify(await response.json());
+      expect(response.status).toBe(200);
+      expect(observed).toEqual([
+        ["m1", summary === "none" || (!summary && !firstVisible)],
+        ["m2", summary === "none" || (!summary && firstVisible)],
+      ]);
+      expect(output.includes("Actual provider summary")).toBe(summary === "auto" || (!summary && !firstVisible));
+      expect(output).toContain("Final fallback answer");
+    });
+  }
+});

@@ -271,3 +271,5 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
+
+Provider `showThinkingSummary` is a Responses request default; it does not rewrite catalog summary defaults or client configuration. See [Google summaries](providers/google.md).

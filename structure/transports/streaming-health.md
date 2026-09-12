@@ -196,3 +196,5 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Raw reasoning and provider-authored summary deltas both remain real upstream activity; visibility does not change heartbeat or terminal ownership. See [reasoning presentation](../providers/chat-compat.md).

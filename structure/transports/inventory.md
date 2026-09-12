@@ -67,3 +67,5 @@ Quota publication distinguishes display reports from explicitly supplied inferen
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+CCA Gemini summary provenance and request opt-in are specified in [Google provider](../providers/google.md); raw Responses content retains its wire channel.

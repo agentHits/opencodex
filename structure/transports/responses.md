@@ -309,14 +309,11 @@ custom result has no local call, because its original wire type cannot be establ
 would send an unmatched result upstream. The check resolves the selected wire protocol and the
 request's own tool declarations after final route selection, so stateful destinations keep their
 upstream-owned native function and native-only custom continuations. Explicit input still receives
-orphan repair; this path asks the client to replay rather than reconstructing history. This flag also enables the existing
-visible content-to-summary rewrite for SSE and JSON; summary-channel items and opaque reasoning
-blobs keep their existing response handling. The shared recording callback applies the same
-reasoning rewrite under the exact client-visible predicate before caching output, after tool
-restoration and function normalization. This keeps full-content replay fingerprints comparable
-for both full-history-plus-ID and delta continuations without weakening identity checks. Hidden
-summaries and opaque blobs keep their existing cache representation. It does not change streaming selection or Chat
-model routes. Go fixtures cover Luna, Grok and Muse against both response formats.
+orphan repair; this path asks the client to replay rather than reconstructing history. Content-channel reasoning stays content in SSE, JSON and stored replay output; native
+summary items and opaque blobs retain their upstream representation. Full-content replay
+fingerprints compare the same client-visible items without content-to-summary conversion.
+It does not change streaming selection or Chat model routes. Go fixtures cover Luna, Grok
+and Muse against both response formats.
 
 The canonical OpenCode Go transport also derives `x-opencode-session` from the existing hashed
 session lane before per-model wire selection. One conversation keeps one opaque affinity value

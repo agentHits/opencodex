@@ -308,3 +308,5 @@ The Combo guides describe the distinction between display quota and single-crede
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Provider configuration documents distinguish actual summaries from raw reasoning content. The test layout registers the summary-default contract cases and removes the obsolete content-rewrite test with its implementation.

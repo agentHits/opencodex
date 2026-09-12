@@ -96,3 +96,5 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+The provider summary default applies at Responses ingress; native Chat and Anthropic inbound preferences keep their existing handling. Raw content is never renamed to a summary. See [bridge contract](../providers/chat-compat.md).

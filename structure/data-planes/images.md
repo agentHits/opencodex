@@ -76,3 +76,5 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+CCA image-capable requests do not acquire the text-summary includeThoughts opt-in. See [Google summary boundary](../providers/google.md).

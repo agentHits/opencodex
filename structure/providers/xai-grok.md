@@ -62,3 +62,5 @@ Account-scoped OAuth quota remains display evidence for provider-level Combo sel
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Grok chat raw reasoning uses content-channel output with an empty summary; hidden replay envelopes retain continuation text. Native Responses content is not promoted to summaries. See [chat compatibility](chat-compat.md).

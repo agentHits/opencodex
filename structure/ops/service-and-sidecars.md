@@ -139,3 +139,5 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Provider summary defaults are evaluated per routed Responses request without changing service lifecycle or sidecar activation. See [runtime](../runtime.md).

@@ -212,3 +212,5 @@ cooldowns and response-driven retry remain authoritative.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
+
+Responses route normalization resolves provider summary defaults from the original wire preference on every final route. See [reasoning presentation](providers/chat-compat.md) and [CCA summary provenance](providers/google.md).

@@ -82,3 +82,5 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Provider summary defaults are Responses-specific and do not rewrite connected Claude Desktop profiles. See [inbound compatibility](../data-planes/inbound-compat.md).

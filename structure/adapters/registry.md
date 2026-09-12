@@ -63,3 +63,5 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Adapter events distinguish raw reasoning content from summary-channel thinking; CCA Gemini classification is request-local. See [Google provenance](../providers/google.md).

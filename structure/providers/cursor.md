@@ -82,3 +82,5 @@ constraints cannot widen the canonical shape. Bare shell bridge names are reject
 on the freeform path.
 Namespaced tools do not acquire bare-shell behavior. Regression coverage lives in
 `tests/providers/cursor/cursor-tool-definitions.test.ts`.
+
+Shared raw-reasoning events retain content-channel presentation; provider-authored thinking keeps its existing summary path. See [bridge contract](chat-compat.md).

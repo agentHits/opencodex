@@ -207,3 +207,5 @@ Provider-level Combo eligibility uses explicit inference evidence for the curren
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
+
+Final-route summary visibility is recomputed after fallback from the original Responses preference; an earlier provider opt-in does not carry into a later provider. See [reasoning presentation](providers/chat-compat.md).

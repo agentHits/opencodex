@@ -106,3 +106,5 @@ would pass while the rule was violated.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
+
+Raw reasoning content and provider-authored summaries remain distinct on the Responses wire. See [reasoning presentation](providers/chat-compat.md).
