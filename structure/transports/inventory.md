@@ -46,7 +46,7 @@ Two fake-IP DNS accommodations exist, both for resolved answers only (a literal 
 still rejects). The IANA benchmark range (198.18/15 and its IPv4-mapped IPv6 spellings) is admitted
 whenever any outbound proxy applies to the host, because the range itself marks the answer synthetic.
 Mihomo's default IPv6 fake-IP range (fdfe:dcba:9876::/48) is ULA and carries no such mark, so it is
-admitted only when the proxy variable that matches the URL scheme is set (HTTPS_PROXY for https:,
+admitted for fixed canonical destinations under the transparent TUN exception, or when the proxy variable that matches the URL scheme is set (HTTPS_PROXY for https:,
 HTTP_PROXY for http:; ALL_PROXY is not consulted because Bun fetch does not honour it), the host is
 not in NO_PROXY, and the request is then bound to that proxy through Bun's explicit `proxy` option
 rather than environment inference. Both gates live in the outbound wrapper, not in classification:
@@ -70,3 +70,10 @@ see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routi
 
 Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
+
+
+## Account quota failure diagnostics
+
+Antigravity account quota probes expose only a closed `quotaFailure` category when the read is unavailable. Typed transport failures, rejected destinations, redirects, denied access, rate limits and unusable bodies are distinguished; successful fallback clears the earlier failure. The last attempted endpoint determines the diagnosis. A 401/403 category does not change account health, entitlement or routing eligibility.
+
+`src/providers/quota.ts` binds diagnoses to the probed credential/project and rechecks before cache reads and API projection. Reauthentication invalidates an old diagnosis independently of last-good quota bars. Private digests, callbacks and upstream error values are not serialized. The CLI and current/all-account dashboard views consume the same closed code; unknown codes and local management-read failures retain generic unavailable text. Codes are transient, never persisted quota evidence. Authenticated TUN field acceptance remains separate from deterministic transport coverage.

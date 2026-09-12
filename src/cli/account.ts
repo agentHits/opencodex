@@ -115,7 +115,7 @@ function priorityText(row: AccountRow): string {
  * decides on before a long session. The full breakdown stays in `--json`.
  */
 function quotaText(row: AccountRow): string {
-  if ((row as { quotaUnavailable?: boolean }).quotaUnavailable) return "unavailable";
+  if (row.quotaUnavailable) return row.quotaFailure ? `unavailable (${row.quotaFailure})` : "unavailable";
   const quota = row.quota;
   if (!quota) return "-";
   const parts: string[] = [];

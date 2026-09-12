@@ -205,3 +205,5 @@ The Cline client keeps connection settings and models in a separate native file 
 `claudeCode.stabilizePromptCache` is a default-off operator setting for
 [translated instruction stabilization](data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
+
+Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.

@@ -41,3 +41,5 @@ The management quota DTO keeps Combo editing aligned with scoped inference evide
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
 
 Cline uses the existing file-integration page, tabs, status badge and rollback dialogs. Its localized semantics identify both files and the required stop/restart boundary before users mutate them.
+
+Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.

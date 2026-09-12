@@ -586,6 +586,19 @@ afterEach(() => {
 });
 
 describe("ocx account CLI (issue #180 matrix)", () => {
+  test("OAuth quota diagnostics use a closed code in human and JSON output", async () => {
+    oauthAccounts = [{ id: "acct_1", quotaUnavailable: true, quotaFailure: "dns_failed" }];
+    const human = await run(["list", "anthropic", "--quota"]);
+    expect(human.code).toBe(0);
+    expect(human.stdout).toContain("unavailable (dns_failed)");
+    const machine = await run(["list", "anthropic", "--quota", "--json"]);
+    expect(JSON.parse(machine.stdout).accounts[0].quotaFailure).toBe("dns_failed");
+    oauthAccounts = [{ id: "acct_1", quotaUnavailable: true, quotaFailure: RAW_SENTINEL }];
+    const unknown = await run(["list", "anthropic", "--quota", "--json"]);
+    expect(unknown.stdout).not.toContain(RAW_SENTINEL);
+    expect(JSON.parse(unknown.stdout).accounts[0]).not.toHaveProperty("quotaFailure");
+  });
+
   test.each([100, 12])("pending validation stays visible at %s percent usage without exposing raw health details", async weeklyPercent => {
     codexAccounts = [{ id: "pending", email: "p***@example.test", quota: { weeklyPercent },
       health: { status: "warning", reason: "validation_pending", message: RAW_SENTINEL } }];

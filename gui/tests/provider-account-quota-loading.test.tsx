@@ -417,3 +417,31 @@ test("a hanging fetch reaches its deadline, preserves last-good and clears probe
     else Reflect.deleteProperty(AbortSignal, "timeout");
   }
 });
+
+
+test("quota diagnostics normalize and clear on recovery or management failure", async () => {
+  let failure: string | undefined = "dns_failed";
+  let localFailure = false;
+  respond = async url => url.includes("quota=1") && localFailure ? new Response(null, { status: 503 }) : Response.json({
+    accounts: [{ id: "account", active: true, quotaMode: "probe", quota: reading,
+      ...(url.includes("quota=1") ? { quotaUnavailable: failure !== undefined, quotaFailure: failure } : {}),
+    }],
+  });
+  await act(async () => { await pools.fetchAccountSets(["oauth"], true); });
+  expect(pools.accountSets.oauth.accounts[0].quotaFailure).toBe("dns_failed");
+  failure = "private-unrecognized-error";
+  await act(async () => { await pools.fetchAccountSets(["oauth"], true); });
+  expect(pools.accountSets.oauth.accounts[0].quotaFailure).toBeUndefined();
+  failure = "rate_limited";
+  await act(async () => { await pools.fetchAccountSets(["oauth"], true); });
+  expect(pools.accountSets.oauth.accounts[0].quotaFailure).toBe("rate_limited");
+  localFailure = true;
+  await act(async () => { await pools.fetchAccountSets(["oauth"], true); });
+  expect(pools.accountSets.oauth.accounts[0]).toMatchObject({ quotaUnavailable: true, quota: reading });
+  expect(pools.accountSets.oauth.accounts[0].quotaFailure).toBeUndefined();
+  localFailure = false;
+  failure = undefined;
+  await act(async () => { expect(await pools.fetchAccountSets(["oauth"], true)).toBe(true); });
+  expect(pools.accountSets.oauth.accounts[0]).toMatchObject({ quotaUnavailable: false, quota: reading });
+  expect(pools.accountSets.oauth.accounts[0].quotaFailure).toBeUndefined();
+});

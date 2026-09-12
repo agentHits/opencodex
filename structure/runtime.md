@@ -225,3 +225,5 @@ Cline CLI joins the existing export/client integration registries. Explicit CLI 
 `claudeCode.stabilizePromptCache` is a default-off operator setting for
 [translated instruction stabilization](data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
+
+Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
