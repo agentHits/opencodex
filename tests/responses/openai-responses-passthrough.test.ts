@@ -335,6 +335,55 @@ test("canonical forward providers normalize trailing slashes and let the pool ov
   expect(request.headers["chatgpt-account-id"]).toBe("runtime-account");
 });
 
+test("noncanonical Responses preserves provider-owned safety-buffering hints", async () => {
+  const upstream = [
+    'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_custom"},"safety_buffering":{"provider_owned":true}}\n\n',
+    'event: response.metadata\ndata: {"type":"response.metadata","metadata":{"type":"safety_buffering","provider_owned":true}}\n\n',
+    'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_custom","status":"completed","output":[]}}\n\n',
+    "data: [DONE]\n\n",
+  ].join("");
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(upstream, { headers: {
+    "content-type": "text/event-stream",
+    "x-codex-safety-buffering-enabled": "provider-owned",
+    "x-codex-safety-buffering-faster-model": "provider-model",
+  } })) as typeof fetch;
+  try {
+    for (const providerConfig of [
+      {
+        adapter: "openai-responses",
+        baseUrl: "https://fixture.test/v1",
+        authMode: "key" as const,
+        apiKey: "fixture-key",
+      },
+      {
+        adapter: "openai-responses",
+        baseUrl: "https://fixture.test/v1",
+        authMode: "forward" as const,
+        headers: { authorization: "Bearer provider-static" },
+      },
+    ]) {
+      const config = {
+        port: 0,
+        defaultProvider: "fixture",
+        dropCodexSafetyBuffering: true,
+        providers: { fixture: providerConfig },
+      } as OcxConfig;
+      const response = await handleResponses(new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "fixture/model", stream: true, input: "ping" }),
+      }), config, { model: "", provider: "" });
+
+      expect(response.headers.get("x-codex-safety-buffering-enabled")).toBe("provider-owned");
+      expect(response.headers.get("x-codex-safety-buffering-faster-model")).toBe("provider-model");
+      expect(await response.text()).toBe(upstream);
+    }
+  } finally {
+    globalThis.fetch = savedFetch;
+  }
+});
+
 test("noncanonical pool-required providers use only their configured static credentials", () => {
   const adapter = createResponsesPassthroughAdapter({
     adapter: "openai-responses",
@@ -4532,4 +4581,32 @@ describe("raw usage passthrough on the forward path (#41980 parity, #37138 adjac
       globalThis.fetch = savedFetch;
     }
   });
+});
+
+
+test("canonical Responses hint suppression is opt-in at the request boundary", async () => {
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response([
+    'data: {"type":"response.created","response":{"id":"resp_hint"},"safety_buffering":true}\n\n',
+    'data: {"type":"response.metadata","metadata":{"type":"safety_buffering"}}\n\n',
+    'data: {"type":"response.completed","response":{"id":"resp_hint","status":"completed","output":[]}}\n\n',
+  ].join(""), { headers: { "content-type": "text/event-stream",
+    "x-codex-safety-buffering-enabled": "true", "x-codex-safety-buffering-faster-model": "fixture-model", "x-codex-turn-id": "fixture-turn" } })) as typeof fetch;
+  try {
+    for (const dropCodexSafetyBuffering of [undefined, false, true]) {
+      const config = { port: 0, dropCodexSafetyBuffering, providers: { openai: {
+        ...provider, codexAccountMode: "direct", upstreamWebsocket: false,
+      } } } as OcxConfig;
+      const response = await handleResponses(new Request("http://localhost/v1/responses", {
+        method: "POST", headers: { "content-type": "application/json", authorization: "Bearer fixture-forward-token" },
+        body: JSON.stringify({ model: "openai/gpt-5.6-sol", input: "ping", stream: true }),
+      }), config, { model: "", provider: "" });
+      expect(response.status).toBe(200);
+      expect(response.headers.has("x-codex-safety-buffering-enabled")).toBe(dropCodexSafetyBuffering !== true);
+      expect(response.headers.get("x-codex-turn-id")).toBe("fixture-turn");
+      const text = await response.text();
+      expect(text.includes("safety_buffering")).toBe(dropCodexSafetyBuffering !== true);
+      expect(text).toContain("response.completed");
+    }
+  } finally { globalThis.fetch = savedFetch; }
 });

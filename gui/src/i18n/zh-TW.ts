@@ -2255,6 +2255,7 @@ export const zhTW: Record<TKey, string> = {
   "logs.detail.attempt.recovery.anthropicOauth429": "Anthropic OAuth 被限流 (429)",
   "logs.detail.attempt.recovery.image413": "圖片承載過大 (413)",
   "logs.detail.attempt.recovery.emptyCompletion": "空白完成重試",
+  "logs.detail.attempt.recovery.consoleGoUpload": "Console 上傳重試",
   "logs.detail.attempt.recovery.unknown": "未知的復原原因",
   "logs.detail.estimate.provider_cost_overlay": "已使用供應商設定的價格覆蓋。",
   "logs.detail.estimate.priority_lower_bound": "無法取得已確認的 Priority 價格；目前顯示的估算是已知下限。",

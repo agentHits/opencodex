@@ -1,5 +1,10 @@
 # Responses Transport
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
+Plaintext collaboration restoration treats a null namespace as absent, rejects non-string namespace types, and restores the native namespace/name pair before HTTP/WS delivery and continuation publication.
+
 ## Responses HTTP/SSE
 
 `/v1/responses` is the main Codex-facing endpoint. The server parses Responses input, routes to a
@@ -316,14 +321,11 @@ custom result has no local call, because its original wire type cannot be establ
 would send an unmatched result upstream. The check resolves the selected wire protocol and the
 request's own tool declarations after final route selection, so stateful destinations keep their
 upstream-owned native function and native-only custom continuations. Explicit input still receives
-orphan repair; this path asks the client to replay rather than reconstructing history. This flag also enables the existing
-visible content-to-summary rewrite for SSE and JSON; summary-channel items and opaque reasoning
-blobs keep their existing response handling. The shared recording callback applies the same
-reasoning rewrite under the exact client-visible predicate before caching output, after tool
-restoration and function normalization. This keeps full-content replay fingerprints comparable
-for both full-history-plus-ID and delta continuations without weakening identity checks. Hidden
-summaries and opaque blobs keep their existing cache representation. It does not change streaming selection or Chat
-model routes. Go fixtures cover Luna, Grok and Muse against both response formats.
+orphan repair; this path asks the client to replay rather than reconstructing history. Content-channel reasoning stays content in SSE, JSON and stored replay output; native
+summary items and opaque blobs retain their upstream representation. Full-content replay
+fingerprints compare the same client-visible items without content-to-summary conversion.
+It does not change streaming selection or Chat model routes. Go fixtures cover Luna, Grok
+and Muse against both response formats.
 
 The canonical OpenCode Go transport also derives `x-opencode-session` from the existing hashed
 session lane before per-model wire selection. One conversation keeps one opaque affinity value
@@ -424,6 +426,16 @@ final outgoing model/tier. No caller identity is synthesized. Noncanonical
 opt-in gateways keep their own metadata policy. Oversized/unsupported-runtime
 HTTP fallback preserves the original HTTP body and Lite header.
 
+For the final wire model `gpt-5.3-codex-spark`, the canonical forward adapter normalizes the
+Lite header from the BODY, overriding caller/configured headers and stale native WS Lite
+metadata in both directions. A body carrying a nonempty `additional_tools` input item is
+pinned to `true`: that item IS the Lite tool-delivery format and the non-Lite wire shape
+expects top-level `tools`, so an inherited `false` would advertise non-Lite while the tools
+exist only in the Lite shape and hide the client tool surface. Any other Spark body is set to
+`false`, selecting the non-Lite framing policy. A changed Lite identity retires the previous socket;
+subsequent eligible Spark requests with the same identity can reuse the new socket. Malformed
+native metadata retains HTTP fallback eligibility without rewriting its body.
+
 Canonical WS quota and response metadata preceding the first Responses event
 are projected into bounded, allowlisted HTTP headers before the response is
 committed. Later quota observations update only the captured serving account;
@@ -499,6 +511,10 @@ retried. Guarded paths: the ChatGPT passthrough and generic adapter fetch in
 fallback. Adapters with their own `fetchResponse` (kiro, cursor, google) keep their own retry
 policies; kiro imports the shared abort/sleep helpers from this module.
 
+## Console upload rejection recovery
+
+`src/providers/opencode-zen-rate-limit.ts` recognizes the complete Console upload-rejection envelope only at the effective HTTPS opencode.ai Zen/Go generation endpoint. A provider row name cannot authorize another destination. The two recovery loops in `src/server/responses/core.ts` wait 800 ms and replay the captured serialized request once; cancellation, nonreplayable responses, other errors and a second upload rejection keep their failure semantics. The recovery kind is persisted as `console-go-upload-retry` and has a localized Logs label.
+
 ## Same-provider combo quota fallback
 
 For a failover combo with multiple models on the same Codex-login OpenAI provider, a pre-stream
@@ -510,6 +526,15 @@ This exception is request-scoped and is not applied to direct requests, round-ro
 combo whose remaining eligible targets use other providers.
 
 > Decision record: [ADR-0070](../decisions/ADR-0070-same-provider-combo-quota-fallback.md)
+
+## Combo per-target reasoning controls
+
+`src/server/responses/core.ts` passes the combo's `reasoningEffortMode` and the final target's
+`supportedLadderFor` result to `src/combos/request.ts` before adapter parsing. Explicit empty
+capability ladders remove effort and thinking controls in every combo mode; adaptive mode also
+removes those controls for unknown ladders and preserves `reasoning.summary`. Known non-empty
+ladders retain the existing per-target effort resolution. This request normalization does not
+change target order, attempt accounting, or the existing provider-400 failover classification.
 
 ## Combo streaming commit boundary
 
@@ -536,8 +561,9 @@ not retried.
 
 > Decision record: [ADR-0071](../decisions/ADR-0071-combo-streaming-commit-boundary.md)
 
-Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.
+Console upload-rejection recovery excludes query-bearing and fragment-bearing destinations even when their host and generation path match the canonical endpoint.
 
+Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -545,8 +571,18 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
-Codex pool settings and their consumers follow the [reset-first ordering contract](../providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
+Spark Lite and routing metadata use the same suffix-normalized model object as serialization, including configured bracket-suffix removal.
 
+## Optional client transport hints
+
+`dropCodexSafetyBuffering` defaults to false. Canonical OpenAI forward Responses can remove only
+the two safety-buffering response headers, matching response.metadata events and top-level
+safety_buffering fields. Pull/eager client output boundaries compose this with policy failure
+normalization; refusal/error semantics, retryability, cancellation and captured EOF errors remain
+intact. Internal inspection observes original upstream frames. Native codex.response.metadata.headers
+WebSocket metadata and compact are excluded. This does not disable upstream safety enforcement.
+
+Codex pool settings and their consumers follow the [reset-first ordering contract](../providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
 Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
