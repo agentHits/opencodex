@@ -1,16 +1,17 @@
 /**
- * Devin CLI credential import.
+ * Devin CLI credential-file import.
  *
  * The installed CLI writes `credentials.toml` after `devin auth login`, and the
  * `windsurf_api_key` in it is an ordinary `devin-session-token$<JWT>` — the same
- * shape RegisterUser returns for `ocx login devin`, and the same one the
+ * shape RegisterUser returns for the browser sign-in, and the same one the
  * cloud-direct client already speaks. Measured against a signed-in CLI: it mints
  * a user_jwt, opens the full model catalog, and streams chat.
  *
- * So this is kiro's import-first login with the same substance: adopt a signed-in
- * local CLI's own session rather than starting a browser flow the CLI already
- * completed. No browser is ever opened, because there is nothing left for
- * opencodex to authorize.
+ * This module is only the file-reading half of that. The login decision —
+ * adopt the CLI session when present, fall back to the Auth0 browser flow when
+ * the file is absent — lives in `loginDevin` in `../devin.ts`, because the
+ * merged `devin` provider owns both paths (`devin-cli` survives only as a
+ * deprecated alias for unmigrated configs).
  *
  * The file also carries `devin_webapp_host` and `devin_api_url`, which belong to
  * the Devin *session* product (`cog_` keys, agent VMs) rather than to model
@@ -19,28 +20,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
-import { identityFromApiKey } from "./devin";
-import { resolveDevinApiBaseUrl } from "./devin/api-base";
-import type { OAuthController, OAuthCredentials } from "./types";
-
-/**
- * How to get a signed-in CLI, for the one error that needs to say so.
- *
- * This flow reads `credentials.toml` and never executes the CLI, so it does not
- * resolve the binary. The constant used to live beside the discovery helper the
- * retired ACP adapter needed; that adapter is gone and this sentence is all that
- * outlived it.
- */
-const DEVIN_CLI_INSTALL_HINT =
-  "Install the Devin CLI with `curl -fsSL https://cli.devin.ai/install.sh | bash` or `brew install --cask devin-cli`, then run `devin auth login`.";
-
-/**
- * Structurally the `LoginOpts` from `./index`, restated here rather than imported.
- * `index.ts` imports this module to register the provider, so importing the type
- * back would close a cycle for one optional field this flow does not branch on:
- * an import has nothing to force, so `forceLogin` is a no-op for it.
- */
-type DevinCliLoginOpts = { forceLogin?: boolean };
 
 /** Absolute-path override, for a CLI installed somewhere this resolver does not model. */
 export const DEVIN_CLI_CREDENTIALS_ENV = "OPENCODEX_DEVIN_CLI_CREDENTIALS";
@@ -96,11 +75,13 @@ export interface DevinCliCredentialFile {
 const DEVIN_CLI_CREDENTIALS_MAX_BYTES = 64 * 1024;
 
 /**
- * Why the import has no credential, for the one error message the caller owns.
+ * Why the import has no credential, for the caller that owns the response.
  *
  * `missing` and `unreadable` used to collapse into the same `undefined`, so a
  * permission error on an existing file was reported as "not signed in" and sent
- * the operator to `devin auth login`, which does not fix it.
+ * the operator to `devin auth login`, which does not fix it. The distinction
+ * matters even more now that `missing` is the browser-fallback branch: only an
+ * absent file may fall through.
  */
 export type DevinCliCredentialOutcome =
   | { kind: "ok"; file: DevinCliCredentialFile }
@@ -135,8 +116,8 @@ export function readDevinCliCredentialOutcome(deps: DevinCliLoginDeps = {}): Dev
  * not, and the quoted form is required rather than optional — an unquoted
  * matcher would pass its own fixtures and miss the real file.
  *
- * Returns undefined rather than throwing so the caller owns the one error
- * message. Nothing here ever puts the file's contents into a thrown value.
+ * Returns undefined rather than throwing so the caller owns the outcome.
+ * Nothing here ever puts the file's contents into a thrown value.
  */
 export function readDevinCliCredentialFile(deps: DevinCliLoginDeps = {}): DevinCliCredentialFile | undefined {
   const outcome = readDevinCliCredentialOutcome(deps);
@@ -146,61 +127,4 @@ export function readDevinCliCredentialFile(deps: DevinCliLoginDeps = {}): DevinC
 /** True when a signed-in CLI credential is readable. Used for status, never for auth. */
 export function devinCliSignedIn(deps: DevinCliLoginDeps = {}): boolean {
   return readDevinCliCredentialFile(deps) !== undefined;
-}
-
-export async function loginDevinCli(
-  ctrl: OAuthController,
-  _opts?: DevinCliLoginOpts,
-  deps: DevinCliLoginDeps = {},
-): Promise<OAuthCredentials> {
-  const outcome = readDevinCliCredentialOutcome(deps);
-  // Each branch deliberately names no path contents and no parsed value. A
-  // Connect error can echo a request, and redactSecretString does not recognise
-  // a bare JWT or a devin-session-token, which is why register-user.ts refuses
-  // to repeat error bodies; the same caution applies to anything thrown here.
-  if (outcome.kind === "unreadable") {
-    // The file is there and we could not read it, so `devin auth login` is the
-    // wrong instruction: it would succeed and change nothing.
-    throw new Error(
-      "Found a Devin CLI credential file but could not read it. Check its permissions and size, then try again.",
-    );
-  }
-  if (outcome.kind === "incomplete") {
-    throw new Error(
-      "The Devin CLI credential file is missing its session key or API server URL. Run `devin auth login` again to rewrite it.",
-    );
-  }
-  if (outcome.kind === "missing") {
-    throw new Error(
-      `No signed-in Devin CLI session found. ${DEVIN_CLI_INSTALL_HINT} Then run \`devin auth login\` and try again.`,
-    );
-  }
-  const file = outcome.file;
-  // The host comes off disk and then receives the key, so it passes the same
-  // allowlist as the RegisterUser host. An unallowlisted value falls back to the
-  // default rather than becoming an exfiltration target.
-  const apiBaseUrl = resolveDevinApiBaseUrl(file.apiServerUrl);
-  ctrl.onProgress?.("Imported the signed-in Devin CLI session.");
-  return {
-    access: file.apiKey,
-    // Cognition issues a durable key and exposes no refresh endpoint. Carrying
-    // the key here rather than "" is the house pattern: an empty refresh makes
-    // detectOAuthWarning report stale_credentials from the moment of login.
-    refresh: file.apiKey,
-    expires: Number.MAX_SAFE_INTEGER,
-    source: "local-cli",
-    apiBaseUrl,
-    ...identityFromApiKey(file.apiKey),
-  };
-}
-
-export async function refreshDevinCliToken(
-  _refreshToken: string,
-  _signal?: AbortSignal,
-  _credential?: OAuthCredentials,
-): Promise<OAuthCredentials> {
-  // The CLI owns this session and Cognition has no refresh endpoint. Extending
-  // the stored expiry would make a revoked key look valid forever; throwing lets
-  // the request path mark the account needsReauth instead.
-  throw new Error("invalid_grant: the Devin CLI owns this session. Run devin auth login again.");
 }
