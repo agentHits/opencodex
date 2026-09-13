@@ -239,6 +239,13 @@ dispatch keeps its normal reselection policy. `tests/web-search/web-search-passt
 covers drift during search, while pacing, and before first-leg headers return, plus successful
 first-dispatch reselection and result preservation.
 
+`providers.<name>.webSearchBridge.backend` is explicit-only. `ollama` spends that provider's API key
+on the planned search endpoint. `openai`, `anthropic`, `xai`, `gemini`, and `exa` reuse the matching
+sidecar executor and that executor's own credential; a missing credential leaves the bridge
+disarmed rather than falling through to another paid search. A leg that mixes an intercepted
+`web_search` call with another client-executed tool still fails closed. Assistant text is not
+treated as a search instruction.
+
 ## Remote Hub hardening ownership
 
 `src/remote/protocol.ts` owns pure interval/feature negotiation. `src/remote/hub-state.ts` owns the `GET|HEAD /v1/hub-state` contract, its caps, and the parser both sides share. `src/client/hub-client.ts` owns bounded, schema-validated remote catalog consumption, hub-state reads, and key-id probes; `src/client/hub-state.ts` owns the resolution and the owner-stamped 0600 cache, and a failed read reports "unavailable" rather than degrading to the client's own local provider and login state. `src/client/hub-relay.ts` is a fixed-authority management relay with URL, header, body, redirect, and stream bounds. The public data listener remains the direct client→hub path; the loopback management ingress never serves data-plane routes.
