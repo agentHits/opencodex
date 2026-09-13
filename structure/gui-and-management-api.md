@@ -461,11 +461,7 @@ selectors, a vendor-only inferred price is unavailable; exact provider and user 
 eligible. Missing trace evidence is not reconstructed from today's configuration. Provider-detail
 model shares use that provider's token total, not the global total. Unknown reserved `policy/`
 selectors are rejected before upstream dispatch; historical rows remain unchanged.
-Expected-price overlays are estimates, not billing reproductions: the Z.AI GLM rows
-(`zai`, `zhipu-bigmodel`, `zhipu-bigmodel-coding`, `zhipu-bigmodel-responses`) display the
-published z.ai USD list price on surfaces that actually bill by Coding Plan subscription or
-CNY-tiered domestic PAYG, and every such row is marked `verified-derived` so the estimate flag
-reaches the UI.
+Expected-price overlays are estimates, not billing reproductions: the Z.AI GLM rows (`zai`, `zhipu-bigmodel`, `zhipu-bigmodel-coding`, `zhipu-bigmodel-responses`) display the published z.ai USD list price on surfaces that actually bill by Coding Plan subscription or CNY-tiered domestic PAYG, and every such row is marked `verified-derived` so the estimate flag reaches the UI.
 
 The management API retains the compact accumulator plus bounded query summaries; it never retains
 normalized per-request rows after a response. File identity changes, shrinkage, same-size metadata
@@ -589,13 +585,11 @@ Cline journal Undo eligibility reads both native configuration files through the
 The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.
 
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
-
 Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates. The account history response can include a [low-confidence effective capacity estimate](providers/openai-tiers.md#observed-effective-token-capacity); usage normalization retains local-answer provenance so local responses cannot supply samples. Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
 
 Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
 
 Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
-
 Dashboard overview polling observes authorization failures independently of stalled or rejected peer requests, cancels remaining child requests after a decisive result, and exposes resource-level deadline failures without rewriting them as authentication failures.
 
 The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
