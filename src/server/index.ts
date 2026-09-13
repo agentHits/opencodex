@@ -790,6 +790,13 @@ export function attachLiveSidebandUpstream(
       return;
     }
     ws.data.liveOpened = true;
+    // The upstream opened before this socket existed, so the "open" listener
+    // below can never fire for it. Disarm the connect watchdog exactly as that
+    // listener would, or every session with a max lifetime is force-closed ten
+    // seconds after attach. The session timer stays armed: it bounds the whole
+    // session, not the connect phase.
+    if (ws.data.liveConnectTimer !== undefined) clearTimeout(ws.data.liveConnectTimer);
+    ws.data.liveConnectTimer = undefined;
     for (const frame of takeover.frames) {
       try {
         // Mirror the live message listener exactly: same ceiling, same diagnostic
