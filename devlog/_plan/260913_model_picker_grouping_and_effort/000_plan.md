@@ -79,3 +79,63 @@ omp에 프로바이더 화이트리스트는 없다. `ompEfforts()`가 `ExportMo
 wp2와 wp3은 같은 한 줄짜리 원인을 공유하므로 PR 하나로 착지한다. 나누면 두 번째
 PR이 빈 변경이 된다.
 
+
+## wp1 종료 — 선례 확정
+
+| 찾는 것 | 결과 | 위치 |
+|---|---|---|
+| "Gemini 처리" 그룹핑 | Antigravity 전용 구현, 공용 프레임 아님 | 도입 `c07f2d63dc`, 회귀 복구 `06f8e7a944` |
+| 그 구현의 두 조각 | collapse + `modelReasoningEfforts` | `antigravity-models.ts:140-156`, `registry.ts:2139` |
+| Pi 추론 피커 선례 | Anthropic 동일 결함 수정 | `df416a439c` (#3454), 주석이 `registry.ts:403-408`에 남아 있음 |
+
+`registry.ts:403-408` 주석이 이번 건을 그대로 예고하고 있었다.
+
+> Without this the providers advertised no ladder at all, so every client that
+> keys its effort control off `reasoningEfforts` — Aside and the rest of the
+> Pi-shaped exports — wrote these models with no control.
+
+Devin은 그 문장의 다음 피해자였다.
+
+
+## wp2 종료 — Codex 피커 사다리
+
+PR #4490 → `dev` `cb8f59614`. `modelReasoningEfforts`가 붙었고, 라이브 경로가 모델별
+사다리를 `CatalogModel.reasoningEfforts`로 싣는다. SWE-2는 이제 medium/high/max만
+광고하고, `effort.ts:232-243`이 spawn_agent용 top rung을 별도로 합성한다.
+
+그룹핑 자체는 이미 있었다 — `collapseDevinModelUid`가 이 단위 이전부터 접고 있었다.
+빠진 건 접힌 행에 붙을 사다리였고, 그래서 "묶는 기능이 필요하다"는 체감이 나왔다.
+
+
+## wp3 종료 — Pi 계열 익스포트
+
+같은 머지가 `reasoningEfforts`를 채운다. `ompEfforts()`(`omp.ts:72`)가 비어 있지 않은
+배열일 때만 `thinking: { mode: "effort", efforts }`를 쓰므로, 이제 Devin 모델에도
+컨트롤이 그려진다. 영향 범위는 Pi 하나가 아니라 같은 필드를 읽는 `pi`, `aside`,
+`prime`, `omo`, `zcode`, `mcode`, `dsh`, `raycast`, OpenCode 계열 전부다.
+
+`cline` export는 effort 필드 자체가 없어 대상이 아니다.
+
+## 후속
+
+- `DEVIN_STATIC_MODELS`에 `swe-2` 부재, `stale-context-window-migration.ts:45-56`의
+  구 로스터, `src/adapters/registry.ts:26-30`의 구 주석 — #4484 잔여물이고 사다리와
+  무관해 이 단위에서 건드리지 않았다.
+- 정적 표에는 실측된 SWE-2만 있다. 다른 모델의 degraded 사다리는 계정 카탈로그를
+  실측할 기회가 생기면 줄을 추가한다.
+
+
+## 단위 종료
+
+| wp | 결과 | 커밋 / PR | merge |
+|---|---|---|---|
+| wp0 | 로드맵 + 구현 | `024537f30a`, PR #4490 (`6f77d24bb3`) | `cb8f59614` |
+| wp1 | 선례 확정 | `b7e9d66966`, `17e1c9320a` | — |
+| wp2 | Codex 피커 사다리 | 위 머지에 포함 | `cb8f59614` |
+| wp3 | Pi 계열 익스포트 | `d4666ffe14` (기록), 위 머지에 포함 | `cb8f59614` |
+
+한 원인이라 PR 하나로 착지했다. 나눴다면 두 번째가 빈 변경이 됐을 것이다.
+
+exact-head CI: `6f77d24bb3`에서 25 success / 0 fail / 0 cancelled. 로컬 제품
+스위트·typecheck·build·install은 **NOT RUN**이다.
+
