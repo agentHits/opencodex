@@ -6,6 +6,7 @@ import { CodexPauseToggleLabel, CodexTicketBadge } from "./codex-account-pool-he
 import type { CodexAccountEntry } from "./codex-account-pool-types";
 import type { CodexAccountModeState } from "../codex-multi-state";
 import type { TFn } from "../i18n/shared";
+import type { MainDeviceReauthState } from "./use-main-device-reauth";
 import type { NoticeTone } from "../ui";
 import { navigateHash } from "../hash-routing";
 import {
@@ -37,6 +38,7 @@ export function CodexAccountPoolMainCard({
   onCopyDoctor,
   doctorCopyOutcomeFor,
   onManageMainHardLock,
+  mainReauth,
 }: {
   t: TFn;
   main: CodexAccountEntry | undefined;
@@ -62,6 +64,12 @@ export function CodexAccountPoolMainCard({
   onCopyDoctor?: (accountId: string) => void;
   doctorCopyOutcomeFor?: (accountId: string) => "copied" | "unavailable" | null;
   onManageMainHardLock?: () => void;
+  /** #3898: native-main device reauth flow state and controls (dedicated namespace). */
+  mainReauth?: {
+    state: MainDeviceReauthState;
+    start: () => Promise<void>;
+    cancel: () => Promise<void>;
+  } | undefined;
 }) {
   const mainFallbackLabel = t("codexAuth.codexApp");
   const mainId = main?.id ?? "__main__";
@@ -182,7 +190,47 @@ export function CodexAccountPoolMainCard({
         <div className="card-sub faint">{t("pws.healthCooldownHint")}</div>
       )}
       {showReauth
-        ? <div className="card-sub faint">{t("codexAuth.mainTokenExpired")}</div>
+        ? <div className="card-sub faint">
+            <p role="status">{t("codexAuth.mainTokenExpired")}</p>
+            {mainReauth && (mainReauth.state.phase === "idle" || mainReauth.state.phase === "failed") && (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm codex-auth-action-btn"
+                  onClick={() => { void mainReauth.start(); }}
+                >
+                  {t("codexAuth.mainReauthDevice")}
+                </button>
+                {mainReauth.state.phase === "failed" && (
+                  <span className="badge badge-amber">{t("codexAuth.mainReauthFailed")}: {mainReauth.state.code}</span>
+                )}
+              </>
+            )}
+            {mainReauth && mainReauth.state.phase === "starting" && (
+              <span className="faint">{t("codexAuth.mainReauthPending")}</span>
+            )}
+            {mainReauth && (mainReauth.state.phase === "pending" || mainReauth.state.phase === "committing") && (
+              <span className="codex-main-reauth-pending">
+                {mainReauth.state.verificationUrl && (
+                  <span>{t("codexAuth.mainReauthOpen")}: {mainReauth.state.verificationUrl}</span>
+                )}
+                {mainReauth.state.deviceCode && (
+                  <strong>{t("codexAuth.mainReauthCode")}: {mainReauth.state.deviceCode}</strong>
+                )}
+                <span className="faint">{t("codexAuth.mainReauthPending")}</span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm codex-auth-action-btn"
+                  onClick={() => { void mainReauth.cancel(); }}
+                >
+                  {t("codexAuth.mainReauthCancel")}
+                </button>
+              </span>
+            )}
+            {mainReauth && mainReauth.state.phase === "succeeded" && (
+              <span className="badge badge-primary">{t("codexAuth.mainReauthSucceeded")}</span>
+            )}
+          </div>
         : !inCooldown && <>
             <QuotaBars
               quota={main?.quota ?? null}

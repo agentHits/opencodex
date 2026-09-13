@@ -24,6 +24,8 @@ import type { TranslatorBudget } from "../lib/translator-budget";
 import { rewriteRoutedCustomToolsForUpstream } from "../responses/custom-tool-compat";
 import { rewriteRoutedToolSearchForUpstream } from "../responses/tool-search-compat";
 import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-tool-compat";
+import { preparePlaintextV2AgentMessages } from "../responses/plaintext-v2-agent-messages";
+import { isMetaAiResponsesDestination, rewriteMuseToolNamesForUpstream } from "../responses/muse-tool-name-alias";
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { stripUnicodePropertyPatterns } from "./responses-tool-schema";
@@ -700,6 +702,7 @@ function promoteClientLoadedTools(body: unknown): unknown {
 }
 
 const MAX_RESPONSES_CALL_ID_LENGTH = 64;
+
 const REPAIRED_CALL_ID_PREFIX = "call_ocx_";
 const REPAIRED_CALL_ID_DIGEST_LENGTH = MAX_RESPONSES_CALL_ID_LENGTH - REPAIRED_CALL_ID_PREFIX.length;
 
@@ -2205,6 +2208,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       let routedCustomToolRepairNames: Set<string> | undefined;
       let convertedRoutedToolSearchNames: Set<string> | undefined;
       let convertedRoutedNamespaceToolAliases: Map<string, { namespace: string; name: string; kind: "function" | "custom" }> | undefined;
+      let plaintextV2AgentMessageToolNames: ReadonlySet<string> | undefined;
+      let plaintextV2AgentMessageAliasedToolNames: ReadonlySet<string> | undefined;
+      let convertedMuseToolNameAliases: Map<string, string> | undefined;
       const unexpandedMiss = !!parsed.previousResponseId && parsed._previousResponseInputExpanded !== true;
       let outBody = stripPreviousResponseId(
         parsed._rawBody,
@@ -2298,6 +2304,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           outBody = stripOpenAiOnlyWebSearchFields(outBody);
         }
         outBody = stripMuseSparkUnsupportedWebSearchFields(outBody, parsed.modelId, url);
+        // Host-only: api.meta.ai rejects function names over 64 chars on every Muse model,
+        // including default muse-spark-1.3. Do not reuse the contributor/Zen web_search
+        // predicates. Namespace flattening has already produced the public wire names.
+        if (isMetaAiResponsesDestination(url)) {
+          const rewritten = rewriteMuseToolNamesForUpstream(outBody);
+          outBody = rewritten.body;
+          convertedMuseToolNameAliases = rewritten.aliases;
+        }
         // Last, so promoted namespace children are also cleared of Codex-private fields.
         outBody = stripCanonicalOnlyToolFields(outBody, provider.supportsOpenAiWebSearchToolFields === false);
       }
@@ -2314,6 +2328,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // Run after routed compaction so nested input_image parts are replaced before a malformed
       // tool output is flattened to text and can no longer be inspected structurally.
       outBody = repairUnidentifiedToolOutputItems(outBody);
+      if (parsed._plaintextV2AgentMessages === true && isCanonicalOpenAiForwardProvider(provider)) {
+        const prepared = preparePlaintextV2AgentMessages(outBody);
+        outBody = prepared.body;
+        if (prepared.namespaceAliased) {
+          plaintextV2AgentMessageToolNames = prepared.toolNames;
+          plaintextV2AgentMessageAliasedToolNames = prepared.aliasedAgentMessageToolNames;
+        }
+      }
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
         stripItemIdsWhenUnstored(
@@ -2337,7 +2359,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         ),
         isXaiSchemaTarget(provider),
       );
-      const finalBody = stripDisabledVerbosity(
+      const unnormalizedBody = stripDisabledVerbosity(
         stripDisabledReasoningSummaries(
           normalizeConfiguredReasoningSummaryDelivery(sanitizedBody, provider, parsed.modelId),
           provider,
@@ -2346,6 +2368,15 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         provider,
         parsed.modelId,
       );
+      // Normalize the wire model before deriving model-dependent transport metadata.
+      const finalBody =
+        provider.modelSuffixBracketStrip
+          && unnormalizedBody !== null
+          && typeof unnormalizedBody === "object"
+          && !Array.isArray(unnormalizedBody)
+          && typeof (unnormalizedBody as { model?: unknown }).model === "string"
+          ? { ...(unnormalizedBody as Record<string, unknown>), model: stripBracketedModelSuffix((unnormalizedBody as { model: string }).model) }
+          : unnormalizedBody;
       if (isCanonicalOpenAiForwardProvider(provider)) {
         const routingHeaders = new Headers(headers);
         applyCodexRoutingHint(routingHeaders, finalBody);
@@ -2372,15 +2403,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // here, on the serialized body, not on the parsed selector. One place covers both the
       // HTTP and the WebSocket outbound, because the WS path transports this same request
       // instead of rebuilding it.
-      const body = JSON.stringify(
-        provider.modelSuffixBracketStrip
-          && finalBody !== null
-          && typeof finalBody === "object"
-          && !Array.isArray(finalBody)
-          && typeof (finalBody as { model?: unknown }).model === "string"
-          ? { ...(finalBody as Record<string, unknown>), model: stripBracketedModelSuffix((finalBody as { model: string }).model) }
-          : finalBody,
-      );
+      const body = JSON.stringify(finalBody);
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
         new TextEncoder().encode(body).byteLength,
@@ -2395,6 +2418,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),
         ...(convertedRoutedNamespaceToolAliases ? { convertedRoutedNamespaceToolAliases } : {}),
+        ...(plaintextV2AgentMessageToolNames ? { plaintextV2AgentMessageToolNames } : {}),
+        ...(plaintextV2AgentMessageAliasedToolNames ? { plaintextV2AgentMessageAliasedToolNames } : {}),
+        ...(convertedMuseToolNameAliases ? { convertedMuseToolNameAliases } : {}),
         ...(tierLog ? { tierLog } : {}),
       };
     },

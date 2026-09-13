@@ -39,6 +39,7 @@ import {
   normalizeAccountPoolStrategy,
   parseAccountPoolStickyLimit,
   parseAccountPoolStrategy,
+  parseCodexAccountPoolStrategy,
 } from "../../codex/pool-rotation";
 import { normalizeAccountPoolQuotaWindow, parseAccountPoolQuotaWindow } from "../../oauth/anthropic-routing";
 import { primeCodexPoolQuotas } from "../../codex/auth-api";
@@ -78,6 +79,24 @@ import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, C
 import type { ManagementContext } from "./context";
 import { readManagementJsonBody, readManagementJsonBodyOr, rethrowManagementBodyTooLarge } from "./body";
 import { codexAccountNamespaceProviderCollisionError } from "../../codex/account-namespace-match";
+
+/**
+ * Provider ids that share the Devin cloud-direct client, and therefore share its
+ * process-memory caches.
+ *
+ * `devin` signs in through RegisterUser and `devin-cli` imports a signed-in local
+ * CLI session, but both hand the same api_key to the same client, so one cache
+ * serves both and one of them clearing it is not enough.
+ */
+function isDevinCloudDirectProvider(provider: string): boolean {
+  return provider === "devin" || provider === "devin-cli";
+}
+
+async function clearDevinCloudDirectCaches(): Promise<void> {
+  const { clearCachedUserJwt, clearCachedCatalog } = await import("../../adapters/devin/cloud-direct");
+  clearCachedUserJwt();
+  clearCachedCatalog();
+}
 import { ACCOUNT_IMPORT_DEADLINE_MS, ACCOUNT_IMPORT_MAX_REQUEST_BYTES } from "../../oauth/account-import";
 import { readBoundedJsonRequestBody } from "../request-decompress";
 
@@ -255,14 +274,12 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const { clearProviderQuotaCache, clearAccountQuotaCache } = await import("../../providers/quota");
     clearProviderQuotaCache();
     clearAccountQuotaCache(provider);
-    if (provider === "devin") {
-      // The cached user_jwt's payload contains the api_key, and the catalog is
-      // keyed by that key. Without this they outlive the credential in process
-      // memory until the JWT's own ~24 minute expiry.
-      const { clearCachedUserJwt, clearCachedCatalog } = await import("../../adapters/devin/cloud-direct");
-      clearCachedUserJwt();
-      clearCachedCatalog();
-    }
+    // The cached user_jwt's payload contains the api_key, and the catalog is
+    // keyed by that key. Without this they outlive the credential in process
+    // memory until the JWT's own ~24 minute expiry. `devin` and `devin-cli`
+    // share one cache, so gating on `devin` alone left a CLI-imported key's JWT
+    // resident after its own logout.
+    if (isDevinCloudDirectProvider(provider)) await clearDevinCloudDirectCaches();
     return jsonResponse({ success: true });
   }
 
@@ -325,7 +342,9 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
         return {
           ...account,
           quota: row.quota,
-          ...(quotaMode === "probe" ? { quotaUnavailable: row.unavailable === true } : {}),
+          ...(quotaMode === "probe" ? { quotaUnavailable: row.unavailable === true,
+            ...(row.unavailable && row.quotaFailure && row.quotaFailureIsCurrent?.() === true ? { quotaFailure: row.quotaFailure } : {}),
+          } : {}),
         };
       }),
     });
@@ -383,8 +402,10 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     // sticky limit is refused identically whichever pool is addressed.
     let strategy: string | undefined;
     if (fields.strategy !== undefined) {
-      const parsed = parseGenericPoolStrategy(fields.strategy);
-      if (parsed === null) return jsonResponse({ error: "strategy must be one of: quota, round-robin, fill-first" }, 400);
+      const parsed = kind === "codex" ? parseCodexAccountPoolStrategy(fields.strategy) : parseGenericPoolStrategy(fields.strategy);
+      if (parsed === null) return jsonResponse({ error: kind === "codex"
+        ? "strategy must be one of: quota, round-robin, fill-first, reset-first"
+        : "strategy must be one of: quota, round-robin, fill-first" }, 400);
       strategy = parsed;
     }
     let stickyLimit: number | undefined;
@@ -685,6 +706,10 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const { clearProviderQuotaCache, clearAccountQuotaCache } = await import("../../providers/quota");
     clearProviderQuotaCache();
     clearAccountQuotaCache(provider);
+    // Same reasoning as logout. Removing the last account for a provider used to
+    // leave the JWT and catalog in memory, because only the logout route cleared
+    // them.
+    if (isDevinCloudDirectProvider(provider)) await clearDevinCloudDirectCaches();
     return jsonResponse({ ok: true });
   }
 
@@ -833,7 +858,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       requestOrigin: req.headers.get("origin"),
     });
     const { readApiKeyUsageRollup } = await import("./api-key-usage");
-    const { rollup, attributionSince, historyTruncated } = await readApiKeyUsageRollup(keys.map(k => k.id), config.managementUsageMaxReadBytes);
+    const { rollup, attributionSince, historyTruncated, usageIncomplete, usageIncompleteReason } = await readApiKeyUsageRollup(keys.map(k => k.id), config.managementUsageMaxReadBytes);
     return jsonResponse({
       // 8 random hex past the fixed `ocx_data_` literal: enough to tell two keys
       // apart in a list, with 128 bits of the tail still unrevealed. Masking only
@@ -853,6 +878,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       // Dataset-level and singular: it describes the usage log, not any one key.
       ...(attributionSince ? { attributionSince } : {}),
       ...(historyTruncated ? { historyTruncated: true } : {}),
+      ...(usageIncomplete ? { usageIncomplete: true, usageIncompleteReason } : {}),
       authMatrix: AUTH_MATRIX,
       ...endpoints,
     }, 200, req, config);

@@ -137,9 +137,11 @@ describe("retired Spark response headers cannot supply account quota", () => {
     expect(getAccountQuota("legacy-5h")?.shortWindowSeconds).toBe(18_000);
   });
 
-  it("drops an elapsed account-level short tuple when a Spark refresh omits the account short slot", () => {
-    // #4122 stopped new Spark writes into short*, but mergeAccountQuota kept carrying the
-    // already-polluted tuple and rewriting updatedAt, so the six-hour disk TTL never fired.
+  it("a retired-model header refresh is inert and cannot fabricate custom windows", () => {
+    // #4122 stopped new Spark writes into short*. Retirement goes further: the retired model is
+    // refused at the parser, so its response cannot write, drop or relabel anything. The elapsed
+    // short tuple below is left for the next genuine refresh to expire, covered by the
+    // weekly-only case that follows.
     clearAccountQuota();
     setAccountQuotaFromParsed("spark-stale", {
       weeklyPercent: 29,
@@ -149,19 +151,18 @@ describe("retired Spark response headers cannot supply account quota", () => {
       shortResetAt: 1788974652,
       shortWindowSeconds: 18_000,
     });
+    const before = getAccountQuota("spark-stale");
     applyAccountQuotaFromUpstreamHeaders("spark-stale", new Headers(SPARK_HEADERS), undefined, undefined, {
       modelId: "gpt-5.3-codex-spark",
     });
     const quota = getAccountQuota("spark-stale");
-    expect(quota?.shortPercent).toBeUndefined();
-    expect(quota?.shortResetAt).toBeUndefined();
-    expect(quota?.shortObservedAt).toBeUndefined();
-    expect(quota?.shortWindowSeconds).toBeUndefined();
-    expect(quota?.weeklyPercent).toBe(21);
-    expect(quota?.customWindows).toEqual([{ label: "GPT-5.3-Codex-Spark 5h", percent: 4, resetAt: 1788974652 }]);
+    // Nothing moves, including `updatedAt`: a retired refresh must not renew the disk TTL either.
+    expect(quota).toEqual(before);
+    expect(quota?.weeklyPercent).toBe(29);
+    expect(quota?.customWindows).toBeUndefined();
   });
 
-  it("drops an elapsed account-level short tuple on a WHAM weekly+Spark refresh", () => {
+  it("drops an elapsed account-level short tuple on a WHAM weekly refresh carrying retired limits", () => {
     // Live path for the 2026-09-12 Pro row: WHAM reports weekly primary + Spark additional
     // limits and never rewrites shortObservedAt, so merge must drop the elapsed carry.
     clearAccountQuota();
@@ -191,10 +192,7 @@ describe("retired Spark response headers cannot supply account quota", () => {
     expect(quota?.shortObservedAt).toBeUndefined();
     expect(quota?.shortWindowSeconds).toBeUndefined();
     expect(quota?.weeklyPercent).toBe(29);
-    expect(quota?.customWindows?.map(window => window.label)).toEqual([
-      "GPT-5.3-Codex-Spark 5h",
-      "GPT-5.3-Codex-Spark Weekly",
-    ]);
+    expect(quota?.customWindows).toBeUndefined();
   });
 
   it("drops an elapsed account-level short tuple on a weekly-only refresh", () => {

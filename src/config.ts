@@ -1,3 +1,4 @@
+import { modelCapabilitiesConfigError, mergeModelCapabilities, sanitizeModelCapabilitiesForLoad } from "./config/provider-validation";
 import { createHash } from "node:crypto";
 import { chmodSync, constants as fsConstants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,8 +15,11 @@ import {
   pinnedReasoningEffortConfigError,
   modelAdapterRecordConfigError,
   modelDisplayNamesConfigError,
+  autoReviewModelOverridesConfigError,
+  autoReviewModelTargetConfigError,
   nonBlankStringArrayConfigError,
   normalizeNonBlankStringArray,
+  normalizeAutoReviewModelOverrides,
   positiveIntegerConfigError,
   positiveIntegerRecordConfigError,
   providerBaseUrlConfigError,
@@ -573,17 +577,39 @@ const modelPinnedEffortsSchema = z.unknown().superRefine((value, ctx) => {
   Object.entries(value as Record<string, string>).map(([key, effort]) => [key.trim(), effort]),
 ));
 
+const autoReviewModelSchema = z.unknown().superRefine((value, ctx) => {
+  const error = autoReviewModelTargetConfigError(value, "autoReviewModel", true);
+  if (error) ctx.addIssue({ code: "custom", message: error });
+}).transform(value => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+});
+
+const autoReviewModelOverridesSchema = z.unknown().superRefine((value, ctx) => {
+  const error = autoReviewModelOverridesConfigError(value, "autoReviewModelOverrides", true);
+  if (error) ctx.addIssue({ code: "custom", message: error });
+}).transform(value => normalizeAutoReviewModelOverrides(value));
+
+const modelCapabilitiesSchema = z.unknown().superRefine((value, ctx) => {
+  const error = modelCapabilitiesConfigError(value);
+  if (error) ctx.addIssue({ code: "custom", message: error });
+}).transform(value => mergeModelCapabilities(undefined, value));
+
 /**
  * Zod schema for one provider entry: known fields are validated strictly while unknown
  * fields pass through (preserved for runtime extensions).
  */
 const providerConfigSchema = z.object({
+  modelCapabilities: modelCapabilitiesSchema.optional(),
   pinnedReasoningEffort: pinnedReasoningEffortSchema.optional(),
   modelPinnedReasoningEfforts: modelPinnedEffortsSchema.optional(),
   // Validated rather than left to passthrough: an unrecognized strategy would otherwise
   // load silently and then be ignored at selection time, which reads as a broken feature
   // rather than a rejected setting.
   apiKeyPoolStrategy: z.enum(["round-robin", "fill-first", "quota"]).optional(),
+  autoReviewModel: autoReviewModelSchema.optional(),
+  autoReviewModelOverrides: autoReviewModelOverridesSchema.optional(),
   adapter: z.string().min(1),
   baseUrl: z.string().min(1),
   alias: z.string().optional(),
@@ -665,9 +691,12 @@ export {
   apiKeyTransportConfigError,
   booleanRecordConfigError,
   modelAdapterRecordConfigError,
+  autoReviewModelOverridesConfigError,
+  autoReviewModelTargetConfigError,
   modelDisplayNamesConfigError,
   nonBlankStringArrayConfigError,
   normalizeNonBlankStringArray,
+  normalizeAutoReviewModelOverrides,
   positiveIntegerConfigError,
   positiveIntegerRecordConfigError,
   providerBaseUrlConfigError,
@@ -1041,6 +1070,11 @@ function canonicalHttpOrigin(value: string): string | null {
   }
 }
 
+const managementIngressSchema = z.union([
+  z.object({ enabled: z.literal(false) }).strict(),
+  z.object({ enabled: z.literal(true), port: z.number().int().min(1).max(65535) }).strict(),
+]);
+
 const hubConfigSchema = z.object({
   managementPublicOrigin: z.string().transform((value, ctx) => {
     const origin = canonicalHttpOrigin(value);
@@ -1064,10 +1098,7 @@ const hubConfigSchema = z.object({
   }).optional(),
   // A malformed hand edit disables only the optional ingress. Live writes are rejected by
   // managementIngressConfigError before this load-time degradation can hide the mistake.
-  managementIngress: z.union([
-    z.object({ enabled: z.literal(false) }).strict(),
-    z.object({ enabled: z.literal(true), port: z.number().int().min(1).max(65535) }).strict(),
-  ]).optional().catch(undefined),
+  managementIngress: managementIngressSchema.optional().catch(undefined),
 }).strict();
 
 const tailscaleUserSchema = z.string().trim().min(1).superRefine((value, ctx) => {
@@ -1253,6 +1284,8 @@ const configSchema = z.object({
   configRebaseProvenance: z.unknown().optional(),
   // A retry can be billable, so absence and malformed hand edits both stay off.
   emptyCompletionRetry: z.boolean().optional().catch(false),
+  // Header suppression changes what Codex sees, so absence and malformed edits stay off.
+  dropCodexSafetyBuffering: z.boolean().optional().catch(false),
   // A malformed hand edit must not silently stop opening the browser: fall back
   // to undefined, which resolves to the historical auto-open behavior.
   oauthOpenBrowser: z.boolean().optional().catch(undefined),
@@ -1269,6 +1302,7 @@ const configSchema = z.object({
   contextCapValue: z.number().int().positive().optional(),
   multiAgentGuidanceEnabled: z.boolean().optional(),
   // Invalid optional recovery config must not discard unrelated provider/account state.
+  plaintextV2AgentMessages: z.boolean().optional().catch(undefined),
   agentTaskRecovery: agentTaskRecoverySchema.optional().catch(undefined),
   // Same rationale: a bad notify section must not cost the operator their providers.
   quotaResetNotify: quotaResetNotifySchema.optional().catch(undefined),
@@ -1895,6 +1929,23 @@ export function retryOn429PolicyConfigError(policy: unknown): string | null {
   return `retryOn429.${field} is invalid (${first.message})`;
 }
 
+function sanitizeCapabilityDeclarationsForLoad(parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object") return;
+  const providers = (parsed as Record<string, unknown>).providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return;
+  for (const [name, value] of Object.entries(providers)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const provider = value as Record<string, unknown>;
+    if (provider.modelCapabilities === undefined) continue;
+    if (modelCapabilitiesConfigError(provider.modelCapabilities) !== null) {
+      console.warn(`config.json provider ${JSON.stringify(redactSecretString(name))} has malformed modelCapabilities; retaining valid axes and restricting malformed input modalities to text`);
+      const repaired = sanitizeModelCapabilitiesForLoad(provider.modelCapabilities);
+      if (repaired) provider.modelCapabilities = repaired;
+      else delete provider.modelCapabilities;
+    }
+  }
+}
+
 /**
  * Load-time degradation for `providers.<name>.modelCosts`, mirroring
  * {@link sanitizeRetryOn429ForLoad}. A hand-edited malformed display-price row
@@ -1944,6 +1995,44 @@ function sanitizeModelCostsForLoad(parsed: unknown): void {
 }
 
 /**
+ * Load-time degradation for provider-scoped auto-review selectors. A malformed
+ * hand edit must not fail the whole config parse; the management boundary stays
+ * strict and rejects the same shapes before they can be written.
+ */
+function sanitizeAutoReviewForLoad(parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object") return;
+  const root = parsed as Record<string, unknown>;
+  const providers = root.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) return;
+  for (const [name, providerValue] of Object.entries(providers as Record<string, unknown>)) {
+    if (!providerValue || typeof providerValue !== "object" || Array.isArray(providerValue)) continue;
+    const provider = providerValue as Record<string, unknown>;
+    const safeProviderName = JSON.stringify(redactSecretString(name));
+    if (name === "openai") {
+      delete provider.autoReviewModel;
+      delete provider.autoReviewModelOverrides;
+      continue;
+    }
+    if (provider.autoReviewModel !== undefined
+      && autoReviewModelTargetConfigError(provider.autoReviewModel, "autoReviewModel", true) !== null) {
+      console.warn(`⚠️  config.json providers.${safeProviderName}.autoReviewModel is invalid — ignoring the selector`);
+      delete provider.autoReviewModel;
+    }
+    if (provider.autoReviewModelOverrides !== undefined) {
+      const overridesError = autoReviewModelOverridesConfigError(
+        provider.autoReviewModelOverrides,
+        "autoReviewModelOverrides",
+        true,
+      );
+      if (overridesError) {
+        console.warn(`⚠️  config.json providers.${safeProviderName}.autoReviewModelOverrides is invalid — ignoring the map`);
+        delete provider.autoReviewModelOverrides;
+      }
+    }
+  }
+}
+
+/**
  * Companion to {@link warnDegradedStreamMode} for a blank persisted `hostname`. The bind
  * falls back to loopback, which is the safe direction but not what the file asked for —
  * say so once instead of silently ignoring the field.
@@ -1953,6 +2042,26 @@ function warnDegradedHostname(rawParsed: unknown, validated: OcxConfig): void {
   const raw = (rawParsed as Record<string, unknown>).hostname;
   if (raw !== undefined && validated.hostname === undefined) {
     console.warn(`⚠️  config.json hostname ${JSON.stringify(raw)} is not a usable bind address — falling back to 127.0.0.1`);
+  }
+}
+
+function degradedListenerWarnings(rawParsed: unknown, validated: OcxConfig): string[] {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw) return [];
+  const warnings: string[] = [];
+  if (raw.unauthenticatedLoopbackListener !== undefined && validated.unauthenticatedLoopbackListener === undefined) {
+    warnings.push("unauthenticatedLoopbackListener ignored: invalid listener configuration; repair config.json before enabling the listener");
+  }
+  const hub = rawConfigRecord(raw.hub);
+  if (hub?.managementIngress !== undefined && !managementIngressSchema.safeParse(hub.managementIngress).success) {
+    warnings.push("hub.managementIngress ignored: invalid management listener configuration; repair config.json before enabling the listener");
+  }
+  return warnings;
+}
+
+function warnDegradedListeners(rawParsed: unknown, validated: OcxConfig): void {
+  for (const warning of degradedListenerWarnings(rawParsed, validated)) {
+    console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
   }
 }
 
@@ -2153,6 +2262,17 @@ function malformedUpstreamHostCircuitThresholdWarning(rawParsed: unknown): strin
 
 function warnDegradedUpstreamHostCircuitThreshold(rawParsed: unknown): void {
   const warning = malformedUpstreamHostCircuitThresholdWarning(rawParsed);
+  if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+}
+
+function malformedPlaintextV2AgentMessagesWarning(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || raw.plaintextV2AgentMessages === undefined || typeof raw.plaintextV2AgentMessages === "boolean") return null;
+  return "plaintextV2AgentMessages ignored: expected a boolean";
+}
+
+function warnDegradedPlaintextV2AgentMessages(value: unknown): void {
+  const warning = malformedPlaintextV2AgentMessagesWarning(value);
   if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
 }
 
@@ -2398,14 +2518,17 @@ export function loadConfig(): OcxConfig {
     sanitizeAliasesForLoad(parsed);
     sanitizeReasoningPinsForLoad(parsed);
     sanitizeModelDisplayNamesForLoad(parsed);
+    sanitizeAutoReviewForLoad(parsed);
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
+    sanitizeCapabilityDeclarationsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       const config = normalizeApiKeyIds(result.data as OcxConfig);
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedStreamMode(parsed, config);
       warnDegradedHostname(parsed, config);
+      warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2413,6 +2536,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedNativeSubagentConfig(parsed, config);
       warnDegradedCodexAccountPicker(parsed);
       warnDegradedUpstreamHostCircuitThreshold(parsed);
+      warnDegradedPlaintextV2AgentMessages(parsed);
       warnDegradedAgentTaskRecovery(parsed);
       warnDegradedRuntimeRole(parsed);
       warnDegradedOptionalRemoteBlocks(parsed);
@@ -2435,6 +2559,7 @@ export function loadConfig(): OcxConfig {
       const config = normalizeApiKeyIds(retryResult.data as OcxConfig);
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedHostname(parsed, config);
+      warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2442,6 +2567,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedNativeSubagentConfig(parsed, config);
       warnDegradedCodexAccountPicker(parsed);
       warnDegradedUpstreamHostCircuitThreshold(parsed);
+      warnDegradedPlaintextV2AgentMessages(parsed);
       warnDegradedAgentTaskRecovery(parsed);
       warnDegradedRuntimeRole(parsed);
       warnDegradedOptionalRemoteBlocks(parsed);
@@ -2460,6 +2586,7 @@ export function loadConfig(): OcxConfig {
         const config = normalizeApiKeyIds(salvaged.parsed);
         warnInheritedFastWireConflicts(configPath, config);
         warnDegradedHostname(parsed, config);
+        warnDegradedListeners(parsed, config);
         warnDegradedApiKeys(parsed, config);
         warnDegradedCodexAccountPriorities(parsed, config);
         warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2467,6 +2594,7 @@ export function loadConfig(): OcxConfig {
         warnDegradedNativeSubagentConfig(parsed, config);
         warnDegradedCodexAccountPicker(parsed);
         warnDegradedUpstreamHostCircuitThreshold(parsed);
+        warnDegradedPlaintextV2AgentMessages(parsed);
         warnDegradedAgentTaskRecovery(parsed);
         warnDegradedRuntimeRole(parsed);
         warnDegradedOptionalRemoteBlocks(parsed);
@@ -2594,6 +2722,7 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   const warnings = configPlaceholderWarnings(normalized);
   warnings.push(...inheritedFastWireConflictProviderNames(normalized).map(inheritedFastWireConflictWarning));
   warnings.push(...degradedCodexAccountPriorityWarnings(rawParsed, normalized));
+  warnings.push(...degradedListenerWarnings(rawParsed, normalized));
   const quotaAutoRefreshWarning = degradedCodexQuotaAutoRefreshWarning(rawParsed, normalized);
   if (quotaAutoRefreshWarning) warnings.push(quotaAutoRefreshWarning);
   if (rawEffort !== undefined && !isClaudeSubagentEffort(rawEffort)) {
@@ -2618,6 +2747,8 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   if (notifyWarning) warnings.push(notifyWarning);
   const codexPoolWarning = malformedCodexPoolWarning(rawParsed);
   if (codexPoolWarning) warnings.push(codexPoolWarning);
+  const plaintextWarning = malformedPlaintextV2AgentMessagesWarning(rawParsed);
+  if (plaintextWarning) warnings.push(plaintextWarning);
   if (syncDisabledReason) {
     warnings.push(`syncCodexSubagentDefaults ignored: ${syncDisabledReason}`);
   }
@@ -2697,6 +2828,12 @@ function upstreamHostCircuitThresholdError(value: unknown): string | null {
     && threshold >= 0
     && threshold <= UPSTREAM_HOST_CIRCUIT_MAX_THRESHOLD) return null;
   return `schema_invalid: upstreamHostCircuitThreshold: must be an integer from 0 to ${UPSTREAM_HOST_CIRCUIT_MAX_THRESHOLD}`;
+}
+
+function plaintextV2AgentMessagesError(value: unknown): string | null {
+  return malformedPlaintextV2AgentMessagesWarning(value)
+    ? "schema_invalid: plaintextV2AgentMessages: must be a boolean or omitted"
+    : null;
 }
 
 function agentTaskRecoveryError(value: unknown): string | null {
@@ -2855,6 +2992,14 @@ function emptyCompletionRetryError(value: unknown): string | null {
   return "schema_invalid: emptyCompletionRetry: must be a boolean or omitted";
 }
 
+function dropCodexSafetyBufferingError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "dropCodexSafetyBuffering")) return null;
+  const enabled = raw.dropCodexSafetyBuffering;
+  if (enabled === undefined || typeof enabled === "boolean") return null;
+  return "schema_invalid: dropCodexSafetyBuffering: must be a boolean or omitted";
+}
+
 function oauthOpenBrowserError(value: unknown): string | null {
   const raw = rawConfigRecord(value);
   if (!raw || !Object.hasOwn(raw, "oauthOpenBrowser")) return null;
@@ -2990,6 +3135,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? claudeSubagentEffortError(value)
     ?? appOwnedMemoryBudgetError(value)
     ?? upstreamHostCircuitThresholdError(value)
+    ?? plaintextV2AgentMessagesError(value)
     ?? agentTaskRecoveryError(value)
     ?? quotaResetNotifyError(value)
     ?? codexPoolError(value)
@@ -2998,6 +3144,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? codexQuotaAutoRefreshError(value)
     ?? codexAccountPickerEnabledError(value)
     ?? emptyCompletionRetryError(value)
+    ?? dropCodexSafetyBufferingError(value)
     ?? oauthOpenBrowserError(value)
     ?? runtimeRoleError(value)
     ?? remoteGuiConfigError(value)
@@ -3022,8 +3169,10 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // schema and send the caller a default-config fallback (the config command could then
     // persist that fallback over the user's providers/keys).
     sanitizeModelDisplayNamesForLoad(parsed);
+    sanitizeAutoReviewForLoad(parsed);
     sanitizeRetryOn429ForLoad(parsed);
     sanitizeModelCostsForLoad(parsed);
+    sanitizeCapabilityDeclarationsForLoad(parsed);
     const result = configSchema.safeParse(parsed);
     if (result.success) {
       return validFileConfigDiagnostics(normalizeApiKeyIds(result.data as OcxConfig), parsed);
@@ -3047,10 +3196,13 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // that ignores the error and writes it back preserves what the operator configured.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
+      const config = normalizeApiKeyIds(salvaged.parsed);
+      const warnings = degradedListenerWarnings(parsed, config);
       return {
-        config: normalizeApiKeyIds(salvaged.parsed),
+        config,
         source: "fallback",
         error: schemaDiagnosticsError(result.error),
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
 
@@ -4019,6 +4171,7 @@ export function getDefaultConfig(): OcxConfig {
   return {
     port: 10100,
     emptyCompletionRetry: false,
+    dropCodexSafetyBuffering: false,
     fastRows: true,
     managementUsageMaxReadBytes: 64 * 1024 * 1024,
     appOwnedMemoryBudgetMb: DEFAULT_APP_OWNED_MEMORY_BUDGET_BYTES / (1024 * 1024),

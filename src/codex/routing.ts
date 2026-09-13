@@ -10,7 +10,7 @@ import { clearAccountNeedsReauth, isAccountNeedsReauth, markAccountNeedsReauth }
 import {
   POOL_KEY_CODEX,
   normalizeAccountPoolStickyLimit,
-  normalizeAccountPoolStrategy,
+  normalizeCodexAccountPoolStrategy,
   notePoolRotationFailure,
   notePoolRotationSuccess,
   peekRoundRobinAccount,
@@ -1174,7 +1174,7 @@ function excludedCodexPoolPlanKeys(config: OcxConfig): ReadonlySet<string> | und
  * selection-only drain so routing never reads the fenced native credential for it, so a rule that
  * covered main would disagree with itself between drain and ordinary routing.
  */
-function isCodexAccountPlanExcluded(
+export function isCodexAccountPlanExcluded(
   config: OcxConfig,
   accountId: string,
   precomputed?: ReadonlySet<string>,
@@ -1479,6 +1479,12 @@ function listEligibleCodexAccountIds(
   return getEligiblePoolAccounts(config, undefined, now, quotaScope, selectionOptions);
 }
 
+/** Shared reset timestamps are not evidence for independent model-quota groups. */
+function accountPoolStrategyForScope(config: OcxConfig, quotaScope?: CodexQuotaScope) {
+  const strategy = normalizeCodexAccountPoolStrategy(config.accountPoolStrategy);
+  return strategy === "reset-first" && isIndependentCodexQuotaScope(quotaScope) ? "quota" : strategy;
+}
+
 function stickyLimitForConfig(config: OcxConfig): number {
   return normalizeAccountPoolStickyLimit(config.accountPoolStickyLimit);
 }
@@ -1508,6 +1514,32 @@ function hasCodexQuotaHeadroom(
   );
   if (isUnknownUsage(usage)) return true;
   return usage < threshold;
+}
+
+/** Earliest future shared short/weekly reset; missing evidence and ties use usage order. */
+function pickResetFirstCodexAccount(
+  config: OcxConfig,
+  ids: readonly string[],
+  now: number,
+  selectionOptions?: CodexAccountUsabilityOptions,
+): string | null {
+  const available = ids.filter(id => hasCodexQuotaHeadroom(config, id, selectionOptions, now));
+  if (available.length === 0) return pickLowestUsageAmong(config, ids, selectionOptions, now);
+  let earliest = Number.POSITIVE_INFINITY;
+  let candidates: string[] = [];
+  for (const id of available) {
+    const quota = getAccountQuota(id);
+    const resets = [quota?.shortResetAt, quota?.weeklyResetAt]
+      .filter((reset): reset is number => typeof reset === "number" && Number.isFinite(reset))
+      .map(resetAtToMs)
+      .filter(reset => reset > now);
+    const next = Math.min(...resets);
+    if (next < earliest) {
+      earliest = next;
+      candidates = [id];
+    } else if (next === earliest) candidates.push(id);
+  }
+  return pickLowestUsageAmong(config, candidates, selectionOptions, now);
 }
 
 /**
@@ -1600,7 +1632,7 @@ function pickUnboundStrategyAccount(
   commitSharedActive = commit,
   commitAffinity = commit,
 ): string | null {
-  const strategy = normalizeAccountPoolStrategy(config.accountPoolStrategy);
+  const strategy = accountPoolStrategyForScope(config, quotaScope);
   if (strategy === "quota") return null;
   const poolKey = codexPoolKeyForScope(quotaScope);
 
@@ -1624,8 +1656,10 @@ function pickUnboundStrategyAccount(
     return picked;
   }
 
-  if (strategy === "fill-first") {
-    picked = pickFillFirstCodexAccount(config, now, quotaScope, selectionOptions);
+  if (strategy === "fill-first" || strategy === "reset-first") {
+    picked = strategy === "reset-first"
+      ? pickResetFirstCodexAccount(config, listEligibleCodexAccountIds(config, now, quotaScope, selectionOptions), now, selectionOptions)
+      : pickFillFirstCodexAccount(config, now, quotaScope, selectionOptions);
     if (!picked) return null;
     if (commitSharedActive) {
       if (!isIndependentCodexQuotaScope(quotaScope)
@@ -1758,7 +1792,7 @@ export function pickAlternateCodexAccount(
   quotaScope?: CodexQuotaScope,
   selectionOptions?: CodexAccountUsabilityOptions,
 ): string | null {
-  const strategy = normalizeAccountPoolStrategy(config.accountPoolStrategy);
+  const strategy = accountPoolStrategyForScope(config, quotaScope);
   // The exclusion is passed into eligibility rather than post-filtered off its
   // result: when the excluded account is the only healthy member of the top
   // tier, the tier walk must be free to descend instead of selecting that tier
@@ -1770,6 +1804,9 @@ export function pickAlternateCodexAccount(
   if (strategy === "fill-first") {
     const eligible = getEligiblePoolAccounts(config, excludeId, now, quotaScope, selectionOptions);
     return pickNextFillFirstCodexAccount(config, excludeId, eligible, now, selectionOptions);
+  }
+  if (strategy === "reset-first") {
+    return pickResetFirstCodexAccount(config, getEligiblePoolAccounts(config, excludeId, now, quotaScope, selectionOptions), now, selectionOptions);
   }
   return pickLowestUsageCodexAccount(config, excludeId, now, quotaScope, selectionOptions);
 }
@@ -1867,7 +1904,7 @@ function setActiveCodexAccount(config: OcxConfig, accountId: string): void {
 
 /** Quota strategy persists; RR/fill-first keep a process-local cursor only. */
 function promoteActiveCodexAccount(config: OcxConfig, accountId: string): void {
-  if (normalizeAccountPoolStrategy(config.accountPoolStrategy) === "quota") {
+  if (normalizeCodexAccountPoolStrategy(config.accountPoolStrategy) === "quota") {
     setActiveCodexAccount(config, accountId);
     return;
   }
@@ -2152,9 +2189,12 @@ function previewReusableAffinityAccount(
   ) {
     return null;
   }
+  if (accountPoolStrategyForScope(config, quotaScope) === "reset-first") {
+    return resetFirstAffinityReplacement(entry, config, now, quotaScope, selectionOptions) ?? entry.accountId;
+  }
   // Quota strategy only: non-quota strategies keep affinity for ongoing threads
   // (new-session-only rotation — docs / affinity policy A).
-  if (normalizeAccountPoolStrategy(config.accountPoolStrategy) === "quota") {
+  if (accountPoolStrategyForScope(config, quotaScope) === "quota") {
     const threshold = config.autoSwitchThreshold ?? 80;
     if (threshold > 0) {
       const usage = computeCodexUsageScore(
@@ -2207,6 +2247,23 @@ function mayRebindAffinityForQuota(
     || (!isUnknownUsage(usage) && usage >= 100);
 }
 
+/** Reset ordering may move a binding only under the existing cache-affinity release policy. */
+function resetFirstAffinityReplacement(
+  entry: ThreadAffinityEntry,
+  config: OcxConfig,
+  now: number,
+  quotaScope?: CodexQuotaScope,
+  selectionOptions?: CodexAccountUsabilityOptions,
+): string | null {
+  const threshold = config.autoSwitchThreshold ?? 80;
+  if (threshold <= 0) return null;
+  const usage = computeCodexUsageScore(getAccountQuota(entry.accountId), getPoolAccountPlanForSelection(config, entry.accountId, selectionOptions), now);
+  if (!mayRebindAffinityForQuota(config, entry.accountId, usage, threshold, selectionOptions)) return null;
+  const candidates = getEligiblePoolAccounts(config, entry.accountId, now, quotaScope, selectionOptions, true)
+    .filter(id => hasCodexQuotaHeadroom(config, id, selectionOptions, now));
+  return pickResetFirstCodexAccount(config, candidates, now, selectionOptions);
+}
+
 /**
  * Re-evaluate an affined account under the quota strategy. Returns a strictly
  * cooler replacement, or null when the current binding should remain.
@@ -2218,7 +2275,13 @@ function reevaluateAffinityQuota(
   quotaScope?: CodexQuotaScope,
   selectionOptions?: CodexAccountUsabilityOptions,
 ): string | null {
-  if (normalizeAccountPoolStrategy(config.accountPoolStrategy) !== "quota") return null;
+  const strategy = accountPoolStrategyForScope(config, quotaScope);
+  if (strategy === "reset-first") {
+    const replacement = resetFirstAffinityReplacement(entry, config, now, quotaScope, selectionOptions);
+    if (replacement || now - entry.lastReevalAt >= CODEX_THREAD_AFFINITY_REEVAL_INTERVAL_MS) entry.lastReevalAt = now;
+    return replacement;
+  }
+  if (strategy !== "quota") return null;
   const threshold = config.autoSwitchThreshold ?? 80;
   const usage = threshold > 0
     ? computeCodexUsageScore(
@@ -2311,6 +2374,7 @@ export function previewCodexAccountForRequest(
     else if (
       hasConfiguredPoolAccount(config, active, selectionOptions)
       && !isCodexAccountPaused(config, active)
+      && !isCodexAccountPlanExcluded(config, active)
     ) return active;
     else return null;
   }
@@ -2445,7 +2509,7 @@ export function resolveCodexAccountForThreadDetailed(
       const cooler = reevaluateAffinityQuota(entry, config, now, quotaScope, selectionOptions);
       if (cooler) {
         if (!isIndependentCodexQuotaScope(quotaScope)) {
-          setActiveCodexAccount(config, cooler);
+          promoteActiveCodexAccount(config, cooler);
         }
         bindThreadAffinity(threadId, cooler, now, quotaScope); // rebinds + resets clocks
         return { status: "selected", accountId: cooler };
@@ -2553,6 +2617,7 @@ export function resolveCodexAccountForThreadDetailed(
     } else if (
       hasConfiguredPoolAccount(config, active, selectionOptions)
       && !isCodexAccountPaused(config, active)
+      && !isCodexAccountPlanExcluded(config, active)
     ) {
       return { status: "selected", accountId: active };
     } else {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createDevinAdapter, mapOcxMessagesToDevin, mapOcxToolsToDevin } from "../../src/adapters/devin";
+import { createDevinAdapter, mapOcxMessagesToDevin, mapOcxToolsToDevin, resolveWireModelUidForTests } from "../../src/adapters/devin";
 import { sanitizeToolDescriptionForCognitionForTests } from "../../src/adapters/devin/cloud-direct/chat";
 import { DEVIN_MODEL_CONTEXT_WINDOWS, DEVIN_STATIC_MODELS, collapseDevinModelUid } from "../../src/adapters/devin/live-models";
 import { parseCatalogBuffer } from "../../src/adapters/devin/cloud-direct/catalog";
@@ -41,12 +41,53 @@ describe("devin adapter", () => {
       options: {},
     };
     const history = mapOcxMessagesToDevin(parsed);
-    expect(history[0]).toEqual({ role: "system", content: "be brief" });
+    // One system item carrying the prompt and, because this request advertises a
+    // tool, the shared non-OpenAI catalog contract paragraph after it.
+    expect(history[0]?.role).toBe("system");
+    expect(String(history[0]?.content)).toStartWith("be brief\n\nTool contract:");
     expect(history[1]).toEqual({ role: "user", content: "hi" });
     expect(history[2]?.role).toBe("assistant");
     expect(history[2]?.tool_calls?.[0]?.id).toBe("c1");
     expect(history[3]).toEqual({ role: "tool", content: "ok", tool_call_id: "c1" });
     expect(mapOcxToolsToDevin(parsed.context.tools)?.[0]?.name).toBe("lookup");
+  });
+
+  test("the tool catalog nudge names the bare wire names the encoder actually sends", () => {
+    // Cognition is offered `tool.name` with no namespace prefix (mapOcxToolsToDevin),
+    // so a nudge built from the default namespaced form would advertise a name the
+    // model is never given. Both Devin provider rows share this adapter, so this is
+    // the single place that covers `devin` and `devin-cli` at once.
+    const parsed: OcxParsedRequest = {
+      modelId: "swe-1-7",
+      stream: true,
+      context: {
+        systemPrompt: ["be brief"],
+        messages: [{ role: "user", content: "hi", timestamp: 1 }],
+        tools: [
+          { name: "exec_command", description: "run", parameters: { type: "object" } },
+          { namespace: "codex_app", name: "list_threads", description: "list", parameters: { type: "object" } },
+        ],
+      },
+      options: {},
+    };
+    const system = String(mapOcxMessagesToDevin(parsed)[0]?.content);
+    const wireNames = (mapOcxToolsToDevin(parsed.context.tools) ?? []).map((tool) => tool.name);
+    expect(wireNames).toEqual(["exec_command", "list_threads"]);
+    for (const name of wireNames) expect(system).toContain(`\`${name}\``);
+    expect(system).not.toContain("codex_app__list_threads");
+  });
+
+  test("a request with no tools keeps the system prompt exactly as it was", () => {
+    const parsed: OcxParsedRequest = {
+      modelId: "swe-1-7",
+      stream: true,
+      context: {
+        systemPrompt: ["be brief"],
+        messages: [{ role: "user", content: "hi", timestamp: 1 }],
+      },
+      options: {},
+    };
+    expect(mapOcxMessagesToDevin(parsed)[0]).toEqual({ role: "system", content: "be brief" });
   });
 
   test("collapseDevinModelUid strips effort suffixes to base ids", () => {
@@ -157,6 +198,41 @@ describe("devin adapter", () => {
     // Every statically advertised model needs one, or the picker reports 128k.
     for (const model of DEVIN_STATIC_MODELS) {
       expect(DEVIN_MODEL_CONTEXT_WINDOWS[model]).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("SWE-2 wire effort selection", () => {
+  // Cognition spells SWE-2 effort as the model id, so an explicit effort has to
+  // beat a suffix the picker already chose. Before this, swe-2-high asked for at
+  // medium stayed high and the caller was silently ignored.
+  test.each(["medium", "high", "max"])("an explicit %s effort overrides every SWE-2 variant", async (effort) => {
+    for (const model of ["swe-2", "swe-2-medium", "swe-2-high", "swe-2-max", "swe-2.high"]) {
+      expect(await resolveWireModelUidForTests(model, "unused", "unused", effort)).toBe(`swe-2-${effort}`);
+    }
+  });
+
+  test.each([
+    ["none", "medium"], ["off", "medium"], ["minimal", "medium"],
+    ["low", "medium"], ["xhigh", "max"], ["ultra", "max"],
+  ])("maps %s to the supported SWE-2 %s lane", async (effort, expected) => {
+    expect(await resolveWireModelUidForTests("swe-2-high", "unused", "unused", effort)).toBe(`swe-2-${expected}`);
+  });
+
+  // Case is normalised, which the source contribution did not do: a caller that
+  // sends HIGH means the same lane as high.
+  test("effort matching is case-insensitive", async () => {
+    expect(await resolveWireModelUidForTests("swe-2-medium", "unused", "unused", "HIGH")).toBe("swe-2-high");
+  });
+
+  test("omitted or unknown effort preserves an explicit variant", async () => {
+    expect(await resolveWireModelUidForTests("swe-2-high", "unused", "unused")).toBe("swe-2-high");
+    expect(await resolveWireModelUidForTests("swe-2-max", "unused", "unused", "future-effort")).toBe("swe-2-max");
+  });
+
+  test("other model families keep their existing suffix precedence", async () => {
+    for (const model of ["claude-opus-5-medium", "gpt-5-6-sol-high", "swe-1-7-high", "swe-20-high"]) {
+      expect(await resolveWireModelUidForTests(model, "unused", "unused", "max")).toBe(model);
     }
   });
 });

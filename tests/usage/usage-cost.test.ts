@@ -298,8 +298,8 @@ describe("resolveMatchedPrice", () => {
     expect(resolveMatchedPrice("openrouter", "anthropic-claude-3.5-sonnet")).toBeNull();
   });
 
-  test("16. shipped overlay membership: 70 keys, including canonical Fable 5.1, Opus 5 and compatibility prices", () => {
-    expect(EXPECTED_PRICE_OVERLAYS.length).toBe(70);
+  test("16. shipped overlay membership: 95 keys, including canonical Fable 5.1, Opus 5 and compatibility prices", () => {
+    expect(EXPECTED_PRICE_OVERLAYS.length).toBe(95);
     expect(EXPECTED_PRICE_OVERLAYS.some(row => row.status === "unverified")).toBe(false);
     const keys = new Set(EXPECTED_PRICE_OVERLAYS.map(row => `${row.provider}/${row.modelId}`));
     for (const expected of [
@@ -370,6 +370,33 @@ describe("resolveMatchedPrice", () => {
       "alibaba-token-plan/qwen3.8-max",
       "alibaba-token-plan-intl/qwen3.8-max",
       "cursor/auto",
+      // Z.AI GLM family — the zai bundle is all-zero upstream, so each exposing
+      // provider surface carries its own verified-derived rows (z.ai USD list).
+      "zai/glm-5.3",
+      "zai/glm-5.3[1m]",
+      "zai/glm-5.3-flash",
+      "zai/glm-5.2",
+      "zai/glm-5.2[1m]",
+      "zai/glm-5.1",
+      "zai/glm-5",
+      "zai/glm-4.6",
+      "zhipu-bigmodel/glm-4.6",
+      "zhipu-bigmodel/glm-4.6v",
+      "zhipu-bigmodel/glm-4.7",
+      "zhipu-bigmodel/glm-5",
+      "zhipu-bigmodel/glm-5.1",
+      "zhipu-bigmodel/glm-5.2",
+      "zhipu-bigmodel/glm-5.3",
+      "zhipu-bigmodel-coding/glm-5.3",
+      "zhipu-bigmodel-coding/glm-5.3[1m]",
+      "zhipu-bigmodel-coding/glm-5.3-flash",
+      "zhipu-bigmodel-coding/glm-5.2",
+      "zhipu-bigmodel-coding/glm-5.2[1m]",
+      "zhipu-bigmodel-coding/glm-5.1",
+      "zhipu-bigmodel-coding/glm-5",
+      "zhipu-bigmodel-coding/glm-4.6",
+      "zhipu-bigmodel-responses/glm-5.3",
+      "zhipu-bigmodel-responses/glm-5.3-flash",
     ]) {
       expect(keys.has(expected)).toBe(true);
     }
@@ -388,6 +415,19 @@ describe("resolveMatchedPrice", () => {
       cost4: { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0 },
       status: "verified",
     });
+    // GLM overlays: every surface resolves the verified z.ai list price as a
+    // derived estimate, including the bracket-alias and the native-VLM Flash row.
+    for (const [provider, modelId, cost4] of [
+      ["zai", "glm-5.3", { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 }],
+      ["zai", "glm-5.3[1m]", { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 }],
+      ["zai", "glm-5.3-flash", { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 }],
+      ["zhipu-bigmodel", "glm-4.7", { input: 0.6, output: 2.2, cacheRead: 0.11, cacheWrite: 0 }],
+      ["zhipu-bigmodel-coding", "glm-5.2", { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 }],
+      ["zhipu-bigmodel-responses", "glm-5.3-flash", { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 }],
+    ] as const) {
+      const price = resolveMatchedPrice(provider, modelId);
+      expect(price, `${provider}/${modelId}`).toMatchObject({ cost4, source: "expected", status: "verified-derived" });
+    }
     for (const modelId of [
       "gemini-3.5-flash-extra-low",
       "gemini-3.5-flash-low",
