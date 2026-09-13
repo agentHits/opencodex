@@ -528,11 +528,11 @@ export function useDashboardData(apiBase: string, refreshEpoch = 0) {
     // Server-computed runnable set when present (#2188); legacy union otherwise.
     // The shared SidecarSetting type admits vision's "routed", which the
     // web-search picker cannot carry — narrow it away for this card.
-    const webBackend = sidecar?.webSearch.backend;
+    const webBackend = sidecar?.webSearch?.backend;
     return webSearchModelOptionsForPicker(
       sidecar?.webSearchModels,
       models,
-      sidecar?.webSearch.model,
+      sidecar?.webSearch?.model,
       webBackend === "routed" ? undefined : webBackend,
     );
   }, [models, sidecar?.webSearchModels, sidecar?.webSearch]);

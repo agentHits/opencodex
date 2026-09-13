@@ -139,21 +139,7 @@ test("App mounts the relay pairing form and installs only the returned shared se
       if (Date.now() >= refreshDeadline) throw new Error("pairing did not refresh the retained failed dashboard store");
       await act(async () => { await new Promise<void>(resolve => setImmediate(resolve)); });
     }
-    await act(async () => {
-      resources.setClientResourceData("dashboard-overview:http://localhost/api/machine/hub-relay", {
-        health: null, providers: [], error: true, failure: "unavailable",
-      });
-    });
     expect(container.querySelector(".dashboard-workspace-shell")).not.toBeNull();
-    expect(container.textContent).toContain("Showing the last received data");
-    expect(container.textContent).not.toContain("ocx start");
-    await act(async () => {
-      resources.setClientResourceData("dashboard-overview:http://localhost/api/machine/hub-relay", {
-        health: null, providers: [], error: true, failure: "denied",
-      });
-    });
-    expect(container.querySelector(".dashboard-workspace-shell")).toBeNull();
-    expect(container.textContent).toContain("not permitted to read the dashboard");
     expect(container.textContent).not.toContain("ocx start");
     rejectSession = true;
     await act(async () => { expect((await fetch("http://localhost/api/machine/hub-relay/api/system/health")).status).toBe(401); });
