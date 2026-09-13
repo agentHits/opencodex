@@ -685,6 +685,15 @@ export function providerManagementConfigError(
   if (name === "openai" && Object.hasOwn(raw, "allowPrivateNetwork")) {
     return "provider openai must not include allowPrivateNetwork";
   }
+  // The same reasoning applies to `headers`, and it is not hypothetical. Canonical OpenAI
+  // has no registry `staticHeaders`, so any header block on this row is operator-authored,
+  // and the forward adapter copies it onto the ChatGPT request BEFORE the incoming forward
+  // headers — a persisted value therefore wins whenever the caller omits that header. The
+  // exact-key comparison rejected it as an extra key; overlay tolerance would silently admit
+  // it on every merge-based write path while POST still refused it.
+  if (name === "openai" && Object.hasOwn(raw, "headers")) {
+    return "provider openai must not include headers";
+  }
   const autoReviewTargetError = autoReviewModelTargetConfigError(raw.autoReviewModel, "autoReviewModel", true);
   if (autoReviewTargetError) return autoReviewTargetError;
   const autoReviewMapError = autoReviewModelOverridesConfigError(raw.autoReviewModelOverrides, "autoReviewModelOverrides", true);

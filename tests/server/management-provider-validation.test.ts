@@ -1827,6 +1827,43 @@ describe("provider management validation", () => {
     }
   });
 
+  // Same class of defect as allowPrivateNetwork above, and the one the overlay-tolerant
+  // comparison actually reaches: canonical OpenAI has no registry staticHeaders, and the
+  // forward adapter copies provider.headers onto the ChatGPT request before the incoming
+  // forward headers, so a persisted value wins whenever the caller omits that header.
+  test("canonical OpenAI with selectedModels still rejects a headers overlay", async () => {
+    if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
+    mkdirSync(TEST_DIR, { recursive: true });
+    process.env.OPENCODEX_HOME = TEST_DIR;
+    saveConfig({
+      port: 0,
+      openaiProviderTierVersion: 2,
+      defaultProvider: "openai",
+      providers: {
+        openai: { ...canonicalDirect, selectedModels: ["gpt-6-astra"] },
+      },
+    } as OcxConfig);
+    const resolvedError = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+
+    const server = startServer(0);
+    try {
+      const patch = await fetch(new URL("/api/providers?name=openai", server.url), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ headers: { "chatgpt-account-id": "spoofed-account" } }),
+      });
+      expect(patch.status).toBe(400);
+      const body = await patch.json() as { error?: string };
+      expect(body.error).toContain("headers");
+      expect(Object.hasOwn(loadConfig().providers.openai as object, "headers")).toBe(false);
+      expect(loadConfig().providers.openai?.selectedModels).toEqual(["gpt-6-astra"]);
+    } finally {
+      resolvedError.mockRestore();
+      await server.stop(true);
+    }
+  });
+
+
   // #1409: the add/edit form's payload type has no member for contextWindow or
   test("provider POST overwrite preserves an explicit annotateEmptyToolOutputs: false", async () => {
     if (existsSync(TEST_DIR)) removeTreeWithRetry(TEST_DIR);
