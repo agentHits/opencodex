@@ -72,6 +72,11 @@ test("App mounts the relay pairing form and installs only the returned shared se
     ]);
     if (url.pathname.endsWith("/api/models")) return Response.json([]);
     if (url.pathname === "/healthz") return Response.json({ version: "0.0.0-test" });
+    if (url.pathname.endsWith("/api/sidecar-settings")) return Response.json({
+      webSearch: { model: "gpt-5.6-luna" },
+      vision: { model: "gpt-5.6-luna", enabled: true },
+    });
+    if (url.pathname.endsWith("/api/shadow-call-settings")) return Response.json({ enabled: false, model: "gpt-5.6-luna" });
     if (url.pathname.endsWith("/api/usage")) return Response.json({
       range: "30d", surface: "all", since: null, generatedAt: Date.now(),
       summary: { requests: 0, attemptCount: 0, measuredRequests: 0, reportedRequests: 0, unreportedRequests: 0, unsupportedRequests: 0, estimatedRequests: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0, coverageRatio: 0, estimatedCostUsd: 0, pricedRequests: 0, unpricedRequests: 0, unmeteredRequests: 0 },
@@ -107,6 +112,15 @@ test("App mounts the relay pairing form and installs only the returned shared se
   resources.setClientResourceData("dashboard-overview:http://localhost/api/machine/hub-relay", {
     health: null, providers: [], error: true, failure: "auth",
   });
+  const sidecarFixture = {
+    sidecar: {
+      webSearch: { model: "gpt-5.6-luna" },
+      vision: { model: "gpt-5.6-luna", enabled: true },
+    },
+    shadowCall: null,
+  };
+  resources.setClientResourceData("dashboard-sidecars:http://localhost/api/machine/hub-relay", sidecarFixture);
+  resources.setClientResourceData("dashboard-sidecars:", sidecarFixture);
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   try {

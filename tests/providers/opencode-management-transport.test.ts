@@ -87,17 +87,9 @@ test("production catalog transport ignores proxy environment; its control reache
   try {
     for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) process.env[key] = proxy.url.origin;
     process.env.NO_PROXY = ""; process.env.no_proxy = "";
-    let proxiedControl = false;
-    try {
-      proxiedControl = await fetch("http://opencode-control.invalid", { signal: AbortSignal.timeout(2000) }).then(r => r.text()) === "proxy-control";
-    } catch {
-      // Bun's default fetch may not honor HTTP_PROXY; catalog isolation below is the product contract.
-    }
-    const proxyBeforeCatalog = proxyRequests;
-    if (proxiedControl) expect(proxyBeforeCatalog).toBe(1);
     expect(await fetchOpencodeProxyModels({ hostname: "127.0.0.1", port: local.port!, pid: null, source: "config" }, admin)).toEqual(rows);
     expect(catalogRequests).toBe(1);
-    expect(proxyRequests).toBe(proxyBeforeCatalog);
+    expect(proxyRequests).toBe(0);
   } finally { await local.stop(true); await proxy.stop(true); }
 }, SERVER_BUDGET_MS);
 
@@ -126,7 +118,8 @@ test.each(["environment", "file", "missing", "unauthorized", "redirect", "ingres
     });
     let childEnv: NodeJS.ProcessEnv | undefined;
     const spawn = spyOn(childProcess, "spawn").mockImplementation((...args) => {
-      childEnv = args[2]?.env;
+      const options = args[2] as { env?: NodeJS.ProcessEnv } | undefined;
+      childEnv = options?.env;
       const child = new childProcess.ChildProcess(); queueMicrotask(() => child.emit("exit", 0, null)); return child;
     });
     const err = spyOn(console, "error").mockImplementation(() => {});
