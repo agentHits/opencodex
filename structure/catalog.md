@@ -251,8 +251,10 @@ Provider model pins precede provider-wide pins, then global selector/destination
 A pin can raise the effective caller effort; the later cap can still lower or omit it.
 `none` means explicit-effort omission (provider default), not guaranteed reasoning disablement.
 Compaction maintenance is exempt. Pins are user overlays and do not alter registry seeds,
-model discovery or advertised ladders. Native Chat normalizes newly pinned values through
-provider wire mapping; unpinned native requests retain their existing pass-through contract.
+model discovery or advertised ladders. Native Chat applies qualifying caps even without a
+pin, and normalizes pinned values and values rewritten by a cap through provider wire
+mapping. Without a pin or a cap rewrite, native caller values retain their original wire
+spelling; the V1 and compaction cap exemptions are preserved.
 
 > Decision record: [ADR-0023](decisions/ADR-0023-ultra-reasoning-level.md)
 
@@ -274,10 +276,14 @@ see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-
 
 ## Paginated history writer boundary
 
-`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
 
 Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 ## Provider-scoped approval reviewer
 
 `src/codex/catalog/sync.ts` resolves exact case-preserving provider/model reviewer selectors against the final catalog in both retained sync and `src/codex/convergence.ts`. Valid per-model selection wins over valid provider-wide selection, then the root selector supplies fallback. Native root stamps retain the observed original value and applied selector bound to their slug; removal restores the original only while the applied value is unchanged. The native provenance remains after restoration so an equal provider reviewer cannot trigger legacy reclassification on the next sync. Ambiguous legacy unmarked catalogs retain their existing heuristic cleanup. Provider stamps do not change routing or credentials.
+
+The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
+Exact [model input declarations](config.md#explicit-per-model-capability-declarations) now feed text-only eligibility and catalog hints; existing image-description/omission handling consumes them before the main upstream send.

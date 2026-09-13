@@ -425,11 +425,19 @@ need to rediscover. Every legacy variant id keeps routing unchanged.
 
 ### xAI Priority Processing
 
-The built-in `xai` preset advertises and injects Fast only when its effective transport uses
-`authMode: "key"`. API-key mode targets `https://api.x.ai/v1` through the `openai-chat` adapter and
-sends `service_tier: "priority"` through Chat Completions. `ocx login xai`
-instead stores OAuth credentials for the separate Grok CLI subscription-gateway flow, so OAuth
-remains unclassified: its catalog rows do not advertise Fast and the proxy does not inject a tier.
+The built-in `xai` preset supports Fast on both of its transports, with different scope.
+API-key mode targets `https://api.x.ai/v1`; routes resolved to `openai-chat` send
+`service_tier: "priority"` through Chat Completions, while model defaults and overrides can
+select the `openai-responses` transport instead. `ocx login xai`
+instead stores OAuth credentials for the Grok subscription gateway
+(`https://cli-chat-proxy.grok.com/v1`; these credentials refresh automatically), where Fast
+is classified per model (live-probed 2026-09-13): grok-4.6, grok-4.5, grok-4.3, grok-4.20-0309-reasoning,
+grok-4.20-0309-non-reasoning, grok-build-0.1, and grok-composer-2.5-fast accept
+`service_tier: "priority"` over Grok OAuth and echo it, so those rows advertise Fast, accept
+`--fast` selectors, and forward a caller-sent tier on either wire. grok-4.20-multi-agent-0309
+is excluded: the gateway answers `service_tier: "default"` when sent `priority`, so it stays
+unclassified and its caller tier is not forwarded. Unlisted models stay unclassified on both
+transports.
 
 xAI charges Priority Processing at 2× the standard token price for input, output, cached, and
 reasoning tokens; cache discounts are applied before the multiplier. Cost estimates use that premium
@@ -1087,3 +1095,11 @@ or expiry does not extend the history-recovery contract.
 Sender and recipient on routed Responses are context for the receiving model, not a new
 machine-readable routing protocol. Tool routing continues to use the existing collaboration
 contracts.
+
+### Per-model capability declarations
+
+`modelCapabilities` stores explicit declarations keyed by exact upstream model ID. IDs preserve case and must not contain surrounding whitespace. Each entry may contain `inputModalities` (`text`, `image`, `audio`, `video`), `contextTier` (`default`, `long_context`) and `video.processing` (`static`, `agentic`). These are operator declarations, not proof of provider support. Context-tier and video fields currently record intent only and do not activate upstream behavior or increase catalog windows.
+
+The raw provider editor and provider API expose this map. POST/PUT replace an explicitly supplied map and reject null entries. PATCH merges individual axes; null clears a map, model, axis or video processing value, while `{}` makes no change. Omitted provider overwrites preserve the existing map. Malformed hand-edited files retain valid independent axes and treat malformed explicit input modalities as text-only, with a diagnostic.
+
+An explicit `modelCapabilities.<id>.inputModalities` now takes precedence over legacy modality hints for that exact routed model. A text-only declaration uses the existing vision sidecar to replace images with descriptions; if no sidecar is available, the request receives an explicit omission marker before dispatch. Native Chat image requests divert through this path. The catalog can still advertise image attachment support because the proxy provides the description step. Context-tier and video processing declarations remain inert pending their transport support.

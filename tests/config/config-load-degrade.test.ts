@@ -175,3 +175,37 @@ test("Fast rows default on for fresh and omitted config; explicit false and malf
     expect(loaded.providers.xai.note).toBe("keep me");
   }
 });
+
+
+test("model capability writes stay strict while load preserves independent restrictions", () => {
+  const raw = { ...candidate(undefined), providers: { xai: {
+    ...candidate(undefined).providers.xai,
+    apiKey: "fixture-key", modelCapabilities: {
+      ModelA: { inputModalities: ["text"] },
+      modela: { contextTier: "long_context" },
+      broken: { inputModalities: "image", contextTier: "typo" },
+    },
+  } } };
+  expect(validateConfigCandidate(raw).ok).toBe(false);
+  writeFileSync(getConfigPath(), JSON.stringify(raw), "utf8");
+  const loaded = loadConfig();
+  expect(loaded.providers.xai.modelCapabilities).toEqual({
+    ModelA: { inputModalities: ["text"] }, modela: { contextTier: "long_context" },
+    broken: { inputModalities: ["text"] },
+  });
+  expect(loaded.providers.xai.apiKey).toBe("fixture-key");
+  expect(validateConfigCandidate(loaded).ok).toBe(true);
+});
+
+test("model capabilities round-trip all explicit axes without expanding inference", () => {
+  const raw = { ...candidate(undefined), providers: { xai: {
+    ...candidate(undefined).providers.xai,
+    modelCapabilities: { ModelA: { inputModalities: ["text", "image"], contextTier: "long_context", video: { processing: "agentic" } } },
+  } } };
+  const validated = validateConfigCandidate(raw);
+  expect(validated.ok).toBe(true);
+  if (!validated.ok) return;
+  saveConfig(validated.config);
+  expect(loadConfig().providers.xai.modelCapabilities).toEqual(raw.providers.xai.modelCapabilities);
+  expect(loadConfig().providers.xai.modelContextWindows).toBeUndefined();
+});

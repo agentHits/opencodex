@@ -5290,3 +5290,81 @@ test("raw provider editor normalizes reviewer clears before live adoption", asyn
     expect((await request("PUT", { baseline: updated, next: unrelated })).status).toBe(200);
   }
 });
+
+test("model capability PATCH merges axes while strict replacement and DTO state agree", async () => {
+  mkdirSync(TEST_DIR, { recursive: true });
+  process.env.OPENCODEX_HOME = TEST_DIR;
+  const live: OcxConfig = { port: 0, defaultProvider: "caps", providers: { caps: {
+    adapter: "openai-chat", baseUrl: "https://example.test/v1", liveModels: false, models: ["ModelA", "modela"],
+    modelCapabilities: { ModelA: { inputModalities: ["text"], contextTier: "long_context", video: { processing: "agentic" } }, modela: { inputModalities: ["text", "image"] } },
+  } } };
+  saveConfig(live);
+  const request = async (method: string, body?: unknown) => {
+    const url = new URL(method === "PATCH" ? "http://localhost/api/providers?name=caps" : "http://localhost/api/providers");
+    return (await handleManagementAPI(new Request(url, { method, headers: { "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }), url, live, { createManagementConvergeCodex: catalogConvergenceFactory() }))!;
+  };
+  const before = live.providers.caps!.modelCapabilities;
+  const originalRow = before!.ModelA!;
+  const originalVideo = originalRow.video;
+  expect((await request("PATCH", { modelCapabilities: { ModelA: { contextTier: "default", video: { processing: null } } } })).status).toBe(200);
+  expect(live.providers.caps!.modelCapabilities).toEqual({
+    ModelA: { inputModalities: ["text"], contextTier: "default" }, modela: { inputModalities: ["text", "image"] },
+  });
+  expect(before!.ModelA!.video).toEqual({ processing: "agentic" });
+  expect(originalRow.contextTier).toBe("long_context");
+  expect(originalVideo).toEqual({ processing: "agentic" });
+  expect(live.providers.caps!.modelCapabilities).not.toBe(before);
+  expect(live.providers.caps!.modelCapabilities!.ModelA).not.toBe(originalRow);
+  expect(loadConfig().providers.caps!.modelCapabilities).toEqual(live.providers.caps!.modelCapabilities);
+  const listed = await (await request("GET")).json() as Array<{ name: string; modelCapabilities?: unknown }>;
+  expect(listed.find(row => row.name === "caps")!.modelCapabilities).toEqual(live.providers.caps!.modelCapabilities);
+  expect(providerEditorConfigDTO(live).providers.caps!.modelCapabilities).toEqual(live.providers.caps!.modelCapabilities);
+  for (const patch of [{ " ModelA ": {} }, { ModelA: { unknown: true } }, { ModelA: { inputModalities: [] } }]) {
+    expect((await request("PATCH", { modelCapabilities: patch })).status).toBe(400);
+  }
+  const admitted = structuredClone(live.providers.caps!.modelCapabilities);
+  const diskBeforeReject = readFileSync(join(TEST_DIR, "config.json"), "utf8");
+  for (const patch of [JSON.parse('{"__proto__":null}'), { ModelA: { video: [] } }, { ModelA: { video: { processing: "invalid" } } }]) {
+    expect((await request("PATCH", { modelCapabilities: patch })).status).toBe(400);
+    expect(live.providers.caps!.modelCapabilities).toEqual(admitted);
+    expect(readFileSync(join(TEST_DIR, "config.json"), "utf8")).toBe(diskBeforeReject);
+  }
+  const resolved = spyOn(destinationPolicy, "providerDestinationResolvedError").mockResolvedValue(null);
+  try {
+    const replacement = { adapter: "openai-chat", baseUrl: "https://example.test/v1", liveModels: false, models: ["ModelA", "modela"] };
+    expect((await request("POST", { name: "caps", provider: replacement })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities).toEqual(admitted);
+    expect((await request("POST", { name: "caps", provider: { ...replacement, modelCapabilities: {} } })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities).toBeUndefined();
+    expect((await request("PATCH", { modelCapabilities: admitted })).status).toBe(200);
+    const stale = providerEditorConfigDTO(loadConfig());
+    expect((await request("PATCH", { modelCapabilities: { ModelA: { contextTier: null } } })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities!.ModelA).toEqual({ inputModalities: ["text"] });
+    expect(live.providers.caps!.modelCapabilities!.modela).toEqual({ inputModalities: ["text", "image"] });
+    const staleEdit = structuredClone(stale);
+    staleEdit.providers.caps!.note = "stale";
+    expect((await request("PUT", { baseline: stale, next: staleEdit })).status).toBe(409);
+    expect((await request("PATCH", { modelCapabilities: { ModelA: null } })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities).toEqual({ modela: { inputModalities: ["text", "image"] } });
+    expect((await request("PATCH", { modelCapabilities: null })).status).toBe(200);
+    expect(live.providers.caps!.modelCapabilities).toBeUndefined();
+    expect((await request("PATCH", { modelCapabilities: admitted })).status).toBe(200);
+  } finally {
+    resolved.mockRestore();
+  }
+  const baseline = providerEditorConfigDTO(loadConfig());
+  const invalidNext = structuredClone(baseline);
+  Object.assign(invalidNext.providers.caps!, { modelCapabilities: null });
+  expect((await request("PUT", { baseline, next: invalidNext })).status).toBe(400);
+  const next = structuredClone(baseline);
+  next.providers.caps!.modelCapabilities = {};
+  expect((await request("PUT", { baseline, next })).status).toBe(200);
+  expect(live.providers.caps!.modelCapabilities).toBeUndefined();
+  expect(loadConfig().providers.caps!.modelCapabilities).toBeUndefined();
+  const newBaseline = providerEditorConfigDTO(loadConfig());
+  const followup = structuredClone(newBaseline);
+  followup.providers.caps!.note = "fresh baseline";
+  expect((await request("PUT", { baseline: newBaseline, next: followup })).status).toBe(200);
+});
