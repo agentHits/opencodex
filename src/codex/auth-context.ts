@@ -1026,7 +1026,7 @@ export async function resolveCodexAuthContext(
   }
 
   try {
-    const token = await getValidCodexToken(accountId);
+    const token = await getValidCodexToken(accountId, { signal: options.signal });
     assertCodexAccountValidationReady(accountId);
     return {
       kind: "pool",
