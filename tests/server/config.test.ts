@@ -777,6 +777,19 @@ describe("opencodex config defaults", () => {
     });
   });
 
+  test("codex safety-buffering header drop is an explicit top-level opt-in", () => {
+    const defaults = getDefaultConfig();
+    expect(defaults.dropCodexSafetyBuffering).toBe(false);
+    expect(validateConfigCandidate({ ...defaults, dropCodexSafetyBuffering: true })).toMatchObject({
+      ok: true,
+      config: { dropCodexSafetyBuffering: true },
+    });
+    expect(validateConfigCandidate({ ...defaults, dropCodexSafetyBuffering: "yes" })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("dropCodexSafetyBuffering"),
+    });
+  });
+
   test("usage and MCP config overrides change the effective bound while defaults remain compatible", () => {
     const defaults = getDefaultConfig();
     expect(defaults.managementUsageMaxReadBytes).toBe(64 * 1024 * 1024);
@@ -1211,6 +1224,46 @@ describe("opencodex config defaults", () => {
       expect(validateConfigCandidate({ ...base, agentTaskRecovery: invalid })).toMatchObject({
         ok: false,
         error: expect.stringContaining("agentTaskRecovery"),
+      });
+      expect(backupNames()).toEqual([]);
+    }
+  });
+
+  test("plaintextV2AgentMessages is explicit and degrades invalid hand edits", () => {
+    const base = {
+      port: 12345,
+      providers: {
+        custom: {
+          adapter: "openai-responses",
+          baseUrl: "https://example.test/v1",
+        },
+      },
+      defaultProvider: "custom",
+    };
+    expect(getDefaultConfig().plaintextV2AgentMessages).toBeUndefined();
+
+    writeConfig({ ...base, plaintextV2AgentMessages: true });
+    expect(loadConfig()).toMatchObject({ ...base, plaintextV2AgentMessages: true });
+    expect(validateConfigCandidate({ ...base, plaintextV2AgentMessages: true })).toMatchObject({
+      ok: true,
+      config: { plaintextV2AgentMessages: true },
+    });
+
+    for (const invalid of [null, "true", 1, {}]) {
+      writeConfig({ ...base, plaintextV2AgentMessages: invalid });
+      const diagnostics = readConfigDiagnostics();
+      expect(diagnostics).toMatchObject({
+        source: "file",
+        error: null,
+        config: base,
+      });
+      expect(diagnostics.config.plaintextV2AgentMessages).toBeUndefined();
+      expect(diagnostics.warnings).toContain(
+        "plaintextV2AgentMessages ignored: expected a boolean",
+      );
+      expect(validateConfigCandidate({ ...base, plaintextV2AgentMessages: invalid })).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("plaintextV2AgentMessages"),
       });
       expect(backupNames()).toEqual([]);
     }
