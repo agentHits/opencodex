@@ -411,6 +411,12 @@ materialization or usability failure before transferring a resolved context to i
 Audio reports one terminal upstream outcome after validating the response body; redirects remain
 neutral and client/shutdown cancellation does not manufacture an account failure.
 
+External voice reconnects restrict provider selection as well as exact account selection to the
+original call binding. Credential acquisition accepts a cancellation signal; post-resolution
+materialization checks cancellation before returning ownership. Connectivity-only WebSocket
+completion is neutral: HTTP 101 does not prove inference or quota recovery, and a normal close
+may follow a protocol error. Explicit transport errors/timeouts settle once during cleanup.
+
 The dashboard presents one OpenAI Codex card with accessible Pool/Direct controls and a separate,
 unchanged API-key card. `PATCH /api/providers?name=openai` persists exactly one
 `codexAccountMode`, clears affinity/quota cache, primes only when entering Pool, and does not refresh
