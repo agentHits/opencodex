@@ -328,3 +328,17 @@ tier that Codex converts to `max`; opencodex then maps or clamps the value for t
 
 The model context cap is independent of sub-agent mode. Configure it on the Models page; native
 OpenAI models retain their real context windows.
+
+The experimental `plaintextV2AgentMessages` field is unset in a fresh config and runs only when set
+to `true`. The caller must use the Responses wire, and the final destination must use
+`adapter: "openai-responses"`, `authMode: "forward"`, and the exact base URL
+`https://chatgpt.com/backend-api/codex`. OpenAI API-key providers, custom compatible gateways,
+routes to other providers, and non-Responses callers are excluded. For an eligible new native
+ChatGPT v2 tool call, the option assigns request-scoped aliases to the namespace and three reserved
+message-tool names, removes the message marker, and restores the original identities in the
+response. It handles
+`spawn_agent`, `send_message`, and `followup_task` and adds no recovery request. HTTPS remains
+encrypted, but task text can be retained in Codex history, routed-provider requests, and local
+response/debug state. Existing ciphertext is unchanged, and the option depends on undocumented
+ChatGPT and Codex behavior. See
+[Agent configuration: Plaintext v2 agent messages](/reference/configuration/agents/#plaintext-v2-agent-messages).
