@@ -7,6 +7,9 @@ Codex WebSocket quota-family normalization remains generic; retired-model eviden
 by the [OpenAI quota owner](../providers/openai-tiers.md#public-provider-contract), not by
 removing support for non-default WebSocket quota families.
 
+Key-auth hosted-search continuations validate account selection after pacing and report a failed
+terminal on drift; see [continuation binding contract](../runtime.md#hosted-search-continuation-binding).
+
 ## Heartbeat and stall deadline
 
 The HTTP/SSE bridge emits an SSE comment-line keep-alive (`: opencodex heartbeat`) during upstream
