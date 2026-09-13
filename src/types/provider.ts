@@ -783,6 +783,12 @@ export interface OcxProviderConfig {
    */
   requiresReasoningPlaceholderModels?: string[];
   /**
+   * Default to displaying provider-authored summaries when Responses summary is omitted.
+   * Explicit wire summary:"none" wins; false disables a seeded provider default.
+   * Raw reasoning is never relabeled as a summary.
+   */
+  showThinkingSummary?: boolean;
+  /**
    * Opt-in same-target 429 retry policy. Codex itself never retries 429 (it retries 5xx only,
    * openai/codex#30471), and single-key pools have no failover, so the proxy waits and replays
    * the identical request on the same key before any failover. Pre-stream only: a 429 arrives
