@@ -433,6 +433,12 @@ import {
   type RoutedNamespaceToolAliases,
 } from "../../responses/namespace-tool-compat";
 import {
+  createMuseToolNameRestoreRewrite,
+  restoreMuseToolNames,
+  restoreMuseToolNamesInJson,
+  type MuseToolNameAliases,
+} from "../../responses/muse-tool-name-alias";
+import {
   collectDeclaredBareWireToolNames,
   collectDeclaredNamelessClientCallTypes,
   collectDeclaredWireToolNames,
@@ -4805,8 +4811,10 @@ async function handleResponsesInner(
   }
 
   let routedNamespaceToolAliases: RoutedNamespaceToolAliases = new Map();
+  let routedMuseToolNameAliases: MuseToolNameAliases = new Map();
   const refreshRoutedNamespaceToolAliases = (builtRequest: AdapterRequest): void => {
     routedNamespaceToolAliases = builtRequest.convertedRoutedNamespaceToolAliases ?? new Map();
+    routedMuseToolNameAliases = builtRequest.convertedMuseToolNameAliases ?? new Map();
   };
 
   if ("passthrough" in adapter && adapter.passthrough && !routedCompaction) {
@@ -5079,7 +5087,9 @@ async function handleResponsesInner(
       // provider) every name looks undeclared, and flipping this would stop recording continuation
       // state for exactly the passthrough traffic the guard deliberately stands down for.
       if (undeclaredToolGuardActive && !inspectionSawUndeclaredTool && undeclaredToolCallName(
-        restoreAuthorizedBareNamespaceToolCalls(payload),
+        restoreAuthorizedBareNamespaceToolCalls(
+          restoreMuseToolNames(payload, routedMuseToolNameAliases).value,
+        ),
         declaredWireToolNames,
         declaredNamelessClientCallTypes,
         providerExecutedCallTypes,
@@ -5101,7 +5111,12 @@ async function handleResponsesInner(
     ) => {
       if (inspectionSawUndeclaredTool) return;
       const restored = restoreRoutedCustomCalls(
-        restoreAuthorizedBareNamespaceToolCalls(restoreRoutedNamespaceCalls(response, routedNamespaceToolAliases).value),
+        restoreAuthorizedBareNamespaceToolCalls(
+          restoreRoutedNamespaceCalls(
+            restoreMuseToolNames(response, routedMuseToolNameAliases).value,
+            routedNamespaceToolAliases,
+          ).value,
+        ),
         routedCustomToolNames,
         routedCustomToolRepairNames,
         declaredWireToolNames,
@@ -6103,6 +6118,9 @@ async function handleResponsesInner(
         createImageGenCallRestoreRewrite(imageGenCallAliases),
         // #3217: a call whose namespace repeats its own name is unroutable in codex-rs.
         createSelfNamedToolCallNamespaceScrubRewrite(selfNamedNamespaceScrubAuthorization),
+        routedMuseToolNameAliases.size > 0
+          ? createMuseToolNameRestoreRewrite(routedMuseToolNameAliases)
+          : undefined,
         routedNamespaceToolAliases.size > 0
           ? createRoutedNamespaceCallRestoreRewrite(routedNamespaceToolAliases)
           : undefined,
@@ -6364,7 +6382,10 @@ async function handleResponsesInner(
       let clientJson = (() => {
         const restoredNamespace = restoreRoutedNamespaceCallsInJson(
           scrubSelfNamedToolCallNamespaceInJson(
-            restoreImageGenCallsInJson(text, imageGenCallAliases),
+            restoreMuseToolNamesInJson(
+              restoreImageGenCallsInJson(text, imageGenCallAliases),
+              routedMuseToolNameAliases,
+            ),
             selfNamedNamespaceScrubAuthorization,
           ),
           routedNamespaceToolAliases,
