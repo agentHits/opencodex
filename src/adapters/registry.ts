@@ -6,7 +6,6 @@ import { createCodeBuddyAdapter } from "./codebuddy/adapter";
 import { createQoderAdapter } from "./qoder/adapter";
 import { createCommandCodeAdapter } from "./command-code";
 import { createCursorAdapter } from "./cursor";
-import { createDevinCliAdapter } from "./devin-cli/adapter";
 import { createDevinAdapter } from "./devin";
 import { createGoogleAdapter } from "./google";
 import { createKiroAdapter } from "./kiro";
@@ -21,6 +20,16 @@ export type AdapterCacheRetention = "none" | "short" | "long";
 
 export interface AdapterFactoryContext {
   cacheRetention?: AdapterCacheRetention;
+  /**
+   * The configured provider row this adapter serves.
+   *
+   * Needed when one adapter backs two provider ids whose credentials differ:
+   * `devin` and `devin-cli` share a transport and a token format but sign in to
+   * different accounts and can sit on different Cognition tenants, and the tenant
+   * is recorded on the credential rather than in the registry. Optional, and
+   * every other adapter ignores it.
+   */
+  providerId?: string;
 }
 
 export type AdapterWire =
@@ -33,7 +42,6 @@ export type AdapterWire =
   | "google"
   | "kiro"
   | "cursor"
-  | "devin-cli"
   | "devin";
 
 export type AdapterMutationContract =
@@ -116,15 +124,10 @@ export const ADAPTER_REGISTRY = {
     mutation: "codex-owned-with-gated-native-fallback",
     create: (provider: OcxProviderConfig, _context: AdapterFactoryContext) => createCursorAdapter(provider),
   },
-  "devin-cli": {
-    wire: "devin-cli",
-    mutation: "codex-owned",
-    create: (provider: OcxProviderConfig, _context: AdapterFactoryContext) => createDevinCliAdapter(provider),
-  },
   devin: {
     wire: "devin",
     mutation: "codex-owned",
-    create: (provider: OcxProviderConfig, _context: AdapterFactoryContext) => createDevinAdapter(provider),
+    create: (provider: OcxProviderConfig, context: AdapterFactoryContext) => createDevinAdapter(provider, context),
   },
   "mimo-free": {
     contractParent: "openai-chat",
