@@ -4,13 +4,13 @@ import { sanitizeToolDescriptionForCognitionForTests } from "../../src/adapters/
 import { DEVIN_MODEL_CONTEXT_WINDOWS, DEVIN_STATIC_MODELS, collapseDevinModelUid } from "../../src/adapters/devin/live-models";
 import { parseCatalogBuffer } from "../../src/adapters/devin/cloud-direct/catalog";
 import { encodeMessage, encodeString, encodeVarintField } from "../../src/adapters/devin/cloud-direct/wire";
-import { OAUTH_PROVIDERS } from "../../src/oauth";
+import { DEPRECATED_OAUTH_PROVIDER_ALIASES, OAUTH_PROVIDERS, resolveRefreshPolicy } from "../../src/oauth";
 import { PROVIDER_REGISTRY } from "../../src/providers/registry";
 import type { OcxParsedRequest } from "../../src/types";
 
 describe("devin adapter", () => {
   test("is registered as an oauth provider and adapter", () => {
-    expect(OAUTH_PROVIDERS.devin.defaultModel).toBe("swe-1-7");
+    expect(OAUTH_PROVIDERS.devin.defaultModel).toBe("swe-2");
     const entry = PROVIDER_REGISTRY.find((row) => row.id === "devin");
     expect(entry?.adapter).toBe("devin");
     expect(entry?.authKind).toBe("oauth");
@@ -55,8 +55,8 @@ describe("devin adapter", () => {
   test("the tool catalog nudge names the bare wire names the encoder actually sends", () => {
     // Cognition is offered `tool.name` with no namespace prefix (mapOcxToolsToDevin),
     // so a nudge built from the default namespaced form would advertise a name the
-    // model is never given. Both Devin provider rows share this adapter, so this is
-    // the single place that covers `devin` and `devin-cli` at once.
+    // model is never given. The merged `devin` provider and the deprecated
+    // `devin-cli` alias share this adapter, so this one place covers both.
     const parsed: OcxParsedRequest = {
       modelId: "swe-1-7",
       stream: true,
@@ -229,11 +229,22 @@ describe("devin adapter", () => {
     expect(collapseDevinModelUid("grok-4-5-medium")).toBe("grok-4-5");
   });
 
-  test("loginDevin is browser-only (no local import option)", () => {
-    // The devin OAuth entry must not accept importLocal/forceLogin opts —
-    // login is always the Auth0 browser flow.
-    const entry = OAUTH_PROVIDERS.devin;
-    expect(entry.login.length).toBeLessThanOrEqual(1);
+  test("devin-cli survives only as a deprecated alias, never a provider entry", () => {
+    // The merge removed the registry row and the OAUTH_PROVIDERS def: an
+    // `oauthConfig("devin-cli")` entry would throw at module load, and a live
+    // entry would re-expose the id as a second dashboard/login row. What keeps
+    // `ocx login devin-cli` and pre-migration saved state working is the alias
+    // map plus refresh-policy resolution.
+    expect(PROVIDER_REGISTRY.find((row) => row.id === "devin-cli")).toBeUndefined();
+    expect("devin-cli" in OAUTH_PROVIDERS).toBe(false);
+    expect(DEPRECATED_OAUTH_PROVIDER_ALIASES["devin-cli"]).toBe("devin");
+    // A lingering devin-cli config row must inherit devin's "disabled" policy:
+    // resolving to the "lazy-only" fallback would make the guardian attempt
+    // refreshes Cognition has no endpoint for and mark the account needsReauth.
+    expect(resolveRefreshPolicy("devin-cli", { providers: {} } as never)).toBe("disabled");
+    // The canonical entry takes forceLogin so reauth/add-account can skip the
+    // CLI import and reach the browser flow for a different account.
+    expect(OAUTH_PROVIDERS.devin.login.length).toBeGreaterThanOrEqual(2);
   });
 
   test("rewrites the Cognition blocklist trigger phrase in tool descriptions", () => {

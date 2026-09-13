@@ -91,7 +91,7 @@ Grok chat raw reasoning uses content-channel output with an empty summary; hidde
 Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
-Devin CLI credential path composition in `src/oauth/devin-cli.ts` follows the selected platform: Windows uses Win32 APPDATA paths, other platforms use POSIX XDG-data paths. The explicit absolute override remains verbatim; credential parsing and login behavior are unchanged.
+Devin CLI credential path composition in `src/oauth/devin/cli-import.ts` follows the selected platform: Windows uses Win32 APPDATA paths, other platforms use POSIX XDG-data paths. The explicit absolute override remains verbatim; credential parsing and login behavior are unchanged.
 
 Provider-scoped catalog hints remain isolated by provider in `src/providers/registry.ts`. The
 OpenCode Go `deepseek-v4.1-flash` 1,048,576-token context hint does not change xAI model metadata or

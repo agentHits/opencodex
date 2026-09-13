@@ -1,16 +1,16 @@
-import { describe, expect, test } from "bun:test";
-import { homedir } from "node:os";
-import { win32 } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, win32 } from "node:path";
 import {
   DEVIN_CLI_CREDENTIALS_ENV,
   devinCliCredentialsPath,
   devinCliSignedIn,
-  loginDevinCli,
   readDevinCliCredentialFile,
   readDevinCliCredentialOutcome,
-  refreshDevinCliToken,
-} from "../../src/oauth/devin-cli";
-import { resolveDevinApiServer } from "../../src/oauth/devin";
+  type DevinCliLoginDeps,
+} from "../../src/oauth/devin/cli-import";
+import { loginDevin, refreshDevinToken, resolveDevinApiServer } from "../../src/oauth/devin";
 import type { OAuthController } from "../../src/oauth/types";
 
 /**
@@ -37,9 +37,22 @@ function depsFor(contents: string | undefined, env: NodeJS.ProcessEnv = {}) {
   };
 }
 
-function silentController(): OAuthController & { progress: string[] } {
+/**
+ * A controller that records whether the browser flow was entered. The merged
+ * login's two paths are distinguished by one observable: the Auth0 flow calls
+ * `onAuth` with a sign-in URL before anything else, and the CLI import never
+ * touches it. `onManualCodeInput` returns "" so the browser branch stops at
+ * its own "nothing pasted" error rather than reaching the network.
+ */
+function recordingController() {
+  const auths: Array<{ url: string; instructions?: string }> = [];
   const progress: string[] = [];
-  return { progress, onProgress: (m: string) => { progress.push(m); } };
+  const ctrl: OAuthController = {
+    onAuth: (info) => { auths.push(info); },
+    onProgress: (m) => { progress.push(m); },
+    onManualCodeInput: () => Promise.resolve(""),
+  };
+  return { ctrl, auths, progress };
 }
 
 describe("devin-cli credentials path", () => {
@@ -85,10 +98,30 @@ describe("devin-cli credential file", () => {
   });
 });
 
-describe("devin-cli login", () => {
-  test("imports the signed-in session without a browser", async () => {
-    const ctrl = silentController();
-    const cred = await loginDevinCli(ctrl, undefined, depsFor(REAL_FILE));
+describe("devin merged login is import-first", () => {
+  // loginDevin reads the real credential path (no injected deps), so these
+  // fixtures go through OPENCODEX_DEVIN_CLI_CREDENTIALS — the same absolute-path
+  // override the resolver honours — pointed at files under a temp dir.
+  const tmp = mkdtempSync(join(tmpdir(), "ocx-devin-login-"));
+  const credentialFile = join(tmp, "credentials.toml");
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedEnv = process.env[DEVIN_CLI_CREDENTIALS_ENV];
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[DEVIN_CLI_CREDENTIALS_ENV];
+    else process.env[DEVIN_CLI_CREDENTIALS_ENV] = savedEnv;
+    rmSync(credentialFile, { force: true });
+  });
+
+  const pointAt = (path: string) => { process.env[DEVIN_CLI_CREDENTIALS_ENV] = path; };
+
+  test("a signed-in CLI session imports without a browser", async () => {
+    writeFileSync(credentialFile, REAL_FILE);
+    pointAt(credentialFile);
+    const { ctrl, auths } = recordingController();
+    const cred = await loginDevin(ctrl);
     expect(cred.access).toBe(KEY);
     // Durable-key pattern: refresh carries the key too, or detectOAuthWarning
     // reports stale_credentials from the moment of login.
@@ -96,31 +129,80 @@ describe("devin-cli login", () => {
     expect(cred.expires).toBe(Number.MAX_SAFE_INTEGER);
     expect(cred.source).toBe("local-cli");
     expect(cred.apiBaseUrl).toBe("https://server.codeium.com");
-    // onAuth is never called: there is nothing for opencodex to authorize.
-    expect(ctrl.progress.join(" ")).not.toContain(KEY);
+    // onAuth is never called: the CLI already completed PKCE, so there is
+    // nothing left for a browser to authorize.
+    expect(auths).toEqual([]);
   });
 
   test("an off-allowlist api_server_url never becomes the request origin", async () => {
-    const hostile = REAL_FILE.replace("https://server.codeium.com", "https://evil.example.com");
-    const cred = await loginDevinCli(silentController(), undefined, depsFor(hostile));
+    writeFileSync(credentialFile, REAL_FILE.replace("https://server.codeium.com", "https://evil.example.com"));
+    pointAt(credentialFile);
+    const cred = await loginDevin(recordingController().ctrl);
     expect(cred.apiBaseUrl).toBe("https://server.codeium.com");
     expect(cred.apiBaseUrl).not.toContain("evil");
   });
 
-  test("the failure names the install hint and never the secret", async () => {
+  test("a missing credential file falls back to the browser flow", async () => {
+    // CLI-absent users have no other sign-in path; a pure rename of the old
+    // devin-cli import would leave them unable to log in at all. The empty
+    // paste ends the flow at its own error, which is what proves onAuth ran
+    // without the test ever reaching RegisterUser.
+    pointAt(join(tmp, "does-not-exist.toml"));
+    const { ctrl, auths } = recordingController();
+    const err = await loginDevin(ctrl).catch((e: Error) => e);
+    expect(auths).toHaveLength(1);
+    expect(auths[0]!.url).toContain("windsurf");
+    expect((err as Error).message).toContain("No auth token pasted");
+  });
+
+  test("an unreadable credential file throws instead of opening a browser", async () => {
+    // The file exists but cannot be read: a browser login would succeed and
+    // leave the broken file in place, hiding the real fault. A directory at
+    // the credential path makes readFileSync throw without chmod games, which
+    // is the same "unreadable" outcome an EACCES produces.
+    pointAt(tmp);
+    const { ctrl, auths } = recordingController();
+    await expect(loginDevin(ctrl)).rejects.toThrow(/could not read it/);
+    expect(auths).toEqual([]);
+  });
+
+  test("an incomplete credential file throws instead of opening a browser", async () => {
+    // A half-written file is a broken credential, not an absent one: falling
+    // back to the browser would mint a second session while the CLI's own
+    // file stays corrupt.
+    writeFileSync(credentialFile, 'api_server_url = "https://server.codeium.com"\n');
+    pointAt(credentialFile);
+    const { ctrl, auths } = recordingController();
+    await expect(loginDevin(ctrl)).rejects.toThrow(/session key|devin auth login/);
+    expect(auths).toEqual([]);
+  });
+
+  test("forceLogin skips the import and goes to the browser", async () => {
+    // The management route sets forceLogin on addAccount/reauth, and an
+    // operator forcing a login means "a different account than the CLI's" —
+    // importing the same CLI session again would silently ignore that.
+    writeFileSync(credentialFile, REAL_FILE);
+    pointAt(credentialFile);
+    const { ctrl, auths } = recordingController();
+    const err = await loginDevin(ctrl, { forceLogin: true }).catch((e: Error) => e);
+    expect(auths).toHaveLength(1);
+    expect((err as Error).message).toContain("No auth token pasted");
+  });
+
+  test("no thrown message repeats the imported key", async () => {
     // redactSecretString does not recognise a bare JWT or a devin-session-token,
     // and login errors reach terminal output, so nothing parsed may be thrown.
-    const err = await loginDevinCli(silentController(), undefined, depsFor(undefined)).catch((e: Error) => e);
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toContain("devin auth login");
-    expect((err as Error).message).not.toContain(KEY);
-    const badErr = await loginDevinCli(silentController(), undefined, depsFor('windsurf_api_key = "' + KEY + '"\n'))
-      .catch((e: Error) => e);
-    expect((badErr as Error).message).not.toContain(KEY);
+    writeFileSync(credentialFile, `windsurf_api_key = "${KEY}"\n`);
+    pointAt(credentialFile);
+    const err = await loginDevin(recordingController().ctrl).catch((e: unknown) => e);
+    expect(String(err)).not.toContain("devin-session-token");
   });
 
   test("refresh is terminal", async () => {
-    await expect(refreshDevinCliToken("x")).rejects.toThrow(/invalid_grant/);
+    // Cognition exposes no refresh endpoint and the key is durable; throwing
+    // invalid_grant lets the request path mark the account needsReauth instead
+    // of extending a revoked key forever.
+    await expect(refreshDevinToken("x")).rejects.toThrow(/invalid_grant/);
   });
 });
 
@@ -131,13 +213,13 @@ describe("devin tenant selection is provider-scoped", () => {
     expect(resolveDevinApiServer(undefined)).toBe("https://server.codeium.com");
   });
 
-  test("an unknown provider id falls back rather than borrowing another slot", () => {
-    // The regression this parameter exists for: reading a fixed "devin" slot sent
-    // one provider's key to the other provider's tenant.
+  test("the deprecated devin-cli id normalizes onto the devin slot", () => {
+    // A config saved before the merge migration can still name "devin-cli";
+    // both ids share one credential slot after the merge, so the alias must
+    // read the same place rather than an orphaned slot.
     expect(resolveDevinApiServer(undefined, "devin-cli")).toBe("https://server.codeium.com");
   });
 });
-
 
 describe("devin-cli credential path and read bounds", () => {
   const okFile = [
@@ -170,7 +252,7 @@ describe("devin-cli credential path and read bounds", () => {
     expect(win.startsWith("devin")).toBe(false);
   });
 
-  test("a present-but-unreadable file is not reported as a missing sign-in", async () => {
+  test("a present-but-unreadable file is not reported as a missing sign-in", () => {
     const deps = {
       env: { HOME: "/home/u", XDG_DATA_HOME: "/home/u/.local/share" },
       platform: "linux" as NodeJS.Platform,
@@ -179,10 +261,8 @@ describe("devin-cli credential path and read bounds", () => {
     };
     expect(readDevinCliCredentialOutcome(deps)).toEqual({ kind: "unreadable" });
     // "run devin auth login" would succeed and change nothing, so the two
-    // outcomes must not share one message.
-    await expect(loginDevinCli({} as OAuthController, undefined, deps)).rejects.toThrow(/could not read it/);
-    await expect(loginDevinCli({} as OAuthController, undefined, { ...deps, exists: () => false }))
-      .rejects.toThrow(/No signed-in Devin CLI session/);
+    // outcomes must not share one outcome kind.
+    expect(readDevinCliCredentialOutcome({ ...deps, exists: () => false })).toEqual({ kind: "missing" });
   });
 
   test("a file past the parse bound is refused rather than scanned", () => {
@@ -204,16 +284,5 @@ describe("devin-cli credential path and read bounds", () => {
       read: () => 'api_server_url = "https://server.codeium.com"\n',
     };
     expect(readDevinCliCredentialOutcome(deps).kind).toBe("incomplete");
-  });
-
-  test("no thrown message repeats the key", async () => {
-    const deps = {
-      env: { HOME: "/home/u", XDG_DATA_HOME: "/home/u/.local/share" },
-      platform: "linux" as NodeJS.Platform,
-      exists: () => true,
-      read: () => { throw new Error("EACCES"); },
-    };
-    const err = await loginDevinCli({} as OAuthController, undefined, deps).catch((e: unknown) => e);
-    expect(String(err)).not.toContain("devin-session-token");
   });
 });
