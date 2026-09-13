@@ -1260,6 +1260,8 @@ const configSchema = z.object({
   configRebaseProvenance: z.unknown().optional(),
   // A retry can be billable, so absence and malformed hand edits both stay off.
   emptyCompletionRetry: z.boolean().optional().catch(false),
+  // Header suppression changes what Codex sees, so absence and malformed edits stay off.
+  dropCodexSafetyBuffering: z.boolean().optional().catch(false),
   // A malformed hand edit must not silently stop opening the browser: fall back
   // to undefined, which resolves to the historical auto-open behavior.
   oauthOpenBrowser: z.boolean().optional().catch(undefined),
@@ -1276,6 +1278,7 @@ const configSchema = z.object({
   contextCapValue: z.number().int().positive().optional(),
   multiAgentGuidanceEnabled: z.boolean().optional(),
   // Invalid optional recovery config must not discard unrelated provider/account state.
+  plaintextV2AgentMessages: z.boolean().optional().catch(undefined),
   agentTaskRecovery: agentTaskRecoverySchema.optional().catch(undefined),
   // Same rationale: a bad notify section must not cost the operator their providers.
   quotaResetNotify: quotaResetNotifySchema.optional().catch(undefined),
@@ -2183,6 +2186,17 @@ function warnDegradedUpstreamHostCircuitThreshold(rawParsed: unknown): void {
   if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
 }
 
+function malformedPlaintextV2AgentMessagesWarning(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || raw.plaintextV2AgentMessages === undefined || typeof raw.plaintextV2AgentMessages === "boolean") return null;
+  return "plaintextV2AgentMessages ignored: expected a boolean";
+}
+
+function warnDegradedPlaintextV2AgentMessages(value: unknown): void {
+  const warning = malformedPlaintextV2AgentMessagesWarning(value);
+  if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+}
+
 function malformedAgentTaskRecoveryWarning(rawParsed: unknown): string | null {
   const raw = rawConfigRecord(rawParsed);
   if (!raw || !Object.hasOwn(raw, "agentTaskRecovery")) return null;
@@ -2441,6 +2455,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedNativeSubagentConfig(parsed, config);
       warnDegradedCodexAccountPicker(parsed);
       warnDegradedUpstreamHostCircuitThreshold(parsed);
+      warnDegradedPlaintextV2AgentMessages(parsed);
       warnDegradedAgentTaskRecovery(parsed);
       warnDegradedRuntimeRole(parsed);
       warnDegradedOptionalRemoteBlocks(parsed);
@@ -2470,6 +2485,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedNativeSubagentConfig(parsed, config);
       warnDegradedCodexAccountPicker(parsed);
       warnDegradedUpstreamHostCircuitThreshold(parsed);
+      warnDegradedPlaintextV2AgentMessages(parsed);
       warnDegradedAgentTaskRecovery(parsed);
       warnDegradedRuntimeRole(parsed);
       warnDegradedOptionalRemoteBlocks(parsed);
@@ -2495,6 +2511,7 @@ export function loadConfig(): OcxConfig {
         warnDegradedNativeSubagentConfig(parsed, config);
         warnDegradedCodexAccountPicker(parsed);
         warnDegradedUpstreamHostCircuitThreshold(parsed);
+        warnDegradedPlaintextV2AgentMessages(parsed);
         warnDegradedAgentTaskRecovery(parsed);
         warnDegradedRuntimeRole(parsed);
         warnDegradedOptionalRemoteBlocks(parsed);
@@ -2646,6 +2663,8 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   if (notifyWarning) warnings.push(notifyWarning);
   const codexPoolWarning = malformedCodexPoolWarning(rawParsed);
   if (codexPoolWarning) warnings.push(codexPoolWarning);
+  const plaintextWarning = malformedPlaintextV2AgentMessagesWarning(rawParsed);
+  if (plaintextWarning) warnings.push(plaintextWarning);
   if (syncDisabledReason) {
     warnings.push(`syncCodexSubagentDefaults ignored: ${syncDisabledReason}`);
   }
@@ -2725,6 +2744,12 @@ function upstreamHostCircuitThresholdError(value: unknown): string | null {
     && threshold >= 0
     && threshold <= UPSTREAM_HOST_CIRCUIT_MAX_THRESHOLD) return null;
   return `schema_invalid: upstreamHostCircuitThreshold: must be an integer from 0 to ${UPSTREAM_HOST_CIRCUIT_MAX_THRESHOLD}`;
+}
+
+function plaintextV2AgentMessagesError(value: unknown): string | null {
+  return malformedPlaintextV2AgentMessagesWarning(value)
+    ? "schema_invalid: plaintextV2AgentMessages: must be a boolean or omitted"
+    : null;
 }
 
 function agentTaskRecoveryError(value: unknown): string | null {
@@ -2883,6 +2908,14 @@ function emptyCompletionRetryError(value: unknown): string | null {
   return "schema_invalid: emptyCompletionRetry: must be a boolean or omitted";
 }
 
+function dropCodexSafetyBufferingError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "dropCodexSafetyBuffering")) return null;
+  const enabled = raw.dropCodexSafetyBuffering;
+  if (enabled === undefined || typeof enabled === "boolean") return null;
+  return "schema_invalid: dropCodexSafetyBuffering: must be a boolean or omitted";
+}
+
 function oauthOpenBrowserError(value: unknown): string | null {
   const raw = rawConfigRecord(value);
   if (!raw || !Object.hasOwn(raw, "oauthOpenBrowser")) return null;
@@ -3018,6 +3051,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? claudeSubagentEffortError(value)
     ?? appOwnedMemoryBudgetError(value)
     ?? upstreamHostCircuitThresholdError(value)
+    ?? plaintextV2AgentMessagesError(value)
     ?? agentTaskRecoveryError(value)
     ?? quotaResetNotifyError(value)
     ?? codexPoolError(value)
@@ -3026,6 +3060,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? codexQuotaAutoRefreshError(value)
     ?? codexAccountPickerEnabledError(value)
     ?? emptyCompletionRetryError(value)
+    ?? dropCodexSafetyBufferingError(value)
     ?? oauthOpenBrowserError(value)
     ?? runtimeRoleError(value)
     ?? remoteGuiConfigError(value)
@@ -4048,6 +4083,7 @@ export function getDefaultConfig(): OcxConfig {
   return {
     port: 10100,
     emptyCompletionRetry: false,
+    dropCodexSafetyBuffering: false,
     fastRows: true,
     managementUsageMaxReadBytes: 64 * 1024 * 1024,
     appOwnedMemoryBudgetMb: DEFAULT_APP_OWNED_MEMORY_BUDGET_BYTES / (1024 * 1024),
