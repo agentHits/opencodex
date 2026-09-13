@@ -38,6 +38,11 @@ request-local alias. Raw API-key continuations deliberately preserve ids because
 continuation may reference a call stored upstream under its original id; proxy-expanded API-key
 replays are explicit and receive the same repair.
 
+Separately, Meta Muse Responses (`src/responses/muse-tool-name-alias.ts`) aliases function *tool
+names* that exceed 64 characters or contain characters outside `[a-zA-Z0-9_-]` on `api.meta.ai`
+only. That map is not the call-id repair: it covers tools, `additional_tools`, history calls, and
+`tool_choice`, then restores original names inbound.
+
 These compatibility guards are covered by focused tests and should stay close to the adapters that
 need them.
 
@@ -264,3 +269,5 @@ fragments are not guessed onto pending ID-only calls.
 parallel/colliding identities, distinct unsafe raw JSON index literals, the maximum
 safe-integer boundary, invalid index types, missing/null continuations and UTF-8
 byte-limit boundaries.
+
+Translated Chat request construction uses the [inline-image budget](../transports/streaming-health.md#translated-chat-inline-image-budget); the shared normalizer counts retained bytes even when a wire-specific drop callback keeps the image attached.
