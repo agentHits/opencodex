@@ -315,6 +315,18 @@ export const CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: ["account", "history"],
+    summary: "Cached quota observations for one stored Codex pool account.",
+    routes: [{ method: "GET", path: "/api/codex-auth/quota/history" }],
+    flags: [
+      { name: "--json", value: "boolean", summary: "Emit the bounded observation history." },
+      { name: "--limit", value: "number", summary: "Return the newest 1 to 200 observations." },
+    ],
+    mutates: false,
+    json: "payload",
+    details: ["Use account history openai <pool-account-id>. Reads cached observations only; no refresh or warmup. Native main is not included."],
+  },
+  {
     command: ["account", "main", "reauth"],
     summary: "Reauthenticate the native main Codex login with a device code (#3898); headless hubs need no Codex App or keyring.",
     routes: [

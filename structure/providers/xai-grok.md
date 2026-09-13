@@ -69,6 +69,8 @@ Account-scoped OAuth quota remains display evidence for provider-level Combo sel
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
+Codex pool settings and their consumers follow the [reset-first ordering contract](openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
+
 Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
@@ -95,3 +97,7 @@ The upstream tier echo relays to the client on every Chat Completions delivery s
 (`src/chat/outbound.ts` projections and `src/server/chat-native-sse.ts` chunks), matching
 what the Responses lane already relayed for responses-wire upstreams; the responses-lane
 assembly for chat-wire upstreams tracks the echo in attempt telemetry only.
+
+Pool quota producers and account commands follow the [bounded raw-observation contract](openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
+
+Account quota surfaces use [safe probe diagnostics](../transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.

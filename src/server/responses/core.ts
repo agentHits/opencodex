@@ -1,3 +1,4 @@
+import { capturePoolQuotaWriter } from "../../codex/account-store";
 import type { Server } from "bun";
 import { recordContextSessionOwner } from "../../codex/context-owner";
 import { contextRelayActivated } from "../../codex/context-compat";
@@ -1051,7 +1052,7 @@ function codexWsQuotaObserver(authCtx: CodexAuthContext, provider: OcxProviderCo
   const mainWriter = authCtx.kind === "main-pool" ? authCtx.mainQuotaWriter : undefined;
   return headers => {
     if (credentialGeneration !== undefined && !isCodexAccountGenerationLive(accountId, credentialGeneration)) return;
-    applyCapturedCodexQuota(accountId, headers, writerGeneration, mainWriter, { modelId });
+    applyCapturedCodexQuota(accountId, headers, writerGeneration, mainWriter, { modelId, poolWriter: authCtx.kind === "pool" ? authCtx.poolQuotaWriter : undefined });
   };
 }
 
@@ -1456,7 +1457,7 @@ async function retryCodexPoolOnAlternateAccount(
       firstResponse.headers,
       firstAuthCtx.writerGeneration,
       firstAuthCtx.kind === "main-pool" ? firstAuthCtx.mainQuotaWriter : undefined,
-      { modelId: route.modelId },
+      { modelId: route.modelId, poolWriter: firstAuthCtx.kind === "pool" ? firstAuthCtx.poolQuotaWriter : undefined },
     );
   }
   const deferFirstOutcome = shouldDeferCodexResetDerivedCooldown(
@@ -2430,6 +2431,7 @@ async function refreshPoolForwardAuth(args: {
       accessToken: refreshed.accessToken,
       chatgptAccountId: refreshed.chatgptAccountId,
       generation: refreshed.generation,
+      poolQuotaWriter: capturePoolQuotaWriter(authCtx.accountId, refreshed),
     };
     const provider = applyCodexAuthContextToProvider(
       stripCodexRuntimeProviderFields(route.provider),
@@ -5944,7 +5946,7 @@ async function handleResponsesInner(
       if (!isCodexWsQuotaObservedResponse(upstreamResponse)) {
         applyAccountQuotaFromUpstreamHeaders(authCtx.accountId, upstreamResponse.headers,
           authCtx.writerGeneration, authCtx.kind === "main-pool" ? authCtx.mainQuotaWriter : undefined,
-          { modelId: route.modelId });
+          { modelId: route.modelId, poolWriter: authCtx.kind === "pool" ? authCtx.poolQuotaWriter : undefined });
       }
       if (terminalBodyWillRecord) {
         options.setTerminalOutcomeRecorder?.((status, httpStatusOverride) => {

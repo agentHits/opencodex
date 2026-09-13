@@ -467,6 +467,7 @@ function normalizeUsageAttempt(raw: unknown): PersistedUsageAttempt | null {
     durationMs: attempt.durationMs,
     // Absent by default; only the literal `true` marker survives the round trip.
     ...(attempt.streamAborted === true ? { streamAborted: true } : {}),
+    ...(attempt.locallyAnswered === true ? { locallyAnswered: true } : {}),
     ...(isNonNegativeFiniteNumber(attempt.firstOutputMs)
       ? { firstOutputMs: attempt.firstOutputMs }
       : {}),

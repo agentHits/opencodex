@@ -1,3 +1,10 @@
+import { CODEX_ACCOUNT_LOG_LABEL_RE } from "./account-label";
+import { poolQuotaHistoryIdentity } from "./account-store";
+import { estimateCodexQuotaCapacity, insufficientCodexCapacity, type CodexCapacityResult } from "./quota-capacity";
+import { readUsageSnapshotForManagement } from "../usage/log";
+import { capturePoolQuotaWriter } from "./account-store";
+import type { PoolQuotaWriter } from "./quota-types";
+import { getAccountQuotaHistory, isValidWhamHistoryObservation } from "./quota";
 import {
   ConfigMutationLockError,
   loadConfig,
@@ -41,6 +48,7 @@ import {
 } from "./account-priority";
 import {
   claimDueCodexQuotaRecoveryProbes,
+  codexQuotaScopeForModel,
   claimManualResetCooldowns,
   settleManualResetCooldown,
   type ManualResetCooldownClaim,
@@ -49,6 +57,7 @@ import {
   clearThreadAccountMapForAccount,
   getEffectiveActiveCodexAccountId,
   isEffectiveCodexAccountPinned,
+  isCodexAccountPlanExcluded,
   reconcileCodexActiveAfterExclusion,
   resetCodexRoutingForManualSelection,
   settleCodexQuotaRecoveryProbe,
@@ -58,9 +67,9 @@ import {
   MAX_ACCOUNT_PRIORITY,
   MIN_ACCOUNT_PRIORITY,
   normalizeAccountPoolStickyLimit,
-  normalizeAccountPoolStrategy,
+  normalizeCodexAccountPoolStrategy,
   parseAccountPoolStickyLimit,
-  parseAccountPoolStrategy,
+  parseCodexAccountPoolStrategy,
   parseAccountPriority,
 } from "./pool-rotation";
 import { checkAccountIdCollision, getMainChatgptAccountId, readCodexTokens, readCodexTokensResult } from "./auth-collision";
@@ -379,6 +388,7 @@ export type CodexAccountReauthReason =
   | "forbidden";
 
 function poolAccountDto(
+  config: OcxConfig,
   account: CodexAccount,
   quotaResult: PoolQuotaResult,
   hasCredential: boolean,
@@ -413,6 +423,10 @@ function poolAccountDto(
     quota: quota ? { ...quota } : null,
     needsReauth: needsReauth || health.status === "reauth_required",
     ...(reauthReason !== undefined ? { reauthReason } : {}),
+    ...(isCodexAccountPlanExcluded(config, account.id) ? {
+      selectionExcludedReason: "plan_excluded" as const,
+      selectionExcludedPlan: codexPlanValue(config.codexAccounts?.find(row => row.id === account.id)?.plan),
+    } : {}),
     hasCredential,
     ...(quotaResult.quotaProbeSkipped ? { quotaProbeSkipped: true as const } : {}),
     ...oauthAccountHealthFields("codex", account.id, health),
@@ -1192,6 +1206,9 @@ export interface CodexAuthAccountDto {
    * needs the operator; `/api/oauth/accounts` already carries the same field name.
    */
   reauthReason?: CodexAccountReauthReason;
+  /** Automatic selection policy only; explicit routes retain their usual auth checks. */
+  selectionExcludedReason?: "plan_excluded";
+  selectionExcludedPlan?: string;
   hasCredential: boolean;
   health: OAuthAccountHealth;
   healthLabel: OAuthHealthLabel;
@@ -1358,6 +1375,7 @@ async function recoverPoolQuotaFrom401(ctx: {
 
   const writerGeneration = captureConfigGeneration();
   markQuotaProbeAttempted(ctx.quotaProbeEvidence, refreshed.generation);
+  const poolWriter = capturePoolQuotaWriter(accountId, refreshed);
   const replay = await fetch("https://chatgpt.com/backend-api/wham/usage", {
     headers: {
       Authorization: `Bearer ${refreshed.accessToken}`,
@@ -1376,7 +1394,7 @@ async function recoverPoolQuotaFrom401(ctx: {
     return { quota: existing ?? null, needsReauth: false, credentialGeneration: refreshed.generation };
   }
   const result = await commitPoolQuotaResponse(replay, {
-    accountId, existing, configuredPlan, generation: refreshed.generation, writerGeneration,
+    accountId, existing, configuredPlan, generation: refreshed.generation, writerGeneration, poolWriter,
     mayPublish: ctx.quotaProbeEvidence.mayPublish,
   });
   return result.freshCredentialGeneration === refreshed.generation ? {
@@ -1418,11 +1436,13 @@ async function commitPoolQuotaResponse(
     configuredPlan: string | undefined;
     generation: number;
     writerGeneration: number;
+    poolWriter?: PoolQuotaWriter;
     mayPublish?: () => boolean;
   },
 ): Promise<PoolQuotaResult> {
   const { accountId, existing, configuredPlan, generation, writerGeneration } = ctx;
   const data = (await resp.json()) as WhamUsageResponse;
+  const observedAt = Date.now();
   if (ctx.mayPublish?.() === false) {
     return { quota: getAccountQuota(accountId), needsReauth: false, credentialGeneration: generation };
   }
@@ -1440,7 +1460,8 @@ async function commitPoolQuotaResponse(
   if (!isCodexAccountGenerationLive(accountId, generation)) {
     return { quota: null, needsReauth: false, credentialGeneration: generation };
   }
-  setAccountQuotaFromParsed(accountId, quota, writerGeneration);
+  setAccountQuotaFromParsed(accountId, quota, writerGeneration, undefined, quota,
+    ctx.poolWriter && isValidWhamHistoryObservation(data) ? { writer: ctx.poolWriter, observedAt, source: "wham", raw: quota } : undefined);
   return {
     quota: getAccountQuota(accountId),
     needsReauth: false,
@@ -1464,6 +1485,7 @@ async function fetchFreshPoolAccountQuota(
   let requestCredentialGeneration = readCodexAccountRecord(accountId)?.generation;
   try {
     const { accessToken, chatgptAccountId, generation } = await getValidToken(accountId);
+    const poolWriter = capturePoolQuotaWriter(accountId, { accessToken, chatgptAccountId, generation });
     requestCredentialGeneration = generation;
     onCredentialGeneration?.(generation);
     markQuotaProbeAttempted(quotaProbeEvidence, generation);
@@ -1494,7 +1516,7 @@ async function fetchFreshPoolAccountQuota(
       return withQuotaProbeEvidence(recovered, quotaProbeEvidence);
     }
     const committed = await commitPoolQuotaResponse(resp, {
-      accountId, existing, configuredPlan, generation, writerGeneration,
+      accountId, existing, configuredPlan, generation, writerGeneration, poolWriter,
       mayPublish: quotaProbeEvidence.mayPublish,
     });
     return withQuotaProbeEvidence(committed, quotaProbeEvidence);
@@ -2006,6 +2028,7 @@ export async function listCodexAuthAccountsSnapshot(
     const currentCredential = getCodexAccountCredential(accountId);
     if (!currentCredential) {
       return [poolAccountDto(
+        runtimeConfig,
         currentAccount,
         { quota: null, needsReauth: true },
         false,
@@ -2026,6 +2049,7 @@ export async function listCodexAuthAccountsSnapshot(
       ? { ...currentAccount, plan: quotaResult.freshPlan }
       : currentAccount;
     return [poolAccountDto(
+      runtimeConfig,
       dtoAccount,
       effectiveQuotaResult,
       true,
@@ -2457,7 +2481,7 @@ export async function handleCodexAuthAPI(
       pinnedAccountId: pinnedCodexAccountId(runtimeConfig) ?? null,
       autoSwitchThreshold: runtimeConfig.autoSwitchThreshold ?? 80,
       upstreamFailoverThreshold: runtimeConfig.upstreamFailoverThreshold ?? 3,
-      accountPoolStrategy: normalizeAccountPoolStrategy(runtimeConfig.accountPoolStrategy),
+      accountPoolStrategy: normalizeCodexAccountPoolStrategy(runtimeConfig.accountPoolStrategy),
       accountPoolStickyLimit: normalizeAccountPoolStickyLimit(runtimeConfig.accountPoolStickyLimit),
     });
   }
@@ -2488,12 +2512,12 @@ export async function handleCodexAuthAPI(
       return jsonResponse({ error: "strategy or stickyLimit required" }, 400);
     }
     const runtimeConfig = getRuntimeConfig(config);
-    let nextStrategy: NonNullable<ReturnType<typeof parseAccountPoolStrategy>> | undefined;
+    let nextStrategy: NonNullable<ReturnType<typeof parseCodexAccountPoolStrategy>> | undefined;
     let nextSticky: NonNullable<ReturnType<typeof parseAccountPoolStickyLimit>> | undefined;
     if (body.strategy !== undefined) {
-      const parsed = parseAccountPoolStrategy(body.strategy);
+      const parsed = parseCodexAccountPoolStrategy(body.strategy);
       if (parsed === null) {
-        return jsonResponse({ error: 'strategy must be one of: quota, round-robin, fill-first' }, 400);
+        return jsonResponse({ error: 'strategy must be one of: quota, round-robin, fill-first, reset-first' }, 400);
       }
       nextStrategy = parsed;
     }
@@ -2509,7 +2533,7 @@ export async function handleCodexAuthAPI(
     saveRuntimeConfig(config, runtimeConfig);
     return jsonResponse({
       ok: true,
-      accountPoolStrategy: normalizeAccountPoolStrategy(runtimeConfig.accountPoolStrategy),
+      accountPoolStrategy: normalizeCodexAccountPoolStrategy(runtimeConfig.accountPoolStrategy),
       accountPoolStickyLimit: normalizeAccountPoolStickyLimit(runtimeConfig.accountPoolStickyLimit),
     });
   }
@@ -2524,6 +2548,46 @@ export async function handleCodexAuthAPI(
     runtimeConfig.upstreamFailoverThreshold = body.threshold;
     saveRuntimeConfig(config, runtimeConfig);
     return jsonResponse({ ok: true });
+  }
+
+  if (url.pathname === "/api/codex-auth/quota/history" && req.method === "GET") {
+    const accountId = url.searchParams.get("accountId");
+    const rawLimit = url.searchParams.get("limit");
+    if (url.searchParams.getAll("accountId").length !== 1 || !isValidCodexAccountId(accountId)
+      || url.searchParams.getAll("limit").length > 1
+      || [...url.searchParams.keys()].some(key => key !== "accountId" && key !== "limit")
+      || (rawLimit !== null && !/^(?:[1-9]|[1-9][0-9]|1[0-9]{2}|200)$/.test(rawLimit))) {
+      return jsonResponse({ error: "A stored pool accountId and optional limit from 1 to 200 are required" }, 400);
+    }
+    const runtimeConfig = getRuntimeConfig(config);
+    const account = configuredPoolAccount(runtimeConfig, accountId);
+    if (!account) return jsonResponse({ error: "Unknown pool account" }, 404);
+    const identity = poolQuotaHistoryIdentity(accountId);
+    const allHistory = getAccountQuotaHistory(accountId);
+    const limit = rawLimit === null ? 200 : Number(rawLimit);
+    const history = { ...allHistory, observations: allHistory.observations.slice(-limit), truncated: allHistory.observations.length > limit };
+    const label = account.logLabel;
+    const labelStillUnique = () => {
+      const current = getRuntimeConfig(config);
+      return configuredPoolAccount(current, accountId)?.logLabel === label
+        && current.codexAccounts?.filter(row => codexAccountLogLabel(row) === label).length === 1;
+    };
+    let capacity: CodexCapacityResult = insufficientCodexCapacity("identity_unavailable");
+    if (identity && identity === poolQuotaHistoryIdentity(accountId) && label && CODEX_ACCOUNT_LOG_LABEL_RE.test(label) && labelStillUnique()) {
+      try {
+        const usage = await readUsageSnapshotForManagement();
+        if (poolQuotaHistoryIdentity(accountId) !== identity || !labelStillUnique()) capacity = insufficientCodexCapacity("identity_changed");
+        else if (!usage.revision) capacity = insufficientCodexCapacity("ledger_unavailable");
+        else if (usage.truncatedPrefixBytes > 0 || usage.entriesTruncated || usage.entriesDropped > 0) capacity = insufficientCodexCapacity("ledger_truncated");
+        else capacity = estimateCodexQuotaCapacity(allHistory.observations, usage.entries, label,
+          model => codexQuotaScopeForModel(model) === "shared");
+      } catch { capacity = insufficientCodexCapacity("ledger_unavailable"); }
+    }
+    if (!configuredPoolAccount(getRuntimeConfig(config), accountId)) return jsonResponse({ error: "Unknown pool account" }, 404);
+    if (identity !== poolQuotaHistoryIdentity(accountId) || (identity && label && !labelStillUnique())) {
+      return jsonResponse({ accountId, ...getAccountQuotaHistory(accountId, limit), capacity: insufficientCodexCapacity("identity_changed") });
+    }
+    return jsonResponse({ accountId, ...history, capacity });
   }
 
   if (url.pathname === "/api/codex-auth/quota" && req.method === "GET") {
