@@ -274,7 +274,9 @@ export function setAccountQuotaFromParsed(
   policyQuota: Omit<StoredAccountQuota, "updatedAt"> | null = quota,
   historyEvidence?: QuotaObservationEvidence,
 ): void {
-  if (!quota) return;
+  quota = withoutRetiredCodexQuota(quota);
+  policyQuota = withoutRetiredCodexQuota(policyQuota);
+  if (!quota || (!snapshotHasUsage(quota) && quota.resetCredits === undefined)) return;
   if (!mayCommitAccountQuota(accountId, writerGeneration)) return;
   const isMain = accountId === MAIN_CODEX_ACCOUNT_ID;
   if (isMain && mainWriter && !isMainQuotaWriterLive(mainWriter)) return;
@@ -317,6 +319,8 @@ function mergeAccountQuota(
   updatedAt: number,
   policyEvidence = false,
 ): StoredAccountQuota {
+  quota = withoutRetiredCodexQuota(quota) ?? {};
+  existing = withoutRetiredCodexQuota(existing ?? null) ?? undefined;
   const next: StoredAccountQuota = { updatedAt };
   const creditsOnly = quota.resetCredits !== undefined && !snapshotHasUsage(quota);
 
@@ -425,7 +429,9 @@ function notifyCodexQuotaSnapshot(accountId: string, next: StoredAccountQuota): 
   // Copy before the boundary: `next` is the live map value and the following write mutates
   // it, so an observation that read it after awaiting could see a later snapshot than the
   // one it was called for.
-  const snapshot = { ...next };
+  const retained = withoutRetiredCodexQuota(next);
+  if (!retained) return;
+  const snapshot = { ...retained };
   pendingObservation = pendingObservation
     .then(async () => {
       const observer = await import("../quota/reset-observer");
@@ -449,21 +455,25 @@ export function flushQuotaObservationsForTests(): Promise<void> {
   return pendingObservation;
 }
 
-/** Wire marker shared by Spark-family models, whose upstream limit family is model-specific. */
-const SPARK_MODEL_MARKER = "codex-spark";
-/**
- * Custom-window label for the Spark 5h window. The WHAM parser and the response-header path
- * must write the SAME label so a header refresh replaces the WHAM reading instead of doubling it.
- */
-const SPARK_SHORT_WINDOW_LABEL = "GPT-5.3-Codex-Spark 5h";
-const SPARK_WEEKLY_WINDOW_LABEL = "GPT-5.3-Codex-Spark Weekly";
+/** Exact retired model evidence, including account/provider-qualified selectors. */
+export function isRetiredCodexSparkModel(modelId: string | undefined): boolean {
+  return modelId?.trim().toLowerCase().split("/").at(-1) === "gpt-5.3-codex-spark";
+}
 
-/** True when the routed model belongs to the Spark family, which carries its own rate limit. */
-function isCodexSparkModel(modelId: string | undefined): boolean {
-  return typeof modelId === "string" && modelId.includes(SPARK_MODEL_MARKER);
+/** Tombstone old cache/DTO labels without changing unrelated custom windows or stores. */
+export function withoutRetiredCodexQuota<T extends Omit<StoredAccountQuota, "updatedAt"> | null>(quota: T): T | null {
+  if (!quota?.customWindows?.length) return quota;
+  const kept = quota.customWindows.filter(window =>
+    window.label !== "GPT-5.3-Codex-Spark 5h" && window.label !== "GPT-5.3-Codex-Spark Weekly");
+  if (kept.length === quota.customWindows.length) return quota;
+  const next = { ...quota };
+  if (kept.length > 0) next.customWindows = kept;
+  else delete next.customWindows;
+  return snapshotHasUsage(next) || next.resetCredits !== undefined ? next as T : null;
 }
 
 export function parseUpstreamQuotaHeaders(headers: Headers, options?: { modelId?: string }): Omit<StoredAccountQuota, "updatedAt"> | null {
+  if (isRetiredCodexSparkModel(options?.modelId)) return null;
   const primaryRaw = headers.get("x-codex-primary-used-percent");
   const secondaryRaw = headers.get("x-codex-secondary-used-percent");
   const tertiaryRaw = headers.get("x-codex-tertiary-used-percent");
@@ -486,10 +496,6 @@ export function parseUpstreamQuotaHeaders(headers: Headers, options?: { modelId?
   // it into weeklyPercent both discards the real weekly reading and leaves the account looking
   // exhausted long after the burst window resets. Duration decides, exactly as parseUsageQuota
   // already does for the WHAM payload — the two parsers must not disagree about the same data.
-  // One more attribution layer (#4122): on a Spark-family model response the sub-day primary is
-  // the MODEL-SPECIFIC limit, not an account window. Filing it as the account short tuple made
-  // one pool account display a 5h bar its identically-limited peers did not have, and fed a
-  // model limit to the account-policy readers (main-account hard lock, five-hour auto-refresh).
   const primaryIsShort = isExplicitShortWindowMinutes(primaryWindowMinutes);
 
   if (primaryIsMonthly) {
@@ -506,21 +512,10 @@ export function parseUpstreamQuotaHeaders(headers: Headers, options?: { modelId?
       if (secondaryResetAt !== undefined) quota.weeklyResetAt = secondaryResetAt;
     }
   } else if (primaryIsShort) {
-    if (isCodexSparkModel(options?.modelId)) {
-      if (primaryPercent !== undefined) {
-        const sparkWindow: { label: string; percent: number; resetAt?: number } = {
-          label: SPARK_SHORT_WINDOW_LABEL,
-          percent: primaryPercent,
-        };
-        if (primaryResetAt !== undefined) sparkWindow.resetAt = primaryResetAt;
-        quota.customWindows = [sparkWindow];
-      }
-    } else {
-      if (primaryPercent !== undefined) quota.shortPercent = primaryPercent;
-      if (primaryResetAt !== undefined) quota.shortResetAt = primaryResetAt;
-      const minutes = windowMinutes_(primaryWindowMinutes);
-      if (minutes !== undefined) quota.shortWindowSeconds = Math.round(minutes * 60);
-    }
+    if (primaryPercent !== undefined) quota.shortPercent = primaryPercent;
+    if (primaryResetAt !== undefined) quota.shortResetAt = primaryResetAt;
+    const minutes = windowMinutes_(primaryWindowMinutes);
+    if (minutes !== undefined) quota.shortWindowSeconds = Math.round(minutes * 60);
     // The burst window vacates the primary slot, so the weekly reading is the secondary — which
     // is where it was all along. Without this the true weekly value is silently dropped.
     if (secondaryPercent !== undefined) {
@@ -558,26 +553,9 @@ export function applyAccountQuotaFromUpstreamHeaders(
   const policyQuota = [
     "x-codex-primary-used-percent", "x-codex-secondary-used-percent", "x-codex-tertiary-used-percent",
   ].some(name => isInvalidPolicyUsagePercent(headers.get(name))) ? null : filterMainPolicyMonthlyQuota(quota);
-  // A header-observed Spark window is a partial update against the WHAM-recorded custom windows:
-  // merge by label so the weekly Spark entry survives, and hydrate first so the first call in a
-  // process does not merge against an empty map. The merged list goes only to the legacy
-  // snapshot — the identity-bound policy evidence keeps exactly what this response said.
-  let legacyQuota = quota;
-  if (quota.customWindows !== undefined) {
-    hydrateAccountQuotasFromDisk();
-    const existing = accountQuota.get(accountId)?.customWindows;
-    if (existing !== undefined) {
-      const incoming = new Map(quota.customWindows.map(window => [window.label, window]));
-      const merged = existing.map(window => incoming.get(window.label) ?? window);
-      for (const window of quota.customWindows) {
-        if (!existing.some(entry => entry.label === window.label)) merged.push(window);
-      }
-      legacyQuota = { ...quota, customWindows: merged };
-    }
-  }
   const validHistory = !["x-codex-primary-used-percent", "x-codex-secondary-used-percent", "x-codex-tertiary-used-percent"]
     .some(name => isInvalidPolicyUsagePercent(headers.get(name)));
-  setAccountQuotaFromParsed(accountId, legacyQuota, writerGeneration, mainWriter, policyQuota,
+  setAccountQuotaFromParsed(accountId, quota, writerGeneration, mainWriter, policyQuota,
     options?.poolWriter && validHistory ? { writer: options.poolWriter, observedAt: Date.now(), source: "response-header", raw: quota } : undefined);
 }
 
@@ -682,7 +660,9 @@ function hydrateAccountQuotasFromDisk(): void {
     for (const [accountId, quota] of Object.entries(parsed.quotas)) {
       if (!quota || typeof quota !== "object" || typeof quota.updatedAt !== "number") continue;
       if (now - quota.updatedAt > QUOTA_DISK_MAX_AGE_MS) continue;
-      if (!accountQuota.has(accountId)) accountQuota.set(accountId, quota);
+      const retained = withoutRetiredCodexQuota(quota);
+      if (!retained) continue;
+      if (!accountQuota.has(accountId)) accountQuota.set(accountId, retained);
     }
   } catch {
     // Corrupt/missing cache must never block routing or the dashboard.
@@ -819,9 +799,6 @@ export function parseUsageQuota(data: WhamUsageResponse): Omit<StoredAccountQuot
     : undefined;
 
   if (!data.rate_limit) {
-    if (data.additional_rate_limits?.length) {
-      return parseUsageQuota({ ...data, rate_limit: {} });
-    }
     return resetCredits !== undefined ? { resetCredits } : null;
   }
 
@@ -884,38 +861,6 @@ export function parseUsageQuota(data: WhamUsageResponse): Omit<StoredAccountQuot
   // A supplementary value (including fallback from an unreadable primary) is not proof.
   if (primaryIsMonthly && primaryPercent !== undefined) quota.monthlyIsPrimaryWindow = true;
 
-  const spark = data.additional_rate_limits?.find(additional => {
-    const name = String(additional.limit_name ?? "").toLowerCase();
-    const feature = String(additional.metered_feature ?? "").toLowerCase();
-    return feature === "codex_bengalfox" || name.includes("gpt-5.3-codex-spark");
-  });
-  const sparkWindows = [spark?.rate_limit?.primary_window, spark?.rate_limit?.secondary_window]
-    .filter((window): window is WhamUsageWindow => !!window);
-  const sparkShort = sparkWindows.find(window => {
-    const percent = normalizeUsagePercent(window.used_percent);
-    return percent !== undefined && isExplicitShortWindow(window);
-  });
-  const sparkWeekly = sparkWindows.find(window => {
-    const percent = normalizeUsagePercent(window.used_percent);
-    const seconds = window.limit_window_seconds;
-    return percent !== undefined
-      && !isExplicitShortWindow(window)
-      && !isExplicitMonthlyWindow(window)
-      && (seconds === undefined || seconds >= WEEKLY_WINDOW_MIN_SECONDS);
-  });
-  const sparkCustomWindows: Array<{ label: string; percent: number; resetAt?: number }> = [];
-  for (const [label, window] of [
-    [SPARK_SHORT_WINDOW_LABEL, sparkShort],
-    [SPARK_WEEKLY_WINDOW_LABEL, sparkWeekly],
-  ] as const) {
-    const percent = normalizeUsagePercent(window?.used_percent);
-    if (percent === undefined) continue;
-    const sparkWindow: { label: string; percent: number; resetAt?: number } = { label, percent };
-    const resetAt = normalizeResetAt(window?.reset_at);
-    if (resetAt !== undefined) sparkWindow.resetAt = resetAt;
-    sparkCustomWindows.push(sparkWindow);
-  }
-  if (sparkCustomWindows.length > 0) quota.customWindows = sparkCustomWindows;
   if (resetCredits !== undefined) quota.resetCredits = resetCredits;
 
   return hasKnownQuotaValue(quota) || resetCredits !== undefined ? quota : null;
@@ -950,13 +895,10 @@ function historyWindows(quota: Omit<StoredAccountQuota, "updatedAt">): QuotaHist
       ...(window === "monthly" && quota.monthlyIsPrimaryWindow ? { monthlyIsPrimaryWindow: true } : {}),
     });
   }
-  for (const [label, window] of [[SPARK_SHORT_WINDOW_LABEL, "short"], [SPARK_WEEKLY_WINDOW_LABEL, "weekly"]] as const) {
-    const raw = quota.customWindows?.find(row => row.label === label);
-    if (!raw || !Number.isFinite(raw.percent) || raw.percent < 0 || raw.percent > 100) continue;
-    windows.push({ family: "spark", window, usedPercent: raw.percent,
-      ...(typeof raw.resetAt === "number" && Number.isFinite(raw.resetAt) && raw.resetAt >= 0 ? { resetAtMs: resetAtToMs(raw.resetAt) } : {}),
-    });
-  }
+  // No observation path emits retired Spark custom windows any more: the header parser refuses the
+  // retired model and the WHAM parser no longer derives its family, so recording one here could only
+  // resurrect evidence `withoutRetiredCodexQuota` tombstones on the way in. The `spark` family stays
+  // in the history schema so samples already persisted by older builds still parse.
   return windows;
 }
 

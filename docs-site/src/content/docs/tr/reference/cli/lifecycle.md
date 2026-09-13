@@ -65,6 +65,10 @@ Proxy'yi **durdurmadan** yerel Codex'i geri yükleyin — enjekte edilen
 yapılandırma satırlarını ve yönlendirilen katalog girdilerini kaldırır, böylece
 düz `codex` tekrar yerel olarak çalışır. `eject`, `restore`'un bir takma adıdır.
 
+Geri yüklenen katalog, `gpt-5.3-codex-spark` dahil kullanımdan kaldırılan yerel modellerin
+yalın kimliklerini ve güvenilir hesap önekli girdilerini dışarıda bırakır. Katalog yedeği olsa da
+olmasa da bu kural geçerlidir; özgün yedek ve kullanıcının geçmiş model seçimleri korunur.
+
 Proxy yaşam döngüsünü değiştirmeden düz `codex`'i zaten çalışan bir proxy'ye
 yeniden yönlendirmek için her iki yazıma da `back` iletin:
 

@@ -2926,31 +2926,23 @@ describe("legacy custom-model catalog ownership", () => {
     }));
   });
 
-  test("a persisted row for a retired native is not re-observed back into the catalog", () => {
-    const retiredAccountRow = {
-      // A stale on-disk row for a retired native is the one way membership removal can be undone:
-      // an observation admits any native NOT in the supported set, which a retired slug also is not.
-      ...nativeTemplate(),
-      slug: "team/gpt-5.4",
-      display_name: "team / GPT-5.4",
-      supported_in_api: true,
-      opencodex_catalog_kind: CODEX_ACCOUNT_BOUND_CATALOG_KIND,
+  test("full-shaped retired observations are rejected while a future native is admitted", () => {
+    const retired = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"];
+    const fullNative = {
+      ...nativeTemplate(), shell_type: "unified_exec", comp_hash: null, supported_in_api: true,
     };
-    const retiredBareRow = {
-      ...nativeTemplate(),
-      slug: "gpt-5.4-mini",
-      display_name: "GPT-5.4-Mini",
-      supported_in_api: true,
-    };
+    const observations = retired.flatMap(slug => [
+      { ...fullNative, slug },
+      { ...fullNative, slug: `desktop/${slug}`, opencodex_catalog_kind: CODEX_ACCOUNT_BOUND_CATALOG_KIND },
+    ]);
+    const future = { ...fullNative, slug: "gpt-future-native" };
     const bySelector = accountBoundNativeOpenAiSlugsBySelector(
-      { codexAccounts: { team: { accountId: "acct_team" } } } as never,
-      [retiredAccountRow, retiredBareRow] as never,
+      { codexAccountNamespaces: { desktop: "@main" } }, [...observations, future],
     );
-    for (const slugs of bySelector.values()) {
-      expect(slugs).not.toContain("gpt-5.4");
-      expect(slugs).not.toContain("gpt-5.4-mini");
-    }
-    expect(observedAccountBoundNativeEntries([retiredBareRow] as never)).toEqual([]);
+    expect([...bySelector.keys()]).toEqual(["desktop"]);
+    expect(bySelector.get("desktop")).toContain("gpt-future-native");
+    for (const slug of retired) expect(bySelector.get("desktop")).not.toContain(slug);
+    expect(observedAccountBoundNativeEntries([...observations, future])).toEqual([future]);
   });
 
   test("legacy evidence cannot claim account-selector or combo rows", () => {
@@ -3514,18 +3506,15 @@ describe("Codex catalog routed normalization", () => {
     }
   });
 
-  test("native gpt-5.3-codex-spark uses its 100k context window instead of inherited codex max", () => {
-    const template = {
-      ...nativeTemplate(),
-      context_window: 272_000,
-      max_context_window: 272_000,
-    };
-    const entries = buildCatalogEntries(template, ["gpt-5.3-codex-spark"], []);
-    const native = entries.find(e => e.slug === "gpt-5.3-codex-spark");
-
-    expect(native?.context_window).toBe(100_000);
-    expect(native?.max_context_window).toBe(100_000);
-    expect(native?.auto_compact_token_limit).toBe(90_000);
+  test("retired Spark has no native membership or context override", () => {
+    expect(NATIVE_OPENAI_MODELS).not.toContain("gpt-5.3-codex-spark");
+    expect(nativeOpenAiContextWindow("gpt-5.3-codex-spark")).toBeUndefined();
+    expect(nativeOpenAiMaxInputTokens("gpt-5.3-codex-spark")).toBeUndefined();
+    const entries = buildCatalogEntries(nativeTemplate(), [...NATIVE_OPENAI_MODELS], []);
+    expect(entries.some(entry => entry.slug === "gpt-5.3-codex-spark")).toBe(false);
+    expect(entries.find(entry => entry.slug === "gpt-5.5")).toMatchObject({
+      context_window: 272_000, max_context_window: 272_000, auto_compact_token_limit: 244_800,
+    });
   });
 
   test("native GPT-5.6 entries add max and ultra reasoning even when cloned from an older template", () => {
@@ -4396,41 +4385,41 @@ describe("Codex catalog routed normalization", () => {
     };
     // The second native is a surviving slug: a retired one would be dropped as an
     // unsupported native before this test could say anything about adoption.
-    const nativeSpark = {
+    const nativeSol = {
       ...nativeTemplate(),
-      slug: "gpt-5.3-codex-spark",
-      display_name: "gpt-5.3-codex-spark",
+      slug: "gpt-5.6-sol",
+      display_name: "gpt-5.6-sol",
       priority: 6,
     };
     const routedCursorRows = buildCatalogEntries(nativeTemplate(), [], [
       { provider: "cursor", id: "gpt-5.5", owned_by: "cursor" },
-      { provider: "cursor", id: "gpt-5.3-codex-spark", owned_by: "cursor" },
+      { provider: "cursor", id: "gpt-5.6-sol", owned_by: "cursor" },
     ]);
 
     const merged = mergeCatalogEntriesForSync(
-      [native, nativeSpark, { slug: "cursor/old", visibility: "list" }],
+      [native, nativeSol, { slug: "cursor/old", visibility: "list" }],
       routedCursorRows,
       new Map([
         ["gpt-5.5", 9],
-        ["gpt-5.3-codex-spark", 10],
+        ["gpt-5.6-sol", 10],
       ]),
       [],
       false,
-      new Set(["gpt-5.5", "gpt-5.3-codex-spark"]),
+      new Set(["gpt-5.5", "gpt-5.6-sol"]),
     );
     const slugs = merged.map(entry => entry.slug);
 
     expect(slugs).toContain("gpt-5.5");
-    expect(slugs).toContain("gpt-5.3-codex-spark");
+    expect(slugs).toContain("gpt-5.6-sol");
     expect(slugs).toContain("cursor/gpt-5.5");
-    expect(slugs).toContain("cursor/gpt-5.3-codex-spark");
+    expect(slugs).toContain("cursor/gpt-5.6-sol");
     expect(slugs).not.toContain("cursor/old");
     expect(merged.find(entry => entry.slug === "gpt-5.5")?.priority).toBe(9);
     expect(merged.find(entry => entry.slug === "gpt-5.5")?.base_instructions)
       .toBe("installed native instructions");
     expect(merged.find(entry => entry.slug === "gpt-5.5")?.genuine_marker)
       .toBe("installed-native");
-    expect(merged.find(entry => entry.slug === "gpt-5.3-codex-spark")?.priority).toBe(10);
+    expect(merged.find(entry => entry.slug === "gpt-5.6-sol")?.priority).toBe(10);
   });
 
   test("buildCatalogEntries advertises supports_websockets only on explicit opt-in", () => {
@@ -7027,7 +7016,7 @@ describe("native slug allowlist", () => {
     ];
 
     expect(filterSupportedNativeSlugs(liveModels)).toEqual([
-      "gpt-5.5", "gpt-5.3-codex-spark",
+      "gpt-5.5",
     ]);
   });
 

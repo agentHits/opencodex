@@ -3,6 +3,10 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+Codex WebSocket quota-family normalization remains generic; retired-model evidence is filtered
+by the [OpenAI quota owner](../providers/openai-tiers.md#public-provider-contract), not by
+removing support for non-default WebSocket quota families.
+
 ## Heartbeat and stall deadline
 
 The HTTP/SSE bridge emits an SSE comment-line keep-alive (`: opencodex heartbeat`) during upstream

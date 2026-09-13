@@ -10,6 +10,8 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 - preserves native OpenAI entries from the live catalog or static fallback, and emits
   gpt-5.6 natives from the pinned upstream models.json snapshot
   (`src/codex/data/upstream-models.json` — exact per-slug ladders: luna has no ultra);
+- excludes retired `gpt-5.3-codex-spark` from native fallback, observed/cache rows, and
+  account-selector projections, including retained sync and native restore;
 - upgrades either an observed selector-qualified `*/gpt-daybreak-blue-latest` account row or an
   explicitly configured canonical `openai/gpt-daybreak-blue-latest` Codex-forward row from the
   pinned Sol capability metadata while preserving its selector and Daybreak wire identity;
@@ -26,7 +28,8 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 - backs up the pristine catalog once per catalog: the copy is keyed by a hash of the catalog path
   (`catalog-backup-<id>.json`), and the legacy unsuffixed `catalog-backup.json` is retained in
   addition for the default catalog, so a restore resolves the backup for the catalog it is restoring
-  rather than assuming a single file;
+  rather than assuming a single file; restoration omits retired bare and trusted account-qualified
+  native rows from the output without rewriting the pristine backup or unrelated snapshots;
 - invalidates `$CODEX_HOME/models_cache.json` when model visibility changes.
 
 On the default `opencodex-catalog.json` path, sync deliberately uses two catalog sources: Codex's
@@ -64,6 +67,9 @@ are trusted; unknown ids are carried through startup cache invalidation as hidde
 are emitted only as selector-qualified rows whose account provenance matches. They never expand
 the bare native or API-key model list. This keeps account-scoped upstream ids such as
 `gpt-daybreak-blue-latest` callable without treating them as a static release allowlist.
+
+Retirement is a catalog/evidence policy, not a universal request denylist. Manually supplied
+model ids still follow generic routing. User-selected config and historical usage remain stored.
 
 Account-gated native ids are a stricter subset. Their authenticated ChatGPT `/models` roster is
 cached per credential generation with a bounded timeout. A bare gated row is emitted only when at

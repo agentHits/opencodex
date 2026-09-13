@@ -254,9 +254,6 @@ export function CodexAccountPoolPageHead({
   actionFeedbackTone,
   onRefresh,
   onPauseExhausted,
-  sparkVisible,
-  sparkBusy,
-  onToggleSpark,
 }: {
   t: TFn;
   embedded: boolean;
@@ -267,10 +264,6 @@ export function CodexAccountPoolPageHead({
   actionFeedbackTone?: NoticeTone | null;
   onRefresh: () => void;
   onPauseExhausted: () => void;
-  /** undefined until the preference has loaded, so the switch never renders a guessed state. */
-  sparkVisible?: boolean;
-  sparkBusy?: boolean;
-  onToggleSpark?: () => void;
 }) {
   return (
     <div
@@ -286,29 +279,8 @@ export function CodexAccountPoolPageHead({
         >
           {actionFeedback ?? ""}
         </span>
-        {sparkVisible !== undefined && onToggleSpark && (
-          <span className="codex-auth-spark-toggle">
-            <span className="codex-auth-spark-toggle__label">{t("codexAuth.sparkQuota")}</span>
-            <button
-              type="button"
-              className={`toggle ${sparkVisible ? "on" : ""}`}
-              onClick={onToggleSpark}
-              disabled={!!sparkBusy}
-              aria-pressed={sparkVisible}
-              aria-label={t("codexAuth.sparkQuota")}
-              title={t("codexAuth.sparkQuotaHint")}
-            >
-              <span className="toggle-knob" />
-            </button>
-          </span>
-        )}
-        {/*
-          The two account-scoped actions used to live here, beside the page title. On the
-          standalone page that put four controls plus a heading on one row, and the actions
-          sat far above the account cards they act on. They render in
-          CodexAccountPoolActions below instead. The embedded surface keeps them inline,
-          because there is no title row there to crowd.
-        */}
+        {/* The standalone pause/refresh row sits next to the account cards. Embedded
+            surfaces keep those actions beside feedback because there is no page title. */}
         {embedded && (
           <CodexAccountPoolActionButtons
             t={t}

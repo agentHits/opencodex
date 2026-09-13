@@ -37,6 +37,10 @@ Some adapters share another adapter's routed-tool semantics while retaining inde
 
 The registry records those relationships with `contractParent`. A parent relationship does **not** mean the registry recursively constructs a parent adapter and injects it into the child. Azure and MiMo keep owning their existing internal composition. This avoids making production constructors depend on test/conformance needs and keeps this authority refactor behavior-neutral.
 
+Codex Spark retirement removes model-specific exceptions from the Responses adapter, without
+changing contract inheritance or generic Responses Lite handling; see
+[Responses transport](../transports/responses.md#responses-httpsse).
+
 ## Wrapper-cycle and runtime validation policy
 
 `effectiveAdapterContract()` follows `contractParent` links at runtime with a visited set. Unknown parents and cycles fail closed. This is intentionally runtime validation: registry/config values can originate in persisted files written by older or hand-edited installations, so compile-time typing alone is not an adequate boundary.

@@ -3,6 +3,10 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+Codex-native retirement is scoped to OpenAI catalog/quota evidence. Shared Responses handling
+retains xAI provider behavior; see
+[the catalog boundary](../catalog.md#shared-catalog).
+
 ## xAI Grok hardening (official Grok Build contract parity)
 
 Grounded in the open-sourced official client (xai-org/grok-build); unit + evidence:

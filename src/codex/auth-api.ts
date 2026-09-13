@@ -87,6 +87,7 @@ import {
   parseUsageQuota,
   setAccountQuotaFromParsed,
   updateAccountQuota,
+  withoutRetiredCodexQuota,
   type StoredAccountQuota,
   type WhamUsageResponse,
 } from "./quota";
@@ -251,49 +252,11 @@ function codexAccountPersistenceConflict(
     : undefined;
 }
 
-/**
- * The exact labels `parseUsageQuota` emits for the Codex Spark windows (quota.ts).
- * Matching on the label rather than on "is a custom window" is load-bearing: the same array
- * carries Cursor's First-party models / API usage, Anthropic's Fable / Opus / Sonnet,
- * Antigravity's Gem / Cla, Kimi's subscription credits and a dozen dynamic provider meters.
- */
-const CODEX_SPARK_WINDOW_LABELS = new Set([
-  "GPT-5.3-Codex-Spark 5h",
-  "GPT-5.3-Codex-Spark Weekly",
-]);
-
-/**
- * Drop the Spark window unless the operator asked for it (default hidden).
- *
- * Applied at the DTO boundary, never at parse or cache time: custom windows participate in
- * quota-presence checks, snapshot reconciliation and capacity aggregation, so removing Spark
- * upstream of this point would change routing state rather than display.
- *
- * Both GUI surfaces funnel through here — the Codex Auth rows directly, and /api/provider-quotas
- * via listCodexAuthAccountsSnapshot — so one filter covers both. Filtering only one would leave
- * the other still rendering the row the operator switched off.
- */
-export function withSparkVisibility<T extends Omit<StoredAccountQuota, "updatedAt"> | StoredAccountQuota | null>(
-  quota: T,
-): T {
-  if (!quota?.customWindows?.length) return quota;
-  if (loadConfig().showCodexSparkQuota === true) return quota;
-  const kept = quota.customWindows.filter(window => !CODEX_SPARK_WINDOW_LABELS.has(window.label));
-  if (kept.length === quota.customWindows.length) return quota;
-  // An empty list is dropped rather than serialized: an absent field and an empty array should
-  // not be two different ways of saying "no custom windows" on the wire.
-  const next = { ...quota } as Record<string, unknown>;
-  if (kept.length > 0) next.customWindows = kept;
-  else delete next.customWindows;
-  return next as T;
-}
-
-
 function quotaForPlan<T extends Omit<StoredAccountQuota, "updatedAt"> | StoredAccountQuota | null>(
   quota: T,
   plan: unknown,
-): T {
-  const visible = withSparkVisibility(quota);
+): T | null {
+  const visible = withoutRetiredCodexQuota(quota);
   if (!visible || !isThirtyDayOnlyCodexPlan(plan)) return visible;
   const quotaWindows = visible;
   return {
@@ -1749,7 +1712,7 @@ export async function runCodexCooldownRecoveryProbes(config: OcxConfig, now = Da
       try {
         const result = await fetchPoolAccountQuota(claim.accountId, true, account.plan);
         // Defence in depth: independent scopes are already excluded at the claim site.
-        // Generic WHAM must never clear Spark or Reserve even if claim selection changes.
+        // Generic WHAM must never clear Reserve even if claim selection changes.
         const recovered = (claim.scope === undefined || claim.scope === "shared")
           && isCompleteCodexQuotaRecoverySnapshot(result.freshQuota ?? null, result.freshPlan ?? account.plan);
         settleCodexQuotaRecoveryProbe(claim, recovered, {
@@ -2093,9 +2056,9 @@ export async function listCodexAuthAccountsSnapshot(
     hasCredential: hasMainCredential,
     needsReauth: mainNeedsReauth,
     ...(mainReauthReason !== undefined ? { reauthReason: mainReauthReason } : {}),
-    quota: mainInfo.quota ? {
-      ...quotaForPlan(mainQuotaWithCarriedResetCredits(mainInfo.quota), mainInfo.plan),
-    } : null,
+    quota: mainInfo.quota
+      ? quotaForPlan(mainQuotaWithCarriedResetCredits(mainInfo.quota), mainInfo.plan)
+      : null,
     ...oauthAccountHealthFields("codex", MAIN_CODEX_ACCOUNT_ID, mainHealth),
   };
   return {

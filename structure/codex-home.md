@@ -20,6 +20,10 @@ $CODEX_HOME/.opencodex-native-main-profiles/
 Never assume macOS-only paths. Windows, service installs, and app-launched Codex can all depend on
 the resolved `CODEX_HOME`.
 
+Observed catalog/cache rows and restore output follow the [retired-native policy](catalog.md#shared-catalog).
+Restore filters retired bare and trusted account-qualified native rows from its output with or
+without a backup. The original backup, historical user-selected settings and session records remain intact.
+
 Journal restoration compares config and profile independently against their saved originals and
 recorded injected hashes. If either changed artifact lacks its injected hash, the config/profile
 pair and journal remain untouched and the result is explicitly unverified; callers must not

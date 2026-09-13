@@ -155,7 +155,9 @@ Codex `spawn_agent` advertises only the highest-priority first five picker-visib
 Use at most five configured `subagentModels` ids; they may contain bare catalog ids, routed
 `provider/model` ids, or exact account-qualified `<selector>/<native-openai-model>` ids. The
 dashboard offers bare native and routed choices; exact account-qualified choices are configured
-through `ocx agent subagents set` or the opencodex configuration.
+through `ocx agent subagents set` or the opencodex configuration. Retired native rows are
+excluded by the [shared catalog](catalog.md#shared-catalog); saved user choices are not rewritten
+by that retirement. Quota fallback retains independent shared/Reserve evidence.
 
 When account selectors are active, one featured bare native id expands into a complete selector row
 group. Catalog priorities use the selector count as a stride so each group stays together without

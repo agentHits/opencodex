@@ -561,7 +561,7 @@ export function cooldownErrorMessage(err: CodexAccountCooldownError, accountSele
   if (err instanceof CodexMainAccountHardLockError || err instanceof CodexReserveUnavailableError) return err.message;
   const until = new Date(err.cooldownUntil).toISOString();
   const scopeLabels: Record<CodexQuotaScope, string> = {
-    spark: "Spark quota", shared: "shared native quota", reserve: "Reserve quota",
+    shared: "shared native quota", reserve: "Reserve quota",
   };
   const scope = err.quotaScope ? scopeLabels[err.quotaScope] : null;
   const selected = accountSelector

@@ -3,6 +3,10 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+Codex-native retirement does not retire a Cursor-owned model name. Cursor transport and
+namespace handling retain their provider contract; the bounded native scope lives in
+[the shared catalog](../catalog.md#shared-catalog).
+
 ## Cursor Native Exec
 
 Cursor's experimental live transport can receive server-driven local read/write/delete/ls/grep,

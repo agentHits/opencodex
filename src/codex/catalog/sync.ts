@@ -49,7 +49,7 @@ import { codexAccountLogLabel, fallbackCodexAccountLogLabel } from "../account-l
 
 import { CODEX_CUSTOM_MODEL_CATALOG_KIND, CODEX_PROVIDER_MODEL_CATALOG_KIND, activeCodexModelsCachePath, applyCatalogMetadata, applyMultiAgentMode, applyNativeOpenAiContextOverride, applyRoutedCodexToolMode, catalogBackupPathFor, catalogHasRoutedEntries, catalogModelSlug, ensureStrictCatalogFields, findNativeTemplate, findSupportedNativeTemplate, isDefaultCatalogPath, isRoutedModelCompatibilityExcluded, legacyCatalogBackupPath, normalizeRoutedCatalogEntry, normalizeServiceTiers, readCatalog, readCatalogBackup, readCodexCatalogPath, readCodexCatalogPathForHome, readConfiguredAutoReviewModel, readNativeBaseline } from "./parsing";
 import type { CatalogModel, MultiAgentMode, RawCatalog, RawEntry } from "./parsing";
-import { accountBoundNativeOpenAiSlugs, accountBoundNativeOpenAiSlugsBySelector, applyNativeVisibility, CODEX_NATIVE_ALIAS_CATALOG_KIND, desktopAllowlistSuppressedNativeSlugs, disabledNativeSlugs, isNativeAliasCatalogEntry, isUnsupportedOpenAiNativeSlug, NATIVE_OPENAI_MODELS, nativeContextLimits, observedAccountBoundNativeEntries, shouldIncludeAccountBoundNativeOpenAi, shouldIncludeNativeOpenAi, shouldUpgradeToUpstreamEntry, SUPPORTED_NATIVE_OPENAI_SLUGS, upstreamNativeEntry, type NativeContextLimitsInput } from "./metadata";
+import { accountBoundNativeOpenAiSlugs, accountBoundNativeOpenAiSlugsBySelector, applyNativeVisibility, CODEX_NATIVE_ALIAS_CATALOG_KIND, desktopAllowlistSuppressedNativeSlugs, disabledNativeSlugs, isNativeAliasCatalogEntry, isUnsupportedOpenAiNativeSlug, NATIVE_OPENAI_MODELS, RETIRED_NATIVE_OPENAI_MODELS, nativeContextLimits, observedAccountBoundNativeEntries, shouldIncludeAccountBoundNativeOpenAi, shouldIncludeNativeOpenAi, shouldUpgradeToUpstreamEntry, SUPPORTED_NATIVE_OPENAI_SLUGS, upstreamNativeEntry, type NativeContextLimitsInput } from "./metadata";
 import {
   bundledCatalogCacheState,
   loadBundledCodexCatalog,
@@ -261,7 +261,7 @@ export function finishUpstreamNativeEntry(clone: RawEntry, priority: number, con
   if (priority !== 9) clone.priority = priority;
   applyNativeOpenAiContextOverride(clone, contextCap);
   // GPT-5.6 natives keep their exact upstream ladders (e.g. luna has max but no ultra).
-  // Older natives (gpt-5.5 / 5.3-codex-spark) get mock max + ultra
+  // Older natives (gpt-5.5) get mock max + ultra
   // (wire-clamped to xhigh). Ultra is always advertised regardless of v2 toggle.
   if (!isGpt56NativeSlug(String(clone.slug ?? ""))) ensureUltraReasoningLevel(clone);
   return ensureStrictCatalogFields(normalizeServiceTiers(clone));
@@ -400,15 +400,10 @@ export function deriveEntry(
       applyNativeOpenAiContextOverride(e, contextCap);
       if (isGpt56NativeSlug(slug)) ensureGpt56ReasoningLevels(e);
       else ensureUltraReasoningLevel(e);
-     // Non-5.6 natives (5.5, 5.4, 5.4-mini, spark) do not support responses-lite;
-     // the template may carry the flag from a 5.6 entry — strip it so codex-rs does
-     // not inject reasoning.context: "all_turns" for models that reject it.
-     if (!isGpt56NativeSlug(slug)) {
-        // Spark NEEDS use_responses_lite: true — it controls the tool delivery format
-        // (AdditionalTools in input vs top-level tools). The reasoning params that
-        // use_responses_lite triggers (context: "all_turns", summary) are stripped
-        // separately in the passthrough adapter (stripUnsupportedReasoningParams).
-        if (!slug.includes("codex-spark")) delete e.use_responses_lite;
+      // Older natives do not support Responses Lite. A newer template must not enable
+      // reasoning.context or WebSockets on those models.
+      if (!isGpt56NativeSlug(slug)) {
+        delete e.use_responses_lite;
         delete e.supports_websockets;
       }
     }
@@ -2576,18 +2571,22 @@ export function restoreCodexCatalogWithPermit(
   const replacementVisibility = visibleAccountReplacementNatives(catalog.models, disabledModels);
   const backup = readCatalogBackup(catalogPath);
   if (backup && Array.isArray(backup.models)) {
-    const removed = (catalog.models ?? []).filter(m => typeof m.slug === "string" && m.slug.includes("/")).length;
+    const removed = (catalog.models ?? []).filter(m => typeof m.slug === "string"
+      && (m.slug.includes("/") || RETIRED_NATIVE_OPENAI_MODELS.has(m.slug))).length;
     const backupSlugs = new Set(backup.models.flatMap(m => typeof m.slug === "string" ? [m.slug] : []));
     const userNativeAdditions = restoreAccountHiddenBareNatives(
       (catalog.models ?? []).filter(m =>
         typeof m.slug === "string" && !m.slug.includes("/") && !backupSlugs.has(m.slug)
+        && !RETIRED_NATIVE_OPENAI_MODELS.has(m.slug)
       ),
       replacementVisibility,
       disabledModels,
     );
     const restored = {
       ...backup,
-      models: [...backup.models, ...userNativeAdditions],
+      // A pristine backup predates retirement; it must not revive withdrawn native rows.
+      models: [...backup.models.filter(m => typeof m.slug !== "string"
+        || !RETIRED_NATIVE_OPENAI_MODELS.has(trustedAccountBoundNativeCatalogSlug(m) ?? m.slug)), ...userNativeAdditions],
     };
     replaceActiveCodexCatalog(permit, owningCodexHome, {
       path: catalogPath,
@@ -2597,7 +2596,8 @@ export function restoreCodexCatalogWithPermit(
   }
   const before = catalog.models.length;
   const native = restoreAccountHiddenBareNatives(
-    catalog.models.filter(m => !(typeof m.slug === "string" && m.slug.includes("/"))),
+    catalog.models.filter(m => !(typeof m.slug === "string"
+      && (m.slug.includes("/") || RETIRED_NATIVE_OPENAI_MODELS.has(m.slug)))),
     replacementVisibility,
     disabledModels,
   );

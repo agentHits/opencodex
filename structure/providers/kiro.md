@@ -3,6 +3,9 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+The shared hosted-tool policy has no Codex Spark-specific branch. Kiro continues to use its
+provider capabilities below; see [Responses compatibility](../transports/responses.md#responses-httpsse).
+
 ## Kiro client parallel-tool hint
 
 Kiro's wire remains serialized even when an OpenAI Responses client sends

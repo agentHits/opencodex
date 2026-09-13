@@ -1760,7 +1760,7 @@ describe("Codex auth context", () => {
     }
   });
 
-  test("reset-derived native cooldowns stay within their confirmed quota group", async () => {
+  test("retired resets leave shared auth usable while Retry-After still blocks it", async () => {
     const originalNow = Date.now;
     const now = 1_800_000_000_000;
     const cfg = config();
@@ -1780,11 +1780,11 @@ describe("Codex auth context", () => {
         modelId: "gpt-5.3-codex-spark",
       });
 
-      // Spark owns a separate quota, so Terra can use the same account.
+      // Retired evidence cannot cool the account or create a new scope.
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-terra" }))
         .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
-        .rejects.toBeInstanceOf(CodexAccountCooldownError);
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
 
       recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
         now,
@@ -1792,8 +1792,7 @@ describe("Codex auth context", () => {
         modelId: "gpt-5.6-terra",
       });
 
-      // Terra and Luna stay in the shared native quota group, while Spark keeps
-      // its independent cooldown instead of being overwritten by Terra's 429.
+      // Manually typed retired ids have no quota-scope exception to ordinary cooldowns.
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-luna" }))
         .rejects.toBeInstanceOf(CodexAccountCooldownError);
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
@@ -1813,7 +1812,7 @@ describe("Codex auth context", () => {
     }
   });
 
-  test("a scoped cooldown uses another account without moving the independent native scope", async () => {
+  test("a retired reset preserves the bound Pool account across subsequent requests", async () => {
     const originalNow = Date.now;
     const now = 1_800_000_000_000;
     const cfg = config();
@@ -1837,8 +1836,7 @@ describe("Codex auth context", () => {
     }
     try {
       Date.now = () => now;
-      // Establish the shared-scope binding first. The Spark fallback below must
-      // create a second binding rather than replacing this one.
+      // Establish an ordinary binding; retired evidence must not move it.
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-terra" }))
         .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
 
@@ -1849,20 +1847,19 @@ describe("Codex auth context", () => {
       });
 
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
-        .resolves.toMatchObject({ kind: "pool", accountId: "pool-b" });
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
       expect(cfg.activeCodexAccountId).toBe("pool-a");
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-terra" }))
         .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
-      // This second Spark request proves routing retained the peer choice for
-      // the Spark affinity instead of relying on an auth-layer substitution.
+      // Repeated manually typed requests retain the same shared affinity.
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
-        .resolves.toMatchObject({ kind: "pool", accountId: "pool-b" });
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
     } finally {
       Date.now = originalNow;
     }
   });
 
-  test("a successful Spark recovery probe leaves the shared native cooldown intact", async () => {
+  test("a successful shared recovery probe leaves Reserve cooldown intact", async () => {
     const originalNow = Date.now;
     const now = 1_800_000_000_000;
     const cfg = config();
@@ -1879,36 +1876,38 @@ describe("Codex auth context", () => {
       recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
         now,
         resetAt,
-        modelId: "gpt-5.3-codex-spark",
+        modelId: "gpt-5.6-sol",
       });
+      // State-only Reserve evidence: no Reserve dispatch or entitlement grant is asserted.
       recordCodexUpstreamOutcome(cfg, "pool-a", 429, {
         now,
         resetAt,
-        modelId: "gpt-5.6-terra",
+        modelId: "gpt-reserve",
       });
 
       const probeAt = now + CODEX_QUOTA_PROBE_INTERVAL_MS;
       Date.now = () => probeAt;
-      const sparkProbe = await resolveCodexAuthContext(headers, cfg, "pool", {
-        modelId: "gpt-5.3-codex-spark",
+      const sharedProbe = await resolveCodexAuthContext(headers, cfg, "pool", {
+        modelId: "gpt-5.6-sol",
       });
-      expect(sparkProbe).toMatchObject({
+      expect(sharedProbe).toMatchObject({
         kind: "pool",
-        probeQuotaScope: "spark",
+        probeQuotaScope: "shared",
       });
 
       recordCodexUpstreamOutcome(cfg, "pool-a", 200, {
         now: probeAt + 1,
-        modelId: "gpt-5.3-codex-spark",
-        probeLeaseId: (sparkProbe as { probeLeaseId?: string }).probeLeaseId,
-        probeQuotaScope: (sparkProbe as { probeQuotaScope?: "spark" }).probeQuotaScope,
+        modelId: "gpt-5.6-sol",
+        probeLeaseId: (sharedProbe as { probeLeaseId?: string }).probeLeaseId,
+        probeQuotaScope: (sharedProbe as { probeQuotaScope?: "shared" }).probeQuotaScope,
       });
 
       Date.now = () => probeAt + 1;
-      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.3-codex-spark" }))
+      await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-sol" }))
         .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
       await expect(resolveCodexAuthContext(headers, cfg, "pool", { modelId: "gpt-5.6-luna" }))
-        .resolves.toMatchObject({ kind: "pool", probeQuotaScope: "shared" });
+        .resolves.toMatchObject({ kind: "pool", accountId: "pool-a" });
+      expect(getCodexQuotaHealthSnapshot("pool-a", "reserve", probeAt + 1)).not.toBeNull();
     } finally {
       Date.now = originalNow;
     }
@@ -2309,12 +2308,12 @@ describe("cooldown error surface", () => {
       "acct_9f3c21",
       Date.parse("2026-07-26T10:00:00.000Z"),
       "reset-derived",
-      "spark",
+      "reserve",
     );
 
     const message = cooldownErrorMessage(err);
 
-    expect(message).toContain("Spark quota is cooling down");
+    expect(message).toContain("Reserve quota is cooling down");
     expect(message).not.toContain("Selected Codex account (account-…3c21) is cooling down");
   });
 

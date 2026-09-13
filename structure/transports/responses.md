@@ -11,6 +11,10 @@ Plaintext collaboration restoration treats a null namespace as absent, rejects n
 provider, lets the selected adapter speak the upstream protocol, then bridges adapter events back to
 Responses-compatible streaming output.
 
+Retired Codex Spark has no model-specific tool or Responses Lite override; general Lite handling and
+namespace scrubbing remain shared compatibility behavior. Codex quota/reset evidence follows the
+[shared/Reserve policy](../providers/openai-tiers.md#public-provider-contract), including suppression of retired model-derived evidence before shared recovery.
+
 ### Credential-bearing HTTP redirects
 
 Credential/body-bearing HTTP sends use `redirect: "manual"` at the final executor boundary,
@@ -426,15 +430,11 @@ final outgoing model/tier. No caller identity is synthesized. Noncanonical
 opt-in gateways keep their own metadata policy. Oversized/unsupported-runtime
 HTTP fallback preserves the original HTTP body and Lite header.
 
-For the final wire model `gpt-5.3-codex-spark`, the canonical forward adapter normalizes the
-Lite header from the BODY, overriding caller/configured headers and stale native WS Lite
-metadata in both directions. A body carrying a nonempty `additional_tools` input item is
-pinned to `true`: that item IS the Lite tool-delivery format and the non-Lite wire shape
-expects top-level `tools`, so an inherited `false` would advertise non-Lite while the tools
-exist only in the Lite shape and hide the client tool surface. Any other Spark body is set to
-`false`, selecting the non-Lite framing policy. A changed Lite identity retires the previous socket;
-subsequent eligible Spark requests with the same identity can reuse the new socket. Malformed
-native metadata retains HTTP fallback eligibility without rewriting its body.
+No wire model carries a model-specific Lite override: the retired `gpt-5.3-codex-spark` body
+normalization is gone, so Lite intent is whatever the caller or configured header says. A changed
+Lite identity still retires the previous socket, and subsequent eligible requests with the same
+identity can reuse the new socket. Malformed native metadata retains HTTP fallback eligibility
+without rewriting its body.
 
 Canonical WS quota and response metadata preceding the first Responses event
 are projected into bounded, allowlisted HTTP headers before the response is
@@ -575,7 +575,7 @@ Chat helper admission in `src/server/responses/core.ts` follows the [deferred st
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence; see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
-Spark Lite and routing metadata use the same suffix-normalized model object as serialization, including configured bracket-suffix removal.
+Lite and routing metadata use the same suffix-normalized model object as serialization, including configured bracket-suffix removal.
 
 ## Optional client transport hints
 

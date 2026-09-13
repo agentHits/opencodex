@@ -33,6 +33,10 @@ pay-as-you-go, Coding Plan, and Agent Plan endpoints. Additional
 providers are routed by explicit `provider/model`, provider model lists, or the configured
 `defaultProvider`.
 
+Native model retirement changes the advertised catalog and model-specific quota support; it
+preserves saved user model selections and historical usage. See the bounded
+[catalog policy](catalog.md#shared-catalog) and [legacy settings contract](config.md#config-surface).
+
 > Decision record: [ADR-0001](decisions/ADR-0001-product-boundary.md)
 
 ## Local state
@@ -89,8 +93,9 @@ still cover the rule, which is a judgement only review makes.
 - **INV-AUTH-01** — The management plane (`/api/*`) and the data plane (`/v1/*`) never share an
   admission credential.
   Enforced by `tests/server/server-management-auth.test.ts`.
-- **INV-RESTORE-01** — `ocx restore` returns the pristine Codex catalog, so a restored install is a
-  usable native Codex. The service-stop and uninstall paths of the same promise are covered
+- **INV-RESTORE-01** — `ocx restore` restores native Codex from the pristine catalog with
+  retired bare/account-qualified native rows omitted from the output; the original backup stays
+  unchanged. The service-stop and uninstall paths of the same promise are covered
   separately in `tests/cli/restore-completes-shared-teardown.test.ts` and are not bound to this id.
   Enforced by `tests/codex-integration/codex-catalog-restore.test.ts`.
 - **INV-TESTS-01** — `tests/` is organised by domain (`tests/<domain>/`, mirroring `src/`); the map

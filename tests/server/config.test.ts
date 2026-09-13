@@ -2245,13 +2245,18 @@ describe("opencodex config defaults", () => {
         custom: {
           adapter: "openai-responses",
           baseUrl: "https://example.test/v1",
+          // Retirement removes native Spark policy, not explicit custom-gateway model ids.
           modelPreferHostedTools: { "gpt-5.3-codex-spark": ["image_generation"] },
         },
       },
       defaultProvider: "custom",
     });
-    expect(readConfigDiagnostics().source).toBe("fallback");
-    expect(readConfigDiagnostics().error).toContain("does not support");
+    const retiredCustomModel = readConfigDiagnostics();
+    expect(retiredCustomModel.source).toBe("file");
+    expect(retiredCustomModel.error).toBeNull();
+    expect(retiredCustomModel.config.providers.custom?.modelPreferHostedTools).toEqual({
+      "gpt-5.3-codex-spark": ["image_generation"],
+    });
 
     writeConfig({
       port: 12345,

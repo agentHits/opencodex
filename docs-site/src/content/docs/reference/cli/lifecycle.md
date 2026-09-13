@@ -77,6 +77,10 @@ Idempotently ensure a background proxy is running, then sync its live model cata
 Restore native Codex **without** stopping the proxy — strips the injected config lines and routed
 catalog entries so plain `codex` works natively again. `eject` is an alias of `restore`.
 
+Restored catalog output excludes retired native models, including `gpt-5.3-codex-spark`,
+whether stored as bare ids or trusted account-qualified rows. This applies with or without
+a catalog backup; the original backup and historical user-selected configuration are preserved.
+
 Restoration reports failure instead of replacing changed configuration files when a saved journal
 lacks the corresponding injection hashes. The current files and journal remain available for
 review; see [recovery without injection hashes](/guides/codex-integration/#recovery-without-injection-hashes).

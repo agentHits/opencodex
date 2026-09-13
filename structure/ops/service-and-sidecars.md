@@ -3,6 +3,9 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+Service startup and restore use the [catalog retirement policy](../catalog.md#shared-catalog);
+retirement does not itself change service registration or user-selected model configuration.
+
 ## Background service command selection
 
 A bare `ocx service` is an idempotent install-or-repair command. Argument validation happens before

@@ -55,6 +55,10 @@ their own files.
 
 ## Lifecycle
 
+Startup catalog sync and native restore apply the [retired-native policy](catalog.md#shared-catalog).
+Codex quota processing has shared and Reserve scopes; retired model evidence is suppressed as
+described in [OpenAI quota ownership](providers/openai-tiers.md#public-provider-contract).
+
 `ocx start` refuses a duplicate PID, starts the proxy, writes `~/.opencodex/ocx.pid` and
 `runtime-port.json` through `src/config/process-state.ts`, syncs Codex config/catalog, then serves
 until shutdown. Normal shutdown restores native Codex. Service mode sets
