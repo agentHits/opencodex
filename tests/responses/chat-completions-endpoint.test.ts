@@ -242,6 +242,11 @@ describe("chatCompletionsToResponsesBody image parts", () => {
     { part: { type: "image_url", image_url: "https://example.com/image.png" }, expected: { type: "input_image", image_url: "https://example.com/image.png" } },
     { part: { type: "image_url", image_url: "https://example.com/image.png", detail: "low" }, expected: { type: "input_image", image_url: "https://example.com/image.png", detail: "low" } },
     { part: { type: "image_url", image_url: { url: "https://example.com/image.png" } }, expected: { type: "input_image", image_url: "https://example.com/image.png" } },
+    { part: { type: "image", data: "aGVsbG8=", mimeType: "image/png" }, expected: { type: "input_image", image_url: "data:image/png;base64,aGVsbG8=" } },
+    { part: { type: "image", data: "aGVsbG8=", mediaType: "image/jpeg" }, expected: { type: "input_image", image_url: "data:image/jpeg;base64,aGVsbG8=" } },
+    { part: { type: "image", data: "data:image/webp;base64,aGVsbG8=", mimeType: "image/png" }, expected: { type: "input_image", image_url: "data:image/webp;base64,aGVsbG8=" } },
+    { part: { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "aGVsbG8=" } }, expected: { type: "input_image", image_url: "data:image/jpeg;base64,aGVsbG8=" } },
+    { part: { type: "image", source: { type: "url", url: "https://example.com/claude.png" } }, expected: { type: "input_image", image_url: "https://example.com/claude.png" } },
   ])("preserves user image shorthand and omitted detail: %j", ({ part, expected }) => {
     const body = chatCompletionsToResponsesBody({ model: "mock/test-model", messages: [{ role: "user", content: [part] }] });
     expect(body.input).toEqual([{ type: "message", role: "user", content: [expected] }]);
