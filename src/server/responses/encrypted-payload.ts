@@ -322,8 +322,20 @@ export function hasEncryptedContentPart(content: unknown): boolean {
 /** The marker `prepareOpaqueBlobRecovery` already substitutes for an undecryptable part. */
 export const OMITTED_ENCRYPTED_CONTENT_TEXT = "[encrypted content omitted]";
 
-/** A slot that is nothing but encoded bytes: the base64 and base64url alphabets, no spaces. */
-const BASE64_RUN_ONLY = /^[A-Za-z0-9+/=_-]+$/;
+/**
+ * The Fernet WIRE shape, without validating the body: version prefix, base64url alphabet, and a
+ * canonical encoded length. Free text is judged by this rather than by
+ * `looksLikeBackendCiphertext`, which is length >= 64 over a character class that a SHA-256 hex
+ * digest matches exactly at 64 characters -- as do a SHA-512 digest, a long key, and adjacent
+ * short encoded fragments. An `encrypted_content` slot carries ciphertext by definition and is
+ * stripped whatever it holds; a text part does not, and replacing a digest a child deliberately
+ * printed would destroy readable content to protect bytes that were never secret.
+ */
+const FERNET_SHAPED = /^g[A-Za-z0-9_-]+={0,2}$/;
+
+function looksLikeFernetToken(text: string): boolean {
+  return text.length >= 100 && text.length % 4 === 0 && FERNET_SHAPED.test(text);
+}
 
 function textWithRunsOmitted(payload: string, runs: readonly FernetTokenRun[]): string {
   let last = 0;
@@ -357,13 +369,17 @@ function textWithRunsOmitted(payload: string, runs: readonly FernetTokenRun[]): 
  * to find that out. Nothing is decrypted, and nothing readable is lost: the parent could not read
  * these bytes either.
  *
- * The classification deliberately does NOT require a canonical Fernet token. Recognizing only
- * well-formed tokens would reopen the same defect one payload later: a truncated token, a
- * standard-base64 blob carrying `+` or `/`, an unexpected version byte, a run split across
- * slots, or a run past the recovery size limits would each keep the item and forward the bytes.
- * Every `encrypted_content` slot in an item the adapter cannot lower is therefore treated as
- * ciphertext, and free text is judged by the same `looksLikeBackendCiphertext` heuristic the
- * sanitizer already trusts. Prose cannot match it; a blob has no spaces.
+ * The two kinds of slot are judged differently, because they carry different guarantees. An
+ * `encrypted_content` slot holds ciphertext by definition, so it is stripped whatever it holds:
+ * demanding a well-formed token there would reopen this defect one payload later, since a
+ * truncated token, a standard-base64 blob carrying `+` or `/`, an unexpected version byte, or a
+ * run past the recovery size limits would each keep the item and forward the bytes.
+ *
+ * A text part carries no such guarantee, so it is matched strictly: embedded runs that validate
+ * as Fernet, or a whole slot with the Fernet wire shape. A loose character-class test would be
+ * worse than the defect for that half -- a SHA-256 digest is exactly 64 characters of
+ * `[A-Za-z0-9]` and would be replaced with a marker, silently deleting something a child
+ * deliberately printed.
  */
 export function stripAgentMessageCiphertextInPlace(input: unknown): number {
   if (!Array.isArray(input)) return 0;
@@ -390,11 +406,11 @@ export function stripAgentMessageCiphertextInPlace(input: unknown): number {
   return repaired;
 }
 
-/** Free text: drop embedded token runs, and replace a slot that is nothing but a blob. */
+/** Free text: drop embedded token runs, and replace a slot that is nothing but a token. */
 function textWithoutCiphertext(text: string): string {
   const runs = fernetTokenRuns(text);
   if (runs.length > 0) return textWithRunsOmitted(text, runs);
-  return looksLikeBackendCiphertext(text.trim()) ? OMITTED_ENCRYPTED_CONTENT_TEXT : text;
+  return looksLikeFernetToken(text.trim()) ? OMITTED_ENCRYPTED_CONTENT_TEXT : text;
 }
 
 function ciphertextTextOfPart(part: unknown): string | undefined {
@@ -406,21 +422,22 @@ function ciphertextTextOfPart(part: unknown): string | undefined {
 }
 
 /**
- * Adjacent text slots that are one blob between them. Each fragment can be too short to judge
- * on its own, which is the text-side twin of the split `encrypted_content` run.
+ * Adjacent text slots that are one token between them. Each fragment can be too short to judge on
+ * its own, which is the text-side twin of the split `encrypted_content` run. The join must still
+ * be Fernet-shaped, so two ordinary encoded fragments do not become a marker by being adjacent.
  */
 function joinedCiphertextTextParts(content: readonly unknown[]): Set<object> {
   const flagged = new Set<object>();
   let run: Array<{ part: object; text: string }> = [];
   const finish = (): void => {
-    if (run.length > 1 && looksLikeBackendCiphertext(run.map(entry => entry.text).join(""))) {
+    if (run.length > 1 && looksLikeFernetToken(run.map(entry => entry.text).join(""))) {
       for (const entry of run) flagged.add(entry.part);
     }
     run = [];
   };
   for (const part of content) {
     const text = ciphertextTextOfPart(part);
-    if (text === undefined || text.trim().length === 0 || !BASE64_RUN_ONLY.test(text)) {
+    if (text === undefined || text.trim().length === 0 || !/^[A-Za-z0-9_-]+={0,2}$/.test(text)) {
       finish();
       continue;
     }

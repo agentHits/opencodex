@@ -264,6 +264,43 @@ function agentMessageRequest(stream = false): Request {
   });
 }
 
+/**
+ * The canonical Codex backend is exempt from the pre-dispatch repair (#4454), because it is the
+ * one destination that minted this ciphertext and can read it. That keeps
+ * `prepareOpaqueBlobRecovery`'s `agent_message` arm live exactly where it still makes sense: the
+ * backend failing to decrypt its own bytes.
+ */
+function nativeConfig(): OcxConfig {
+  return {
+    defaultProvider: "openai",
+    providers: {
+      openai: {
+        adapter: "openai-responses",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        authMode: "forward",
+        codexAccountMode: "direct",
+      },
+    },
+  } as OcxConfig;
+}
+
+function nativeAgentMessageRequest(stream = false): Request {
+  return new Request("http://localhost/v1/responses", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-codex-parent-thread-id": "thread-native-encrypted-agent-message",
+      authorization: "Bearer caller-codex-token",
+    },
+    body: JSON.stringify({
+      model: "gpt-5.5",
+      stream,
+      store: false,
+      input: agentMessageReplayInput(),
+    }),
+  });
+}
+
 function decryptStreamResponse(wire: string, contentType: string | null): Response {
   // A string body would implicitly add text/plain even when headers are omitted.
   const response = new Response(new TextEncoder().encode(wire), {
@@ -611,6 +648,52 @@ describe("opaque blob recovery through /v1/responses", () => {
     const sentInput = outbound.at(0)?.input as Array<Record<string, unknown>> | undefined;
     expect(sentInput?.at(0)).toEqual(recoveredAgentMessage());
     expect(JSON.stringify(outbound.at(0))).not.toContain(FUNCTION_OUTPUT_BLOB);
+  });
+
+  test("still retries a ChatGPT agent-message decrypt failure on the canonical backend", async () => {
+    const outbound: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      outbound.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return outbound.length <= 3
+        ? new Response(CHATGPT_FUNCTION_OUTPUT_DECRYPT_ERROR, {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        })
+        : success("resp-native-agent-message-recovered");
+    }) as typeof fetch;
+    const logCtx: RequestLogContext = { model: "", provider: "" };
+
+    const response = await handleResponses(nativeAgentMessageRequest(), nativeConfig(), logCtx);
+    expect(response.status).toBe(200);
+    await response.text();
+
+    expect(outbound).toHaveLength(4);
+    // The blob reaches this destination, which is the point of the exemption, and only the
+    // post-rejection repair takes it back off the wire.
+    expect(JSON.stringify(outbound.at(0))).toContain(FUNCTION_OUTPUT_BLOB);
+    expect(JSON.stringify(outbound.at(3))).not.toContain(FUNCTION_OUTPUT_BLOB);
+    expect(JSON.stringify(outbound.at(3))).toContain("[encrypted content omitted]");
+    expect(logCtx.activeAttempt?.recoveryKinds).toEqual(["transient-5xx", "opaque-blob-rejection"]);
+  });
+
+  test("still hides a streamed agent-message decrypt failure from the client on the canonical backend", async () => {
+    const outbound: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      outbound.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return outbound.length === 1
+        ? streamedFunctionOutputDecryptFailure()
+        : streamedSuccess("resp-native-stream-agent-message-recovered");
+    }) as typeof fetch;
+
+    const response = await handleResponses(nativeAgentMessageRequest(true), nativeConfig(), { model: "", provider: "" });
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("response.completed");
+    expect(body).not.toContain(FUNCTION_OUTPUT_DECRYPT_MESSAGE);
+    expect(outbound).toHaveLength(2);
+    expect(JSON.stringify(outbound.at(0))).toContain(FUNCTION_OUTPUT_BLOB);
+    expect(JSON.stringify(outbound.at(1))).not.toContain(FUNCTION_OUTPUT_BLOB);
   });
 
   test("recovers a zero-output error-event decrypt failure before client relay", async () => {

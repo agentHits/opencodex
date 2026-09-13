@@ -788,6 +788,52 @@ describe("routed Responses agent-message ciphertext repair", () => {
     expect(outbound()[0]).toContain("the child replied [encrypted content omitted] and stopped");
   });
 
+  test("leaves readable text that only resembles an encoded blob", async () => {
+    // An `encrypted_content` slot carries ciphertext by definition, so it is stripped whatever it
+    // holds. A text part does not. Judging text by a loose character class would be worse than the
+    // defect for that half: a SHA-256 digest is exactly 64 characters of the same alphabet, and a
+    // child that deliberately printed one would have it silently deleted.
+    const readable = {
+      sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      sha512: "cf83e1357eefb8bd".repeat(8),
+      apiKey: `sk-proj-${"A".repeat(120)}`,
+    };
+    for (const [name, text] of Object.entries(readable)) {
+      const outbound = captureOutbound("relay-model");
+
+      const response = await post(routedResponsesConfig(), "relay/child-model", [{
+        type: "agent_message",
+        author: "/root/child",
+        recipient: "/root",
+        content: [{ type: "input_text", text: `digest ${text}` }, { type: "input_text", text }],
+      }, userTurn]);
+
+      expect(response.status, name).toBe(200);
+      expect(outbound()[0], name).toContain(text);
+      expect(outbound()[0], name).not.toContain("[encrypted content omitted]");
+    }
+  });
+
+  test("repairs a token split across adjacent text parts", async () => {
+    // The text-side twin of the split encrypted slot. The join must still be Fernet-shaped, so
+    // two ordinary encoded fragments do not become a marker merely by being adjacent.
+    const outbound = captureOutbound("relay-model");
+
+    const response = await post(routedResponsesConfig(), "relay/child-model", [{
+      type: "agent_message",
+      author: "/root/child",
+      recipient: "/root",
+      content: [
+        { type: "input_text", text: FERNET_TASK.slice(0, 60) },
+        { type: "input_text", text: FERNET_TASK.slice(60) },
+      ],
+    }, userTurn]);
+
+    expect(response.status).toBe(200);
+    expect(outbound()[0]).not.toContain(FERNET_TASK.slice(0, 60));
+    expect(outbound()[0]).toContain("[encrypted content omitted]");
+  });
+
   test("repairs a slot that is not a well-formed token, including standard base64", async () => {
     // The original defect reached the wire because an item was not lowerable. Recognizing only
     // canonical Fernet would reopen it one payload later: a truncated token, a bad version byte,

@@ -171,15 +171,21 @@ after `expandPreviousResponseInput`, after the sanitizer has rewritten plaintext
 encrypted slots, and after encrypted-task recovery has had its chance to produce real plaintext
 instead of a marker.
 
-The classification does not require a canonical Fernet token, and that is the point. Matching only
-well-formed tokens would reopen the same defect one payload later: a truncated token, a
-standard-base64 blob carrying `+` or `/`, an unexpected version byte, a run split across slots, or
-a run past the recovery size limits would each keep the item and forward the bytes. Every
-`encrypted_content` slot in an item the adapter cannot lower is therefore treated as ciphertext,
-and free text is judged by the same `looksLikeBackendCiphertext` heuristic the sanitizer already
-trusts, which prose cannot match because a blob has no spaces. Other item types are untouched:
-reasoning and function-output blobs keep the reactive opaque-blob recovery, which still rescues a
-destination that merely failed to decrypt something it was entitled to read.
+The two kinds of slot are judged differently, because they carry different guarantees. An
+`encrypted_content` slot holds ciphertext by definition, so it is stripped whatever it holds:
+demanding a well-formed token there would reopen the same defect one payload later, since a
+truncated token, a standard-base64 blob carrying `+` or `/`, an unexpected version byte, or a run
+past the recovery size limits would each keep the item and forward the bytes. A text part carries
+no such guarantee, so it is matched strictly -- embedded runs that validate as Fernet, or a whole
+slot with the Fernet wire shape, which is the version prefix, the base64url alphabet and a
+canonical length of at least 100 divisible by four. Adjacent text fragments are joined before that
+test, so a token split across slots is still caught. `looksLikeBackendCiphertext` is deliberately
+NOT used on text: it is length >= 64 over a character class that a SHA-256 digest matches exactly
+at 64 characters, and replacing a digest a child deliberately printed would delete readable content
+to protect bytes that were never secret. Other item types are untouched: reasoning and
+function-output blobs keep the reactive opaque-blob recovery, which still rescues a destination
+that merely failed to decrypt something it was entitled to read, and which stays reachable for the
+canonical backend and for explicitly trusted routes.
 
 The repair resolves the same wire override the adapter is built from rather than restating routing
 policy, and runs for `openai-responses` whenever the destination is not the canonical Codex
