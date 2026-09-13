@@ -25,20 +25,24 @@ Some adapters share another adapter's routed-tool semantics while retaining inde
 - `cursor` stays direct because its `runTurn` transport and gated native-file fallback are distinct.
 - `devin` is direct for a related reason. It streams Cognition's
   `ApiServerService/GetChatMessage` over Connect-RPC from `runTurn` with hand-written protobuf
-  framing, so like Cursor it never travels the `buildRequest`/`parseStream` path. Both Devin
-  provider rows share it. The installed CLI's own `credentials.toml` holds an ordinary
+  framing, so like Cursor it never travels the `buildRequest`/`parseStream` path. Login is
+  import-first: the installed CLI's own `credentials.toml` holds an ordinary
   `devin-session-token`, the same credential `RegisterUser` mints for a browser sign-in, so
-  `devin-cli` imports that token and the two rows differ only in where the credential came from.
-  `AdapterFactoryContext.providerId` is what keeps them apart: the Cognition tenant is recorded on
-  the credential, not in the registry, so the adapter has to know which row it is serving before it
-  can resolve a host.
+  `devin` imports that token when one exists and falls back to the Auth0 browser flow when it
+  does not. `devin-cli` survives only as a deprecated alias — `ocx login devin-cli` routes to
+  `devin`, and a startup merge migration rewrites any saved row still keyed under the old
+  provider id, so the registry carries one Devin provider, not two.
+  `AdapterFactoryContext.providerId` still tells the shared adapter which configured row it is
+  serving: the Cognition tenant is recorded on the credential, not in the registry, so the
+  adapter has to know the row before it can resolve a host.
 
   There is no second Devin transport. An Agent Client Protocol adapter that spawned a local
   `devin acp` child once existed under the `devin-cli` adapter id and was removed: the CLI's
   credential turned out to be the ordinary cloud token, so the child process bought nothing that
   importing the token did not, and it cost a placeholder `buildRequest`, a disabled
   `parseStream`, an identity-only `baseUrl`, and a subprocess running in the operator's tree.
-  `projectDevinCliAuthMode` rewrites any saved row that still names the retired adapter id.
+  `projectDevinCliAuthMode` rewrites any saved row that still names the retired adapter id,
+  alongside the merge migration that retires the `devin-cli` provider id itself.
 
 The registry records those relationships with `contractParent`. A parent relationship does **not** mean the registry recursively constructs a parent adapter and injects it into the child. Azure and MiMo keep owning their existing internal composition. This avoids making production constructors depend on test/conformance needs and keeps this authority refactor behavior-neutral.
 
@@ -125,5 +129,6 @@ Provider-scoped approval reviewer settings are projected by the [catalog owner](
 
 `src/adapters/devin.ts` resolves an explicit SWE-2 reasoning effort to the native
 medium/high/max UID before accepting a suffix already present in the model id.
-Both Devin provider rows share this resolver. Omitted effort preserves an explicit
+The merged `devin` provider uses this resolver for every account, whichever login
+path minted the credential. Omitted effort preserves an explicit
 variant; unrelated model families retain their existing suffix precedence.
