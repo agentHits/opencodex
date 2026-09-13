@@ -208,6 +208,7 @@ Providers can expose a built-in shorthand, such as `agy` for `google-antigravity
 | `preserveReasoningContentModels?` | `string[]` | Models requiring prior assistant `reasoning_content` in chat history. |
 | `reasoningDetailsModels?` | `string[]` | Models whose endpoint returns thinking as a structured `reasoning_details` array (MiniMax M-series with `reasoning_split`); stream deltas are cumulative snapshots that are prefix-diffed, and preserved reasoning replays as a `reasoning_details` array instead of a `reasoning_content` string. |
 | `requiresReasoningPlaceholderModels?` | `string[]` | Models whose upstream rejects a tool_call continuation missing `reasoning_content` (DeepSeek thinking mode); a minimal placeholder is injected when the replay cache misses. Defaults to `preserveReasoningContentModels`; set `[]` to opt out. |
+| `showThinkingSummary?` | `boolean` | Display provider-authored summaries when a Responses client omits `reasoning.summary`. Explicit wire `"none"` wins; a client that serializes its preference as omission cannot be distinguished. Raw reasoning remains content and is never relabeled as a summary. The `google-antigravity` preset defaults to `true`; explicit `false` disables that default. CCA Gemini requests also opt into `generationConfig.thinkingConfig.includeThoughts` when display is enabled; image, Claude and gpt-oss requests do not. This does not change client configuration or global catalog summary defaults. |
 | `thinkingToggleModels?` | `string[]` | Chat models using `thinking.enabled` rather than an effort ladder. |
 | `thinkingBudgetModels?` | `string[]` | Chat models using integer `thinking_budget`; effort maps to a budget fraction. |
 | `noVisionModels?` | `string[]` | Text-only models sent through the vision sidecar; matching tolerates an Ollama `:size` tag. |
@@ -381,11 +382,19 @@ need to rediscover. Every legacy variant id keeps routing unchanged.
 
 ### xAI Priority Processing
 
-The built-in `xai` preset advertises and injects Fast only when its effective transport uses
-`authMode: "key"`. API-key mode targets `https://api.x.ai/v1` through the `openai-chat` adapter and
-sends `service_tier: "priority"` through Chat Completions. `ocx login xai`
-instead stores OAuth credentials for the separate Grok CLI subscription-gateway flow, so OAuth
-remains unclassified: its catalog rows do not advertise Fast and the proxy does not inject a tier.
+The built-in `xai` preset supports Fast on both of its transports, with different scope.
+API-key mode targets `https://api.x.ai/v1`; routes resolved to `openai-chat` send
+`service_tier: "priority"` through Chat Completions, while model defaults and overrides can
+select the `openai-responses` transport instead. `ocx login xai`
+instead stores OAuth credentials for the Grok subscription gateway
+(`https://cli-chat-proxy.grok.com/v1`; these credentials refresh automatically), where Fast
+is classified per model (live-probed 2026-09-13): grok-4.6, grok-4.5, grok-4.3, grok-4.20-0309-reasoning,
+grok-4.20-0309-non-reasoning, grok-build-0.1, and grok-composer-2.5-fast accept
+`service_tier: "priority"` over Grok OAuth and echo it, so those rows advertise Fast, accept
+`--fast` selectors, and forward a caller-sent tier on either wire. grok-4.20-multi-agent-0309
+is excluded: the gateway answers `service_tier: "default"` when sent `priority`, so it stays
+unclassified and its caller tier is not forwarded. Unlisted models stay unclassified on both
+transports.
 
 xAI charges Priority Processing at 2× the standard token price for input, output, cached, and
 reasoning tokens; cache discounts are applied before the multiplier. Cost estimates use that premium

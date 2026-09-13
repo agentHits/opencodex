@@ -24,6 +24,14 @@ should select among several targets.
 
 Credential-bearing model, image, video, and search requests do not automatically follow HTTP redirects, including same-origin redirects. Configure the final upstream API URL instead of a redirecting alias. A redirect does not cause the server to resend credentials or the request body to its destination. The response owner retains its existing error or relay behavior; native Responses and compact routes can return the original 3xx and `Location` to the client. Client redirect behavior is separate from this server transport policy.
 
+## Console upload rejections
+
+An exact Console or Console Go `Invalid upload request.` HTTP 400 from a canonical
+OpenCode Zen/Go generation endpoint receives one retry after 800 ms. The proxy reuses
+the same serialized request and records the recovery in Logs. Other 400 errors,
+custom destinations, cancellations and repeated upload rejections remain failures.
+This does not retry filtered model responses or interrupted streams.
+
 ## Endpoint overview
 
 | Client surface | Endpoint | Successful non-stream result | Successful stream or socket result |
@@ -80,6 +88,11 @@ With `stream: true`, the response is `text/event-stream`. The bridge emits Respo
 
 With `stream: false` or no `stream`, the same adapter events are collected into one Responses JSON
 object. Both forms preserve the selected model, output items, terminal status, and usage.
+
+When a provider filters or truncates a response, an unfinished tool call remains `incomplete`
+in both JSON and SSE. Partial output is preserved, and the bridge does not emit an argument
+completion event for that open call. Calls already completed keep their status. This preserves
+the provider outcome; client retry behavior for incomplete responses is unchanged.
 
 On the pending `dev` implementation for #4112, a final upstream HTTP 413 on this surface
 is classified as `invalid_request_error` / `context_length_exceeded`. Non-streaming callers

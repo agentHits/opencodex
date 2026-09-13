@@ -1,4 +1,6 @@
 import type { Server } from "bun";
+import { recordContextSessionOwner } from "../../codex/context-owner";
+import { contextRelayActivated } from "../../codex/context-compat";
 import { randomUUID } from "node:crypto";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse, type ResponsesTerminalStatus } from "../../bridge";
 import { formatPassthroughUpstreamError } from "./passthrough-error";
@@ -102,7 +104,10 @@ import {
 } from "../../lib/errors";
 import { injectionDebugLog } from "../../lib/injection-debug-log";
 import { resolveClientRetryAfter } from "../../lib/retry-after";
-import { enrichOpenCodeZenUpstreamMessage } from "../../providers/opencode-zen-rate-limit";
+import {
+  enrichOpenCodeZenUpstreamMessage,
+  isTransientConsoleGoUploadRejection,
+} from "../../providers/opencode-zen-rate-limit";
 import { CODE_MODE_EXEC_TOOL_NAME, modelInList, namespacedToolName } from "../../types";
 import type {
   AdapterEvent,
@@ -214,6 +219,7 @@ import {
   isNonReplayableResponse,
   isTransientUpstreamStatus,
   prepareSameTarget429Wait,
+  sleepWithAbort,
 } from "../../lib/upstream-retry";
 import {
   ForwardAdmissionCredentialError,
@@ -221,6 +227,7 @@ import {
   isProxyAdmissionSecret,
   validateForwardAdmissionCredential,
 } from "../auth-cors";
+import { resolveContextPrincipal } from "../auth-cors";
 import type { DataPlaneAdmission } from "../auth-cors";
 import { createTranslatorBudget, isTranslatorBudgetExceededError, type TranslatorBudget } from "../../lib/translator-budget";
 import { captureExplicitOpenAiCallerAuth, listOpenAiForwardSidecarCandidates, resolveFirstUsableOpenAiSidecar, type ExplicitOpenAiCallerAuth, type ResolvedOpenAiForwardSidecar } from "../../providers/openai-sidecar";
@@ -368,12 +375,6 @@ import {
   repairResponsesJsonItemIds,
 } from "../responses-item-id-repair";
 import {
-  createReasoningSummaryChannelPayloadRewrite,
-  rewriteReasoningSummaryInJson,
-  rewriteReasoningSummaryInJsonString,
-  routeUsesContentChannelReasoning,
-} from "../responses-reasoning-summary-rewrite";
-import {
   createImageGenCallRestoreRewrite,
   imageGenToolCallAliases,
   restoreImageGenCallsInJson,
@@ -429,6 +430,12 @@ import {
   restoreRoutedNamespaceCallsInJson,
   type RoutedNamespaceToolAliases,
 } from "../../responses/namespace-tool-compat";
+import {
+  createMuseToolNameRestoreRewrite,
+  restoreMuseToolNames,
+  restoreMuseToolNamesInJson,
+  type MuseToolNameAliases,
+} from "../../responses/muse-tool-name-alias";
 import {
   collectDeclaredBareWireToolNames,
   collectDeclaredNamelessClientCallTypes,
@@ -843,6 +850,31 @@ async function opaqueBlobRejectionBodyForRecovery(
     || alreadyAttempted
     || !outboundResponsesBodyCarriesOpaqueBlob(outboundBody)
   ) return undefined;
+  try {
+    const body = await readBoundedResponseBody(response.clone(), { signal });
+    return body.displaySafe && !body.truncated ? body.text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Backoff for the single exact-request replay after a canonical Console upload rejection.
+ */
+const CONSOLE_GO_UPLOAD_RETRY_DELAY_MS = 800;
+
+/**
+ * Peek the upstream error body for the Console Go transient-400 recovery. Only a complete,
+ * display-safe body may drive a retry decision (same contract as
+ * opaqueBlobRejectionBodyForRecovery), and reading a clone leaves the original response intact
+ * for the caller's own error surface when no retry is taken.
+ */
+async function consoleGoUploadRejectionBody(
+  response: Response,
+  alreadyAttempted: boolean,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  if (isNonReplayableResponse(response) || response.status !== 400 || alreadyAttempted) return undefined;
   try {
     const body = await readBoundedResponseBody(response.clone(), { signal });
     return body.displaySafe && !body.truncated ? body.text : undefined;
@@ -2570,6 +2602,13 @@ async function applyFinalRouteRequestNormalization(args: {
   route.provider = resolveOpenCodeGoTransport(route.provider,
     args.claudeGoAffinity ? args.claudeGoAffinity.sessionLane : getOrAllocateRequestSessionLane(req));
   route.provider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire);
+  // Recompute from the original wire preference on every route, including fallback.
+  // A provider default never converts raw reasoning into a summary.
+  if (inboundWire === "responses" && parsed._rawBody) {
+    const summary = (parsed._rawBody as { reasoning?: { summary?: unknown } }).reasoning?.summary;
+    parsed.options.hideThinkingSummary = summary === "none"
+      || (!summary && route.provider.showThinkingSummary !== true);
+  }
   if (preserveAnthropicResponseModel) parsed._responseModelId = responseModelId;
   logCtx.model = route.modelId;
   logCtx.provider = route.providerName;
@@ -2925,6 +2964,7 @@ export async function handleComboResponses(
       pick.target,
       comboDefaultEffort(config, comboId),
       supportedLadderFor({ provider: targetRoute.provider, modelId: targetRoute.modelId }),
+      combo.reasoningEffortMode,
     );
     const childHeaders = buildComboChildHeaders(req.headers);
     const childRequest = new Request(req.url, {
@@ -4772,8 +4812,16 @@ async function handleResponsesInner(
   // `compaction_trigger` item — only the canonical ChatGPT backend speaks that
   // contract. An API-key gateway would receive the trigger, answer with an ordinary
   // message, and leave Codex fataling on a missing compaction item (#422).
-  const commitReasoningReplayServingRoute = (): void => {
+  const commitReasoningReplayServingRoute = (outboundHeaders?: HeadersInit): void => {
     commitReasoningReplayServingIdentity(parsed._reasoningReplayScope);
+    // History has no model namespace. Record the account that actually accepted this
+    // final attempt, after refresh/failover, rather than guessing from mutable affinity.
+    // Recording is relay state. With the feature off there is no relay, so building an owner
+    // registry for it is out of scope for this request.
+    if (outboundHeaders && isCanonicalOpenAiForwardProvider(route.provider) && contextRelayActivated()) {
+      recordContextSessionOwner(resolveContextPrincipal(req, config, options.admission), req.headers,
+        route.provider.baseUrl, authCtx, new Headers(outboundHeaders), substituteMainCredential);
+    }
   };
   if (routedCompaction) {
     delete parsed.context.tools;
@@ -4794,8 +4842,10 @@ async function handleResponsesInner(
   }
 
   let routedNamespaceToolAliases: RoutedNamespaceToolAliases = new Map();
+  let routedMuseToolNameAliases: MuseToolNameAliases = new Map();
   const refreshRoutedNamespaceToolAliases = (builtRequest: AdapterRequest): void => {
     routedNamespaceToolAliases = builtRequest.convertedRoutedNamespaceToolAliases ?? new Map();
+    routedMuseToolNameAliases = builtRequest.convertedMuseToolNameAliases ?? new Map();
   };
 
   if ("passthrough" in adapter && adapter.passthrough && !routedCompaction) {
@@ -5071,7 +5121,9 @@ async function handleResponsesInner(
       // provider) every name looks undeclared, and flipping this would stop recording continuation
       // state for exactly the passthrough traffic the guard deliberately stands down for.
       if (undeclaredToolGuardActive && !inspectionSawUndeclaredTool && undeclaredToolCallName(
-        restoreAuthorizedBareNamespaceToolCalls(payload),
+        restoreAuthorizedBareNamespaceToolCalls(
+          restoreMuseToolNames(payload, routedMuseToolNameAliases).value,
+        ),
         declaredWireToolNames,
         declaredNamelessClientCallTypes,
         providerExecutedCallTypes,
@@ -5093,7 +5145,12 @@ async function handleResponsesInner(
     ) => {
       if (inspectionSawUndeclaredTool) return;
       const restored = restoreRoutedCustomCalls(
-        restoreAuthorizedBareNamespaceToolCalls(restoreRoutedNamespaceCalls(response, routedNamespaceToolAliases).value),
+        restoreAuthorizedBareNamespaceToolCalls(
+          restoreRoutedNamespaceCalls(
+            restoreMuseToolNames(response, routedMuseToolNameAliases).value,
+            routedNamespaceToolAliases,
+          ).value,
+        ),
         routedCustomToolNames,
         routedCustomToolRepairNames,
         declaredWireToolNames,
@@ -5102,10 +5159,7 @@ async function handleResponsesInner(
         ? JSON.parse(normalizeFunctionCompletionJson(JSON.stringify(restored)))
         : restored) as { id?: unknown; output?: unknown; status?: unknown };
       // Replay overlap compares the items the client echoes, including visible reasoning shape.
-      const replayResponse = parsed.options.hideThinkingSummary !== true
-        && routeUsesContentChannelReasoning(route.provider, route.modelId)
-        ? rewriteReasoningSummaryInJson(restoredResponse) as typeof restoredResponse
-        : restoredResponse;
+      const replayResponse = restoredResponse;
       if (
         undeclaredToolGuardActive
         && undeclaredToolCallNameInResponse(
@@ -5329,6 +5383,9 @@ async function handleResponsesInner(
     const opaqueBlobRecoveryGuard: OpaqueBlobRecoveryGuard = { attempted: false };
     let oauth401ReplayAttempted = false;
     let codex401ReplayKind: "main" | "stored" | null = null;
+    // Console Go answers a transient 400 "Invalid upload request." for bodies it accepts
+    // moments later; at most one byte-identical replay is allowed per request.
+    const consoleGoUploadRetryGuard: { attempted: boolean } = { attempted: false };
     const rateLimitPolicy = rateLimitRetryPolicyFor(route.provider);
     let rateLimitRetries = 0;
     const rebuildAndRefetch = async (
@@ -5343,10 +5400,12 @@ async function handleResponsesInner(
         return { failed: formatErrorResponse(502, "upstream_error", "Recovery changed the provider wire unexpectedly") };
       }
       try {
-        request = await retryAdapter.buildRequest(parsed, {
-          headers: selectedForwardHeaders,
-          translatorBudget,
-        });
+        if (recovery !== "console-go-upload-retry") {
+          request = await retryAdapter.buildRequest(parsed, {
+            headers: selectedForwardHeaders,
+            translatorBudget,
+          });
+        }
         refreshRoutedNamespaceToolAliases(request);
         recordAdapterReasoning(logCtx, request);
         recordAdapterTier(logCtx, request);
@@ -5880,6 +5939,36 @@ async function handleResponsesInner(
         logCtx.terminalIncompleteReason = preflightLog.terminalIncompleteReason;
       }
     }
+    // Console Go (opencode-zen / opencode-go) intermittently rejects a body it accepts seconds
+    // later with 400 invalid_request_error / "Invalid upload request." Replay the byte-identical
+    // request once after the exact gateway rejection. Single-shot guard.
+    // This recovery reuses the captured request; other recovery kinds still rebuild.
+    if (!consoleGoUploadRetryGuard.attempted) {
+      const uploadRejectionBody = await consoleGoUploadRejectionBody(
+        upstreamResponse,
+        consoleGoUploadRetryGuard.attempted,
+        upstream.signal,
+      );
+      if (uploadRejectionBody !== undefined
+        && isTransientConsoleGoUploadRejection({
+          status: upstreamResponse.status,
+          errorBody: uploadRejectionBody,
+          outboundUrl: request.url,
+        })) {
+        consoleGoUploadRetryGuard.attempted = true;
+        try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+        if (!upstream.signal.aborted) {
+          try {
+            await sleepWithAbort(CONSOLE_GO_UPLOAD_RETRY_DELAY_MS, upstream.signal);
+          } catch { return clientCancelledResponse(); }
+        }
+        if (upstream.signal.aborted) return clientCancelledResponse();
+        const result = await rebuildAndRefetch("console-go-upload-retry");
+        if ("failed" in result) return result.failed;
+        upstreamResponse = result;
+        continue passthroughRecovery;
+      }
+    }
     break;
     }
     const headers = sanitizePassthroughHeaders(upstreamResponse.headers, codexSafetyBufferingOptions);
@@ -6015,7 +6104,7 @@ async function handleResponsesInner(
       // For streamed passthrough, a successful terminal response means non-error upstream status
       // before relay starts. Waiting for SSE completion would retain request state across the whole
       // stream; a later body failure does not undo that this destination accepted and served the turn.
-      commitReasoningReplayServingRoute();
+      commitReasoningReplayServingRoute(request.headers);
       const terminalRepairPolicy = providerModelResponsesTerminalRepair(
         route.providerName,
         route.provider,
@@ -6093,6 +6182,9 @@ async function handleResponsesInner(
         createImageGenCallRestoreRewrite(imageGenCallAliases),
         // #3217: a call whose namespace repeats its own name is unroutable in codex-rs.
         createSelfNamedToolCallNamespaceScrubRewrite(selfNamedNamespaceScrubAuthorization),
+        routedMuseToolNameAliases.size > 0
+          ? createMuseToolNameRestoreRewrite(routedMuseToolNameAliases)
+          : undefined,
         routedNamespaceToolAliases.size > 0
           ? createRoutedNamespaceCallRestoreRewrite(routedNamespaceToolAliases)
           : undefined,
@@ -6103,10 +6195,6 @@ async function handleResponsesInner(
           ? createResponsesItemIdPayloadRewrite(repairConfig!, translatorBudget)
           : undefined,
         responseModelRewrite,
-        parsed.options.hideThinkingSummary !== true
-          && routeUsesContentChannelReasoning(route.provider, route.modelId)
-          ? createReasoningSummaryChannelPayloadRewrite()
-          : undefined,
       ].filter((rewrite): rewrite is NonNullable<typeof rewrite> => rewrite !== undefined);
       // #893: sparse-snapshot gateways get field backfills AND lifecycle event
       // injection at the block level, after payload rewrites. Defaults come
@@ -6355,7 +6443,10 @@ async function handleResponsesInner(
       let clientJson = (() => {
         const restoredNamespace = restoreRoutedNamespaceCallsInJson(
           scrubSelfNamedToolCallNamespaceInJson(
-            restoreImageGenCallsInJson(text, imageGenCallAliases),
+            restoreMuseToolNamesInJson(
+              restoreImageGenCallsInJson(text, imageGenCallAliases),
+              routedMuseToolNameAliases,
+            ),
             selfNamedNamespaceScrubAuthorization,
           ),
           routedNamespaceToolAliases,
@@ -6378,13 +6469,7 @@ async function handleResponsesInner(
         const modelRewritten = parsed._responseModelId !== undefined && parsed._responseModelId !== parsed.modelId
           ? rewriteResponsesModelJson(repaired, parsed._responseModelId)
           : repaired;
-        // The bounded-JSON answer bypasses the SSE payload rewrite, so content-
-        // channel reasoning needs the same normalization here for the plain
-        // JSON answer and every reframed-SSE variant built from clientJson.
-        return parsed.options.hideThinkingSummary !== true
-          && routeUsesContentChannelReasoning(route.provider, route.modelId)
-          ? rewriteReasoningSummaryInJsonString(modelRewritten)
-          : modelRewritten;
+        return modelRewritten;
       })();
       // #1700: same fail-closed policy as the SSE relay above. Both the plain JSON answer and
       // the reframed-SSE branch below are built from this body, so one check covers them. This
@@ -6413,7 +6498,7 @@ async function handleResponsesInner(
           declaredBareWireToolNames,
         );
       }
-      commitReasoningReplayServingRoute();
+      commitReasoningReplayServingRoute(request.headers);
       try {
         rememberPassthroughResponseChecked(
           JSON.parse(text) as { id?: unknown; output?: unknown; status?: unknown; model?: unknown },
@@ -6495,7 +6580,7 @@ async function handleResponsesInner(
     }
     // An unclassified passthrough body is relayed directly and has no bounded completion observer;
     // use the same non-error-status success boundary as SSE instead of retaining per-stream state.
-    commitReasoningReplayServingRoute();
+    commitReasoningReplayServingRoute(request.headers);
     const body = relayWithAbort(upstreamResponse.body, upstream);
     const turnAc = new AbortController();
     const tracked = body ? trackStreamLifetime(body, turnAc, undefined, options.turnAdmissionLease) : null;
@@ -7370,6 +7455,9 @@ async function handleResponsesInner(
     // 413→429 rotation cannot silently undo the tightening.
     let imageRetryAttempted = false;
     const opaqueBlobRecoveryGuard: OpaqueBlobRecoveryGuard = { attempted: false };
+    // Console Go answers a transient 400 "Invalid upload request." for bodies it accepts
+    // moments later; at most one byte-identical replay is allowed per request.
+    const consoleGoUploadRetryGuard: { attempted: boolean } = { attempted: false };
     let oauth401ReplayAttempted = false;
     /**
      * Rebuild the request from the current parsed input (and any image-tier bias) and refetch
@@ -7753,6 +7841,35 @@ async function handleResponsesInner(
         if ("failed" in result) return result.failed;
         upstreamResponse = result;
         continue recovery;
+      }
+      // Console Go (opencode-zen / opencode-go) intermittently rejects a body it accepts seconds
+      // later with 400 invalid_request_error / "Invalid upload request." Replay the
+      // byte-identical request once after the exact gateway rejection.
+      if (!consoleGoUploadRetryGuard.attempted) {
+        const uploadRejectionBody = await consoleGoUploadRejectionBody(
+          upstreamResponse,
+          consoleGoUploadRetryGuard.attempted,
+          upstream.signal,
+        );
+        if (uploadRejectionBody !== undefined
+          && isTransientConsoleGoUploadRejection({
+            status: upstreamResponse.status,
+            errorBody: uploadRejectionBody,
+            outboundUrl: sameTargetRequest?.url,
+          })) {
+          consoleGoUploadRetryGuard.attempted = true;
+          try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+          if (!upstream.signal.aborted) {
+            try {
+              await sleepWithAbort(CONSOLE_GO_UPLOAD_RETRY_DELAY_MS, upstream.signal);
+            } catch { cleanupUpstreamAbort(); return clientCancelledResponse(); }
+          }
+          if (upstream.signal.aborted) { cleanupUpstreamAbort(); return clientCancelledResponse(); }
+          const result = await rebuildAndRefetch("console-go-upload-retry");
+          if ("failed" in result) return result.failed;
+          upstreamResponse = result;
+          continue recovery;
+        }
       }
       break;
     }
