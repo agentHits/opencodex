@@ -289,3 +289,53 @@ test("valid ingress is not blamed when a malformed hub sibling disables the hub 
     expect(diagnostics.warnings?.join("\n")).not.toContain("hub.managementIngress ignored");
     expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
   } finally { warn.mockRestore(); }});
+
+const DESKTOP_PROFILE = {
+  version: 1,
+  assignments: {
+    "opencode-go/deepseek-flash": { family: "opus", alias: "claude-opus-4-8-20260731" },
+  },
+  defaults: { opus: "opencode-go/deepseek-flash", fable: null, sonnet: null, haiku: null },
+};
+
+function writeClaudeDesktopConfig(desktopProfile: unknown): string {
+  const bytes = JSON.stringify({
+    ...candidate(undefined),
+    claudeCode: { enabled: true, authMode: "proxy", desktopProfile },
+  });
+  writeFileSync(getConfigPath(), bytes);
+  return bytes;
+}
+
+test("null desktopProfile applied markers do not replace the operator config (#4430)", () => {
+  const bytes = writeClaudeDesktopConfig({
+    ...DESKTOP_PROFILE,
+    appliedFingerprint: null,
+    appliedAt: null,
+  });
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const loaded = loadConfig();
+    expect(loaded.providers.xai.note).toBe("keep me");
+    expect(loaded.claudeCode?.desktopProfile).toMatchObject(DESKTOP_PROFILE);
+    expect(loaded.claudeCode?.desktopProfile).not.toHaveProperty("appliedFingerprint");
+    expect(loaded.claudeCode?.desktopProfile).not.toHaveProperty("appliedAt");
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
+    expect(error.mock.calls.join("\n")).not.toContain("Using default config");
+  } finally { error.mockRestore(); }
+});
+
+test("an invalid desktopProfile is dropped without resetting providers (#4430)", () => {
+  const bytes = writeClaudeDesktopConfig({ ...DESKTOP_PROFILE, version: 2 });
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const loaded = loadConfig();
+    expect(loaded.providers.xai.note).toBe("keep me");
+    expect(loaded.claudeCode?.desktopProfile).toBeUndefined();
+    expect(loaded.claudeCode?.enabled).toBe(true);
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
+    expect(error.mock.calls.join("\n")).toContain("claudeCode.desktopProfile");
+    expect(error.mock.calls.join("\n")).toContain("preserved");
+    expect(error.mock.calls.join("\n")).not.toContain("Using default config");
+  } finally { error.mockRestore(); }
+});
