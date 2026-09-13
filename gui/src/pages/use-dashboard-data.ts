@@ -1,3 +1,4 @@
+import { classifyDataSurface } from "../data-surface";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useKeyedClientResource } from "../client-resource";
 import { replaceHash } from "../hash-routing";
@@ -135,7 +136,7 @@ function controlsCacheKey(apiBase: string): string {
   return `${CONTROLS_CACHE_PREFIX}${apiBase}`;
 }
 
-export function useDashboardData(apiBase: string) {
+export function useDashboardData(apiBase: string, refreshEpoch = 0) {
   const { locale, t } = useI18n();
   // The hash is the source of truth for the active section (#dashboard, …).
   const [selectedSection, setSelectedSection] = useState<DashboardSection>(readDashboardSectionFromHash);
@@ -253,7 +254,7 @@ export function useDashboardData(apiBase: string) {
 
   const startupHealthPoll = useKeyedClientResource(
     `dashboard-startup-health:${apiBase}`,
-    [apiBase],
+    [apiBase, refreshEpoch],
     (signal) => fetchStartupHealth(apiBase, signal),
     { pollMs: 30_000 },
   );
@@ -275,23 +276,24 @@ export function useDashboardData(apiBase: string) {
   // Wave 1: status/uptime/providers must not wait on injection-model / usage.
   const overviewPoll = useKeyedClientResource(
     `dashboard-overview:${apiBase}`,
-    [apiBase],
+    [apiBase, refreshEpoch],
     (signal) => fetchDashboardOverview(apiBase, signal),
     { pollMs: 5000 },
   );
+  const overviewSurface = classifyDataSurface(overviewPoll, data => data.health === null, true);
   const overviewReady = health !== null || overviewPoll.data !== undefined;
 
   // Preferences that are just config — never gate on overview or injection.
   const maModePoll = useKeyedClientResource(
     `dashboard-ma-mode:${apiBase}`,
-    [apiBase],
+    [apiBase, refreshEpoch],
     (signal) => fetchDashboardMaMode(apiBase, signal),
     { pollMs: 5000 },
   );
 
   const sidecarPoll = useKeyedClientResource(
     `dashboard-sidecars:${apiBase}`,
-    [apiBase],
+    [apiBase, refreshEpoch],
     async (signal) => {
       const startupHealthGeneration = startupHealthGenerationRef.current;
       const data = await fetchDashboardSidecars(apiBase, signal, epochRefs);
@@ -302,7 +304,7 @@ export function useDashboardData(apiBase: string) {
 
   const settingsPoll = useKeyedClientResource(
     `dashboard-settings:${apiBase}`,
-    [apiBase],
+    [apiBase, refreshEpoch],
     async (signal) => {
       const startupHealthGeneration = startupHealthGenerationRef.current;
       const data = await fetchDashboardSettings(apiBase, signal, epochRefs);
@@ -314,14 +316,14 @@ export function useDashboardData(apiBase: string) {
   // Wave 2: heavier peers start after overview commits (or session seed) to cut contention.
   const multiAgentPoll = useKeyedClientResource(
     `dashboard-multi-agent:${apiBase}`,
-    [apiBase],
+    [apiBase, refreshEpoch],
     (signal) => fetchDashboardMultiAgent(apiBase, signal),
     { pollMs: 5000, enabled: overviewReady },
   );
 
   const usagePoll = useKeyedClientResource(
     usageSummary30dResourceKey(apiBase),
-    [apiBase],
+    [apiBase, refreshEpoch],
     (signal) => fetchDashboardUsage(apiBase, signal),
     // 30d usage is documented ~5s cold; this shared key has four subscribers, so
     // every one of them carries the same raised deadline (mount-order independent).
@@ -330,14 +332,14 @@ export function useDashboardData(apiBase: string) {
 
   const diagnosticsPoll = useKeyedClientResource(
     `dashboard-diagnostics:${apiBase}`,
-    [apiBase],
+    [apiBase, refreshEpoch],
     (signal) => fetchProjectConfigDiagnostics(apiBase, signal),
     { pollMs: PROJECT_CONFIG_DIAGNOSTICS_POLL_MS, enabled: overviewReady },
   );
 
   const modelsPoll = useKeyedClientResource(
     `dashboard-models:${apiBase}`,
-    [apiBase, error],
+    [apiBase, error, refreshEpoch],
     (signal) => fetchDashboardModels(apiBase, signal),
     { enabled: overviewReady && !error },
   );
@@ -526,11 +528,11 @@ export function useDashboardData(apiBase: string) {
     // Server-computed runnable set when present (#2188); legacy union otherwise.
     // The shared SidecarSetting type admits vision's "routed", which the
     // web-search picker cannot carry — narrow it away for this card.
-    const webBackend = sidecar?.webSearch.backend;
+    const webBackend = sidecar?.webSearch?.backend;
     return webSearchModelOptionsForPicker(
       sidecar?.webSearchModels,
       models,
-      sidecar?.webSearch.model,
+      sidecar?.webSearch?.model,
       webBackend === "routed" ? undefined : webBackend,
     );
   }, [models, sidecar?.webSearchModels, sidecar?.webSearch]);
@@ -850,7 +852,8 @@ export function useDashboardData(apiBase: string) {
     effortCap, subagentEffortCap, effortCapSaving, setEffortCap, setSubagentEffortCap, setEffortCapSaving,
     syncResult, syncError, projectConfigWarnings,
     updateOpen, updateChannel, setUpdateRestart, updateRestart, updateLoading,
-    updateCheck, updateError, updateJob, reconnecting, error,
+    updateCheck, updateError, updateJob, reconnecting, error: error || overviewSurface.showError,
+    connectionFailure: overviewPoll.data?.failure ?? (overviewSurface.showError ? "unavailable" : undefined), refreshDashboard: overviewPoll.refresh,
     effortCapHelpTriggerRef, updateTriggerRef, maHelpTriggerRef, shadowCallHelpTriggerRef,
     effortCapHelpDialogRef, updateDialogRef, maHelpDialogRef, shadowCallHelpDialogRef,
     filteredGroups, sidecarModels, visionModels,
