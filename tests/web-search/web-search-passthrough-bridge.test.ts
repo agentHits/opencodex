@@ -793,11 +793,13 @@ describe("the reported turn, end to end through handleResponses", () => {
     destinations: Array<{ url: string; authorization: string | null }>;
     searches: number;
     searchUrls: string[];
+    searchHeaders: Array<{ url: string; authorization: string | null; xApiKey: string | null }>;
   }> {
     const savedFetch = globalThis.fetch;
     const outbound: string[] = [];
     const destinations: Array<{ url: string; authorization: string | null }> = [];
     const searchUrls: string[] = [];
+    const searchHeaders: Array<{ url: string; authorization: string | null; xApiKey: string | null }> = [];
     let searches = 0;
     let leg = 0;
     globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
@@ -807,6 +809,12 @@ describe("the reported turn, end to end through handleResponses", () => {
       if (url.includes("/api/web_search") || url.includes("api.exa.ai/search")) {
         searches += 1;
         searchUrls.push(url);
+        const headers = new Headers(init?.headers);
+        searchHeaders.push({
+          url,
+          authorization: headers.get("authorization"),
+          xApiKey: headers.get("x-api-key"),
+        });
         hooks.onSearch?.();
         return new Response(JSON.stringify({
           results: [{
@@ -827,10 +835,10 @@ describe("the reported turn, end to end through handleResponses", () => {
     try {
       const response = await handleResponses(new Request("http://localhost/v1/responses", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", authorization: "Bearer caller-inbound" },
         body: clientRequest,
       }), ocxConfig, { model: "", provider: "" });
-      return { body: await response.text(), outbound, destinations, searches, searchUrls };
+      return { body: await response.text(), outbound, destinations, searches, searchUrls, searchHeaders };
     } finally {
       globalThis.fetch = savedFetch;
     }
@@ -1051,6 +1059,9 @@ describe("the reported turn, end to end through handleResponses", () => {
     } as unknown as OcxConfig;
     const result = await post(cfg, [searchLeg(), answerLeg()]);
     expect(result.searchUrls).toEqual(["https://api.exa.ai/search"]);
+    expect(result.searchHeaders).toEqual([
+      { url: "https://api.exa.ai/search", authorization: null, xApiKey: "exa-canary" },
+    ]);
     expect(result.body).not.toContain(UNDECLARED_TOOL_CALL_ERROR_CODE);
     expect(result.body).toContain("\"type\":\"web_search_call\"");
     expect(result.body).not.toContain("\"name\":\"web_search\"");

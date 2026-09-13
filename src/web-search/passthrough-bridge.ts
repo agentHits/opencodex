@@ -62,7 +62,7 @@ import {
   findGeminiSidecarProvider,
   findXaiSidecarProvider,
   xaiSearchOptionsFromConfig,
-} from "./index";
+} from "./sidecar-providers";
 
 /** Canonical Ollama Cloud origin. The only origin the "ollama" backend derives on its own. */
 export const OLLAMA_CLOUD_ORIGIN = "https://ollama.com";
