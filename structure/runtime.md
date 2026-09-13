@@ -25,7 +25,7 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 | `src/types.ts` | Shared config, parsed request, adapter, and event types. |
 | `src/reasoning-effort.ts` | Codex reasoning-level definitions (`low`/`medium`/`high`/`xhigh`), per-model effort mapping, and catalog effort sanitization. |
 | `src/codex/shim.ts` | Codex autostart shim: replaces the `codex` binary with a wrapper that auto-starts the proxy on demand. It skips startup for management subcommands even when value-taking global flags precede the subcommand, and transactionally restores complete, stable external launcher replacements without a watcher or PATH rediscovery. |
-| `src/service.ts` | OS service manager (macOS launchd, Linux systemd, Windows schtasks): always-on proxy with crash restart. |
+| `src/service.ts` | OS service manager (macOS launchd, Linux systemd, Windows schtasks): always-on proxy with crash restart. Facade over the `src/service/` leaves — `src/service/launchd.ts`, `src/service/systemd.ts`, `src/service/windows-ops.ts`, `src/service/windows-scheduler.ts`, `src/service/windows-taskxml.ts`, `src/service/state.ts`, `src/service/guards.ts`, `src/service/health.ts`, `src/service/repair.ts`, `src/service/orchestration.ts`, `src/service/diagnostics.ts`, `src/service/cli.ts`. |
 
 The `src/` root stays thin: process entry (`src/cli.ts`, `src/index.ts`), shared config/types,
 router, bridge, service manager, reasoning-effort definitions, and the stall-timeout budget live
