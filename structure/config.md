@@ -58,6 +58,8 @@ matters for maintainers is which groups exist and who resolves them:
 Env values are resolved through `src/config.ts`, so a config value naming an env var never persists
 the secret itself.
 
+Malformed optional data-loopback and nested hub-management listener blocks are disabled in memory and reported by load-time warnings and read-only config diagnostics. Ingress warnings validate the raw ingress independently, so an invalid hub sibling does not falsely blame a valid ingress. The warning names only the field; unrelated providers and keys survive. Explicit writes remain strictly validated.
+
 ## Config injection
 
 `src/codex/inject.ts` writes one of two forms. The choice is not cosmetic: it decides whether Codex
@@ -221,6 +223,8 @@ The Cline client keeps connection settings and models in a separate native file 
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
 
 The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
+
+The OpenCode launcher resolves the existing local management origin from the live bind and configured hub ingress. Its admin credential comes from the existing admin environment/file policy; an absent credential fails without substituting a data key.
 
 Provider `autoReviewModel` and `autoReviewModelOverrides` accept validated final-catalog selectors. Per-model keys preserve case and accept the existing raw/encoded slash equivalence. File-load degradation removes malformed optional selectors only; management writes reject malformed shapes. Omitted provider saves preserve selectors, explicit clears remove them, and raw editor candidates adopt normalized values before persistence and live replacement. See [catalog ownership](catalog.md#provider-scoped-approval-reviewer).
 

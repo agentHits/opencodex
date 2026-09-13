@@ -1070,6 +1070,11 @@ function canonicalHttpOrigin(value: string): string | null {
   }
 }
 
+const managementIngressSchema = z.union([
+  z.object({ enabled: z.literal(false) }).strict(),
+  z.object({ enabled: z.literal(true), port: z.number().int().min(1).max(65535) }).strict(),
+]);
+
 const hubConfigSchema = z.object({
   managementPublicOrigin: z.string().transform((value, ctx) => {
     const origin = canonicalHttpOrigin(value);
@@ -1093,10 +1098,7 @@ const hubConfigSchema = z.object({
   }).optional(),
   // A malformed hand edit disables only the optional ingress. Live writes are rejected by
   // managementIngressConfigError before this load-time degradation can hide the mistake.
-  managementIngress: z.union([
-    z.object({ enabled: z.literal(false) }).strict(),
-    z.object({ enabled: z.literal(true), port: z.number().int().min(1).max(65535) }).strict(),
-  ]).optional().catch(undefined),
+  managementIngress: managementIngressSchema.optional().catch(undefined),
 }).strict();
 
 const tailscaleUserSchema = z.string().trim().min(1).superRefine((value, ctx) => {
@@ -2046,6 +2048,26 @@ function warnDegradedHostname(rawParsed: unknown, validated: OcxConfig): void {
   }
 }
 
+function degradedListenerWarnings(rawParsed: unknown, validated: OcxConfig): string[] {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw) return [];
+  const warnings: string[] = [];
+  if (raw.unauthenticatedLoopbackListener !== undefined && validated.unauthenticatedLoopbackListener === undefined) {
+    warnings.push("unauthenticatedLoopbackListener ignored: invalid listener configuration; repair config.json before enabling the listener");
+  }
+  const hub = rawConfigRecord(raw.hub);
+  if (hub?.managementIngress !== undefined && !managementIngressSchema.safeParse(hub.managementIngress).success) {
+    warnings.push("hub.managementIngress ignored: invalid management listener configuration; repair config.json before enabling the listener");
+  }
+  return warnings;
+}
+
+function warnDegradedListeners(rawParsed: unknown, validated: OcxConfig): void {
+  for (const warning of degradedListenerWarnings(rawParsed, validated)) {
+    console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+  }
+}
+
 /**
  * Companion to {@link warnDegradedStreamMode} for a malformed selection-order map.
  * Priority is a preference, so the schema drops the whole map rather than failing
@@ -2509,6 +2531,7 @@ export function loadConfig(): OcxConfig {
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedStreamMode(parsed, config);
       warnDegradedHostname(parsed, config);
+      warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2539,6 +2562,7 @@ export function loadConfig(): OcxConfig {
       const config = normalizeApiKeyIds(retryResult.data as OcxConfig);
       warnInheritedFastWireConflicts(configPath, config);
       warnDegradedHostname(parsed, config);
+      warnDegradedListeners(parsed, config);
       warnDegradedApiKeys(parsed, config);
       warnDegradedCodexAccountPriorities(parsed, config);
       warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2565,6 +2589,7 @@ export function loadConfig(): OcxConfig {
         const config = normalizeApiKeyIds(salvaged.parsed);
         warnInheritedFastWireConflicts(configPath, config);
         warnDegradedHostname(parsed, config);
+        warnDegradedListeners(parsed, config);
         warnDegradedApiKeys(parsed, config);
         warnDegradedCodexAccountPriorities(parsed, config);
         warnDegradedCodexQuotaAutoRefresh(parsed, config);
@@ -2700,6 +2725,7 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   const warnings = configPlaceholderWarnings(normalized);
   warnings.push(...inheritedFastWireConflictProviderNames(normalized).map(inheritedFastWireConflictWarning));
   warnings.push(...degradedCodexAccountPriorityWarnings(rawParsed, normalized));
+  warnings.push(...degradedListenerWarnings(rawParsed, normalized));
   const quotaAutoRefreshWarning = degradedCodexQuotaAutoRefreshWarning(rawParsed, normalized);
   if (quotaAutoRefreshWarning) warnings.push(quotaAutoRefreshWarning);
   if (rawEffort !== undefined && !isClaudeSubagentEffort(rawEffort)) {
@@ -3173,10 +3199,13 @@ function configDiagnosticsFromRaw(raw: string): ConfigDiagnostics {
     // that ignores the error and writes it back preserves what the operator configured.
     const salvaged = salvageConfigCandidate(merged, retryResult.error);
     if (salvaged) {
+      const config = normalizeApiKeyIds(salvaged.parsed);
+      const warnings = degradedListenerWarnings(parsed, config);
       return {
-        config: normalizeApiKeyIds(salvaged.parsed),
+        config,
         source: "fallback",
         error: schemaDiagnosticsError(result.error),
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
 
