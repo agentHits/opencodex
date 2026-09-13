@@ -1331,6 +1331,8 @@ export const de: Record<TKey, string> = {
   "codexAuth.pause": "Pausieren",
   "codexAuth.resume": "Fortsetzen",
   "codexAuth.paused": "PAUSIERT",
+  "codexAuth.planExcluded": "Nicht automatisch gewählt",
+  "codexAuth.planExcludedHint": "Tarif {plan} ist von der automatischen Auswahl ausgeschlossen. Explizite Kontorouten bleiben verfügbar.",
   "codexAuth.pauseSucceeded": "{email} ist pausiert",
   "codexAuth.resumeSucceeded": "{email} ist wieder im Pool verfügbar",
   "codexAuth.pauseFailed": "{email} konnte nicht pausiert werden. Es wurde nichts geändert.",
@@ -1411,6 +1413,8 @@ export const de: Record<TKey, string> = {
 
   "accountPool.strategy": "Rotationsstrategie",
   "accountPool.strategyDesc": "Wie OpenCodex einer neuen/ungebundenen Aufgabe ein Konto zuweist.",
+  "accountPool.strategyResetFirst": "Nächste Rücksetzung zuerst",
+  "accountPool.strategyHintResetFirst": "Unterhalb der Nutzungsschwelle wird die nächste 5-Stunden- oder Wochenrücksetzung bevorzugt. Gebundene Aufgaben folgen der konfigurierten Affinitätsregel. Unabhängige Modellkontingente werden nach Nutzung geordnet.",
   "accountPool.strategyQuota": "Kontingent",
   "accountPool.strategyRoundRobin": "Round-Robin",
   "accountPool.strategyFillFirst": "Fill-first",

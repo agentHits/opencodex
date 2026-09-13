@@ -1348,6 +1348,8 @@ export const zh: Record<TKey, string> = {
   "codexAuth.pause": "暂停",
   "codexAuth.resume": "恢复",
   "codexAuth.paused": "已暂停",
+  "codexAuth.planExcluded": "不自动选择",
+  "codexAuth.planExcludedHint": "套餐 {plan} 已从自动选择中排除。仍可明确指定此账号。",
   "codexAuth.pauseSucceeded": "已暂停 {email}",
   "codexAuth.resumeSucceeded": "{email} 已重新加入账号池",
   "codexAuth.pauseFailed": "无法暂停 {email}，未做任何更改。",
@@ -1428,6 +1430,8 @@ export const zh: Record<TKey, string> = {
 
   "accountPool.strategy": "轮换策略",
   "accountPool.strategyDesc": "OpenCodex 如何为新建/未绑定任务分配账号。",
+  "accountPool.strategyResetFirst": "额度即将刷新优先",
+  "accountPool.strategyHintResetFirst": "在低于用量阈值的账号中，优先选择下次5小时或周额度重置最早的账号。已绑定任务遵循配置的亲和策略。独立模型额度按用量排序。",
   "accountPool.strategyQuota": "配额",
   "accountPool.strategyRoundRobin": "轮询",
   "accountPool.strategyFillFirst": "填满优先",

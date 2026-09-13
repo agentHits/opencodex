@@ -1917,6 +1917,8 @@ export const en = {
   "codexAuth.pause": "Pause",
   "codexAuth.resume": "Resume",
   "codexAuth.paused": "PAUSED",
+  "codexAuth.planExcluded": "Not auto-selected",
+  "codexAuth.planExcludedHint": "Plan {plan} is excluded from automatic selection. Explicit account routes remain available.",
   "codexAuth.pauseSucceeded": "{email} is paused",
   "codexAuth.resumeSucceeded": "{email} is available to the pool again",
   "codexAuth.pauseFailed": "Could not pause {email}. Nothing was changed.",
@@ -1997,6 +1999,8 @@ export const en = {
 
   "accountPool.strategy": "Rotation strategy",
   "accountPool.strategyDesc": "How OpenCodex assigns an account to a new/unbound task.",
+  "accountPool.strategyResetFirst": "Soonest reset first",
+  "accountPool.strategyHintResetFirst": "Prefer the nearest future 5-hour or weekly reset among accounts below the usage threshold. Bound tasks follow the configured affinity policy. Independent model quotas use quota ordering.",
   "accountPool.strategyQuota": "Quota",
   "accountPool.strategyRoundRobin": "Round-robin",
   "accountPool.strategyFillFirst": "Fill-first",

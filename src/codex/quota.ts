@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, openSync, readSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFile, getConfigDir } from "../config";
 import { captureConfigGeneration, type GenerationContext } from "../lib/state-store-sweeper";
@@ -6,10 +6,12 @@ import { isThirtyDayOnlyCodexPlan } from "./plan";
 import { MAIN_CODEX_ACCOUNT_ID } from "./account-id";
 import { getObservedMainQuotaIdentityKey, isMainQuotaWriterLive, type MainQuotaWriter } from "./main-account-cache";
 
-import type { StoredAccountQuota, WhamUsageResponse, WhamUsageWindow } from "./quota-types";
+import { CodexQuotaHistory, QUOTA_HISTORY_LIMITS, type QuotaHistoryWindow } from "./quota-history";
+import { isPoolQuotaWriterLive, poolQuotaHistoryIdentity } from "./account-store";
+import type { PoolQuotaWriter, StoredAccountQuota, WhamUsageResponse, WhamUsageWindow } from "./quota-types";
 export type { StoredAccountQuota, WhamUsageResponse } from "./quota-types";
 
-/** Disk snapshot under OPENCODEX_HOME — quota and policy identity only, never credential tags. */
+/** Disk snapshot: quota, private non-secret publication UUIDs and policy identity; never token-derived fingerprints. */
 const QUOTA_CACHE_FILENAME = "codex-quota-cache.json";
 /** Keep last-known bars across restarts; WHAM still refreshes on TTL in live/prime paths. */
 const QUOTA_DISK_MAX_AGE_MS = 6 * 60 * 60_000;
@@ -19,6 +21,7 @@ type QuotaDiskFile = {
   version: 1;
   quotas: Record<string, StoredAccountQuota>;
   mainPolicyQuota?: MainPolicyQuota;
+  history?: ReturnType<CodexQuotaHistory["serialize"]>;
 };
 
 type MainPolicyQuota = { identityKey: string; quota: StoredAccountQuota };
@@ -61,6 +64,7 @@ export function resetAtToMs(resetAt: number): number {
 }
 
 const accountQuota = new Map<string, StoredAccountQuota>();
+const quotaHistory = new CodexQuotaHistory();
 let lastReconciledGeneration = 0;
 let liveAccountIds = new Set<string>();
 
@@ -268,6 +272,7 @@ export function setAccountQuotaFromParsed(
   writerGeneration = captureConfigGeneration(),
   mainWriter?: MainQuotaWriter,
   policyQuota: Omit<StoredAccountQuota, "updatedAt"> | null = quota,
+  historyEvidence?: QuotaObservationEvidence,
 ): void {
   if (!quota) return;
   if (!mayCommitAccountQuota(accountId, writerGeneration)) return;
@@ -276,6 +281,11 @@ export function setAccountQuotaFromParsed(
   hydrateAccountQuotasFromDisk();
   const legacyExisting = accountQuota.get(accountId);
   const updatedAt = Date.now();
+  if (historyEvidence && historyEvidence.writer.accountId === accountId && isPoolQuotaWriterLive(historyEvidence.writer)) {
+    quotaHistory.append(historyEvidence.writer, { observedAt: historyEvidence.observedAt, source: historyEvidence.source,
+      credentialGeneration: historyEvidence.writer.credentialGeneration, windows: historyWindows(historyEvidence.raw),
+    }, updatedAt);
+  }
   // Legacy rotation keeps its existing carry behavior, but never inherits policy-only
   // evidence that outlived its disk TTL. Policy has a separate, identity-checked base.
   const next = mergeAccountQuota(quota, legacyExisting, updatedAt);
@@ -446,6 +456,7 @@ const SPARK_MODEL_MARKER = "codex-spark";
  * must write the SAME label so a header refresh replaces the WHAM reading instead of doubling it.
  */
 const SPARK_SHORT_WINDOW_LABEL = "GPT-5.3-Codex-Spark 5h";
+const SPARK_WEEKLY_WINDOW_LABEL = "GPT-5.3-Codex-Spark Weekly";
 
 /** True when the routed model belongs to the Spark family, which carries its own rate limit. */
 function isCodexSparkModel(modelId: string | undefined): boolean {
@@ -540,7 +551,7 @@ export function applyAccountQuotaFromUpstreamHeaders(
   headers: Headers,
   writerGeneration = captureConfigGeneration(),
   mainWriter?: MainQuotaWriter,
-  options?: { modelId?: string },
+  options?: { modelId?: string; poolWriter?: PoolQuotaWriter },
 ): void {
   const quota = parseUpstreamQuotaHeaders(headers, options);
   if (!quota) return;
@@ -564,7 +575,10 @@ export function applyAccountQuotaFromUpstreamHeaders(
       legacyQuota = { ...quota, customWindows: merged };
     }
   }
-  setAccountQuotaFromParsed(accountId, legacyQuota, writerGeneration, mainWriter, policyQuota);
+  const validHistory = !["x-codex-primary-used-percent", "x-codex-secondary-used-percent", "x-codex-tertiary-used-percent"]
+    .some(name => isInvalidPolicyUsagePercent(headers.get(name)));
+  setAccountQuotaFromParsed(accountId, legacyQuota, writerGeneration, mainWriter, policyQuota,
+    options?.poolWriter && validHistory ? { writer: options.poolWriter, observedAt: Date.now(), source: "response-header", raw: quota } : undefined);
 }
 
 export function updateAccountQuota(
@@ -658,9 +672,10 @@ function hydrateAccountQuotasFromDisk(): void {
   try {
     const path = join(getConfigDir(), QUOTA_CACHE_FILENAME);
     if (!existsSync(path)) return;
-    const raw = readFileSync(path, "utf8");
+    const raw = readQuotaCacheBounded(path);
     const parsed = JSON.parse(raw) as QuotaDiskFile;
     if (!parsed || parsed.version !== 1 || !parsed.quotas || typeof parsed.quotas !== "object") return;
+    quotaHistory.hydrate(parsed.history);
     // Policy evidence deliberately outlives the legacy six-hour rotation-cache TTL.
     mainPolicyQuota = readMainPolicyQuota(parsed.mainPolicyQuota);
     const now = Date.now();
@@ -687,6 +702,7 @@ function schedulePersistAccountQuotas(): void {
         version: 1,
         quotas,
         ...(mainPolicyQuota ? { mainPolicyQuota } : {}),
+        history: quotaHistory.serialize(),
       };
       atomicWriteFile(join(getConfigDir(), QUOTA_CACHE_FILENAME), `${JSON.stringify(body)}\n`);
     } catch {
@@ -735,6 +751,8 @@ function forgetCodexQuotaBaseline(accountId?: string): void {
 }
 
 export function clearAccountQuota(accountId?: string): void {
+  if (accountId) hydrateAccountQuotasFromDisk();
+  quotaHistory.clear(accountId);
   if (accountId) {
     hydrateAccountQuotasFromDisk();
     accountQuota.delete(accountId);
@@ -762,7 +780,7 @@ export function clearAccountQuota(accountId?: string): void {
 export function reconcileCodexQuotaAccounts(context: GenerationContext): number {
   if (context.generation <= lastReconciledGeneration) return 0;
   hydrateAccountQuotasFromDisk();
-  let removed = 0;
+  let removed = quotaHistory.reconcile(context.codexAccountIds);
   for (const accountId of accountQuota.keys()) {
     if (context.codexAccountIds.has(accountId)) continue;
     accountQuota.delete(accountId);
@@ -888,7 +906,7 @@ export function parseUsageQuota(data: WhamUsageResponse): Omit<StoredAccountQuot
   const sparkCustomWindows: Array<{ label: string; percent: number; resetAt?: number }> = [];
   for (const [label, window] of [
     [SPARK_SHORT_WINDOW_LABEL, sparkShort],
-    ["GPT-5.3-Codex-Spark Weekly", sparkWeekly],
+    [SPARK_WEEKLY_WINDOW_LABEL, sparkWeekly],
   ] as const) {
     const percent = normalizeUsagePercent(window?.used_percent);
     if (percent === undefined) continue;
@@ -901,4 +919,71 @@ export function parseUsageQuota(data: WhamUsageResponse): Omit<StoredAccountQuot
   if (resetCredits !== undefined) quota.resetCredits = resetCredits;
 
   return hasKnownQuotaValue(quota) || resetCredits !== undefined ? quota : null;
+}
+
+
+export interface QuotaObservationEvidence {
+  writer: PoolQuotaWriter;
+  observedAt: number;
+  source: "wham" | "response-header";
+  raw: Omit<StoredAccountQuota, "updatedAt">;
+}
+
+/** Reject raw invalid readings before the compatibility parser clamps them into valid-looking bars. */
+export function isValidWhamHistoryObservation(data: WhamUsageResponse): boolean {
+  const windows = [data.rate_limit?.primary_window, data.rate_limit?.secondary_window, data.rate_limit?.tertiary_window];
+  for (const limit of Array.isArray(data.additional_rate_limits) ? data.additional_rate_limits : []) {
+    if (limit && typeof limit === "object") windows.push(limit.rate_limit?.primary_window, limit.rate_limit?.secondary_window);
+  }
+  return !windows.some(window => isInvalidPolicyUsagePercent(window?.used_percent));
+}
+
+function historyWindows(quota: Omit<StoredAccountQuota, "updatedAt">): QuotaHistoryWindow[] {
+  const windows: QuotaHistoryWindow[] = [];
+  for (const window of ["short", "weekly", "monthly"] as const) {
+    const percent = quota[`${window}Percent`];
+    const reset = quota[`${window}ResetAt`];
+    if (typeof percent !== "number" || !Number.isFinite(percent) || percent < 0 || percent > 100) continue;
+    windows.push({ family: "account", window, usedPercent: percent,
+      ...(typeof reset === "number" && Number.isFinite(reset) && reset >= 0 ? { resetAtMs: resetAtToMs(reset) } : {}),
+      ...(window === "short" && quota.shortWindowSeconds ? { windowSeconds: quota.shortWindowSeconds } : {}),
+      ...(window === "monthly" && quota.monthlyIsPrimaryWindow ? { monthlyIsPrimaryWindow: true } : {}),
+    });
+  }
+  for (const [label, window] of [[SPARK_SHORT_WINDOW_LABEL, "short"], [SPARK_WEEKLY_WINDOW_LABEL, "weekly"]] as const) {
+    const raw = quota.customWindows?.find(row => row.label === label);
+    if (!raw || !Number.isFinite(raw.percent) || raw.percent < 0 || raw.percent > 100) continue;
+    windows.push({ family: "spark", window, usedPercent: raw.percent,
+      ...(typeof raw.resetAt === "number" && Number.isFinite(raw.resetAt) && raw.resetAt >= 0 ? { resetAtMs: resetAtToMs(raw.resetAt) } : {}),
+    });
+  }
+  return windows;
+}
+
+/** A cache read is bounded even if a file grows between stat and read. */
+function readQuotaCacheBounded(path: string): string {
+  const limit = 4 * 1024 * 1024;
+  const flags = fsConstants.O_RDONLY | (process.platform === "win32" ? 0 : fsConstants.O_NONBLOCK | fsConstants.O_NOFOLLOW);
+  const fd = openSync(path, flags);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > limit) throw new Error("quota cache exceeds bounds");
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= limit) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, limit + 1 - total));
+      const size = readSync(fd, chunk, 0, chunk.length, null);
+      if (!size) return Buffer.concat(chunks, total).toString("utf8");
+      chunks.push(chunk.subarray(0, size)); total += size;
+    }
+    throw new Error("quota cache exceeds bounds");
+  } finally { closeSync(fd); }
+}
+
+/** Cached pool observations only. An unavailable identity never authorizes publication or deletion. */
+export function getAccountQuotaHistory(accountId: string, limit: number = QUOTA_HISTORY_LIMITS.perAccount) {
+  hydrateAccountQuotasFromDisk();
+  const result = quotaHistory.read(accountId, poolQuotaHistoryIdentity(accountId), Date.now(), limit);
+  return { observations: result.samples.map(({ credentialGeneration: _generation, ...sample }) => sample),
+    truncated: result.truncated, retention: { maxObservations: QUOTA_HISTORY_LIMITS.perAccount, maxAgeDays: 30 } };
 }

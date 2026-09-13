@@ -1774,6 +1774,8 @@ export const ja: Record<TKey, string> = {
   "codexAuth.pause": "一時停止",
   "codexAuth.resume": "再開",
   "codexAuth.paused": "一時停止中",
+  "codexAuth.planExcluded": "自動選択の対象外",
+  "codexAuth.planExcludedHint": "プラン {plan} は自動選択の対象外です。アカウントを明示的に指定すると利用できます。",
   "codexAuth.pauseSucceeded": "{email} を一時停止しました",
   "codexAuth.resumeSucceeded": "{email} をアカウントプールに戻しました",
   "codexAuth.pauseFailed": "{email} を一時停止できませんでした。変更はありません。",
@@ -1854,6 +1856,8 @@ export const ja: Record<TKey, string> = {
 
   "accountPool.strategy": "ローテーション戦略",
   "accountPool.strategyDesc": "OpenCodex が新規/未紐付けタスクへアカウントを割り当てる方法です。",
+  "accountPool.strategyResetFirst": "リセットが近い順",
+  "accountPool.strategyHintResetFirst": "使用率のしきい値未満から、次の5時間枠または週次枠のリセットが最も近いアカウントを選びます。紐付け済みタスクは設定されたアフィニティ方針に従います。独立したモデル枠は使用率順です。",
   "accountPool.strategyQuota": "クォータ",
   "accountPool.strategyRoundRobin": "ラウンドロビン",
   "accountPool.strategyFillFirst": "フィルファースト",

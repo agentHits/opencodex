@@ -1367,6 +1367,8 @@ export const ko: Record<TKey, string> = {
   "codexAuth.pause": "일시 중지",
   "codexAuth.resume": "재개",
   "codexAuth.paused": "일시 중지됨",
+  "codexAuth.planExcluded": "자동 선택 제외",
+  "codexAuth.planExcludedHint": "{plan} 플랜은 자동 선택에서 제외됩니다. 계정을 직접 지정하면 사용할 수 있습니다.",
   "codexAuth.pauseSucceeded": "{email} 계정을 일시 중지했습니다",
   "codexAuth.resumeSucceeded": "{email} 계정을 풀에서 다시 사용할 수 있습니다",
   "codexAuth.pauseFailed": "{email} 계정을 일시 중지하지 못했습니다. 변경 사항이 없습니다.",
@@ -1447,6 +1449,8 @@ export const ko: Record<TKey, string> = {
 
   "accountPool.strategy": "로테이션 전략",
   "accountPool.strategyDesc": "OpenCodex가 새 작업/바인딩 없는 작업에 계정을 배정하는 방식입니다.",
+  "accountPool.strategyResetFirst": "가장 가까운 초기화 우선",
+  "accountPool.strategyHintResetFirst": "사용량 임계값 미만인 계정 중 다음 5시간·주간 초기화가 가장 가까운 계정을 고릅니다. 연결된 작업은 설정된 어피니티 정책을 따릅니다. 독립 모델 한도에는 사용량 순서를 적용합니다.",
   "accountPool.strategyQuota": "할당량",
   "accountPool.strategyRoundRobin": "라운드로빈",
   "accountPool.strategyFillFirst": "필 퍼스트",
