@@ -242,6 +242,21 @@ Codex'in yerel model seçici önbelleğini geçersiz kılın, böylece aktif ope
 kataloğundan yeniden oluşturulur. `ocx sync` ile aynı eski `app-server` uyarısı
 ve isteğe bağlı `--restart-codex` davranışı geçerlidir.
 
+### `ocx catalog pull <https-url> [--auth-env <NAME>] [--json] [--restart-codex]`
+
+Başka bir OpenCodex örneğinin `/v1/catalog` uç noktasının sunduğu eksiksiz kataloğu kurar ve
+ardından `models_cache.json` dosyasını eşitler. URL HTTPS olmalıdır; HTTP yalnızca loopback için
+kabul edilir. URL içine gömülü kimlik bilgileri, sorgular, parçalar, yönlendirmeler, boyutu aşan
+yanıtlar ve geçersiz kataloglar, herhangi bir yerel yazma işleminden önce reddedilir. Kimlik
+doğrulama isteğe bağlıdır ve yalnızca ortam değişkeni adıyla (`--auth-env`) okunur, argv'den
+alınmaz.
+
+Katalog ve önbellek, paylaşılan Codex katalog kilidi altında yazılır; bir hata durumunda
+last-known-good dosyalar korunur. Aynı baytlar, mtime değerlerini koruyan bir no-op'tur.
+`--restart-codex` yalnızca gerçek bir yazmadan sonra uygulanır. `ETag` koşullu istekleri ve Desktop
+uygulamasının yeniden başlatılması bu komutun kapsamında değildir. Tam `--json` zarfı ve çıkış
+kodları için [İngilizce referansa](/reference/cli/lifecycle/) bakın.
+
 ## Arka plan servisi
 
 ### `ocx service [install|repair|restart|start|stop|status|uninstall|remove]`

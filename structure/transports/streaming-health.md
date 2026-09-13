@@ -10,7 +10,13 @@ removing support for non-default WebSocket quota families.
 Key-auth hosted-search continuations validate account selection after pacing and report a failed
 terminal on drift; see [continuation binding contract](../runtime.md#hosted-search-continuation-binding).
 
+Shared parsing and streaming follow the [request-copy](byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](byte-accounting.md#stream-buffer-accounting) contracts.
+
 ## Heartbeat and stall deadline
+
+Native Chat uses the same resolved `stallTimeoutSec` with a pending-upstream-read allowance that
+pauses under downstream backpressure. Its Chat error and cancellation contract is documented in
+[native Chat completion lifecycle](../data-planes/inbound-compat.md#native-chat-completion-lifecycle).
 
 The HTTP/SSE bridge emits an SSE comment-line keep-alive (`: opencodex heartbeat`) during upstream
 silence to re-arm Codex's idle timer (Codex's default `stream_idle_timeout` is 300 s and ANY SSE

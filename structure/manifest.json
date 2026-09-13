@@ -143,6 +143,17 @@
       ]
     },
     {
+      "path": "transports/byte-accounting.md",
+      "tier": 3,
+      "title": "Byte Accounting",
+      "scope": "Request-copy and stream-buffer byte accounting shared by parsing, SSE rewriting, the adapters, and the translator budget.",
+      "documents": [
+        "src/adapters/",
+        "src/lib/",
+        "src/server/"
+      ]
+    },
+    {
       "path": "transports/responses.md",
       "tier": 3,
       "title": "Responses Transport",

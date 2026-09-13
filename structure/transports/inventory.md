@@ -3,6 +3,11 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+The Chat adapter's [OpenCode Go instruction ordering](../providers/chat-compat.md#opencode-go-chronological-instructions)
+changes translated message placement only; endpoint selection and transport stay with their existing owners.
+
+Shared parsing and streaming follow the [request-copy](byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](byte-accounting.md#stream-buffer-accounting) contracts.
+
 ## Transport inventory
 
 The sections above cover the transports with load-bearing invariants. The rest of the transport
@@ -37,6 +42,24 @@ root pruning cannot erase attachment provenance; the same text participates in t
 Native Composer/MCP behavior and text-only historical replay remain unchanged.
 
 The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
+## Media iteration retention
+
+`src/images/loop.ts` admits at most 32 MiB of serialized non-heartbeat adapter events per
+iteration, including array framing, and 2 MiB of UTF-8 arguments per current tool call. Both
+`runTurn` emission and ordinary stream collection enforce the shared translator limits before
+retaining another event. Overflow aborts the producer and surfaces `translation_buffer_limit`.
+The iteration budget is separate from adapter leases and final response buffers; collected
+`runTurn` events reach the scanner directly without a second charge. Heartbeats do not reset
+argument accounting, and each new iteration receives a fresh retention budget. The charge follows
+what `src/adapters/run-turn-queue.ts` keeps: `push` reports whether it merged a text or thinking
+delta into its buffered tail, and a merged delta costs only its appended payload. Billing every
+pre-merge envelope would abort a turn on roughly a thirtieth of the documented limit whenever a
+producer streams token-granular deltas ahead of its consumer. These bounds do
+not cap process RSS or the conversation messages accumulated across completed media iterations.
+`tests/images/loop.test.ts` covers early producer cancellation, byte boundaries, iteration reset,
+opaque metadata, normal tool passthrough, coalesced-tail accounting, and consumer cancellation on
+both execution paths.
 
 ## Provider diagnostic outbound safety
 

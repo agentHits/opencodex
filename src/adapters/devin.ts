@@ -7,6 +7,7 @@
  * streams CloudChatEvent into AdapterEvent.
  */
 import type { AdapterEvent, OcxAssistantMessage, OcxContentPart, OcxMessage, OcxParsedRequest, OcxProviderConfig, OcxTool, OcxToolCall, OcxToolResultMessage, OcxUsage } from "../types";
+import { namespacedToolName } from "../types";
 import type { IncomingMeta, ProviderAdapter } from "./base";
 import { streamChatEvents, allocateCascadeId, CloudChatError, type ChatHistoryItem, type ToolDef } from "./devin/cloud-direct";
 import { getCachedCatalog } from "./devin/cloud-direct/catalog";
@@ -326,6 +327,76 @@ export function mapOcxToolsToDevin(tools: OcxTool[] | undefined): ToolDef[] | un
   }));
 }
 
+/**
+ * Devin's request mapper advertises the local tool name, so a namespaced Codex tool such as
+ * `mcp__cua_repl__js` is sent upstream as `js`. Restore a returned bare name to its canonical request
+ * identity only when exactly one advertised tool owns it. A null owner is an ambiguous catalog and
+ * must fail before dispatch; an absent owner remains unchanged for the shared undeclared-tool guard
+ * to reject.
+ *
+ * Canonical names are registered as aliases of themselves because the adapter accepts them on return
+ * too. Tracking only local names let one tool's canonical identity collide with another tool's local
+ * name and resolve to the wrong owner: with `{ namespace: "a", name: "x" }` and
+ * `{ namespace: "b", name: "a__x" }`, a returned `a__x` is both the first tool's canonical identity
+ * and the second tool's advertised name, and it used to map to `b__a__x` — so the bridge dispatched
+ * the call to the wrong client tool. That case is genuinely ambiguous and now fails closed.
+ */
+function buildDevinReturnedToolNameMap(
+  tools: OcxTool[] | undefined,
+): ReadonlyMap<string, string | null> {
+  const names = new Map<string, string | null>();
+  const addOwner = (alias: string, canonical: string) => {
+    if (!names.has(alias)) {
+      names.set(alias, canonical);
+    } else if (names.get(alias) !== canonical) {
+      names.set(alias, null);
+    }
+  };
+  for (const tool of tools ?? []) {
+    const canonical = namespacedToolName(tool.namespace, tool.name);
+    addOwner(tool.name, canonical);
+    addOwner(canonical, canonical);
+  }
+  return names;
+}
+
+function restoreDevinReturnedToolName(
+  name: string,
+  names: ReadonlyMap<string, string | null>,
+): string | null {
+  return names.has(name) ? names.get(name)! : name;
+}
+
+type DevinMappedToolCallStart =
+  | Extract<AdapterEvent, { type: "tool_call_start" }>
+  | Extract<AdapterEvent, { type: "error" }>;
+
+function mapDevinToolCallStart(
+  id: string,
+  name: string,
+  names: ReadonlyMap<string, string | null>,
+): DevinMappedToolCallStart {
+  const restoredName = restoreDevinReturnedToolName(name, names);
+  if (restoredName === null) {
+    return {
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    };
+  }
+  return { type: "tool_call_start", id, name: restoredName };
+}
+
+/** Test seam for the request-scoped tool-call event mapping used by runTurn. */
+export function mapDevinToolCallStartForTests(
+  id: string,
+  name: string,
+  tools: OcxTool[] | undefined,
+): DevinMappedToolCallStart {
+  return mapDevinToolCallStart(id, name, buildDevinReturnedToolNameMap(tools));
+}
+
 export function createDevinAdapter(
   provider: OcxProviderConfig,
   context: { providerId?: string } = {},
@@ -391,6 +462,7 @@ export function createDevinAdapter(
       // every RPC to the US server it is not provisioned on.
       const host = resolveDevinApiServer(provider.baseUrl, credentialProviderId);
       const modelUid = await resolveWireModelUid(rawModelId, apiKey, host, parsed.options.reasoning);
+      const returnedToolNames = buildDevinReturnedToolNameMap(parsed.context.tools);
       let openToolId: string | undefined;
       let usage: OcxUsage | undefined;
       let stopReason: string | undefined;
@@ -444,8 +516,13 @@ export function createDevinAdapter(
           }
           if (event.kind === "tool_call_start") {
             closeOpenTool();
+            const mapped = mapDevinToolCallStart(event.id, event.name, returnedToolNames);
+            if (mapped.type === "error") {
+              emit({ ...mapped, ...(usage ? { usage } : {}) });
+              return;
+            }
             openToolId = event.id;
-            emit({ type: "tool_call_start", id: event.id, name: event.name });
+            emit(mapped);
             continue;
           }
           if (event.kind === "tool_call_args") {
