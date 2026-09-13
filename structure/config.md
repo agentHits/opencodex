@@ -225,3 +225,13 @@ Config JSON preserves the boolean; only literal true activates the role-changing
 The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
 
 The OpenCode launcher resolves the existing local management origin from the live bind and configured hub ingress. Its admin credential comes from the existing admin environment/file policy; an absent credential fails without substituting a data key.
+
+Provider `autoReviewModel` and `autoReviewModelOverrides` accept validated final-catalog selectors. Per-model keys preserve case and accept the existing raw/encoded slash equivalence. File-load degradation removes malformed optional selectors only; management writes reject malformed shapes. Omitted provider saves preserve selectors, explicit clears remove them, and raw editor candidates adopt normalized values before persistence and live replacement. See [catalog ownership](catalog.md#provider-scoped-approval-reviewer).
+
+Display-name validation retains prototype-shaped model IDs as data; reviewer-target map validation remains separate and rejects its reserved keys.
+
+## Explicit per-model capability declarations
+
+`modelCapabilities` on `src/types/provider.ts` stores exact model-ID entries with optional inputModalities, contextTier and video.processing axes. `src/config/provider-validation.ts` strictly validates writes and merges PATCH axes without sharing live objects; null map/model/axis/processing tombstones delete, while empty PATCH objects do nothing. Complete POST/PUT replacements reject tombstones. File reads retain valid axes; malformed explicit modalities restrict to text with a diagnostic. The two catalog writers receive explicit config and gather fingerprints include the map. This storage contract alone does not activate a context tier, advertise a larger window or enable video processing.
+
+The text-only consumer reads exact inputModalities declarations before legacy hints. CLI add/edit `--text-only` targets one model and preserves sibling declarations; `src/vision/eligibility.ts` routes declared text-only models into existing image-description or explicit-omission handling. Positive routed image declarations override stale candidate metadata, while native catalog authority retains its existing legacy policy.
