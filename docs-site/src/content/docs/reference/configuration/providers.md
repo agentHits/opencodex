@@ -231,11 +231,12 @@ provider request is sent. Changing away and back also ends that continuation. St
 use the new selection. Selection changes before the first provider send retain normal reselection.
 
 Custom-model `reasoningEfforts` normally override discovered provider metadata. The bounded
-exception is an explicit Astra or Daybreak custom row on the canonical `openai` Codex-forward
-destination: its advertised list is intersected with that model's pinned native capabilities.
-An explicit empty list remains empty with no default; a nonempty incompatible list falls back
-to the native default as a single choice. Defaults must belong to the final list. This changes
-the catalog projection, not stored configuration or arbitrary gateway models sharing a GPT name.
+exception is an explicit custom row whose model id has pinned native Codex capabilities,
+including Astra or Daybreak on an arbitrary gateway: its advertised list is intersected with
+that model's pinned native capabilities. Full native identity still requires the canonical
+`openai` Codex-forward destination. An explicit empty list remains empty with no default; a
+nonempty incompatible list falls back to the native default as a single choice. Defaults must
+belong to the final list. This changes the catalog projection, not stored configuration.
 See [custom native catalog examples](/guides/codex-app-models/).
 
 ### Operator-pinned reasoning effort
