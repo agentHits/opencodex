@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getConfigPath,
   getDefaultConfig,
   loadConfig,
+  readConfigDiagnostics,
   saveConfig,
   validateConfigCandidate,
 } from "../../src/config";
@@ -138,4 +139,85 @@ test("Fast rows default on for fresh and omitted config; explicit false and malf
     expect(loaded.fastRows).toBe(expected);
     expect(loaded.providers.xai.note).toBe("keep me");
   }
+});
+
+
+test.each([
+  { enabled: "true" },
+  { enabled: true, port: 70000 },
+  "secret-shaped-malformed-listener-value",
+])("malformed optional listeners warn without discarding unrelated settings: %j", listener => {
+  const config = { ...candidate(undefined),
+    apiKeys: [{ id: "preserved", name: "preserved", key: "fixture-key", createdAt: "2026-01-01" }],
+    unauthenticatedLoopbackListener: listener,
+    hub: { managementIngress: listener },
+  };
+  const bytes = JSON.stringify(config);
+  writeFileSync(getConfigPath(), bytes);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const loaded = loadConfig();
+    expect(loaded.providers.xai.note).toBe("keep me");
+    expect(loaded.apiKeys?.[0]?.id).toBe("preserved");
+    expect(loaded.unauthenticatedLoopbackListener).toBeUndefined();
+    expect(loaded.hub?.managementIngress).toBeUndefined();
+    const messages = warn.mock.calls.flat().join("\n");
+    expect(messages).toContain("unauthenticatedLoopbackListener ignored");
+    expect(messages).toContain("hub.managementIngress ignored");
+    expect(messages).not.toContain("secret-shaped-malformed-listener-value");
+    const diagnostics = readConfigDiagnostics();
+    expect(diagnostics.warnings?.join("\n")).toContain("unauthenticatedLoopbackListener ignored");
+    expect(diagnostics.warnings?.join("\n")).toContain("hub.managementIngress ignored");
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
+  } finally { warn.mockRestore(); }
+});
+
+test.each([undefined, { enabled: false }])("absent or disabled listeners do not produce degradation warnings: %j", listener => {
+  writeFileSync(getConfigPath(), JSON.stringify({ ...candidate(undefined),
+    unauthenticatedLoopbackListener: listener, hub: { managementIngress: listener },
+  }));
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    loadConfig();
+    const messages = warn.mock.calls.flat().join("\n");
+    expect(messages).not.toContain("Listener ignored");
+    expect(messages).not.toContain("managementIngress ignored");
+  } finally { warn.mockRestore(); }
+});
+
+test("salvaged diagnostics retain listener warnings alongside the routing error", () => {
+  const bytes = JSON.stringify({ ...candidate(undefined),
+    routingProfiles: { bad: { candidates: [] } },
+    unauthenticatedLoopbackListener: { enabled: "true" },
+    hub: { managementIngress: { enabled: true, port: 70000 } },
+  });
+  writeFileSync(getConfigPath(), bytes);
+  const diagnostics = readConfigDiagnostics();
+  expect(diagnostics.source).toBe("fallback");
+  expect(diagnostics.error).toContain("routingProfiles");
+  expect(diagnostics.config.providers.xai.note).toBe("keep me");
+  expect(diagnostics.warnings?.join("\n")).toContain("unauthenticatedLoopbackListener ignored");
+  expect(diagnostics.warnings?.join("\n")).toContain("hub.managementIngress ignored");
+  expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
+});
+
+
+test("valid ingress is not blamed when a malformed hub sibling disables the hub block", () => {
+  const bytes = JSON.stringify({ ...candidate(undefined), hub: {
+    dataPublicOrigin: "not-an-origin", managementIngress: { enabled: true, port: 12345 },
+  } });
+  writeFileSync(getConfigPath(), bytes);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const loaded = loadConfig();
+    expect(loaded.hub).toBeUndefined();
+    expect(loaded.providers.xai.note).toBe("keep me");
+    const messages = warn.mock.calls.flat().join("\n");
+    expect(messages).toContain("hub.dataPublicOrigin");
+    expect(messages).not.toContain("hub.managementIngress ignored");
+    const diagnostics = readConfigDiagnostics();
+    expect(diagnostics.warnings?.join("\n")).toContain("hub.dataPublicOrigin");
+    expect(diagnostics.warnings?.join("\n")).not.toContain("hub.managementIngress ignored");
+    expect(readFileSync(getConfigPath(), "utf8")).toBe(bytes);
+  } finally { warn.mockRestore(); }
 });
