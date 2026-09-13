@@ -84,9 +84,10 @@ import { codexAccountNamespaceProviderCollisionError } from "../../codex/account
  * Provider ids that share the Devin cloud-direct client, and therefore share its
  * process-memory caches.
  *
- * `devin` signs in through RegisterUser and `devin-cli` imports a signed-in local
- * CLI session, but both hand the same api_key to the same client, so one cache
- * serves both and one of them clearing it is not enough.
+ * `devin-cli` is a deprecated alias for the merged `devin` provider, but a
+ * config row the startup migration has not rekeyed yet can still arrive here —
+ * and its logout/removal must clear the same caches, because both ids hand the
+ * same api_key to the same client and one cache serves both.
  */
 function isDevinCloudDirectProvider(provider: string): boolean {
   return provider === "devin" || provider === "devin-cli";
@@ -276,9 +277,9 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     clearAccountQuotaCache(provider);
     // The cached user_jwt's payload contains the api_key, and the catalog is
     // keyed by that key. Without this they outlive the credential in process
-    // memory until the JWT's own ~24 minute expiry. `devin` and `devin-cli`
-    // share one cache, so gating on `devin` alone left a CLI-imported key's JWT
-    // resident after its own logout.
+    // memory until the JWT's own ~24 minute expiry. `devin-cli` is a deprecated
+    // alias whose unmigrated rows share the one cache, so gating on `devin`
+    // alone left a CLI-imported key's JWT resident after its own logout.
     if (isDevinCloudDirectProvider(provider)) await clearDevinCloudDirectCaches();
     return jsonResponse({ success: true });
   }
