@@ -45,6 +45,10 @@ const buildWindowsTaskXml = (...args: Parameters<typeof buildWindowsTaskXmlProdu
 const windowsTaskRegistrationHealthy = (...args: Parameters<typeof windowsTaskRegistrationHealthyProduction>) =>
   windowsTaskRegistrationHealthyProduction(args[0], args[1], args[2], args[3] === undefined ? TEST_WINDOWS_TASK_SID : args[3]);
 
+/** The exact LogonTrigger block the builder emits for the default test SID (#4425). */
+const LOGON_TRIGGER_BLOCK =
+  `<LogonTrigger>\n      <Enabled>true</Enabled>\n      <UserId>${TEST_WINDOWS_TASK_SID}</UserId>\n    </LogonTrigger>`;
+
 const TEST_DIR = join(import.meta.dir, ".tmp-service-test");
 const previousOpenCodexHome = process.env.OPENCODEX_HOME;
 const previousCodexHome = process.env.CODEX_HOME;
@@ -850,8 +854,8 @@ describe("Windows service task", () => {
    * `UserId` is optional in the schema, and omitting it makes a SessionStateChangeTrigger fire
    * for any account's session change. Scope it to the installing account when that account is
    * known. The builder is synchronous and cannot force an account lookup, so an unknown
-   * account degrades to the unscoped trigger — the same position the pre-existing
-   * `LogonTrigger` is already in, and still better than having no recovery trigger at all.
+   * account degrades every trigger to the unscoped form — still better than having no
+   * recovery trigger at all, and the position `LogonTrigger` was in before #4425.
    */
   test("scopes session-recovery triggers to the installing account when it is known", () => {
     const scoped = buildWindowsTaskXml("s.cmd", "l.vbs", undefined, "MACHINE\\installer");
@@ -883,6 +887,29 @@ describe("Windows service task", () => {
       expect(stateChangeAt).toBeGreaterThan(-1);
       expect(userIdAt).toBeLessThan(stateChangeAt);
     }
+  });
+
+  /**
+   * #4425: an unscoped LogonTrigger means "any user's logon", which a non-elevated user may
+   * not register — schtasks /create answers "Access is denied" even though the task design
+   * (InteractiveToken + LeastPrivilege) needs no elevation, and the old diagnostic then
+   * misread that denial as a privilege problem. The logon trigger consumes the same
+   * scoped-user element as its sibling session triggers, and logonTriggerType orders
+   * Enabled before UserId.
+   */
+  test("scopes the logon trigger to the installing account so a non-elevated create succeeds", () => {
+    const scoped = buildWindowsTaskXml("s.cmd", "l.vbs", undefined, "MACHINE\\installer");
+    const logon = /<LogonTrigger>[\s\S]*?<\/LogonTrigger>/i.exec(scoped)?.[0] ?? "";
+    expect(logon).toContain("<Enabled>true</Enabled>");
+    expect(logon).toContain("<UserId>MACHINE\\installer</UserId>");
+    expect(logon.indexOf("<Enabled>")).toBeLessThan(logon.indexOf("<UserId>"));
+
+    // Unknown account: unscoped rather than absent — the pre-#4425 shape, which only an
+    // elevated shell can register. Production always resolves a SID before staging.
+    const unscoped = buildWindowsTaskXml("s.cmd", "l.vbs", undefined, "");
+    const unscopedLogon = /<LogonTrigger>[\s\S]*?<\/LogonTrigger>/i.exec(unscoped)?.[0] ?? "";
+    expect(unscopedLogon).toContain("<Enabled>true</Enabled>");
+    expect(unscopedLogon).not.toContain("<UserId>");
   });
 
   test("accepts an explicit session scope only for the known matching identity", () => {
@@ -931,10 +958,13 @@ describe("Windows service task", () => {
     const scoped = buildWindowsTaskXml("ignored.cmd", guardLauncher, undefined, "MACHINE\\installer")
       .replace(/<Command>.*?<\/Command>/, `<Command>${guardWscript}</Command>`);
     const duplicateScope = scoped.replace(
-      "<UserId>MACHINE\\installer</UserId>",
-      "<UserId>MACHINE\\installer</UserId><UserId>MACHINE\\installer</UserId>",
+      "<UserId>MACHINE\\installer</UserId>\n      <StateChange>",
+      "<UserId>MACHINE\\installer</UserId><UserId>MACHINE\\installer</UserId>\n      <StateChange>",
     );
-    const emptyScope = scoped.replace("MACHINE\\installer", "");
+    const emptyScope = scoped.replace(
+      "<UserId>MACHINE\\installer</UserId>\n      <StateChange>",
+      "<UserId></UserId>\n      <StateChange>",
+    );
     expect(windowsTaskRegistrationHealthy(duplicateScope, guardWscript, guardLauncher, "MACHINE\\installer")).toBe(false);
     expect(windowsTaskRegistrationHealthy(emptyScope, guardWscript, guardLauncher, "MACHINE\\installer")).toBe(false);
 
@@ -962,7 +992,7 @@ describe("Windows service task", () => {
     // Windows drops elements equal to their schema default when it exports a task:
     // Trigger/Settings Enabled default to true and RunLevel defaults to LeastPrivilege.
     const canonical = xml
-      .replace("<LogonTrigger>\n      <Enabled>true</Enabled>\n    </LogonTrigger>", "<LogonTrigger />")
+      .replace(LOGON_TRIGGER_BLOCK, "<LogonTrigger />")
       .replace("    <RunLevel>LeastPrivilege</RunLevel>\n", "")
       .replace("    <Enabled>true</Enabled>\n    <Hidden>", "    <Hidden>");
     expect(canonical).toContain("<LogonTrigger />");
@@ -1076,7 +1106,7 @@ describe("Windows service task", () => {
     const launcher = "C:\\Users\\Test\\.opencodex\\service-launcher.vbs";
     const xml = buildWindowsTaskXml("ignored.cmd", launcher)
       .replace(/<Command>.*?<\/Command>/, `<Command>${wscript}</Command>`);
-    const bootOnly = xml.replace("<LogonTrigger>\n      <Enabled>true</Enabled>\n    </LogonTrigger>", "<BootTrigger />");
+    const bootOnly = xml.replace(LOGON_TRIGGER_BLOCK, "<BootTrigger />");
 
     // The schema allows arbitrary XML under Task/Data, and comments could smuggle a
     // decoy too — neither may stand in for a real logon trigger.
