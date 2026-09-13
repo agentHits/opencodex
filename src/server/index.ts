@@ -207,6 +207,13 @@ import {
 } from "../codex/native-profile-startup";
 import { handleImages } from "./images";
 import { handleLive, logLiveSidebandFrame, parseLiveSidebandTarget, resolveLiveSidebandUpgrade } from "./live";
+import { handleAudioTranscriptions } from "./audio-transcriptions";
+import { resolveAudioAdmission, TRANSCRIPTION_MODEL } from "./audio-upstream";
+import { resolveAudioClient } from "./audio-client";
+import { resolveDictationSocket } from "./audio-dictation";
+import { handleExternalLive, resolveExternalLiveSocket } from "./audio-live";
+import { EXTERNAL_CALL_PREFIX, LiveCallBindings } from "./live-call-bindings";
+import { clearableDeadline } from "../lib/abort";
 import { handleSearch } from "./search";
 import { handleContextHistory } from "./context-history";
 import { codexCompatibleUrl, contextEndpoint, contextRelayActivated } from "../codex/context-compat";
@@ -381,6 +388,7 @@ export function enqueueLiveSidebandPendingFrame(
 type LiveSidebandWebSocketFactory = (
   url: string,
   headers: Record<string, string>,
+  protocols?: string[],
 ) => WebSocket;
 
 function releaseLiveSidebandAdmission(ws: ServerWebSocket<WsData>): void {
@@ -413,8 +421,22 @@ function finalizeLiveSideband(ws: ServerWebSocket<WsData>, upstream?: WebSocket)
   ws.data.liveUpstream = undefined;
   ws.data.livePending = undefined;
   ws.data.livePendingBytes = undefined;
+  if (ws.data.liveConnectTimer !== undefined) clearTimeout(ws.data.liveConnectTimer);
+  if (ws.data.liveSessionTimer !== undefined) clearTimeout(ws.data.liveSessionTimer);
+  ws.data.liveConnectTimer = undefined;
+  ws.data.liveSessionTimer = undefined;
+  ws.data.liveUpstreamHeaders = undefined;
+  ws.data.liveUpstreamProtocols = undefined;
+  ws.data.liveValidateFrame = undefined;
+  if (ws.data.liveAbortListener) ws.data.liveAbortSignal?.removeEventListener("abort", ws.data.liveAbortListener);
+  ws.data.liveAbortSignal = undefined;
+  ws.data.liveAbortListener = undefined;
   ws.data.cancel = undefined;
-  releaseLiveSidebandAdmission(ws);
+  const finish = ws.data.liveFinish;
+  ws.data.liveFinish = undefined;
+  try { finish?.(ws.data.liveOutcome); }
+  catch { console.warn("[audio] upstream accounting failed during close"); }
+  finally { releaseLiveSidebandAdmission(ws); }
 }
 
 function armLiveSidebandCloseFallback(ws: ServerWebSocket<WsData>, upstream: WebSocket): void {
@@ -489,6 +511,10 @@ function closeLiveSidebandBeforeUpgrade(
 function closeLiveSideband(ws: ServerWebSocket<WsData>, code = 1000, reason = ""): void {
   if (ws.data.liveClosing) return;
   ws.data.liveClosing = true;
+  if (ws.data.liveConnectTimer !== undefined) clearTimeout(ws.data.liveConnectTimer);
+  if (ws.data.liveSessionTimer !== undefined) clearTimeout(ws.data.liveSessionTimer);
+  ws.data.liveConnectTimer = undefined;
+  ws.data.liveSessionTimer = undefined;
   ws.data.livePending = undefined;
   ws.data.livePendingBytes = undefined;
   ws.data.cancel = undefined;
@@ -678,12 +704,14 @@ export function openLiveSidebandUpstream(
 
 export function attachLiveSidebandUpstream(
   ws: ServerWebSocket<WsData>,
-  createWebSocket: LiveSidebandWebSocketFactory = (url, headers) => (
-    new WebSocket(url, { headers } as unknown as string[])
+  createWebSocket: LiveSidebandWebSocketFactory = (url, headers, protocols) => (
+    new WebSocket(url, { headers, protocols } as unknown as string[])
   ),
 ): void {
-  // A socket carried in from the upgrade handler already completed its handshake
-  // before the client was told 101. Reuse it rather than dialing a second upstream.
+  if (ws.data.liveAbortSignal?.aborted) {
+    closeLiveSideband(ws, 1000, "audio connection canceled");
+    return;
+  }
   const preOpened = ws.data.liveUpstream;
   let upstream: WebSocket;
   if (preOpened) {
@@ -696,30 +724,49 @@ export function attachLiveSidebandUpstream(
     }
     try {
       // Bun accepts per-handshake headers; the DOM lib types only list protocol arrays.
-      upstream = createWebSocket(url, ws.data.liveUpstreamHeaders ?? {});
+      upstream = createWebSocket(url, ws.data.liveUpstreamHeaders ?? {}, ws.data.liveUpstreamProtocols);
     } catch {
       closeLiveSideband(ws, 1011, "upstream connect failed");
       return;
     }
   }
   ws.data.liveUpstream = upstream;
+  ws.data.liveUpstreamHeaders = undefined;
+  ws.data.liveUpstreamProtocols = undefined;
   ws.data.liveClosing = false;
   ws.data.cancel = () => closeLiveSideband(ws, 1000, "client closed");
+  if (ws.data.liveMaxSessionMs !== undefined) {
+    ws.data.liveConnectTimer = setTimeout(() => {
+      ws.data.liveOutcome = "timeout";
+      closeLiveSideband(ws, 1011, "audio connection timed out");
+    }, 10_000);
+    ws.data.liveSessionTimer = setTimeout(() => closeLiveSideband(ws, 1000, "audio session expired"), ws.data.liveMaxSessionMs);
+  }
 
   upstream.addEventListener("close", (event) => {
     if (ws.data.liveUpstream !== upstream) return;
+    if (ws.data.liveFinish && !ws.data.liveClosing && event.code !== 1000) ws.data.liveOutcome = "connect_error";
     ws.data.liveClosing = true;
     finalizeLiveSideband(ws, upstream);
     try {
-      ws.close(event.code || 1000, event.reason || "");
+      const external = ws.data.liveMaxSessionMs !== undefined;
+      const validCode = event.code === 1000 || (event.code >= 1001 && event.code <= 1014 && ![1004, 1005, 1006].includes(event.code))
+        || (event.code >= 3000 && event.code <= 4999);
+      ws.close(external && !validCode ? 1011 : event.code || 1000, external ? "audio upstream closed" : event.reason || "");
     } catch {
       /* ignore */
     }
   });
   upstream.addEventListener("error", () => {
     if (ws.data.liveUpstream !== upstream) return;
+    if (ws.data.liveFinish && !ws.data.liveClosing) ws.data.liveOutcome = "connect_error";
     closeLiveSideband(ws, 1011, "upstream error");
   });
+  if (ws.data.liveAbortSignal) {
+    ws.data.liveAbortListener = () => closeLiveSideband(ws, 1000, "audio connection canceled");
+    ws.data.liveAbortSignal.addEventListener("abort", ws.data.liveAbortListener, { once: true });
+    if (ws.data.liveAbortSignal.aborted) closeLiveSideband(ws, 1000, "audio connection canceled");
+  }
 
   if (preOpened) {
     // The upstream opened before this socket existed, so its `open` event has already
@@ -758,6 +805,10 @@ export function attachLiveSidebandUpstream(
   upstream.addEventListener("open", () => {
     if (ws.data.liveUpstream !== upstream || ws.data.liveClosing) return;
     ws.data.liveOpened = true;
+    if (ws.data.liveConnectTimer !== undefined) clearTimeout(ws.data.liveConnectTimer);
+    ws.data.liveConnectTimer = undefined;
+    // An accepted transport alone does not prove inference/quota recovery.
+    // Keep healthy closes neutral; explicit transport failures are recorded below.
     const pending = ws.data.livePending ?? [];
     ws.data.livePending = undefined;
     ws.data.livePendingBytes = undefined;
@@ -778,11 +829,15 @@ export function attachLiveSidebandUpstream(
         return;
       }
       logLiveSidebandFrame("u2c", event.data);
-      if (typeof event.data === "string") ws.send(event.data);
-      else if (event.data instanceof ArrayBuffer) ws.send(event.data);
+      let sent: number;
+      if (typeof event.data === "string") sent = ws.send(event.data);
+      else if (event.data instanceof ArrayBuffer) sent = ws.send(event.data);
       else if (ArrayBuffer.isView(event.data)) {
-        ws.send(event.data.buffer.slice(event.data.byteOffset, event.data.byteOffset + event.data.byteLength));
-      } else ws.send(event.data as Buffer);
+        sent = ws.send(event.data.buffer.slice(event.data.byteOffset, event.data.byteOffset + event.data.byteLength));
+      } else sent = ws.send(event.data as Buffer);
+      if (ws.data.liveMaxSessionMs !== undefined && (sent === 0 || ws.getBufferedAmount() > MAX_WS_FRAME_BYTES)) {
+        closeLiveSideband(ws, 1013, "audio client backpressure");
+      }
     } catch {
       closeLiveSideband(ws, 1011, "client send failed");
     }
@@ -946,6 +1001,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   const managementAuth = deps.managementAuthState ?? initializeManagementAuthState(config);
   const managementSessionControl = createManagementSessionControl(managementAuth);
   let userCostOverlayReconciler: { stop(): void } | null = null;
+  const liveCallBindings = new LiveCallBindings();
   // Arm synchronously before listen. A pending journal therefore makes __main__ unusable
   // before any request can resolve its physical credential, while health/management/Pool stay live.
   reconcileLiveStateStores();
@@ -1114,6 +1170,8 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
     if (path === "/v1/responses/compact") return req.method === "POST";
     if (path === "/v1/messages" || path === "/v1/chat/completions") return req.method === "POST";
     if (path === "/v1/messages/count_tokens") return req.method === "POST";
+    if (path === "/v1/audio/transcriptions") return req.method === "POST";
+    if (path === "/v1/audio/transcriptions/stream") return req.headers.get("upgrade")?.toLowerCase() === "websocket";
     if (path === "/v1/alpha/search") return req.method === "POST";
     if (contextEndpoint(path)) return req.method === "POST";
     if (path === "/v1/images/generations" || path === "/v1/images/edits") {
@@ -2410,6 +2468,24 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         ));
       }
 
+      if (url.pathname === "/v1/audio/transcriptions" && req.method === "POST") {
+        disableResponsesRequestTimeout(req, requestServer);
+        if (isDraining()) return drainingResponse(req, policy);
+        const admission = resolveAudioAdmission(req.headers, config);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, policy);
+        if (!isAllowedRequestOrigin(req, policy)) {
+          return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin audio request blocked"), req, policy);
+        }
+        const start = Date.now();
+        const requestId = nextRequestLogId(start);
+        const logCtx: RequestLogContext = { model: TRANSCRIPTION_MODEL, provider: "unknown", ...admissionFields(admission) };
+        return runAdmittedHttpTurn(req, policy, async lease => {
+          const response = await handleAudioTranscriptions(req, config, logCtx, admission, lease);
+          addFinalRequestLog(requestId, start, logCtx, response.status);
+          return withCors(response, req, policy);
+        });
+      }
+
       // ChatGPT / Codex App voice (GPT‑Live / Frameless Bidi) + OpenAI Realtime call-create.
       // Clients hit either /v1/live (Frameless App) or /v1/realtime/calls (codex RealtimeCallClient /
       // public Realtime API). Sideband WS joins are handled just below.
@@ -2421,7 +2497,9 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         if (isDraining()) {
           return drainingResponse(req, policy);
         }
-        const admission = resolveApiAuth(req, policy);
+        const audioClient = resolveAudioClient(req, config);
+        if (audioClient instanceof Response) return withCors(audioClient, req, policy);
+        const admission = audioClient?.admission ?? resolveApiAuth(req, policy);
         if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, policy);
         if (!isAllowedRequestOrigin(req, policy)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, policy);
@@ -2434,7 +2512,9 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
           ...admissionFields(admission),
         };
         return runAdmittedHttpTurn(req, policy, async turnAdmissionLease => {
-          const response = await handleLive(req, config, logCtx, turnAdmissionLease);
+          const response = audioClient
+            ? await handleExternalLive(req, config, logCtx, { client: audioClient, lease: turnAdmissionLease, bindings: liveCallBindings })
+            : await handleLive(req, config, logCtx, turnAdmissionLease);
           addFinalRequestLog(
             requestId,
             start,
@@ -2454,11 +2534,19 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
       const liveSidebandTarget = req.headers.get("upgrade")?.toLowerCase() === "websocket"
         ? parseLiveSidebandTarget(url.pathname, url.searchParams, url.search.replace(/^\?/, ""))
         : null;
-      if (liveSidebandTarget) {
+      const dictationSocket = url.pathname === "/v1/audio/transcriptions/stream"
+        && req.headers.get("upgrade")?.toLowerCase() === "websocket";
+      if (liveSidebandTarget || dictationSocket) {
         if (isDraining()) {
           return drainingResponse(req, policy);
         }
-        const admission = resolveApiAuth(req, policy);
+        const audioClient = resolveAudioClient(req, config, dictationSocket);
+        if (audioClient instanceof Response) return withCors(audioClient, req, policy);
+        if (!audioClient && liveSidebandTarget && "callId" in liveSidebandTarget
+          && liveSidebandTarget.callId.startsWith(EXTERNAL_CALL_PREFIX)) {
+          return withCors(formatErrorResponse(401, "authentication_error", "Live call requires its creator API key"), req, policy);
+        }
+        const admission = audioClient?.admission ?? resolveApiAuth(req, policy);
         if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, policy);
         if (!isAllowedRequestOrigin(req, policy)) {
           return withCors(formatErrorResponse(403, "origin_rejected", "WebSocket upgrade blocked: non-local Origin"), req, policy);
@@ -2472,38 +2560,69 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         };
         const turnAdmissionLease = tryAdmitTurn(sessionLaneIdFromRequest(req.headers));
         if (!turnAdmissionLease) return serverBusyResponse(req, "active turns", policy);
+        const audioController = audioClient ? new AbortController() : undefined;
+        if (audioController) registerTurn(audioController, turnAdmissionLease);
+        const acquisition = audioController
+          ? clearableDeadline(120_000, AbortSignal.any([req.signal, audioController.signal])) : undefined;
+        const releaseAcquisition = () => {
+          acquisition?.clear();
+          if (audioController) unregisterTurn(audioController);
+          else turnAdmissionLease.release();
+        };
         let resolved;
         try {
-          resolved = await resolveLiveSidebandUpgrade(req, config, logCtx, liveSidebandTarget, turnAdmissionLease);
+          resolved = dictationSocket && audioClient
+            ? await resolveDictationSocket(audioClient, config, logCtx, turnAdmissionLease, acquisition?.signal)
+            : liveSidebandTarget && audioClient
+              ? await resolveExternalLiveSocket(audioClient, config, logCtx, liveSidebandTarget, { lease: turnAdmissionLease, bindings: liveCallBindings, signal: acquisition?.signal })
+              : liveSidebandTarget
+                ? await resolveLiveSidebandUpgrade(req, config, logCtx, liveSidebandTarget, turnAdmissionLease)
+                : formatErrorResponse(401, "authentication_error", "opencodex API key required");
         } catch (error) {
-          turnAdmissionLease.release();
+          releaseAcquisition();
           throw error;
         }
+        if (acquisition?.signal.aborted) {
+          try { if (!(resolved instanceof Response) && "finish" in resolved) resolved.finish(); }
+          finally { releaseAcquisition(); }
+          return withCors(formatErrorResponse(req.signal.aborted ? 499 : acquisition.didExpire() ? 504 : 503,
+            "upstream_error", acquisition.didExpire() ? "Audio connection timed out" : "Audio connection canceled"), req, policy);
+        }
         if (resolved instanceof Response) {
-          turnAdmissionLease.release();
+          releaseAcquisition();
           addFinalRequestLog(requestId, start, logCtx, resolved.status);
           return withCors(resolved, req, policy);
         }
-        // Establish the upstream handshake BEFORE promising the client a 101. A 101
-        // followed by a close is indistinguishable from a mid-stream transport loss,
-        // which codex-rs recovers from by rejoining the same call id indefinitely. A
-        // failed upgrade reaches it as a connect error instead, which is the only
-        // outcome that ends that loop.
+        const audio = "finish" in resolved ? resolved : undefined;
+        const finish = audio ? (outcome?: number | "timeout" | "connect_error") => {
+          try { audio.finish(outcome); }
+          finally { releaseAcquisition(); }
+        } : undefined;
+        const discardUpgrade = () => {
+          if (finish) finish();
+          else releaseAcquisition();
+        };
+        if (req.signal.aborted) {
+          discardUpgrade();
+          return withCors(formatErrorResponse(499, "client_closed_request", "Audio connection canceled"), req, policy);
+        }
         const upstreamHandshake = await openLiveSidebandUpstream(
           resolved.upstreamWsUrl,
           resolved.headers,
-          deps.liveSidebandWebSocketFactory,
+          (url, headers) => (deps.liveSidebandWebSocketFactory ?? ((socketUrl, socketHeaders, protocols) => (
+            new WebSocket(socketUrl, { headers: socketHeaders, protocols } as unknown as string[])
+          )))(url, headers, audio?.protocols),
           LIVE_SIDEBAND_UPSTREAM_OPEN_TIMEOUT_MS,
           req.signal,
         );
         if (!upstreamHandshake.ok) {
           if (upstreamHandshake.socket) {
-            closeLiveSidebandBeforeUpgrade(upstreamHandshake.socket, () => turnAdmissionLease.release());
+            closeLiveSidebandBeforeUpgrade(upstreamHandshake.socket, () => discardUpgrade());
           } else {
-            turnAdmissionLease.release();
+            discardUpgrade();
           }
           addFinalRequestLog(requestId, start, logCtx, upstreamHandshake.status);
-          console.error(`[live] sideband upstream handshake failed: ${upstreamHandshake.message}`);
+          console.error("[live] sideband upstream handshake failed: " + upstreamHandshake.message);
           return withCors(
             formatErrorResponse(upstreamHandshake.status, upstreamHandshake.code, upstreamHandshake.message),
             req,
@@ -2512,7 +2631,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         }
         const handoffFailure = upstreamHandshake.handoff.failure();
         if (handoffFailure || upstreamHandshake.socket.readyState !== WebSocket.OPEN) {
-          closeLiveSidebandBeforeUpgrade(upstreamHandshake.socket, () => turnAdmissionLease.release());
+          closeLiveSidebandBeforeUpgrade(upstreamHandshake.socket, () => discardUpgrade());
           const failure = handoffFailure ?? {
             status: 502,
             code: "upstream_error",
@@ -2521,27 +2640,48 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
           addFinalRequestLog(requestId, start, logCtx, failure.status);
           return withCors(formatErrorResponse(failure.status, failure.code, failure.message), req, policy);
         }
-        addFinalRequestLog(requestId, start, logCtx, 101);
-        if (requestServer.upgrade(req, {
-          data: {
-            kind: "live-sideband",
-            liveUpstream: upstreamHandshake.socket,
-            liveUpstreamUrl: resolved.upstreamWsUrl,
-            liveUpstreamHeaders: resolved.headers,
-            liveUpstreamHandoff: upstreamHandshake.handoff,
-            livePending: [],
-            livePendingBytes: 0,
-            liveOpened: true,
-            liveTurnAdmissionLease: turnAdmissionLease,
-          } satisfies WsData,
-        })) return undefined as unknown as Response;
-        // The upgrade was refused after the upstream had already opened; drop it.
+        let upgraded = false;
+        try {
+          upgraded = requestServer.upgrade(req, {
+            ...(audioClient?.protocol ? { headers: { "sec-websocket-protocol": audioClient.protocol } } : {}),
+            data: {
+              kind: "live-sideband",
+              liveUpstream: upstreamHandshake.socket,
+              liveUpstreamUrl: resolved.upstreamWsUrl,
+              liveUpstreamHeaders: resolved.headers,
+              liveUpstreamHandoff: upstreamHandshake.handoff,
+              admission,
+              liveUpstreamProtocols: audio?.protocols,
+              liveValidateFrame: audio?.validateFrame,
+              liveMaxSessionMs: audio?.maxSessionMs,
+              liveFinish: finish,
+              liveAbortSignal: audioController?.signal,
+              livePending: [],
+              livePendingBytes: 0,
+              liveOpened: true,
+              liveTurnAdmissionLease: turnAdmissionLease,
+            } satisfies WsData,
+          });
+        } catch {
+          try {
+            upstreamHandshake.handoff.take();
+          } catch {
+            /* ignore */
+          }
+          closeLiveSidebandBeforeUpgrade(upstreamHandshake.socket, () => discardUpgrade());
+          return withCors(formatErrorResponse(502, "upstream_error", "Audio WebSocket upgrade failed"), req, policy);
+        }
+        if (upgraded) {
+          acquisition?.clear();
+          addFinalRequestLog(requestId, start, logCtx, 101);
+          return undefined as unknown as Response;
+        }
         try {
           upstreamHandshake.handoff.take();
         } catch {
           /* ignore */
         }
-        closeLiveSidebandBeforeUpgrade(upstreamHandshake.socket, () => turnAdmissionLease.release());
+        closeLiveSidebandBeforeUpgrade(upstreamHandshake.socket, () => discardUpgrade());
         return withCors(formatErrorResponse(426, "upgrade_required", "WebSocket upgrade failed"), req, policy);
       }
 
@@ -2658,6 +2798,10 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
       message(ws: ServerWebSocket<WsData>, raw: string | Buffer) {
         if (ws.data.kind === "live-sideband") {
           if (ws.data.liveClosing) return;
+          if (ws.data.liveValidateFrame && !ws.data.liveValidateFrame(raw)) {
+            closeLiveSideband(ws, 1008, "invalid audio event");
+            return;
+          }
           const rawBytes = webSocketFrameBytes(raw);
           if (exceedsLiveSidebandFrameByteLimit(rawBytes)) {
             closeLiveSideband(ws, 1009, "message too large");
@@ -2683,6 +2827,9 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
           }
           try {
             sendUpstreamFrame(upstream, raw);
+            if (ws.data.liveMaxSessionMs !== undefined && upstream.bufferedAmount > MAX_WS_FRAME_BYTES) {
+              closeLiveSideband(ws, 1013, "audio upstream backpressure");
+            }
           } catch {
             closeLiveSideband(ws, 1011, "upstream send failed");
           }
@@ -2904,6 +3051,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   Object.defineProperty(server, "stop", {
     configurable: true,
     value: async (closeActiveConnections?: boolean): Promise<void> => {
+      liveCallBindings.clear();
       // The orchestration lives in `runListenerShutdown` so its two competing properties —
       // cleanup completes, failure propagates — are testable without a live socket.
       await runListenerShutdown(
