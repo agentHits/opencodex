@@ -1319,48 +1319,42 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     noVisionModels: [...CURSOR_NO_VISION_MODELS],
   },
   {
-    // The signed-in Devin CLI as an account source.
-    //
-    // The CLI writes a `devin-session-token$<JWT>` to its own credentials.toml,
-    // which is the same credential RegisterUser hands `ocx login devin` and which
-    // the cloud-direct client already speaks. So this provider imports that token
-    // and streams over Connect-RPC like its browser-login sibling.
+    // The canonical Cognition account provider, after absorbing `devin-cli`
+    // (devlog/_plan/260913_devin_provider_merge). The two ids were the same
+    // `devin` adapter, the same server.codeium.com api-server, and the same
+    // `devin-session-token$<JWT>` credential — only the account source
+    // differed: this entry did an Auth0 browser sign-in while `devin-cli`
+    // imported the token the installed CLI's own PKCE login had already
+    // written to credentials.toml. The merged login is import-first with a
+    // browser fallback: the CLI credential is taken when present (no browser
+    // opens), and the Auth0 flow remains because it is the only path for
+    // users without the CLI. `devin-cli` survives only as a deprecated
+    // alias; a startup migration rewrites saved provider rows, cross-config
+    // references, and auth.json slots to `devin`.
     //
     // `oauth` classifies the ACCOUNT, not the transport. This is not a local
-    // runtime: unlike Ollama or LM Studio it cannot answer at all until a vendor
-    // account is signed in, and `local` grouped it with things that have no
-    // account. It is also the only classification that reaches the dashboard
-    // Accounts tab, which is built from OAUTH_PROVIDERS.
-    id: "devin-cli",
-    label: "Devin CLI",
-    adapter: "devin",
-    baseUrl: "https://server.codeium.com",
-    authKind: "oauth",
-    featured: false,
-    // Off, like `devin`. `deriveProviderPresets` keys the preset catalog off this
-    // flag, so leaving it true would draw the row twice: an Accounts login row and
-    // a preset tile.
-    dashboardPreset: false,
-    note: "Imports the credential your installed Devin CLI already holds (`devin auth login`), then streams over Cognition's Connect-RPC api-server like the `devin` provider. No browser sign-in and no key to paste.",
-    // Degraded-mode seed only; `liveModels` discovers the account's real roster,
-    // which is where `swe-2` and the rest of the current catalog come from.
-    models: ["swe-2", "swe-1-7", "gpt-5-6-sol", "gpt-6-astra", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5", "glm-5-3", "kimi-k3", "gemini-3-8-flash", "grok-4-6"],
-    liveModels: true,
-    defaultModel: "swe-2",
-    modelContextWindows: DEVIN_MODEL_CONTEXT_WINDOWS,
-  },
-  {
+    // runtime: unlike Ollama or LM Studio it cannot answer at all until a
+    // vendor account is signed in, and `local` grouped it with things that
+    // have no account. It is also the only classification that reaches the
+    // dashboard Accounts tab, which is built from OAUTH_PROVIDERS.
     id: "devin",
     label: "Cognition (Devin/Windsurf)",
     adapter: "devin",
     baseUrl: "https://server.codeium.com",
     authKind: "oauth",
     featured: false,
+    // Off: `deriveProviderPresets` keys the preset catalog off this flag, so a
+    // true row would draw the provider twice — an Accounts login row and a
+    // preset tile.
     dashboardPreset: false,
-    note: "Experimental unofficial Cognition/Devin bridge. ocx login devin opens Auth0 browser sign-in, then exchanges the token via Cognition's RegisterUser for a long-lived API key.",
-    models: ["swe-1-7", "swe-1-7-lightning", "gpt-5-6-sol", "gpt-5-6-luna", "gpt-5-6-terra", "claude-opus-4-8", "claude-fable-5-1", "claude-sonnet-5", "glm-5-2", "kimi-k2-7", "grok-4-5"],
+    note: "Experimental unofficial Cognition/Devin bridge. ocx login devin first imports the credential an installed Devin CLI already holds (no browser); without one it opens Auth0 browser sign-in and exchanges the token via Cognition's RegisterUser for a long-lived API key.",
+    // Union seed of the two merged rosters: the newer devin-cli lineup first
+    // (it is the current catalog, so its default ordering wins), then the ids
+    // only the old devin entry carried. Degraded-mode seed only either way —
+    // `liveModels` discovers the account's real roster.
+    models: ["swe-2", "swe-1-7", "gpt-5-6-sol", "gpt-6-astra", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5", "glm-5-3", "kimi-k3", "gemini-3-8-flash", "grok-4-6", "swe-1-7-lightning", "gpt-5-6-luna", "gpt-5-6-terra", "claude-opus-4-8", "glm-5-2", "kimi-k2-7", "grok-4-5"],
     liveModels: true,
-    defaultModel: "swe-1-7",
+    defaultModel: "swe-2",
     modelContextWindows: DEVIN_MODEL_CONTEXT_WINDOWS,
   },
   {
