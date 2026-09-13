@@ -335,7 +335,7 @@ single forms, and the shell pattern is the part worth keeping stable:
 | Subagents | Featured-roster selection workspace (`gui/src/components/subagents-workspace/`). |
 | Combos | Rail, detail panel, and an add flow (`gui/src/components/ComboWorkspace.tsx`). |
 | Add provider | Catalog browser plus form and OAuth panes (`gui/src/components/provider-catalog/`, `gui/src/components/AddProviderModal.tsx`). The catalog browses four tabs — Accounts, Free, Local, Paid — where Local is a catalog-only bucket peeled out of `bucketPresets` after `presetTier` has classified; the workspace `providerTier` stays three-way, so the rail, the free-paid sort and the Free count still treat a local runtime as free. Search sits above the tabs and reaches every tab at once: while a query is live the list renders all four groups with headings and the strip becomes jump chips with counts rather than a tablist, because moving the selected tab would change the row kind under the user (a preset-select button becomes a login row). ArrowDown from the search input focuses the first enabled result action; if none is available, focus stays in the input. The tab strip wraps within narrow modals. Every nonempty note has a full-text button so narrow rows never hide content permanently; the native note dialog closes during teardown and restores focus to its trigger. Provider notes clamp to two lines and open in full in a stacked native `<dialog>` owned by `AddProviderModal`, which also owns the search text so its `window` Escape handler can unwind popup, then query, then dialog. |
-| Codex accounts | Account pool cards, add-account flow, switch and reset modals (`gui/src/components/CodexAccountPool.tsx`, `gui/src/components/AddCodexAccountModal.tsx`), plus the generic account-targeting picker opt-in on `gui/src/pages/codex-set-multiauth.tsx`. Add/delete/login completion is projected to one boolean before presentation; pending catalog work is a warning, not a failed account mutation. |
+| Codex accounts | Account pool cards, add-account flow, switch and reset modals (`gui/src/components/CodexAccountPool.tsx`, `gui/src/components/AddCodexAccountModal.tsx`), plus the generic account-targeting picker opt-in on `gui/src/pages/codex-set-multiauth.tsx`. Add/delete/login completion is projected to one boolean before presentation; pending catalog work is a warning, not a failed account mutation. The main card's native-main device reauth (#3898) is owned by `gui/src/components/use-main-device-reauth.ts`: the dedicated `/api/codex-auth/main/reauth-device` namespace only — never the pool login route — with flowId-owned polling, an allowlisted verification URL, and no token fields accepted from payloads. |
 | Dashboard overview | Overview, Providers, and Models tabs at the page level (`gui/src/pages/Dashboard.tsx`), the 30-day token and coverage stats in the overview head (`gui/src/pages/dashboard-overview-head.tsx`), and the effort-cap, injection, maintenance, sidecar, and memory panels below it (`gui/src/pages/dashboard-overview-panels.tsx`). |
 
 Rail selection is component-local state today, so a reload returns to the workspace's default
@@ -361,6 +361,8 @@ and exact account binding only—there are no built-in Personal/Work roles. A pe
 keeps the saved state and renders fixed `ocx sync` guidance without server/account detail.
 
 ## Usage accounting
+
+`src/server/hub-usage.ts` serves `GET /v1/usage` on hubs for an explicit configured data key. The authenticated key selects the aggregate; query parameters cannot select an API-key identity. Unscoped environment/admin credentials and loopback bypass are not admitted. The response projects only this client's numeric totals, provider/model/day rows and incomplete-history metadata through `src/remote/hub-usage.ts`; accounts, raw records and key IDs are omitted. Unknown fields are stripped at every object boundary and the serialized body is capped at 1 MiB.
 
 Custom usage windows are immutable bounds on the streaming accumulator, applied to each
 ledger entry before attribution and daily aggregation. The filtered aggregate cache includes
@@ -471,18 +473,9 @@ large existing log. The first read is proportional to ledger size; steady-state 
 proportional to newly appended bytes. The Dashboard polls its 30-day usage summary independently once
 per minute, so usage work cannot delay health/provider/settings state or run every five seconds.
 
-An oversized row is skipped within the existing scanner bound, without shortening provider,
-model, or API-key identities. Base and filtered accumulators retain normal rows and a positive
-`usageIncomplete` diagnostic. Append publication ORs the previous flag with the new scan; a rebuild
-recalculates it. Summary-cache hits and direct or aggregate-seeded API-key rollups preserve the
-response-level `usageIncomplete: true` / `usageIncompleteReason: "oversized_rows"` metadata, even
-when no normal rows or attributed keys remain. Invalid-row counters are not a sticky diagnostic:
-they also include temporarily torn suffixes. Absence of the flag is not a completeness guarantee.
-The GUI preserves the metadata in held/session caches and warns in Usage, Dashboard, provider
-workspace/catalog, and key list/detail views. Human CLI output warns before no-match early returns;
-JSON remains unchanged. Saving a most-used model-order snapshot refuses an incomplete response.
-No warning is attached to separate provider quota data. Legacy truncation fields and measurement
-coverage keep their existing meanings; file-read/mutation failures still fail closed.
+An oversized row is skipped within the existing scanner bound, without shortening provider, model, or API-key identities. Base and filtered accumulators retain normal rows and a positive `usageIncomplete` diagnostic. Append publication ORs the previous flag with the new scan; a rebuild recalculates it.
+Summary-cache hits and direct or aggregate-seeded API-key rollups preserve the response-level `usageIncomplete: true` / `usageIncompleteReason: "oversized_rows"` metadata, even when no normal rows or attributed keys remain. Invalid-row counters are not a sticky diagnostic: they also include temporarily torn suffixes. Absence of the flag is not a completeness guarantee.
+The GUI preserves the metadata in held/session caches and warns in Usage, Dashboard, provider workspace/catalog, and key list/detail views. Human CLI output warns before no-match early returns; JSON remains unchanged. Saving a most-used model-order snapshot refuses an incomplete response. No warning is attached to separate provider quota data. Legacy truncation fields and measurement coverage keep their existing meanings; file-read/mutation failures still fail closed.
 
 `usage.jsonl` is an append-only runtime ledger. A manual in-place edit earlier than the trailing
 64 KiB checkpoint followed by file growth is intentionally outside the incremental detector's
@@ -523,10 +516,11 @@ use the `[ocx:<adapter>:<event>]` prefix, go to the proxy terminal, and are buff
 `ocx debug provider logs` / `ocx debug provider logs -f`. Usage JSONL tails with
 `ocx debug usage logs [-f]`. Separate from provider buffered logs above.
 
+The shared Responses path follows the [bounded multipart recovery contract](subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## Remote credentials and bounded sessions
 
 Data keys authorize only the data matrix and authenticated catalog. Admin credentials authorize ordinary management and key rotation but cannot mint, exchange, or refresh a `gui-session`. Pairing grants are digest-only, origin-bound, one-use, capped at 128 live grants, burned after five grant failures, and source-limited after ten failures in ten minutes with at most 1,024 source buckets. `POST /api/session/logout` invalidates only the current origin/CSRF-authorized browser session.
-
 
 ### Model picker ordering settings
 
@@ -551,11 +545,11 @@ picker data resource so failure cannot erase the ordinary model inventory; Apply
 the resource's generation fence, and Most used reads usage only on explicit Apply. Stored mode
 survives availability drift, while complete/native custom orders await explicit replacement.
 
-Chat helper admission in `src/server/responses/core.ts` follows the
-[deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
-claims stored main, after terminal vision, routed vision and search exclusions.
+The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`. Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](remote-workspace.md) owns that integration and records its isolated owner and support limits.
 
-Codex account DTOs and cards expose the routing-plan exclusion separately from credential health; the [plan exclusion contract](providers/openai-tiers.md#automatic-pool-plan-exclusions) also governs CLI projection.
+Listener startup diagnostics follow [the runtime lifecycle contract](runtime.md#lifecycle); malformed optional listener blocks follow [config loading](config.md#config-surface).
+
+Chat helper admission in `src/server/responses/core.ts` follows the [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper claims stored main, after terminal vision, routed vision and search exclusions.
 
 ## Combo editor routing quota
 
@@ -581,12 +575,12 @@ The provider editor field policy exposes `showThinkingSummary` as a boolean prov
 
 `src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
 
-Codex pool settings and their consumers follow the [reset-first ordering contract](providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
+Codex pool settings and their consumers follow the [reset-first ordering contract](providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity. Codex account DTOs and cards expose the routing-plan exclusion separately from credential health; the [plan exclusion contract](providers/openai-tiers.md#automatic-pool-plan-exclusions) also governs CLI projection. Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
 
 Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
-Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
+The connected browser shell reuses `SESSION_UNAVAILABLE_EVENT` and its shared-session readiness state. Terminal 401 recovery failure exposes pairing without a restart instruction; a newer session or aborted request cannot publish an unavailable notice. Successful pairing changes dashboard resource revalidation dependencies, so retained failed stores are explicitly refreshed. Dashboard reads distinguish authentication, permission denial, request failure, invalid payload and transport failure; protected data is hidden for authentication/denial, while other failed refreshes label retained data as stale.
 
 Cline journal Undo eligibility reads both native configuration files through the paired
 integration IO adapter. Its snapshot fingerprint cannot be checked against providers.json alone;
@@ -596,10 +590,10 @@ The existing dashboard file-client maps include Cline CLI and reuse its committe
 
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
 
+Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates. The account history response can include a [low-confidence effective capacity estimate](providers/openai-tiers.md#observed-effective-token-capacity); usage normalization retains local-answer provenance so local responses cannot supply samples. Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
+
 Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
 
-Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
 
-The account history response can include a [low-confidence effective capacity estimate](providers/openai-tiers.md#observed-effective-token-capacity); usage normalization retains local-answer provenance so local responses cannot supply samples.
-
-Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
+Dashboard overview polling observes authorization failures independently of stalled or rejected peer requests, cancels remaining child requests after a decisive result, and exposes resource-level deadline failures without rewriting them as authentication failures.

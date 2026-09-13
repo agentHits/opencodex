@@ -8,6 +8,8 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 Grounded in the open-sourced official client (xai-org/grok-build); unit + evidence:
 `devlog/_fin/260716_grok_build_hardening/`.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 - **Reasoning folding:** the Responses parser folds `reasoning` items into the FOLLOWING
   assistant turn (`pendingReasoning` in `src/responses/parser.ts`) so the Grok chat wire carries
   ONE assistant message with `reasoning_content` — exact-prefix cache stability. Unsigned
@@ -59,6 +61,11 @@ malformed, gapped, oversized, contradictory, failed, or incomplete streams stay 
 
 Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](../gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.
 
+Connected CLI usage follows the [client-scoped hub usage contract](../gui-and-management-api.md#usage-accounting); local management and account data remain separate.
+
+Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.
+
+Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.md#lifecycle); malformed optional listener blocks follow [config loading](../config.md#config-surface).
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -68,16 +75,21 @@ Account-scoped OAuth quota remains display evidence for provider-level Combo sel
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
+Codex pool settings and their consumers follow the [reset-first ordering contract](openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
+
 Optional Codex transport-hint suppression is scoped to canonical Responses client output;
 its defaults and exclusions are owned by [Responses transport](../transports/responses.md).
 
 Grok chat raw reasoning uses content-channel output with an empty summary; hidden replay envelopes retain continuation text. Native Responses content is not promoted to summaries. See [chat compatibility](chat-compat.md).
 
-Codex pool settings and their consumers follow the [reset-first ordering contract](openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
 Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
 Devin CLI credential path composition in `src/oauth/devin-cli.ts` follows the selected platform: Windows uses Win32 APPDATA paths, other platforms use POSIX XDG-data paths. The explicit absolute override remains verbatim; credential parsing and login behavior are unchanged.
+
+Provider-scoped catalog hints remain isolated by provider in `src/providers/registry.ts`. The
+OpenCode Go `deepseek-v4.1-flash` 1,048,576-token context hint does not change xAI model metadata or
+transport behavior.
 
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
 
@@ -103,7 +115,8 @@ The upstream tier echo relays to the client on every Chat Completions delivery s
 (`src/chat/outbound.ts` projections and `src/server/chat-native-sse.ts` chunks), matching
 what the Responses lane already relayed for responses-wire upstreams; the responses-lane
 assembly for chat-wire upstreams tracks the echo in attempt telemetry only.
-
 Pool quota producers and account commands follow the [bounded raw-observation contract](openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
 
 Account quota surfaces use [safe probe diagnostics](../transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](../runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.

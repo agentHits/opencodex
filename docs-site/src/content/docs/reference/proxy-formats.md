@@ -32,6 +32,30 @@ the same serialized request and records the recovery in Logs. Other 400 errors,
 custom destinations, cancellations and repeated upload rejections remain failures.
 This does not retry filtered model responses or interrupted streams.
 
+## Empty search answers
+
+After hosted search, a clean but empty forced-answer pass receives one additional answer
+attempt with tools removed and existing results retained. This can incur another model
+request. A second empty answer fails; malformed calls and provider refusal or truncation
+outcomes are preserved without this retry.
+
+## Cursor context overflow
+
+Cursor's first bare context overflow is surfaced to the client. Later eligible requests
+with a stable client thread may recover with up to three conversation remints per retained
+scope. The in-memory allowance expires after one idle hour, eviction, or restart. Requests
+without a stable thread, isolated helpers, tool-result resumes, partial output, compaction
+and quota errors do not use this recovery. Continued eligible overflows keep the existing
+allowance active even after it is exhausted; they do not replenish it. This does not infer whether a task is making progress.
+
+## Live sideband connection failures
+
+The proxy completes the upstream live sideband handshake before accepting the client
+WebSocket. An upstream rejection fails the upgrade with 502; a ten-second handshake timeout
+returns 504, and client cancellation returns 499. Bun does not expose the exact upstream handshake status, so an upstream 404/410
+cannot currently be forwarded precisely. A successful connection preserves the initial session
+frames in order. This handshake policy is separate from the Responses WebSocket transport.
+
 ## Endpoint overview
 
 | Client surface | Endpoint | Successful non-stream result | Successful stream or socket result |

@@ -4,6 +4,7 @@ import { IconPlus } from "../icons";
 import { EmptyState, type NoticeTone } from "../ui";
 import AddCodexAccountModal from "./AddCodexAccountModal";
 import { useCodexAccountPool, type CodexAccountPoolController } from "../hooks/useCodexAccountPool";
+import { useMainDeviceReauth } from "./use-main-device-reauth";
 import type { ReactNode } from "react";
 import type { CodexAccountModeState } from "../codex-multi-state";
 import CodexAutoSwitchSetting from "./CodexAutoSwitchSetting";
@@ -71,6 +72,12 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   const ownController = useCodexAccountPool(apiBase, !injectedController);
   const controller = injectedController ?? ownController;
   const { accounts, activeId, loadState, switchingId, pauseUpdatingId, priorityUpdatingId, pausingExhausted, activePinnedId, load } = controller;
+  // #3898: the native-main device reauth drives the dedicated namespace; a
+  // completed flow refreshes the account list so the card leaves reauth state.
+  const mainReauth = useMainDeviceReauth(apiBase, () => { void load(); });
+  const mainReauthActive = mainReauth.state.phase === "starting"
+    || mainReauth.state.phase === "pending"
+    || mainReauth.state.phase === "committing";
   const [confirm, setConfirm] = useState<CodexAccountEntry | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [modelsNotice, setModelsNotice] = useState<{ catalogRefreshPending: boolean } | null>(null);
@@ -172,10 +179,10 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
   }, [readLastThreshold, hydrateServerValue]);
 
   useEffect(() => {
-    if (!showAdd) return;
+    if (!showAdd && !mainReauthActive) return;
     const token = controller.pauseRefresh();
     return () => controller.resumeRefresh(token);
-  }, [controller, showAdd]);
+  }, [controller, showAdd, mainReauthActive]);
 
   const activePoolAccount = activeId && activeId !== "__main__"
     ? accounts.find(a => a.id === activeId)
@@ -531,6 +538,7 @@ export default function CodexAccountPool({ apiBase, accountModeState = null, ban
             onCopyDoctor={showDoctorCopy ? copyDoctor : undefined}
             doctorCopyOutcomeFor={showDoctorCopy ? doctorCopy.outcomeFor : undefined}
             onManageMainHardLock={hasMainHardLockSetting ? manageMainHardLock : undefined}
+            mainReauth={mainReauth}
           />
 
           <div className="section-sep">
