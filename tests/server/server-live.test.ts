@@ -1876,6 +1876,27 @@ describe("attachLiveSidebandUpstream ownership", () => {
     expect(upstream.readyState).toBe(WebSocket.CLOSED);
     expect(client.releases()).toBe(1);
   });
+
+  test("disarms the connect watchdog when the upstream was pre-opened", () => {
+    const upstream = new FakeUpstreamSocket();
+    upstream.readyState = WebSocket.OPEN;
+    const client = fakeSidebandClient(upstream, {
+      failure: () => undefined,
+      take: () => ({ ok: true, frames: ["session.created"] }),
+    });
+    client.ws.data.liveMaxSessionMs = 60_000;
+
+    attachLiveSidebandUpstream(client.ws as never);
+
+    // The pre-opened upstream's "open" event fired before attach, so the
+    // listener that would clear the connect timer can never run. The timer
+    // must be disarmed on the takeover path instead; the session timer stays
+    // armed because it bounds the whole session.
+    expect(client.ws.data.liveConnectTimer).toBeUndefined();
+    expect(client.ws.data.liveSessionTimer).toBeDefined();
+    upstream.emit("close", { code: 1000 });
+    expect(client.releases()).toBe(1);
+  });
 });
 
 describe("openLiveSidebandUpstream", () => {
