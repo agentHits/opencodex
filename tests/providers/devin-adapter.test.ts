@@ -135,6 +135,41 @@ describe("devin adapter", () => {
     });
   });
 
+  test("fails closed when one tool's canonical identity is another tool's advertised name", () => {
+    // `a__x` is the first tool's canonical identity and also the second tool's advertised local
+    // name, whose own canonical identity is `b__a__x`. Both readings are legitimate, so resolving
+    // to either owner would dispatch the call to a tool the caller may not have named. Before the
+    // map tracked canonical aliases, a returned `a__x` silently became `b__a__x`.
+    const aliasCollision = [
+      { namespace: "a", name: "x", description: "namespaced", parameters: { type: "object" } },
+      { namespace: "b", name: "a__x", description: "lookalike local name", parameters: { type: "object" } },
+    ];
+
+    expect(mapDevinToolCallStartForTests("call_1", "a__x", aliasCollision)).toEqual({
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    });
+    expect(mapDevinToolCallStartForTests("call_1", "a__x", [...aliasCollision].reverse())).toEqual({
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    });
+    // The unambiguous local name still resolves, and an unrelated canonical name is untouched.
+    expect(mapDevinToolCallStartForTests("call_2", "x", aliasCollision)).toEqual({
+      type: "tool_call_start",
+      id: "call_2",
+      name: "a__x",
+    });
+    expect(mapDevinToolCallStartForTests("call_3", "b__a__x", aliasCollision)).toEqual({
+      type: "tool_call_start",
+      id: "call_3",
+      name: "b__a__x",
+    });
+  });
+
   test("replays a restored namespaced call under the same bare name Cognition was offered", () => {
     const parsed: OcxParsedRequest = {
       modelId: "swe-2",

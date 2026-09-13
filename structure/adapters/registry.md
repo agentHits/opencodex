@@ -35,6 +35,10 @@ Some adapters share another adapter's routed-tool semantics while retaining inde
   owns a request-scoped return map from each unique bare name to the canonical Codex namespace
   identity. Unknown names remain subject to the shared undeclared-tool guard; duplicate bare names
   fail before dispatch rather than selecting a request tool by declaration order.
+  Canonical identities are registered in that map as well, because the adapter accepts them on
+  return. One tool's canonical identity can be another tool's advertised local name, and resolving
+  that name to either owner would dispatch the call to a tool the caller may not have named, so it
+  is treated as ambiguous and fails before dispatch too.
 
   There is no second Devin transport. An Agent Client Protocol adapter that spawned a local
   `devin acp` child once existed under the `devin-cli` adapter id and was removed: the CLI's

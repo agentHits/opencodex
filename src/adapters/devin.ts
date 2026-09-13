@@ -333,18 +333,29 @@ export function mapOcxToolsToDevin(tools: OcxTool[] | undefined): ToolDef[] | un
  * identity only when exactly one advertised tool owns it. A null owner is an ambiguous catalog and
  * must fail before dispatch; an absent owner remains unchanged for the shared undeclared-tool guard
  * to reject.
+ *
+ * Canonical names are registered as aliases of themselves because the adapter accepts them on return
+ * too. Tracking only local names let one tool's canonical identity collide with another tool's local
+ * name and resolve to the wrong owner: with `{ namespace: "a", name: "x" }` and
+ * `{ namespace: "b", name: "a__x" }`, a returned `a__x` is both the first tool's canonical identity
+ * and the second tool's advertised name, and it used to map to `b__a__x` — so the bridge dispatched
+ * the call to the wrong client tool. That case is genuinely ambiguous and now fails closed.
  */
 function buildDevinReturnedToolNameMap(
   tools: OcxTool[] | undefined,
 ): ReadonlyMap<string, string | null> {
   const names = new Map<string, string | null>();
+  const addOwner = (alias: string, canonical: string) => {
+    if (!names.has(alias)) {
+      names.set(alias, canonical);
+    } else if (names.get(alias) !== canonical) {
+      names.set(alias, null);
+    }
+  };
   for (const tool of tools ?? []) {
     const canonical = namespacedToolName(tool.namespace, tool.name);
-    if (!names.has(tool.name)) {
-      names.set(tool.name, canonical);
-    } else if (names.get(tool.name) !== canonical) {
-      names.set(tool.name, null);
-    }
+    addOwner(tool.name, canonical);
+    addOwner(canonical, canonical);
   }
   return names;
 }
