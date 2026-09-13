@@ -14,6 +14,7 @@ description: 监听、远程访问、准入密钥、超时、存储、侧车、�
 | `hostname?` | `string` | `"127.0.0.1"` | 绑定地址。非回环绑定需要 `OPENCODEX_API_AUTH_TOKEN`。 |
 | `proxy?` | `string` | — | 出站 HTTP(S) 代理 URL，或 `${ENV_VAR}`。仅当 `HTTP_PROXY` / `HTTPS_PROXY` 未设置时才会应用；回环地址始终保留在 `NO_PROXY` 中。 |
 | `emptyCompletionRetry?` | `boolean` | `false` | 显式启用：当 Responses turn 既无文本也无工具调用时，使用相同请求重试一次，包括流在终止事件之前结束的情况。重试可能产生费用。`OCX_EMPTY_COMPLETION_RETRY=0` 可在不修改配置的情况下禁用；combo 与 routed-compaction turn 不参与。 |
+| `dropCodexSafetyBuffering?` | `boolean` | `false` | 从 Codex Responses 透传响应中移除 Codex safety-buffering 提示：`x-codex-safety-buffering-enabled` / `x-codex-safety-buffering-faster-model` 响应头、类型为 `safety_buffering` 的 `response.metadata` SSE 事件，以及其他 SSE 事件中的 `safety_buffering` 字段。Codex TUI 会将这些提示显示为“使用更快模型重试”的提示框，其默认操作会把会话切换到较弱的模型。其他 `x-codex-*` 响应头和其他所有 SSE 事件内容均保持不变，但会移除该字段。默认关闭。 |
 | `stallTimeoutSec?` | `number` | `300` | 在上游没有数据之前可等待的秒数，超过后返回 `response.incomplete`。最小值为 1。 |
 | `connectTimeoutMs?` | `number` | `200000` | 每次尝试的 DNS/TCP/TLS/最终响应头截止时间；它在正文生成之前结束。 |
 | `shutdownTimeoutMs?` | `number` | `5000` | 优雅停机截止时间，超过后会中止仍在进行中的请求。 |
@@ -185,3 +186,5 @@ Anthropic OAuth 侧车会复用 opencodex 现有的 Claude Code OAuth 指纹。�
 ## Codex 额度网络诊断
 
 主 Codex 账户行中的 `quotaRefresh` 描述额度查询结果，并不代表剩余额度或模型访问权限。读取缓存或未执行查询时，该字段可能省略。查询使用正在运行的代理服务的环境，而不是当前终端的环境。未设置 `proxy` 时保留现有环境；`"auto"` 只在启动时读取 Windows 静态代理设置，不自动处理 PAC/WPAD、仅 SOCKS 的设置或运行中的更改。TUN 测试成功并不能单独证明 HTTP 代理路径正常。命令和状态说明见[英文网络诊断章节](/reference/configuration/server/#codex-quota-network-diagnostics)。
+
+`dropCodexSafetyBuffering`: 不会改变供应商安全策略或拒绝响应。原生 WebSocket `codex.response.metadata.headers` 和 `/responses/compact` 不在过滤范围内。

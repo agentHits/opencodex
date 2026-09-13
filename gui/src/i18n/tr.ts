@@ -861,6 +861,7 @@ export const tr: Record<TKey, string> = {
   "logs.detail.attempt.recovery.anthropicOauth429": "Anthropic OAuth kısıtlandı (429)",
   "logs.detail.attempt.recovery.image413": "Görsel boyutu çok büyük (413)",
   "logs.detail.attempt.recovery.emptyCompletion": "Boş tamamlama yeniden denemesi",
+  "logs.detail.attempt.recovery.consoleGoUpload": "Console yüklemesi yeniden denendi",
   "logs.detail.attempt.recovery.unknown": "Bilinmeyen kurtarma nedeni",
   "logs.detail.reason.usage_missing": "Kullanım bildirilmedi.",
   "logs.detail.reason.usage_unsupported": "Bu sağlayıcı kullanım bildirmeyebilir.",

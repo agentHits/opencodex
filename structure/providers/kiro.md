@@ -1,5 +1,8 @@
 # Kiro Provider
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Kiro client parallel-tool hint
 
 Kiro's wire remains serialized even when an OpenAI Responses client sends
