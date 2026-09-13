@@ -24,6 +24,30 @@ should select among several targets.
 
 Credential-bearing model, image, video, and search requests do not automatically follow HTTP redirects, including same-origin redirects. Configure the final upstream API URL instead of a redirecting alias. A redirect does not cause the server to resend credentials or the request body to its destination. The response owner retains its existing error or relay behavior; native Responses and compact routes can return the original 3xx and `Location` to the client. Client redirect behavior is separate from this server transport policy.
 
+## Empty search answers
+
+After hosted search, a clean but empty forced-answer pass receives one additional answer
+attempt with tools removed and existing results retained. This can incur another model
+request. A second empty answer fails; malformed calls and provider refusal or truncation
+outcomes are preserved without this retry.
+
+## Cursor context overflow
+
+Cursor's first bare context overflow is surfaced to the client. Later eligible requests
+with a stable client thread may recover with up to three conversation remints per retained
+scope. The in-memory allowance expires after one idle hour, eviction, or restart. Requests
+without a stable thread, isolated helpers, tool-result resumes, partial output, compaction
+and quota errors do not use this recovery. Continued eligible overflows keep the existing
+allowance active even after it is exhausted; they do not replenish it. This does not infer whether a task is making progress.
+
+## Live sideband connection failures
+
+The proxy completes the upstream live sideband handshake before accepting the client
+WebSocket. An upstream rejection fails the upgrade with 502; a ten-second handshake timeout
+returns 504, and client cancellation returns 499. Bun does not expose the exact upstream handshake status, so an upstream 404/410
+cannot currently be forwarded precisely. A successful connection preserves the initial session
+frames in order. This handshake policy is separate from the Responses WebSocket transport.
+
 ## Endpoint overview
 
 | Client surface | Endpoint | Successful non-stream result | Successful stream or socket result |
@@ -80,6 +104,11 @@ With `stream: true`, the response is `text/event-stream`. The bridge emits Respo
 
 With `stream: false` or no `stream`, the same adapter events are collected into one Responses JSON
 object. Both forms preserve the selected model, output items, terminal status, and usage.
+
+When a provider filters or truncates a response, an unfinished tool call remains `incomplete`
+in both JSON and SSE. Partial output is preserved, and the bridge does not emit an argument
+completion event for that open call. Calls already completed keep their status. This preserves
+the provider outcome; client retry behavior for incomplete responses is unchanged.
 
 On the pending `dev` implementation for #4112, a final upstream HTTP 413 on this surface
 is classified as `invalid_request_error` / `context_length_exceeded`. Non-streaming callers

@@ -71,6 +71,8 @@ The hub-management socket is enabled only by `runtimeRole: "hub"` plus
 `hub.managementIngress.enabled`, always binds `127.0.0.1`, and default-denies everything except
 GUI, session bootstrap/exchange, and `/api/*`.
 
+Auxiliary listener bind failures carry the listener key and effective address through `AuxiliaryListenerBindError` in `src/server/ports.ts`. `src/cli/index.ts` reports them without retrying the public port. Startup still rolls back every earlier socket synchronously.
+
 A failed optional bind initiates rollback of every earlier socket; normal stop joins all bound
 sockets before lifecycle release. The existing launchd/systemd installer remains the service owner
 and continues loading the data token from `service-api-token`; hub mode adds no service-manager
@@ -90,6 +92,12 @@ update. A rejected live holder prevents both termination and TCP-row deletion fo
 scans may proceed if verification succeeds or the holder exits. The allowlist narrows termination
 eligibility and supplies no identity evidence by itself. This contract uses the existing verifier;
 it does not add process-instance proof or change the classification cache.
+
+Pinned post-update retries in `src/update/job.ts` retire a child after an observed exit, signal, spawn error, or close event.
+Both retry and final-timeout cleanup check the retained child object; a late exit from an older
+child cannot clear its replacement. Retirement removes only its own event listeners and preserves
+separate logging. A healthy child remains running. This does not provide an
+atomic OS guarantee against unobserved PID reuse.
 
 > Decision record: [ADR-0003](decisions/ADR-0003-lifecycle.md)
 
@@ -139,9 +147,10 @@ The server exposes `POST /api/stop` which restores native Codex config, stops an
 | --- | --- |
 | `src/providers/registry.ts` | Canonical provider presets for CLI, dashboard, OAuth, key providers, and metadata. |
 | `src/providers/derive.ts` | Enrichment from provider presets into user config. |
-| `src/oauth/` | OAuth providers, token storage, refresh, and auth-token resolution. |
+| `src/oauth/` | OAuth providers, token storage, refresh, and auth-token resolution. The login callback listener binds a per-provider FIXED loopback port, so consecutive logins reuse the same number; every response it sends ends its connection (`Connection: close`, including non-callback paths such as a stray `/favicon.ico` 404). Stopping the listener does not close an established socket, so without that a pooled client would deliver the next login's callback to the retired flow, which rejects the unknown state as a CSRF mismatch while the live flow waits. |
 | `src/adapters/openai-responses.ts` | Native OpenAI/ChatGPT Responses passthrough. |
-| `src/adapters/openai-chat.ts` | OpenAI-compatible Chat Completions bridge. |
+| `src/responses/muse-tool-name-alias.ts` | Host-gated Meta Muse 64-char tool-name alias/restore used by the Responses passthrough. |
+| `src/adapters/openai-chat.ts` | OpenAI-compatible Chat Completions bridge. Its client delivery shapes in `src/chat/outbound.ts` and `src/server/chat-native-sse.ts` relay the upstream `service_tier` echo on non-stream, folded-stream, and synthesized-SSE bodies, never inventing the key when the upstream omits it. |
 | `src/adapters/anthropic.ts` | Anthropic Messages bridge. |
 | `src/adapters/google.ts` | Gemini bridge. |
 | `src/adapters/azure.ts` | Azure OpenAI bridge. |
@@ -196,3 +205,52 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+### Empty forced search answers
+
+`src/web-search/loop.ts` makes at most one extra answer attempt after a clean forced-answer terminal with no visible output or tool call. The recovery has no tools and reuses gathered search results. Malformed calls fail before refusal/truncation passthrough, and well-formed recognized refusal/truncation terminals pass through unchanged, including empty or partial answers. The extra generation may incur provider usage.
+
+## Scoped provider quota for Combo selection
+
+`src/providers/quota.ts` publishes routing evidence only when a producer explicitly supplies its
+inference-wide projection. A matching credential alone does not grant veto authority. Display-only
+account, model-group, search and legacy MCP windows remain visible but cannot exclude a provider.
+The private WeakMap binds provider name, adapter, destination and captured credential; neither
+credential nor binding enters report JSON.
+
+`src/providers/quota-routing-cache.ts` rechecks the live single key, effective authentication,
+static credential headers and key-pool size. Unknown, invalid, future or 30-minute-old evidence
+cannot rank or veto a provider. `src/combos/resolve.ts` uses that same scoped getter for selection,
+reset-window ordering and catalog inactivity. Changing a key, destination or adapter invalidates
+the old binding; restoring the same configuration may reuse still-fresh evidence. Account admission,
+cooldowns and response-driven retry remain authoritative.
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
+
+## Live sideband handshake
+
+`src/server/index.ts` establishes the authorized upstream live sideband before accepting the client WebSocket upgrade. `openLiveSidebandUpstream` bounds the handshake to ten seconds and retains at most 32 frames and 1 MiB of preamble within the frame limit. `src/server/ws-bridge.ts` defines the runtime handoff carrying captured frames or terminal state. Failed handshakes return 502/504 and client cancellation returns 499; exact upstream 404/410 status is unavailable from Bun's client WebSocket. Admission ownership lasts until upstream close/CLOSED, including failed upgrades and failed attachment. The ordinary Responses WebSocket exchange remains separate.
+
+## Paginated history writer boundary
+
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.
+
+Cline CLI joins the existing export/client integration registries. Explicit CLI sync and POST /api/sync refresh its owned pair; unattended catalog refresh excludes it. See [Cline paired files](clients/integrations.md#cline-paired-files).
+
+`claudeCode.stabilizePromptCache` is a default-off operator setting for
+[translated instruction stabilization](data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
+Config JSON preserves the boolean; only literal true activates the role-changing transform.
+
+The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
+
+Devin CLI credential path composition in `src/oauth/devin-cli.ts` follows the selected platform: Windows uses Win32 APPDATA paths, other platforms use POSIX XDG-data paths. The explicit absolute override remains verbatim; credential parsing and login behavior are unchanged.
+
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
+
+Translated Chat request construction uses the [inline-image budget](transports/streaming-health.md#translated-chat-inline-image-budget); the shared normalizer counts retained bytes even when a wire-specific drop callback keeps the image attached.
+
+OpenCode catalog discovery in `src/cli/opencode.ts` uses the local admin credential and a validated numeric-loopback management origin. It dials through `src/server/direct-local-http.ts`, rejects redirects and preserves the request/body deadline. Hub ingress selection stays separate from exported inference settings.

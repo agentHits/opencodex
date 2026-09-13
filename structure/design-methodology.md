@@ -36,3 +36,10 @@ surfaces, run through all 3 stages in order.
 - Design methodology: Product-Personality-Selection (dev-uiux-design §1)
 - 6 design dials: mood, lightness, density, shape, typography, motion
 - 7 axes total: design → domain → feature/data/security/ops/cost (derived)
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
+
+The pairing panel names the hub, offers an origin-specific command to run on that hub, and separates one-time codes from data/admin credentials. Copy outcomes and request failures use existing notice/button patterns. Failed authentication never masquerades as a stopped connected process.
+
+Cline uses the existing file-integration page, tabs, status badge and rollback dialogs. Its localized semantics identify both files and the required stop/restart boundary before users mutate them.

@@ -253,8 +253,10 @@ Provider model pins precede provider-wide pins, then global selector/destination
 A pin can raise the effective caller effort; the later cap can still lower or omit it.
 `none` means explicit-effort omission (provider default), not guaranteed reasoning disablement.
 Compaction maintenance is exempt. Pins are user overlays and do not alter registry seeds,
-model discovery or advertised ladders. Native Chat normalizes newly pinned values through
-provider wire mapping; unpinned native requests retain their existing pass-through contract.
+model discovery or advertised ladders. Native Chat applies qualifying caps even without a
+pin, and normalizes pinned values and values rewritten by a cap through provider wire
+mapping. Without a pin or a cap rewrite, native caller values retain their original wire
+spelling; the V1 and compaction cap exemptions are preserved.
 
 > Decision record: [ADR-0023](decisions/ADR-0023-ultra-reasoning-level.md)
 
@@ -267,6 +269,20 @@ provider wire mapping; unpinned native requests retain their existing pass-throu
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
 
+Listener startup diagnostics follow [the runtime lifecycle contract](runtime.md#lifecycle); malformed optional listener blocks follow [config loading](config.md#config-surface).
+
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
+
+## Paginated history writer boundary
+
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
