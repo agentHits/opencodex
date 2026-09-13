@@ -88,6 +88,7 @@
         "src/router.ts",
         "src/server/",
         "src/service.ts",
+        "src/service/",
         "src/stall-timeout.ts",
         "src/storage/",
         "src/tray/",
