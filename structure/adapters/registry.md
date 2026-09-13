@@ -99,3 +99,10 @@ Translated Chat request construction uses the [inline-image budget](../transport
 The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
 
 Provider-scoped approval reviewer settings are projected by the [catalog owner](../catalog.md#provider-scoped-approval-reviewer); this surface retains its existing routing, transport and account-selection behavior.
+
+## SWE-2 model effort selection
+
+`src/adapters/devin.ts` resolves an explicit SWE-2 reasoning effort to the native
+medium/high/max UID before accepting a suffix already present in the model id.
+Both Devin provider rows share this resolver. Omitted effort preserves an explicit
+variant; unrelated model families retain their existing suffix precedence.
