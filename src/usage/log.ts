@@ -73,7 +73,8 @@ export type AttemptRecoveryKind =
   | "image-413"
   | "console-go-upload-retry"
   | "opaque-blob-rejection"
-  | "empty-completion";
+  | "empty-completion"
+  | "reasoning-effort-downgrade";
 
 /** Request-time upstream credential class, never a credential or account identifier. */
 export type UsageCredentialSource = "grok-oauth" | "xai-api-key";
@@ -322,6 +323,7 @@ const ATTEMPT_RECOVERY_KINDS = new Set<AttemptRecoveryKind>([
   "console-go-upload-retry",
   "opaque-blob-rejection",
   "empty-completion",
+  "reasoning-effort-downgrade",
 ]);
 const USAGE_STATUSES = new Set<UsageStatus>([
   "reported",

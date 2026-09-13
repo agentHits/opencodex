@@ -7,6 +7,9 @@ Codex WebSocket quota-family normalization remains generic; retired-model eviden
 by the [OpenAI quota owner](../providers/openai-tiers.md#public-provider-contract), not by
 removing support for non-default WebSocket quota families.
 
+Key-auth hosted-search continuations validate account selection after pacing and report a failed
+terminal on drift; see [continuation binding contract](../runtime.md#hosted-search-continuation-binding).
+
 Shared parsing and streaming follow the [request-copy](byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](byte-accounting.md#stream-buffer-accounting) contracts.
 
 ## Heartbeat and stall deadline

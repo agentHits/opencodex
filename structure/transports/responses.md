@@ -9,7 +9,7 @@ Plaintext collaboration restoration treats a null namespace as absent, rejects n
 
 `/v1/responses` is the main Codex-facing endpoint. The server parses Responses input, routes to a
 provider, lets the selected adapter speak the upstream protocol, then bridges adapter events back to
-Responses-compatible streaming output.
+Responses-compatible streaming output. For an opted-in key-auth provider, a hosted-search continuation stays bound to the API-key selection that served the first leg; the contract is the [hosted-search continuation binding](../runtime.md#hosted-search-continuation-binding).
 
 Retired Codex Spark has no model-specific tool or Responses Lite override; general Lite handling and
 namespace scrubbing remain shared compatibility behavior. Codex quota/reset evidence follows the
@@ -268,12 +268,12 @@ recovery hint naming the broken rule; flat shell bridges and foreign MCP namespa
 annotated, Responses and Kiro additionally require the request's verified code-mode catalog, Cursor
 matches the exact `exec` name under its `opencodex-responses` provider without catalog context, and
 Cursor's error classification and Kiro's whitespace and failed-wrapper grouping are unchanged. Both
-halves live in `src/adapters/exec-tool-result-normalize.ts`
-so the pre-call and post-hoc wording cannot drift. This guidance and annotation change rewrites
-neither the model's JavaScript nor its patch payload; the existing name-alias delimiter
-normalization in `src/responses/code-mode-helper-compat.ts` is unchanged, and the host still rejects a
-malformed call exactly as before. Anthropic, Google, OpenAI-chat and command-code result paths
-have no exec-result seam today and are not annotated.
+halves live in `src/adapters/exec-tool-result-normalize.ts` so the pre-call and post-hoc wording
+cannot drift. This guidance and annotation change rewrites neither the model's JavaScript nor its
+patch payload; the name-alias normalization in `src/responses/code-mode-helper-compat.ts` also
+compiles `view_image` into the declared `exec` and surfaces its `image_url` through `image()`, and
+the host still rejects a malformed call exactly as before. Anthropic, Google, OpenAI-chat and
+command-code result paths have no exec-result seam today and are not annotated.
 
 > Decision record: [ADR-0040](../decisions/ADR-0040-responses-http-sse.md)
 
