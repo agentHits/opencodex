@@ -11,7 +11,7 @@
   "domains": {
     "providers": {
       "match": [
-        "^(?:aside(?!-profile)|auto|azure|baseten|chutes|cline|command|commandcode|context|cyber|deepinfra|deepseek|digitalocean|exa|featherless|forward|hyperbolic|kimi|meta|mimo|minimax|moonshot|muse|new|nous|novita|nscale|nvidia|opencode|openrouter|qwen38|sambanova|umans|vercel|zcode|zhipu)-"
+        "^(?:aside(?!-profile)|auto|azure|baseten|chutes|cline(?!-(?:client|writer))|command|commandcode|context(?!-compat|-history)|cyber|deepinfra|deepseek|digitalocean|exa|featherless|forward|hyperbolic|kimi|meta|mimo|minimax|moonshot|muse|new|nous|novita|nscale|nvidia|opencode|openrouter|qwen38|sambanova|umans|vercel|zcode|zhipu)-"
       ],
       "children": {
         "cursor": [
@@ -33,11 +33,13 @@
     },
     "codex-integration": {
       "match": [
+        "^context-compat\\.test\\.ts$",
         "^(?:active|app|bearer|catalog|combos\\.test\\.ts|doctor\\.test\\.ts|effort|gather|history|injection|issue|multi|native|parallel|project|selected|slug|ultrafast|warmup\\.test\\.ts)-"
       ]
     },
     "server": {
       "match": [
+        "^context-history\\.test\\.ts$",
         "^aside-profiles-routes",
         "^(?:account|alias|bounded|cancel|config\\.test\\.ts|consume|data|debug|error|errors|fetch|health|input|loopback|management|memory|outbound|owned|passive|port|ports\\.test\\.ts|proxy|relay|response|retry|server|session|sidebar|stream|v2)-"
       ]
@@ -109,6 +111,7 @@
     "clients": {
       "match": [
         "^aside-profile(?!s-routes)",
+        "^cline-(?:client|writer)(?:-|[.])",
         "^(?:desktop|omp|pi|prime|remote|sync)-"
       ]
     },
@@ -278,6 +281,7 @@
     "catalog-vision-sidecar-modalities.test.ts": "codex-integration",
     "catalog-zero-credit-picker.test.ts": "codex-integration",
     "chat-completions-endpoint.test.ts": "responses",
+    "chat-conversation-affinity.test.ts": "responses",
     "chat-json-sse-fallback.test.ts": "responses",
     "chat-refusal.test.ts": "responses",
     "chatgpt-device-auth.test.ts": "oauth",
@@ -310,6 +314,7 @@
     "claude-desktop-remote-hub.test.ts": "claude-integration",
     "claude-dotenv-provenance-transport.test.ts": "claude-integration",
     "claude-gateway-cache.test.ts": "claude-integration",
+    "claude-inbound-cache-stabilize.test.ts": "claude-integration",
     "claude-inbound-debug.test.ts": "claude-integration",
     "claude-inbound.test.ts": "claude-integration",
     "claude-management-api.test.ts": "claude-integration",
@@ -317,6 +322,7 @@
     "claude-messages-endpoint.test.ts": "claude-integration",
     "claude-model-info.test.ts": "claude-integration",
     "claude-models-discovery.test.ts": "claude-integration",
+    "claude-native-affinity.test.ts": "claude-integration",
     "claude-native-passthrough.test.ts": "claude-integration",
     "claude-outbound.test.ts": "claude-integration",
     "claude-shell-hook.test.ts": "claude-integration",
@@ -377,10 +383,12 @@
     "client-injection-guard.test.ts": "codex-integration",
     "client-lifecycle-lock.test.ts": "clients",
     "client-machine-listener.test.ts": "clients",
+    "cline-client.test.ts": "clients",
     "cline-pass-deepseek-v4-tool-replay.test.ts": "providers",
     "cline-pass-provider.test.ts": "providers",
     "cline-pass-reasoning-efforts.test.ts": "providers",
     "cline-provider.test.ts": "providers",
+    "cline-writer.test.ts": "clients",
     "closed-pr-branch-cleanup.test.ts": "ci-workflows",
     "codebuddy-adapter.test.ts": "providers",
     "codebuddy-protocol.test.ts": "providers",
@@ -414,6 +422,7 @@
     "codex-cli-update-zero-effect.test.ts": "codex-integration",
     "codex-composed-acceptance.test.ts": "codex-integration",
     "codex-config-generation.test.ts": "codex-integration",
+    "codex-context-owner.test.ts": "codex-integration",
     "codex-convergence-account-selectors.test.ts": "codex-integration",
     "codex-convergence-contract.test.ts": "codex-integration",
     "codex-cooldown-recovery.test.ts": "codex-integration",
@@ -531,6 +540,9 @@
     "consume-for-inspection-cancel.test.ts": "server",
     "container-bootstrap.test.ts": "service",
     "context-cap-unknown-window.test.ts": "providers",
+    "context-compat.test.ts": "codex-integration",
+    "context-history-ownership.test.ts": "server",
+    "context-history.test.ts": "server",
     "context-window-seed-repair.test.ts": "providers",
     "continuation-dedup.test.ts": "responses",
     "core-lab-boundary.test.ts": "lab",
@@ -621,7 +633,6 @@
     "desktop-remote-store.test.ts": "clients",
     "destination-policy-resolved.test.ts": "routing",
     "devin-adapter.test.ts": "providers",
-    "devin-cli-adapter.test.ts": "providers",
     "devin-hardening.test.ts": "providers",
     "digitalocean-scaleway-provider.test.ts": "providers",
     "docs-429-failover-claims.test.ts": "ci-workflows",
@@ -870,6 +881,7 @@
     "muse-passive-quota-observation.test.ts": "providers",
     "muse-spark-web-search-compat.test.ts": "providers",
     "muse-subscription-usage.test.ts": "providers",
+    "muse-tool-name-alias.test.ts": "providers",
     "namespace-tool-compat.test.ts": "responses",
     "native-alias-maintainer-regressions.test.ts": "codex-integration",
     "native-claude-code-toggle.test.ts": "codex-integration",
@@ -1053,6 +1065,9 @@
     "release-notes.test.ts": "ci-workflows",
     "release-version-line.test.ts": "ci-workflows",
     "remote-catalog.test.ts": "clients",
+    "remote-control-prototype.test.ts": "clients",
+    "remote-workspace-protocol.test.ts": "clients",
+    "remote-workspace-rpc-framing.test.ts": "clients",
     "remove-tree-helper.test.ts": "lib",
     "repo-hygiene.test.ts": "ci-workflows",
     "request-decompress.test.ts": "usage",
@@ -1077,6 +1092,7 @@
     "responses-account-label.test.ts": "responses",
     "responses-compaction-routing.test.ts": "responses",
     "responses-compaction.test.ts": "responses",
+    "responses-console-go-upload-retry.test.ts": "responses",
     "responses-context-overflow.test.ts": "responses",
     "responses-custom-tool-guidance.test.ts": "responses",
     "responses-custom-tool-repair.test.ts": "responses",
@@ -1091,6 +1107,7 @@
     "responses-inbound-store-default.test.ts": "responses",
     "responses-item-id-repair.test.ts": "responses",
     "responses-json-events.test.ts": "responses",
+    "responses-muse-tool-name-alias.test.ts": "responses",
     "responses-native-main-refresh.test.ts": "responses",
     "responses-opaque-blob-recovery.test.ts": "responses",
     "responses-parser-agent-message.test.ts": "responses",
@@ -1099,10 +1116,10 @@
     "responses-pool-401-refresh.test.ts": "responses",
     "responses-pool-refresh-attribution.test.ts": "responses",
     "responses-reasoning-summary-passthrough.test.ts": "responses",
-    "responses-reasoning-summary-rewrite.test.ts": "responses",
     "responses-routed-web-search-fields.test.ts": "responses",
     "responses-self-named-namespace-scrub.test.ts": "responses",
     "responses-shadow-intercept.test.ts": "responses",
+    "responses-show-thinking-summary.test.ts": "responses",
     "responses-snapshot-repair-server.test.ts": "responses",
     "responses-snapshot-repair.test.ts": "responses",
     "responses-state-write-amplification.test.ts": "responses",
@@ -1356,7 +1373,9 @@
     "zhipu-bigmodel-responses-quota.test.ts": "providers",
     "zz-ci-api-usage-isolation.test.ts": "ci-workflows",
     "zz-ci-storage-policy-isolation.test.ts": "ci-workflows",
-    "zz-pr-coderabbit-readiness-revalidation.test.ts": "ci-workflows"
+    "zz-pr-coderabbit-readiness-revalidation.test.ts": "ci-workflows",
+    "devin-cli-login.test.ts": "providers",
+    "devin-cli-authmode-migration.test.ts": "providers"
   },
   "migrated": [
     "adapters",

@@ -14,18 +14,26 @@ Runtime adapter construction has one authority: `src/adapters/registry.ts`.
 Some adapters share another adapter's routed-tool semantics while retaining independent runtime construction:
 
 - `azure` and `azure-openai` inherit the `openai-responses` contract.
+  The inherited contract includes Meta Muse's host-gated 64-character tool-name alias when the
+  constructed send URL is `api.meta.ai` (`src/responses/muse-tool-name-alias.ts`).
 - `mimo-free` inherits the `openai-chat` contract.
 - `cursor` stays direct because its `runTurn` transport and gated native-file fallback are distinct.
-- `devin-cli` stays direct for the same reason, one layer further out: it has no HTTP transport at
-  all. The turn runs as an Agent Client Protocol session against a local `devin acp` child process,
-  so `buildRequest` returns a placeholder and `parseStream` is disabled. Its registry `baseUrl` is a
-  canonical identity URL rather than a destination anything connects to, which is what keeps the
-  generated configuration loadable: `providerBaseUrlConfigError` accepts only `http(s)` schemes.
-- `devin` is the cloud half of the same family and is also direct. It streams Cognition's
+- `devin` is direct for a related reason. It streams Cognition's
   `ApiServerService/GetChatMessage` over Connect-RPC from `runTurn` with hand-written protobuf
-  framing, so like Cursor and `devin-cli` it never travels the `buildRequest`/`parseStream` path.
-  The two share a name and nothing else: separate transports, separate credentials, separate
-  adapters.
+  framing, so like Cursor it never travels the `buildRequest`/`parseStream` path. Both Devin
+  provider rows share it. The installed CLI's own `credentials.toml` holds an ordinary
+  `devin-session-token`, the same credential `RegisterUser` mints for a browser sign-in, so
+  `devin-cli` imports that token and the two rows differ only in where the credential came from.
+  `AdapterFactoryContext.providerId` is what keeps them apart: the Cognition tenant is recorded on
+  the credential, not in the registry, so the adapter has to know which row it is serving before it
+  can resolve a host.
+
+  There is no second Devin transport. An Agent Client Protocol adapter that spawned a local
+  `devin acp` child once existed under the `devin-cli` adapter id and was removed: the CLI's
+  credential turned out to be the ordinary cloud token, so the child process bought nothing that
+  importing the token did not, and it cost a placeholder `buildRequest`, a disabled
+  `parseStream`, an identity-only `baseUrl`, and a subprocess running in the operator's tree.
+  `projectDevinCliAuthMode` rewrites any saved row that still names the retired adapter id.
 
 The registry records those relationships with `contractParent`. A parent relationship does **not** mean the registry recursively constructs a parent adapter and injects it into the child. Azure and MiMo keep owning their existing internal composition. This avoids making production constructors depend on test/conformance needs and keeps this authority refactor behavior-neutral.
 
@@ -55,3 +63,27 @@ request when a node carries both. Codex's own deferred tool catalog emits exactl
 so the schema is not something a user can fix from configuration (issue #2673).
 
 > Decision record: [ADR-0093](../decisions/ADR-0093-moonshot-ref-with-siblings-normalization.md)
+
+## Truncated tool finalization
+
+The bridge keeps an open function, custom, or tool-search call incomplete when an adapter ends with a recognized truncated stop reason. Streaming emits no argument/input completion frame for that open call, and buffered JSON applies the same status. A call already closed by its own tool-call end retains its completed state. The response remains incomplete, partial output is preserved, and truncated compaction never replaces history.
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+Canonical Spark Lite metadata follows the final serialized model and surviving nonempty Lite tool catalog; see [Responses transport](../transports/responses.md).
+
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](../transports/responses.md).
+
+Adapter events distinguish raw reasoning content from summary-channel thinking; CCA Gemini classification is request-local. See [Google provenance](../providers/google.md).
+
+Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
+privately to final dispatch; preliminary route selection does not inject Go-only headers.
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
+
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](../transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.

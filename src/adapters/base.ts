@@ -95,6 +95,8 @@ export interface AdapterRequest {
     plaintextV2AgentMessageToolNames?: ReadonlySet<string>;
     /** Collaboration message-tool names actually rewritten to fixed aliases in this request. */
     plaintextV2AgentMessageAliasedToolNames?: ReadonlySet<string>;
+    /** Upstream-only <=64-char aliases for Meta Muse tool names rewritten in this request. */
+    convertedMuseToolNameAliases?: ReadonlyMap<string, string>;
     /** Releases observation of a serialized request body after its final fetch attempt settles. */
     releaseBodyObservation?: () => void;
     /** Exact reasoning parameter emitted by the adapter, for request-log diagnostics only. */
