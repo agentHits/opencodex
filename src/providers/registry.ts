@@ -1400,7 +1400,9 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     // the map above. Key-auth declared the same value via keyAuthServiceTier, so the key
     // lane is unchanged.
     chatServiceTier: true,
-    fastTierDescription: "Priority processing, 2x token price",
+    // Shared across key and OAuth catalog rows. OAuth subscription has no
+    // per-token price, so the 2x claim is scoped to key auth.
+    fastTierDescription: "Priority processing; tier pricing applies on key auth only",
     featured: true,
     oauthId: "xai",
     jawcodeBundle: "xai",
