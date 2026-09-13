@@ -330,9 +330,13 @@ export function createDevinAdapter(
   provider: OcxProviderConfig,
   context: { providerId?: string } = {},
 ): ProviderAdapter {
-  // Which credential slot holds this row's tenant. Defaults to `devin` so every
-  // existing caller — including the tests that construct this adapter directly —
-  // behaves exactly as before.
+  // Which credential slot holds this row's tenant. The key is the configured
+  // provider id verbatim: `devin-cli` is a deprecated alias for the one merged
+  // `devin` provider, and the startup migration rekeys the config row and the
+  // credential slot together, so normalizing here would only misread a row that
+  // has not been migrated yet. Defaults to `devin` so every existing caller —
+  // including the tests that construct this adapter directly — behaves exactly
+  // as before.
   const credentialProviderId = context.providerId ?? "devin";
   const cascadeIds = new Map<string, string>();
   const CASCADE_ID_MAX = 256;
