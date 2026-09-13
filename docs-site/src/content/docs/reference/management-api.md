@@ -145,6 +145,34 @@ should use the dedicated paths above so an older proxy cannot ignore a profile s
 See [Aside profile controls](/guides/integrations/#aside-profile-controls) for CLI commands and
 the proxy upgrade, restart, and retry sequence.
 
+### Remote Workspace
+
+Requires Hub mode and `OCX_REMOTE_WORKSPACE_ENABLED=1` on the Hub process. Disabled status is
+readable; mutations refuse without initializing workspace services.
+
+| Method and path | Purpose | Notable errors |
+| --- | --- | --- |
+| `GET /api/remote-workspace` | Read paired computers, current capabilities, Hub runtimes, and session snapshots | Disabled status when Hub role or explicit opt-in is absent |
+| `POST /api/remote-workspace/pairing` | Create a ten-minute one-use Executor enrollment code | GUI session only; 429 pairing capacity |
+| `GET /api/remote-workspace/runtimes` | Read Codex, Claude Code, and Pi availability on the Hub | — |
+| `GET, POST /api/remote-workspace/sessions` | List sessions or start one bound to a device, root, runtime, and access mode | POST is GUI session only; 409 offline/unavailable/invalid target |
+| `POST /api/remote-workspace/sessions/{id}/prompt` | Continue the bound model session | GUI session only; 409 active turn, offline Executor, or resume failure |
+| `DELETE /api/remote-workspace/sessions/{id}` | Stop the model runtime and encrypted Executor session | GUI session only; 404 unknown session |
+| `DELETE /api/remote-workspace/devices/{id}` | Revoke one computer and stop its sessions | GUI session only; 404 unknown device |
+
+Executor enrollment exchanges a one-use code at `POST /remote-workspace/pair` and then opens
+`/remote-workspace/agent` as a bearer-authenticated outbound WebSocket. Those two machine endpoints
+are not general management API authority. The bearer is device-scoped, and each work session adds a
+signed E2EE handshake. Ten failed pairing codes from one kernel-observed peer return `429` with
+`Retry-After` for the remainder of the fixed ten-minute window. Tailscale Serve clients share the
+management listener's loopback peer bucket; the identity header is not used for throttling because
+a direct local process could forge it. See [Remote Workspace](/guides/remote-workspace/) for the
+end-user flow and trust boundaries.
+
+Session snapshots include `resumable`. It becomes true only after the selected coding-agent runtime
+has durable history; notably, a new Claude Code session remains false until its first prompt
+completes.
+
 ### Combos
 
 | Method and path | Purpose | Notable errors |

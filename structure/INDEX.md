@@ -42,7 +42,7 @@ The wire surfaces a client actually talks to.
 | [`data-planes/images.md`](data-planes/images.md) | Standalone image generation and edit relay. |
 | [`data-planes/search.md`](data-planes/search.md) | Hosted search relay and exact account selectors. |
 | [`data-planes/inbound-compat.md`](data-planes/inbound-compat.md) | Chat Completions inbound, Anthropic-shaped clients, and JSON-upstream streaming clients. |
-| [`remote-workspace.md`](remote-workspace.md) | Inactive workspace protocol, cryptographic identity primitives, and bounded framing. |
+| [`remote-workspace.md`](remote-workspace.md) | Opt-in workspace identity, executor grants, runtime adapters, management and dashboard integration. |
 
 ### Tier 4 — Providers and adapters
 

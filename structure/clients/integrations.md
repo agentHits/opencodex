@@ -169,6 +169,8 @@ precede coordinated writes under one scoped flight, and actual file state/refusa
 separate. Restore reconciles target intent from validated snapshot ownership without changing
 sibling policy. Profile journal views retain source-store provenance for older legacy entries.
 
+The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`; its isolated owner and support limits are documented in [Remote Workspace](../remote-workspace.md).
+
 ## Cline paired files
 
 Cline CLI uses `providers.json` for connection settings and sibling `models.json` for its

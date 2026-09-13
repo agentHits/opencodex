@@ -82,6 +82,19 @@ subsystem from fencing native traffic or creating lock contention. Presence, an 
 or any observation error still takes the locked sweep and fails closed; the fast path is based only
 on proven absence, never on an unreadable path.
 
+The native main slot also accepts one same-identity device reauth (#3898):
+`/api/codex-auth/main/reauth-device` (start/status/cancel) plus
+`ocx account main reauth`. The grant is the OpenAI deviceauth grant already
+used for pool accounts, but nothing routes through the pool login surface —
+`/api/codex-auth/login` keeps rejecting `__main__` — and the commit is a
+sibling of the refresh write: same-identity check against the snapshot
+captured at start, owner-independent exclusive claim (a headless hub runs no
+owner lifecycle), path/hash/inode re-verification inside the claim, and one
+atomic write of access/refresh/id token + account_id. The old identity token
+is never retained beside the new grant. No claim is held while the human
+completes the device page, and no DTO, log, or error carries tokens, emails,
+or raw account ids.
+
 > Decision record: [ADR-0008](decisions/ADR-0008-codex-home.md)
 
 The native-write coordinator is keyed by the canonical `CODEX_HOME` in the effective-user runtime
@@ -231,8 +244,13 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 
 `src/codex/history-provider.ts` rejects provider-history changes with `history_paginated_requires_native_writer` when a target begins with an ordinal-bearing record or declares `history_mode=paginated`. Apply, manifest-backed restore, and explicit legacy recovery preflight all selected targets before changing database rows or manifests. The append boundary checks again. Codex owns ordinal allocation and the live projection cursor; reading the last ordinal and appending N+1 is not safe concurrent coordination. Legacy unnumbered rollouts retain their existing behavior. This guard prevents the observed stable-format corruption; it does not implement native-writer integration or guarantee a concurrent legacy-to-paginated conversion is excluded.
 
-Injection preflights affected history using the normalized config candidate before writing config/profile/journal, then checks again after the complete artifact write. Detected migration restores all three preimages before returning a structured refusal, including on legacy-uncoordinated homes. A failed config restore stops catalog/history work; coordinated restore rolls back its published remove transition. Legacy first-line provider patches are bound to the validated file identity before and after writing. These compensating checks do not provide a native-writer lock or authorize external ordinal allocation.
+Injection preflights affected history using the normalized config candidate before writing config/profile/journal, then checks again after the complete artifact write. Native restore also rechecks after successful journal restoration or fallback removal, while exact config/profile/journal preimages and any coordinated remove transaction remain available for compensation. Detected migration restores all three preimages before returning a structured refusal, including on legacy-uncoordinated homes. A failed config restore stops catalog/history work; coordinated restore rolls back its published remove transition. Legacy first-line provider patches are bound to the validated file identity before and after writing. These compensating checks do not provide a native-writer lock or authorize external ordinal allocation.
 
 The legacy external writer is now refused for affected rows in any store whose schema includes history_mode, even while their row mode is still legacy. This deliberately sacrifices automatic relabeling on migration-capable stores rather than racing native conversion. Synchronous/asynchronous restore, inline journal restore, and direct config removal preserve all artifacts on the same refusal.
 
 Native restore preflight also checks manifest-owned targets whose rows already returned to `openai`, including interrupted restores. Preimage capture distinguishes absent files from unreadable artifacts and aborts before mutation when a complete snapshot cannot be read.
+
+A config restoration that was attempted and failed retains its failed artifact in the restore
+result; unattempted catalog and history artifacts remain skipped. Successful preimage compensation
+preserves config/profile/journal bytes without relabeling the failure as a skipped operation.
+Incomplete compensation still raises the explicit partial-write error.

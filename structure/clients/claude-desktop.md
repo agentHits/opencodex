@@ -82,6 +82,10 @@ Connected CLI usage follows the [client-scoped hub usage contract](../gui-and-ma
 
 Client usage transport follows [the runtime contract](../runtime.md#lifecycle), independently of Desktop inference.
 
+The unregistered executor CLI module stores Remote Workspace state separately from client configuration; see [Remote Workspace](../remote-workspace.md).
+
+Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.
+
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -99,3 +103,5 @@ The explicit sync coordinator also accepts Cline CLI as a separate file integrat
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
 
 The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
+
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.

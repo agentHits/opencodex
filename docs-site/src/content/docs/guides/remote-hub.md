@@ -13,7 +13,9 @@ the hub's own processes dial `127.0.0.1:<the same port>` with no credential, thr
 companion listener. Start from [the recipe below](#linux-systemd-or-macos-launchd), then hand a
 second machine a ready-made command with [`ocx hub invite`](#inviting-another-machine).
 
-The management ingress never serves `/v1/*`, `/healthz`, `/readyz`, or WebSockets. Do not publish its
+The management ingress never serves `/v1/*`, `/healthz`, or `/readyz`. When explicitly enabled,
+Remote Workspace admits only its paired bearer-authenticated agent WebSocket and one-time pairing
+exchange; see [Remote Workspace](/guides/remote-workspace/). Do not publish its
 port directly, do not add a cloud-firewall rule for it, and do not use Tailscale Funnel. Funnel is a
 public-internet surface and is outside this deployment model.
 

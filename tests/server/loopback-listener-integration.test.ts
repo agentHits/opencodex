@@ -782,6 +782,17 @@ describe("unauthenticated loopback listener", () => {
 });
 
 describe("composite listener shutdown", () => {
+  test("starts socket-owner cleanup before waiting for a graceful listener drain", async () => {
+    const ran: string[] = [];
+    let release!: () => void;
+    const closed = new Promise<void>(resolve => { release = resolve; });
+    await runListenerShutdown([
+      async () => { ran.push("admission-closed"); await closed; ran.push("drained"); },
+      async () => { ran.push("owner-cleanup"); release(); },
+    ], async () => { ran.push("lifecycle"); });
+    expect(ran).toEqual(["admission-closed", "owner-cleanup", "drained", "lifecycle"]);
+  });
+
   // Both listeners share one `stop`, and the two properties it must hold pull against each
   // other: keep cleaning up after a failure, yet still report that failure. A test against a
   // live server cannot inject the rejection, so the orchestration was extracted.
@@ -844,7 +855,7 @@ describe("seams the runtime cannot defend", () => {
     // issued from a sibling Bun.serve in the same process. Another version or platform is not
     // promised to, and the loopback listener would then fail to upgrade at all.
     expect(serverSource).not.toMatch(/\bif \(server\.upgrade\(req,/);
-    expect(serverSource.match(/requestServer\.upgrade\(req,/g)?.length).toBe(2);
+    expect(serverSource.match(/requestServer\.upgrade\(req,/g)?.length).toBe(3);
   });
 
   test("the loopback listener binds 127.0.0.1 explicitly", () => {

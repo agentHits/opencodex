@@ -424,6 +424,7 @@ const commandRunners: Record<string, CommandRunner> = {
       // Explicit sync with the integration OFF still refreshes the catalog/cache
       // for side profiles that consume the proxy without injection.
       console.log(synced.message ?? "Codex integration is OFF; catalog refreshed, Codex config untouched.");
+      if (!synced.ok) code = 1;
     } else if (!synced.ok) {
       code = 1;
       console.error("Codex sync did not complete. Fix the reported Codex config issue and retry.");
@@ -480,6 +481,10 @@ const commandRunners: Record<string, CommandRunner> = {
   connect: async deps => {
     const { handleConnectCommand } = await import("./connect");
     return await handleConnectCommand(deps.args.slice(1));
+  },
+  "remote-workspace": async deps => {
+    const { runRemoteWorkspaceCommand } = await import("./remote-workspace");
+    return await runRemoteWorkspaceCommand(deps.args.slice(1));
   },
   disconnect: async deps => {
     const { handleDisconnectCommand } = await import("./connect");

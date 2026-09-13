@@ -366,7 +366,7 @@
       "path": "remote-workspace.md",
       "tier": 3,
       "title": "Remote Workspace",
-      "scope": "Inactive workspace protocol, cryptographic identity primitives, and bounded framing.",
+      "scope": "Opt-in workspace identity, executor grants, runtime adapters, management and dashboard integration.",
       "documents": [
         "src/remote-control/"
       ]
