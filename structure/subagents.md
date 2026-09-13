@@ -114,8 +114,9 @@ ordering behavior. This does not change the separate `opencodex_spawn_priority` 
 Retained rows recompute their natural ranks from the current featured roster and account-selector
 stride before display order is applied, so a discovery outage cannot preserve an obsolete
 featured or picker rank. Canonical `opencode-go` rows retain their configured reasoning ladder
-both when generated and when merged from retained catalog state; synthetic max/ultra choices
-are not added to that provider's declared ladder.
+and provider-scoped context metadata both when generated and when merged from retained catalog
+state; `deepseek-v4.1-flash` therefore keeps its 1,048,576-token window, while synthetic max/ultra
+choices are not added to that provider's declared ladder.
 
 Full derivation with per-line citations: `devlog/_plan/260816_codexrs_multiagent_v2_and_history_perf/013_five_cap_v1_vs_v2.md`.
 
