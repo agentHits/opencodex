@@ -60,6 +60,8 @@ the secret itself.
 
 Malformed optional data-loopback and nested hub-management listener blocks are disabled in memory and reported by load-time warnings and read-only config diagnostics. Ingress warnings validate the raw ingress independently, so an invalid hub sibling does not falsely blame a valid ingress. The warning names only the field; unrelated providers and keys survive. Explicit writes remain strictly validated.
 
+`claudeCode.desktopProfile` follows the same preserve-the-rest rule. JSON `null` (or any non-string) `appliedFingerprint` / `appliedAt` is treated as unset. A profile that is still invalid after that is dropped as a whole — `src/config.ts` salvage already does this for independent `routingProfiles` / `combos` entries — so one bad Desktop marker cannot replace the operator's providers with `getDefaultConfig()`. A `claudeCode` value that is not an object still fails the document, because there is no safe subtree to keep.
+
 The former `showCodexSparkQuota` key is inert passthrough data when loading an old config.
 It is absent from the typed settings contract and cannot re-enable Spark quota through the
 management API. Retirement does not migrate user-selected model ids or erase usage history.
