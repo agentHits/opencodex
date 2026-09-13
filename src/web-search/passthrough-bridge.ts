@@ -64,10 +64,52 @@ import {
   resolveSidecarBackend,
   xaiSearchOptionsFromConfig,
 } from "./sidecar-providers";
+import { providerDestinationConfigError } from "../lib/destination-policy";
+import { redactSecretString } from "../lib/redact";
 
 /** Canonical Ollama Cloud origin. The only origin the "ollama" backend derives on its own. */
 export const OLLAMA_CLOUD_ORIGIN = "https://ollama.com";
 const OLLAMA_WEB_SEARCH_PATH = "/api/web_search";
+
+/**
+ * Providers already warned about a destination-refused bridge endpoint. The planner runs per
+ * request, so without this a refused endpoint would warn on every turn. Keyed on provider plus
+ * endpoint so that editing the config warns again; the key itself is never logged.
+ */
+const warnedRefusedBridgeEndpoints = new Set<string>();
+/** Bound the dedupe set so a pathological config cannot grow it without limit. */
+const MAX_WARNED_REFUSED_ENDPOINTS = 64;
+
+/**
+ * A refused endpoint disarms the bridge, and the refusal itself has to stay silent at the point of
+ * use -- returning undefined is what keeps the key unspent. But silence alone made a real
+ * configuration fail invisibly: a provider keyed under a CUSTOM name (say "my-ollama") pointing at
+ * a loopback endpoint used to arm, and the destination policy now refuses it because only the
+ * registry ids are local by default. The config file never reaches
+ * "providerWebSearchBridgeConfigError", so nothing else would tell the operator. One warning per
+ * provider and endpoint gives them the remedy without leaking the destination: the URL is
+ * deliberately omitted and the provider name is redacted, because a provider key is
+ * caller-controlled and can be token-shaped.
+ */
+function warnRefusedBridgeEndpointOnce(providerName: string, endpoint: string): void {
+  const key = providerName + "\u0000" + endpoint;
+  if (warnedRefusedBridgeEndpoints.has(key)) return;
+  if (warnedRefusedBridgeEndpoints.size >= MAX_WARNED_REFUSED_ENDPOINTS) {
+    warnedRefusedBridgeEndpoints.clear();
+  }
+  warnedRefusedBridgeEndpoints.add(key);
+  console.warn(
+    "[web-search] provider " + JSON.stringify(redactSecretString(providerName))
+    + " webSearchBridge.endpoint was refused by destination policy, so the bridge stays disarmed."
+    + " Set allowPrivateNetwork:true for an intentionally local endpoint, or key the provider under"
+    + " its registry id (ollama, vllm, lm-studio, litellm).",
+  );
+}
+
+/** Test seam: the dedupe is process-wide, so a test that asserts the warning must reset it. */
+export function resetRefusedBridgeEndpointWarningsForTests(): void {
+  warnedRefusedBridgeEndpoints.clear();
+}
 
 const DEFAULT_BRIDGE_MAX_SEARCHES = 3;
 const DEFAULT_BRIDGE_TIMEOUT_MS = 60_000;
@@ -123,13 +165,33 @@ function originOf(value: string | undefined): string | undefined {
  * that receives this provider's API key. Without one, the origin must be canonical Ollama Cloud
  * -- a renamed row pointing at an arbitrary host must not silently receive the key just because
  * its adapter happens to be openai-responses.
+ *
+ * Naming a destination is not the same as it being an allowed one. The endpoint therefore gets the
+ * same literal destination assessment "baseUrl" already gets (#4519): metadata addresses are
+ * refused outright, and loopback/private need the provider's "allowPrivateNetwork" opt-in or a
+ * registry entry that is local by definition, so a local Ollama on 127.0.0.1 keeps working. This
+ * is the ONLY reader of "webSearchBridge.endpoint" in the tree, which is what lets it act as the
+ * authorization boundary for a config file the operator edited by hand -- that path never reaches
+ * "providerWebSearchBridgeConfigError", so a value that survives file load simply cannot be spent.
+ * The refusal returns undefined rather than an error, because disarming is what keeps the key
+ * unspent -- but it is not silent: see warnRefusedBridgeEndpointOnce for why a custom-named local
+ * provider has to be told, once, that its endpoint was refused and how to re-authorize it.
  */
 export function resolveOllamaWebSearchEndpoint(
+  providerName: string,
   provider: OcxProviderConfig,
 ): string | undefined {
   const configured = provider.webSearchBridge?.endpoint;
   if (configured !== undefined) {
-    return originOf(configured) === undefined ? undefined : configured;
+    if (originOf(configured) === undefined) return undefined;
+    if (providerDestinationConfigError(providerName, {
+      baseUrl: configured,
+      allowPrivateNetwork: provider.allowPrivateNetwork,
+    })) {
+      warnRefusedBridgeEndpointOnce(providerName, configured);
+      return undefined;
+    }
+    return configured;
   }
   return originOf(provider.baseUrl) === OLLAMA_CLOUD_ORIGIN
     ? OLLAMA_CLOUD_ORIGIN + OLLAMA_WEB_SEARCH_PATH
@@ -211,6 +273,12 @@ export function planPassthroughWebSearchBridge(
   parsed: OcxParsedRequest,
   provider: OcxProviderConfig,
   options: {
+    /**
+     * Registry key for this provider. Required rather than optional: the destination assessment
+     * consults the registry's local-by-default entries, and an absent name would silently pick a
+     * different answer than the operator configured.
+     */
+    providerName: string;
     isPassthrough: boolean;
     stream: boolean;
     auth?: PassthroughWebSearchBridgeAuth;
@@ -239,7 +307,7 @@ export function planPassthroughWebSearchBridge(
     ? bridge.timeoutMs!
     : DEFAULT_BRIDGE_TIMEOUT_MS;
   if (backend === "ollama") {
-    const endpoint = resolveOllamaWebSearchEndpoint(provider);
+    const endpoint = resolveOllamaWebSearchEndpoint(options.providerName, provider);
     if (!endpoint) return undefined;
     return { backend, endpoint, maxSearches, timeoutMs };
   }
