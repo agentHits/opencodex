@@ -158,9 +158,11 @@ import {
 import { resolveCopilotApiBaseUrl } from "../../oauth/github-copilot";
 import { buildWebSearchTool, planWebSearch, runWithWebSearch, shouldResolveOpenAiWebSearchSidecar } from "../../web-search";
 import {
-  createOllamaBridgeExecutor,
+  createPassthroughWebSearchBridgeExecutor,
   createPassthroughWebSearchBridgeStream,
   planPassthroughWebSearchBridge,
+  resolvePassthroughWebSearchBridgeAuth,
+  shouldResolveOpenAiPassthroughWebSearchBridge,
 } from "../../web-search/passthrough-bridge";
 import { buildImageTool, buildVideoTool, planImageBridge, planVideoBridge, runWithImageBridge, clampImageMaxRounds, IMAGE_GEN_TOOL_NAME, VIDEO_GEN_TOOL_NAME } from "../../images";
 import { describeImagesInPlace, isModelTextOnly, planVisionSidecar, resolveOpenAiVisionModel, shouldResolveOpenAiVisionSidecar, stripImagesInPlace } from "../../vision";
@@ -4769,7 +4771,8 @@ async function handleResponsesInner(
   const needsOpenAiVision = !visionDescribeTerminal
     && shouldResolveOpenAiVisionSidecar(config, route.provider, route.modelId, parsed);
   const needsOpenAiSearch = !routedCompaction && !adapter.runTurn
-    && shouldResolveOpenAiWebSearchSidecar(config, parsed, isPassthrough);
+    && (shouldResolveOpenAiWebSearchSidecar(config, parsed, isPassthrough)
+      || shouldResolveOpenAiPassthroughWebSearchBridge(route.provider, parsed, isPassthrough));
   if (needsOpenAiVision || needsOpenAiSearch) {
     try {
       const candidates = listOpenAiForwardSidecarCandidates(config);
@@ -6242,9 +6245,15 @@ async function handleResponsesInner(
       // conversation upstream, and hands back ordinary Responses SSE — so every rewrite below,
       // including the guard itself, still inspects the client-facing stream. Default OFF: without
       // the opt-in this is one planner call and the relay is byte-identical to before.
+      const webSearchBridgeAuth = resolvePassthroughWebSearchBridgeAuth(
+        route.provider.webSearchBridge?.backend,
+        config,
+        openAiSidecar,
+      );
       const webSearchBridgePlan = planPassthroughWebSearchBridge(parsed, route.provider, {
         isPassthrough: true,
         stream: parsed.stream === true,
+        auth: webSearchBridgeAuth,
       });
       // Capture the binding that actually served the first leg, after its permitted reselection.
       const webSearchBridgeBinding = requestBindings.get(request);
@@ -6278,7 +6287,13 @@ async function handleResponsesInner(
             }),
             false,
           ),
-          execute: createOllamaBridgeExecutor(webSearchBridgePlan, route.provider.apiKey ?? ""),
+          execute: createPassthroughWebSearchBridgeExecutor(webSearchBridgePlan, {
+            providerApiKey: route.provider.apiKey ?? "",
+            auth: webSearchBridgeAuth,
+            hostedTool: parsed._webSearch,
+            describeImages: isModelTextOnly(route.provider, route.modelId),
+            sidecar: config.webSearchSidecar,
+          }),
           // Appending a search result can push the continuation past the ceiling the first leg
           // was admitted under, so the same limit is re-applied before every later send.
           checkOutboundBody: (continuationBody: string) => {
