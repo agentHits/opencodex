@@ -1367,12 +1367,35 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     authKind: "oauth",
     allowKeyAuthOverride: true,
     // Priority Processing is documented for xAI's public API-key Chat Completions and
-    // Responses endpoints. OAuth is a separate Grok CLI subscription gateway and remains
-    // unclassified; do not turn this into a provider-wide supportsServiceTier declaration.
+    // Responses endpoints. The OAuth lane is classified per-model below, not here:
+    // do not turn this into a provider-wide supportsServiceTier declaration.
     keyAuthServiceTier: {
       supportsServiceTier: true,
       chatServiceTier: true,
     },
+    // OAuth (Grok subscription gateway) service-tier capability, classified by live probe
+    // on 2026-09-13 (devlog/_fin/260913_xai_oauth_fast/020_probe-evidence.md): each listed
+    // model accepted service_tier "priority" over grok-oauth and echoed priority upstream.
+    // Key-auth already declares provider-wide support above, so this map only newly opens
+    // the OAuth lane. grok-4.20-multi-agent-0309 is deliberately absent: the gateway accepts
+    // the field but answers service_tier "default" — a live downgrade, not a fast tier.
+    // Unlisted and future-discovered ids stay unclassified.
+    modelSupportsServiceTier: {
+      "grok-4.6": true,
+      "grok-4.5": true,
+      "grok-4.3": true,
+      "grok-4.20-0309-reasoning": true,
+      "grok-4.20-0309-non-reasoning": true,
+      "grok-build-0.1": true,
+      "grok-composer-2.5-fast": true,
+    },
+    // Lets a caller-sent service_tier forward on the Chat wire (fastwire forwardCallerTier
+    // chain). Provider-wide by construction: unclassified chat-wire models then preserve a
+    // caller tier verbatim, the same contract other unclassified Responses routes already
+    // follow; --fast publication and proxy-owned fast injection stay capability-scoped by
+    // the map above. Key-auth declared the same value via keyAuthServiceTier, so the key
+    // lane is unchanged.
+    chatServiceTier: true,
     fastTierDescription: "Priority processing, 2x token price",
     featured: true,
     oauthId: "xai",
@@ -1413,20 +1436,20 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     // Grok 4.6/4.5 subscription Responses callers use the native wire with the existing
     // namespace/web-search/replay normalization. Chat remains an explicit modelAdapters
     // opt-in. Multi-agent has no Chat wire and uses Responses under both auth modes.
-    // Caller-owned service tiers stay off the unclassified OAuth subscription route; key-auth
-    // Fast remains proxy-owned and is still selected through keyAuthServiceTier above.
+    // grok-4.6/4.5 are classified OAuth fast-tier models (modelSupportsServiceTier above),
+    // so a caller-sent service_tier:"priority" forwards on this lane — the Codex fast-toggle
+    // path. Multi-agent keeps its pin: probed 2026-09-13, the gateway downgrades its tier to
+    // "default", so forwarding a caller tier would advertise a tier it does not get.
     modelWireDefaults: {
       "grok-4.6": {
         wire: "openai-responses",
         inbound: ["responses"],
         authModes: ["oauth"],
-        forwardCallerServiceTier: false,
       },
       "grok-4.5": {
         wire: "openai-responses",
         inbound: ["responses"],
         authModes: ["oauth"],
-        forwardCallerServiceTier: false,
       },
       "grok-4.20-multi-agent-0309": {
         // Even at high effort it emits no reasoning-summary deltas or encrypted replay
@@ -1742,6 +1765,12 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     label: "Meta Muse Code (CLI credential)",
     adapter: "openai-responses",
     baseUrl: "https://api.meta.ai/v1",
+    // Meta own client sends this on every Muse Code call. We never have, so a future
+    // server-side requirement would break every Muse request with no local signal.
+    // Declared here rather than in a transport hook so it also covers model discovery
+    // (src/oauth/index.ts:1176) and still yields to a user-set header
+    // (mergeRegistryStaticHeaders, src/providers/registry.ts:3494).
+    staticHeaders: { "x-api-version": "1.0.0" },
     authKind: "oauth",
     oauthId: "meta-muse",
     dashboardUrl: "https://dev.meta.ai",
@@ -1754,7 +1783,7 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     modelInputModalities: Object.fromEntries(META_MUSE_MODELS.map(id => [id, ["text", "image"] as ["text", "image"]])),
     modelReasoningEfforts: Object.fromEntries(META_MUSE_MODELS.map(id => [id, META_MUSE_REASONING_EFFORTS])),
     modelReasoningEffortMap: Object.fromEntries(META_MUSE_MODELS.map(id => [id, META_MUSE_REASONING_EFFORT_MAP])),
-    note: "Reuses the API key the Muse Code CLI stores after `muse login` (macOS only; requires the CLI installed and signed in). Meta ships no native Windows CLI and the Linux credential storage has not been measured, so on those platforms OpenCodex asks you to paste the Muse Code API key from https://dev.meta.ai instead of importing one; a pasted key faces the same format check and live validation as an imported one. Meta scopes that credential to the Muse Code CLI, so this is an UNSUPPORTED use: Meta does not authorize subscription coverage outside its own CLI, how these calls settle is not observable from the API, and you should treat every call as billable against your account. The key, imported or pasted, is copied into OpenCodex's auth store. OpenCodex reads Meta's subscription windows from streaming responses and shows the last observed value with its age; there is no endpoint to query them on demand, so refreshing one requires another streaming turn, and translated (non-passthrough) turns report none. Rate limits apply per team, not per key. For a supported path use the meta-model provider with your own key (export it as META_MODEL_API_KEY).",
+    note: "Signs in to Meta with a browser device code on any platform, then mints the Muse Code subscription key. That grant is reimplemented from the one the Muse Code CLI performs and has NOT been exercised against Meta from OpenCodex, so treat the first login as unverified. If the Muse Code CLI is already signed in on macOS, the existing key is imported instead of starting a new grant. A pasted key from https://dev.meta.ai still works as a fallback when a device login cannot complete, and faces the same format check and live validation. A device login authenticates as Meta own Muse Code client, which is a stronger claim than reusing a key the CLI already minted. Meta scopes that credential to the Muse Code CLI, so this is an UNSUPPORTED use: Meta does not authorize subscription coverage outside its own CLI, how these calls settle is not observable from the API, and you should treat every call as billable against your account. The key, imported or pasted, is copied into OpenCodex's auth store. For an account signed in with the device login, OpenCodex refreshes Meta's subscription windows on demand from the same key endpoint the login uses, at most once every five minutes. For an imported or pasted key there is no endpoint to query them on demand, so OpenCodex reads them from streaming responses and shows the last observed value with its age; refreshing one then requires another streaming turn, and translated (non-passthrough) turns report none. Rate limits apply per team, not per key. For a supported path use the meta-model provider with your own key (export it as META_MODEL_API_KEY).",
   },
   {
     id: "umans",
