@@ -138,6 +138,13 @@ journal creation, and the background history restoration guardian.
 `ocx sync` and `ocx restore back` run the injector's non-writing preflight before provider
 discovery or catalog/cache replacement. Deterministic config and ownership refusals therefore
 leave the existing catalog and cache untouched, and their concrete messages are emitted on stderr.
+One refusal is deliberately not terminal for an explicit `ocx sync`. When the preflight reports
+`history_paginated_requires_native_writer`, the refusal itself stands — config and conversation
+files are not touched — but the catalog and models cache still refresh through their existing
+owner, and the sync reports `catalog-only`. An explicit sync is also the refresh path for side
+profiles that read the OpenCodex catalog without injection, and a home whose history simply
+requires its native writer is not a reason to let their model list go stale. Unattended sync,
+`POST /api/sync`, and every other config or ownership refusal keep the hard failure above.
 The real injection still revalidates under its normal write boundary after catalog convergence;
 the preflight is an early no-write guard, not an authorization token for a later write.
 
@@ -198,7 +205,7 @@ Codex display-cache expiry, retained main-policy evidence, and reset history fol
 
 ## Paginated history writer boundary
 
-`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
 
 Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
 
@@ -207,5 +214,7 @@ The Cline client keeps connection settings and models in a separate native file 
 `claudeCode.stabilizePromptCache` is a default-off operator setting for
 [translated instruction stabilization](data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
+
+The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
 
 Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
