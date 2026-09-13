@@ -152,7 +152,16 @@ describe("native main device reauth flow (#3898)", () => {
     }
     cancelMainDeviceReauth(started.flowId);
     releaseCommit();
-    const terminal = await waitForTerminal(started.flowId);
+    // Publication beats the racing cancellation — but the flip lands when the
+    // commit resolves, so a transient cancelled read is allowed between the
+    // cancel and the commit's return.
+    let terminal: MainDeviceReauthStatus | null = null;
+    const settleDeadline = Date.now() + 2_000;
+    while (Date.now() < settleDeadline) {
+      terminal = getMainDeviceReauthStatus(started.flowId);
+      if (terminal?.status === "succeeded") break;
+      await Bun.sleep(5);
+    }
     expect(terminal).toMatchObject({ status: "succeeded", credentialUpdated: true });
   });
 
