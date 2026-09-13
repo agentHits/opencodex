@@ -315,3 +315,15 @@ The account history response can include a [low-confidence effective capacity es
 Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
 
 Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
+
+## Provider-scoped approval reviewer
+
+`src/codex/catalog/sync.ts` resolves exact case-preserving provider/model reviewer selectors against the final catalog in both retained sync and `src/codex/convergence.ts`. Valid per-model selection wins over valid provider-wide selection, then the root selector supplies fallback. Native root stamps retain the observed original value and applied selector bound to their slug; removal restores the original only while the applied value is unchanged. The native provenance remains after restoration so an equal provider reviewer cannot trigger legacy reclassification on the next sync. Ambiguous legacy unmarked catalogs retain their existing heuristic cleanup. Provider stamps do not change routing or credentials.
+
+The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
+Exact [model input declarations](config.md#explicit-per-model-capability-declarations) now feed text-only eligibility and catalog hints; existing image-description/omission handling consumes them before the main upstream send.
+
+## Renamed destination reasoning metadata
+
+`src/providers/derive.ts` fills missing reasoning tables for renamed providers accepted by the existing fixed-key destination matcher. Model entries are cloned and explicit user entries (including empty arrays) win. Provider-wide effort defaults fill only when undefined; Command Code unknown models therefore keep the registry's empty picker policy unless overridden. Identity, transport and other capability axes are unchanged. The gathered row drives client exports; this metadata contract does not prove arbitrary gateway routing.

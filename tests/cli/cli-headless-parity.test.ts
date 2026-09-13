@@ -1119,3 +1119,25 @@ describe("Aside CLI recovery metadata", () => {
     }
   });
 });
+
+
+test("provider edit sends a model-scoped text-only capability patch", async () => {
+  const { requests, deps } = fakeRuntime();
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  try {
+    expect(await handleProviderRuntimeCommand("edit", ["mine", "--model", "ModelA", "--text-only", "--json"], deps)).toBe(0);
+    expect(requests).toEqual([{ path: "/api/providers?name=mine", method: "PATCH", body: { modelCapabilities: { ModelA: { inputModalities: ["text"] } } } }]);
+  } finally { log.mockRestore(); }
+});
+
+
+test("provider edit rejects incomplete text-only targeting before contacting the server", async () => {
+  const { requests, deps } = fakeRuntime();
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    for (const flags of [["--text-only"], ["--model", "ModelA"], ["--model", " ModelA ", "--text-only"]]) {
+      expect(await handleProviderRuntimeCommand("edit", ["mine", ...flags], deps)).toBe(2);
+    }
+    expect(requests).toHaveLength(0);
+  } finally { error.mockRestore(); }
+});

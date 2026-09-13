@@ -448,3 +448,13 @@ describe("main and native Chat tier authorization parity", () => {
     for (const part of parts) expect(part.image_url.url).toBe(url);
   });
 });
+
+
+test("explicit text-only capabilities divert image-bearing native Chat requests", async () => {
+  const { isNativeChatRouteEligible } = await import("../../../src/server/chat-native");
+  const { routeModel } = await import("../../../src/router");
+  const config = { port: 10100, defaultProvider: "custom", providers: { custom: provider({ modelCapabilities: { model: { inputModalities: ["text"] } } }) } } as OcxConfig;
+  const route = routeModel(config, "custom/model");
+  expect(isNativeChatRouteEligible(route, { messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,YQ==" } }] }] })).toBe(false);
+  expect(isNativeChatRouteEligible(route, { messages: [{ role: "user", content: "hello" }] })).toBe(true);
+});

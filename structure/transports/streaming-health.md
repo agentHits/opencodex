@@ -232,3 +232,7 @@ Live sideband admission and its bounded upstream handshake follow the [runtime c
 ## Translated Chat inline-image budget
 
 `src/adapters/openai-chat-images.ts` reuses the shared image normalization ladder for translated Chat bodies above a 3.5 MiB base64-image budget. This is best effort, not a whole-request ceiling. Remote URLs are not fetched; unprocessable and terminal images remain attached, and retained bytes continue to count during demotion. Under-budget construction stays synchronous; delegating MiMo awaits conditional asynchronous construction. Native Chat passthrough and Anthropic-only 413 retry policy retain their existing behavior.
+
+The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
+Provider-scoped approval reviewer settings are projected by the [catalog owner](../catalog.md#provider-scoped-approval-reviewer); this surface retains its existing routing, transport and account-selection behavior.

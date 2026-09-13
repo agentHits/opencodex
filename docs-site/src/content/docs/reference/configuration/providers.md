@@ -261,6 +261,49 @@ use `null` to clear a scalar or the whole map. A map entry set to `null` or `""`
 entry while preserving other entries. Malformed writes are rejected before saving. A malformed
 optional pin in a hand-edited file is ignored on load without discarding the rest of the config.
 
+### Auto-review (approval) model selection
+
+Codex reads `auto_review_model_override` from the catalog row of the current turn's model to
+choose the model that reviews approval requests. The root `auto_review_model` setting in
+`$CODEX_HOME/config.toml` applies one reviewer to every catalog row; the provider-scoped fields
+below override it per provider. The [provider guide](/guides/providers/#approval-reviewer-per-provider)
+has the operator workflow and a worked example.
+
+`autoReviewModel` is the provider-wide reviewer target. A value can be a bare model id of that same
+provider (the catalog row is normalized to the `provider/model` slug) or a full public catalog
+slug such as `opencode-go/deepseek-v4-flash`. A bare value resolves against that provider's rows
+first and then against a bare catalog row, which is how a native model such as `gpt-5.6-terra` is
+named, and a bare value that lands outside the provider prints a note naming the row that actually
+supplies the reviewer; a value that matches neither is left unresolved. `autoReviewModelOverrides`
+keys are exact upstream model ids of that provider, or the provider's published alias for one
+(`modelAliases`); either spelling names the same routed row, whose slug carries the upstream id. An
+entry wins over the provider-wide value for its model. A provider
+stamp wins over the root selector on its own routed rows, and the root selector remains the
+fallback for native rows and routed rows without a provider stamp. Removing a provider selector
+clears only that provider's stamps; removing the root selector never clears provider stamps.
+Model ids that contain a slash may be written raw or in their encoded catalog form; both
+spellings resolve to the same routed row. Model keys preserve case.
+Selectors are resolved against the final catalog on each sync, independently of one another, and
+each fails closed on its own: an unresolved `autoReviewModel` emits a diagnostic and stamps no
+provider-wide rows, an unresolved `autoReviewModelOverrides` entry emits a diagnostic and stamps
+no per-model override, so a valid provider-wide target remains its fallback. Any selector that does resolve is still applied. Rows without a provider
+stamp keep the root selector, or normal upstream auto-review behavior when that is unset. The
+canonical `openai` provider does not accept these fields.
+
+Removing the root selector clears root stamps from every row, including native rows stamped by
+earlier releases that predate OpenCodex's provenance marker. That cleanup recognizes a legacy
+stamp by its shape — one value across the whole catalog that a routed row also carries — so a
+genuine per-row value matching that shape is cleared with it, and a catalog that has since
+diverged from that shape needs one manual sync. Provider stamps are never touched by root removal.
+
+`PATCH /api/providers?name=<provider>` accepts both fields. Use `null` to clear the scalar or
+the whole map; use a map entry of `null` or `""` to remove that model while preserving other
+entries. Unrelated provider saves preserve previously configured values.
+
+These fields are available in `config.json`, the provider management API, and the Dashboard raw
+JSON provider editor. Dedicated form controls are not present. Native root stamps record the
+previous value and restore it on removal when the stamped value has not been changed externally.
+
 ### Discovered model display names
 
 Use `modelDisplayNames` when a provider returns machine friendly ids but the Codex model picker
@@ -329,6 +372,7 @@ projection, and merge precedence, so only a selector present in the catalog prod
 that sync can become an override. Native upstream values are preserved when the setting is
 cleared or unresolved. The persisted catalog field is read by Codex for the current turn's
 model, which is why a valid configured selector is copied to each applicable entry.
+Provider-scoped selectors (above) are applied before this root fallback and win on routed rows.
 
 ### FastWire B1 capability migration
 
@@ -1052,3 +1096,15 @@ or expiry does not extend the history-recovery contract.
 Sender and recipient on routed Responses are context for the receiving model, not a new
 machine-readable routing protocol. Tool routing continues to use the existing collaboration
 contracts.
+
+### Per-model capability declarations
+
+`modelCapabilities` stores explicit declarations keyed by exact upstream model ID. IDs preserve case and must not contain surrounding whitespace. Each entry may contain `inputModalities` (`text`, `image`, `audio`, `video`), `contextTier` (`default`, `long_context`) and `video.processing` (`static`, `agentic`). These are operator declarations, not proof of provider support. Context-tier and video fields currently record intent only and do not activate upstream behavior or increase catalog windows.
+
+The raw provider editor and provider API expose this map. POST/PUT replace an explicitly supplied map and reject null entries. PATCH merges individual axes; null clears a map, model, axis or video processing value, while `{}` makes no change. Omitted provider overwrites preserve the existing map. Malformed hand-edited files retain valid independent axes and treat malformed explicit input modalities as text-only, with a diagnostic.
+
+An explicit `modelCapabilities.<id>.inputModalities` now takes precedence over legacy modality hints for that exact routed model. A text-only declaration uses the existing vision sidecar to replace images with descriptions; if no sidecar is available, the request receives an explicit omission marker before dispatch. Native Chat image requests divert through this path. The catalog can still advertise image attachment support because the proxy provides the description step. Context-tier and video processing declarations remain inert pending their transport support.
+
+### Renamed API-key presets
+
+A provider saved under another name, such as `CommandCode`, inherits missing reasoning-effort metadata when its adapter and fixed API-key endpoint match a registry preset. Your explicit per-model lists, including `[]`, remain authoritative. An omitted provider-wide list inherits the preset default; an explicit list remains unchanged. This does not match OAuth, unrelated endpoints, or templated/custom endpoint presets.

@@ -473,9 +473,7 @@ large existing log. The first read is proportional to ledger size; steady-state 
 proportional to newly appended bytes. The Dashboard polls its 30-day usage summary independently once
 per minute, so usage work cannot delay health/provider/settings state or run every five seconds.
 
-An oversized row is skipped within the existing scanner bound, without shortening provider, model, or API-key identities. Base and filtered accumulators retain normal rows and a positive `usageIncomplete` diagnostic. Append publication ORs the previous flag with the new scan; a rebuild recalculates it.
-Summary-cache hits and direct or aggregate-seeded API-key rollups preserve the response-level `usageIncomplete: true` / `usageIncompleteReason: "oversized_rows"` metadata, even when no normal rows or attributed keys remain. Invalid-row counters are not a sticky diagnostic: they also include temporarily torn suffixes. Absence of the flag is not a completeness guarantee.
-The GUI preserves the metadata in held/session caches and warns in Usage, Dashboard, provider workspace/catalog, and key list/detail views. Human CLI output warns before no-match early returns; JSON remains unchanged. Saving a most-used model-order snapshot refuses an incomplete response. No warning is attached to separate provider quota data. Legacy truncation fields and measurement coverage keep their existing meanings; file-read/mutation failures still fail closed.
+An oversized row is skipped inside the scanner bound without shortening identities. Accumulators keep normal rows plus `usageIncomplete` / `usageIncompleteReason: "oversized_rows"` on caches and rollups; append ORs the flag and a rebuild recalculates it. Invalid-row counts are not sticky, and absence of the flag is not completeness. GUI caches warn on Usage, Dashboard, provider and key views; CLI warns in human output only; most-used order save refuses an incomplete snapshot. Quota surfaces stay separate. Legacy truncation fields keep their meaning; read/mutation failures still fail closed.
 
 `usage.jsonl` is an append-only runtime ledger. A manual in-place edit earlier than the trailing
 64 KiB checkpoint followed by file growth is intentionally outside the incremental detector's
@@ -577,14 +575,11 @@ The provider editor field policy exposes `showThinkingSummary` as a boolean prov
 
 Codex pool settings and their consumers follow the [reset-first ordering contract](providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity. Codex account DTOs and cards expose the routing-plan exclusion separately from credential health; the [plan exclusion contract](providers/openai-tiers.md#automatic-pool-plan-exclusions) also governs CLI projection. Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
 
-Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
-privately to final dispatch; preliminary route selection does not inject Go-only headers.
+Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch) privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
 The connected browser shell reuses `SESSION_UNAVAILABLE_EVENT` and its shared-session readiness state. Terminal 401 recovery failure exposes pairing without a restart instruction; a newer session or aborted request cannot publish an unavailable notice. Successful pairing changes dashboard resource revalidation dependencies, so retained failed stores are explicitly refreshed. Dashboard reads distinguish authentication, permission denial, request failure, invalid payload and transport failure; protected data is hidden for authentication/denial, while other failed refreshes label retained data as stale.
 
-Cline journal Undo eligibility reads both native configuration files through the paired
-integration IO adapter. Its snapshot fingerprint cannot be checked against providers.json alone;
-[the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
+Cline journal Undo eligibility reads both native configuration files through the paired integration IO adapter; [the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
 
 The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.
 
@@ -597,3 +592,9 @@ Combo child requests normalize effort and thinking controls against the selected
 Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
 
 Dashboard overview polling observes authorization failures independently of stalled or rejected peer requests, cancels remaining child requests after a decisive result, and exposes resource-level deadline failures without rewriting them as authentication failures.
+
+The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
+Exact [model input declarations](config.md#explicit-per-model-capability-declarations) now feed text-only eligibility and catalog hints; existing image-description/omission handling consumes them before the main upstream send.
+
+The raw provider editor round-trips `autoReviewModel` and `autoReviewModelOverrides` through editor-owned DTO fields. POST/PATCH/PUT share validation; PUT copies schema-normalized values into the persisted and live candidate before adoption. Canonical `openai` rejects these fields, including clear forms. Existing authentication, origin checks and stale-baseline protection still govern the writes. See [reviewer projection](catalog.md#provider-scoped-approval-reviewer).

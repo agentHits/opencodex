@@ -587,6 +587,10 @@ and rejects an entire catalog containing any other value, so `add`, `edit`, and 
 all refuse the bad value rather than storing something the catalog writer would have to strip later
 (#759).
 
+### Mark one model text-only
+
+Use `ocx provider add mine --adapter openai-chat --base-url https://example.com/v1 --default-model model-a --text-only` when registering a provider, or `ocx provider edit mine --model model-a --text-only` for an existing provider. Add can use `--model` or its default model; edit requires `--model`. The flag updates only that exact model's `modelCapabilities.inputModalities` to `["text"]`, preserving other models and axes.
+
 ### Cached quota history
 
 `ocx account history openai <pool-account-id> [--limit 1-200] [--json]` reads stored observations without contacting the provider. The output separates actual observation time, WHAM or response-header source, window family and usage percentage. At most 200 observations per account are retained for 30 days, with global storage bounds.
