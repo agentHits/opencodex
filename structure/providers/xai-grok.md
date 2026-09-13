@@ -70,6 +70,8 @@ Devin CLI credential path composition in `src/oauth/devin-cli.ts` follows the se
 
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
 
+The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
 ### OAuth Fast Tier (Priority Processing)
 
 xAI's Priority Processing (`service_tier: "priority"` on Chat Completions and Responses,
@@ -90,5 +92,3 @@ The upstream tier echo relays to the client on every Chat Completions delivery s
 (`src/chat/outbound.ts` projections and `src/server/chat-native-sse.ts` chunks), matching
 what the Responses lane already relayed for responses-wire upstreams; the responses-lane
 assembly for chat-wire upstreams tracks the echo in attempt telemetry only.
-
-The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.

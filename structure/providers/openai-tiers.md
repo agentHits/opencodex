@@ -421,6 +421,8 @@ successful main usage refresh clears the runtime mark.
 
 `src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](../codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
 
+The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+
 ## Context relay ownership
 
 `src/codex/context-owner.ts` records which account actually served a root session, taken from the
@@ -453,5 +455,3 @@ separately, nothing is dispatched upstream after either, and notes writes are ne
 Context relay dispatch rechecks the native experimental opt-in after body and credential waits.
 A disabled gate prevents upstream dispatch even when the request entered while enabled. Final
 materialized headers pass the proxy-credential exclusion check before owner matching.
-
-The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
