@@ -417,6 +417,72 @@ model settings, and noncanonical `openai` rows never receive that recovery path.
 terminal 403 codes as `needsReauth`; generic permission failures remain non-terminal, and a
 successful main usage refresh clears the runtime mark.
 
-## Paginated history writer boundary
+## Automatic pool plan exclusions
 
-`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](../codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+`src/codex/routing.ts` applies optional `codexPool.excludedPlans` to both candidate selection and existing active/affined accounts. An all-excluded pool returns no automatic candidate, including preview and configured-account fallback. Native main remains exempt and unknown plans remain eligible. Explicit account-qualified routes retain pause, credential and entitlement checks while bypassing only this automatic policy.
+
+`src/codex/auth-api.ts` projects `selectionExcludedReason: "plan_excluded"` and `selectionExcludedPlan` from the routing config, even when a newer display-only WHAM plan could not be persisted. The dashboard and account CLI show the policy reason separately from credential health; renewal clears the derived fields. The automatic next-session action and badge are omitted for excluded rows.
+
+## Paginated history writer boundary
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](../codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+## Context relay ownership
+
+`src/codex/context-owner.ts` records which account actually served a root session, taken from the
+final materialized outbound headers of an accepted model attempt, after refresh and failover.
+Entries are bounded, process-local and expiring, and are keyed by the admission principal that
+`src/server/auth-cors.ts` mints for the matched opencodex API key, plus the destination and the
+root session. Two keys therefore cannot observe or overwrite each other's ownership even when both
+resolve to one ChatGPT workspace, and rotating a key mints a new principal instead of inheriting
+the previous holder's sessions. `resolveContextPrincipal` resolves that principal from the opencodex API key the request
+presents, on both the recording and the relay path so the two agree. A remote bind supplies it
+through admission. A loopback bind admits without reading a token, so the key is resolved from the
+request only for a loopback admission; this adds identity where the caller volunteered it rather
+than admitting anyone new, and changes neither admission nor which credential goes upstream. The
+built-in loopback injection cannot carry that header, so the relay is unavailable through the
+default Codex integration and refuses instead of inferring an owner. Making loopback callers
+identifiable is an open maintainer decision, not a gap to be closed by relaxing the refusal.
+
+A workspace id identifies an organization, so an entry also binds the stable user claim carried by
+the accepted credential. That claim is read without signature verification, which is why upstream
+acceptance stays the evidence: a credential proving a different user does not continue the session,
+conflicting claims are never recorded, and an entry with no proven user continues only for the
+exact accepted credential. Conflicting observations stay ambiguous, and ambiguous, unknown,
+expired, evicted or restart-lost ownership fails closed before account selection or upstream I/O.
+
+`src/server/context-history.ts` relays the native history and notes endpoints under one deadline
+that starts on route entry, before the body is read and before credential selection, so an
+unfinished body cannot hold an admitted turn. Client cancellation and deadline expiry are reported
+separately, nothing is dispatched upstream after either, and notes writes are never retried.
+
+Context relay dispatch rechecks the native experimental opt-in after body and credential waits.
+A disabled gate prevents upstream dispatch even when the request entered while enabled. Final
+materialized headers pass the proxy-credential exclusion check before owner matching.
+
+## Quota history publication identity
+
+`src/codex/account-store.ts` assigns each explicit pool credential publication a private random `quotaHistoryIdentity`. Same-account token refresh preserves it, including each alias record's own identity; replacement or deletion retires it. A refresh CAS with a changed upstream account identity rotates the tag and does not propagate that changed identity to old aliases. Credential-only projections omit this metadata.
+
+`capturePoolQuotaWriter` captures the exact dispatched access/account pair and generation. Legacy identity initialization rechecks under the credential mutation lock, persists metadata without advancing credential generation or mutation epoch, and fails to no optional evidence on read/lock/write errors. Append admission uses the captured generation and tag; history retention compares the tag across ordinary refresh. Native main is excluded from this pool proof. These interfaces supply the bounded observation layer; the identity alone is neither a quota sample nor proof of capacity.
+
+## Bounded pool quota observations
+
+`src/codex/quota-history.ts` retains at most 200 raw observations per stored pool account for 30 days, bounded globally to 64 identities, 4096 observations and 2 MiB. `src/codex/quota.ts` persists these alongside the latest quota cache; the file reader caps allocation at 4 MiB and rejects nonregular/oversized input. Invalid history envelopes are discarded without blocking inference. Atomic cache replacement is best-effort single-writer persistence, not cross-process merging.
+
+WHAM and response-header producers pass the exact captured pool writer, including refreshed replay and compact outcomes. Admission rechecks credential generation and publication UUID. Same-account refresh preserves prior history; replacement/removal invalidates it. Raw invalid percentages discard the entire trusted observation before display clamping; carried windows, reset credits alone, native main and staged-login probes never become durable pool history.
+
+`GET /api/codex-auth/quota/history` and `ocx account history openai <pool-account-id>` read only cached, identity-checked observations. The optional limit is 1–200. Public results omit the internal publication UUID and credential generation. These observations are inputs for capacity estimation; percentages alone do not establish absolute token capacity.
+
+## Observed effective token capacity
+
+`src/codex/quota-capacity.ts` joins raw account-family observations with reported single-send usage attempts wholly contained within matching, unexpired reset intervals. Source, window duration and monthly-primary provenance must match; percentage delta must be at least one point. Duplicate request/attempt identities never multiply usage. Local, estimated, multi-send, independent-model and absent-attempt evidence does not supply a capacity sample.
+
+The history read API reports a median effective token estimate and interval sample count with low confidence and explicit coverage/rounding/label-continuity assumptions. It is not a provider token limit or mathematical lower bound and never affects account selection. Truncated, unavailable or excessive usage-ledger reads produce insufficient evidence while retaining history. Publication UUID and explicit unique account label are checked around the asynchronous read; identity changes discard the estimate and refresh the returned history.
+
+## Reset-first account ordering
+
+`src/codex/routing.ts` supports Codex-only `accountPoolStrategy: "reset-first"`. For new shared-quota assignments it chooses the earliest future short/weekly reset after existing eligibility, priority and usage-threshold filtering; ties and absent/elapsed deadlines use the existing usage order. Seconds and milliseconds are normalized with `resetAtToMs`. Threshold zero disables usage filtering while retaining reset ordering. Monthly deadlines do not order this strategy.
+
+Live bindings obey the existing cache-affinity release policy: with `pool.cacheAffinity`, threshold crossing alone retains a healthy account. Manual preference, scoped health and shared-cursor guards remain authoritative. Independent `spark`/`reserve` quota scopes resolve reset-first to existing quota selection because shared reset timestamps do not describe those windows. The configured value stays unchanged.
+
+The Codex parser in `src/oauth/pool-kernel.ts` is reexported by the compatibility facade and used by both `/api/pool/settings` and the legacy Codex settings route. Generic and Anthropic parsers reject reset-first. The dashboard offers it only for Codex; API, CLI and translated guides preserve the same contract.
