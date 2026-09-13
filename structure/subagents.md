@@ -1,5 +1,7 @@
 # Subagents And Multi-Agent Surface
 
+CLI installation inspection reason codes, including Windows deferral, follow the [runtime inspection contract](runtime.md#lifecycle).
+
 ## Plaintext V2 agent messages
 
 `src/responses/plaintext-v2-agent-messages.ts` owns the experimental, configuration-only
