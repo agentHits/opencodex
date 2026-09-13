@@ -105,11 +105,12 @@ export function useMainDeviceReauth(apiBase: string, onCompleted: () => void) {
     try {
       // Empty body by contract: the route rejects any request keys with 400.
       const res = await fetch(`${apiBase}/api/codex-auth/main/reauth-device`, { method: "POST", signal: ctrl.signal });
-      const dto = await res.json().catch(() => ({})) as FlowDto;
       if (!res.ok) {
-        setState({ phase: "failed", code: failureCode(dto.code) });
+        const failed = await res.json().catch(() => ({})) as FlowDto;
+        setState({ phase: "failed", code: failureCode(failed.code) });
         return;
       }
+      const dto = await res.json().catch(() => ({})) as FlowDto;
       if (typeof dto.flowId !== "string" || !dto.flowId) {
         setState({ phase: "failed", code: "request_failed" });
         return;
@@ -131,11 +132,12 @@ export function useMainDeviceReauth(apiBase: string, onCompleted: () => void) {
           `${apiBase}/api/codex-auth/main/reauth-device?flowId=${encodeURIComponent(flowId)}`,
           { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(POLL_TICK_TIMEOUT_MS)]) },
         );
-        const dto = await res.json().catch(() => ({})) as FlowDto;
         if (!res.ok) {
-          setState({ phase: "failed", code: failureCode(dto.code) });
+          const failed = await res.json().catch(() => ({})) as FlowDto;
+          setState({ phase: "failed", code: failureCode(failed.code) });
           return;
         }
+        const dto = await res.json().catch(() => ({})) as FlowDto;
         lastUrl = allowedVerificationUrl(dto.verificationUrl) || lastUrl;
         lastCode = humanCode(dto.deviceCode) || lastCode;
         if (dto.status === "pending" || dto.status === "committing") {

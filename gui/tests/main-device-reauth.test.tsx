@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
-import { act } from "react";
+import { act, useEffect } from "react";
 import type { Root } from "react-dom/client";
 import { LanguageProvider } from "../src/i18n/provider";
 import { CodexAccountPoolMainCard } from "../src/components/codex-account-pool-main-card";
@@ -132,7 +132,11 @@ test("the hook POSTs an empty body to the dedicated route and polls to success",
   let completed = 0;
   let captured: { state: MainDeviceReauthState; start: () => Promise<void>; cancel: () => Promise<void> } | null = null;
   const Probe = () => {
-    captured = useMainDeviceReauth("", () => { completed += 1; });
+    const value = useMainDeviceReauth("", () => { completed += 1; });
+    // Publish from an effect, not during render: assigning an outer binding while
+    // rendering is exactly what the React compiler rejects. act() flushes effects,
+    // so every assertion below still reads the latest committed value.
+    useEffect(() => { captured = value; });
     return null;
   };
   const { createRoot } = await import("react-dom/client");
