@@ -320,6 +320,54 @@ export function hasEncryptedContentPart(content: unknown): boolean {
 
 
 
+/**
+ * Index of the first `agent_message` still carrying ChatGPT-backend ciphertext, or -1.
+ *
+ * `hasUnreadableEncryptedAgentTask` above answers a different question: can the CURRENT
+ * worker task be read at all? It inspects only the tail item and reports false the moment any
+ * plaintext survives the envelope. `normalizeRoutedAgentMessages` asks the opposite question --
+ * is EVERY part lowerable? -- and forwards the private item verbatim when one is not. A mixed
+ * `input_text` + `encrypted_content` item answers "readable" to the first and "not lowerable"
+ * to the second, so it fell between them: the guard never fired, the adapter refused to lower
+ * it, and the raw Responses passthrough put a private item and backend ciphertext on the wire
+ * (#4454). Position was never the discriminator -- a replayed child result lands mid-history
+ * and the tail-only scan cannot see it -- but the tail is equally exposed when it is mixed.
+ *
+ * This is the egress question, so it is deliberately not the readability question: every
+ * surviving `encrypted_content` part counts, and so does a Fernet run embedded in text or in
+ * string content, which the adapter would otherwise lower verbatim. Plaintext parked in an
+ * encrypted slot is already rewritten by `sanitizeEncryptedContentInPlace` before this runs,
+ * so a part that is still `encrypted_content` here is backend ciphertext or a protected
+ * multipart fragment of one.
+ */
+export function agentMessageCiphertextIndex(input: unknown): number {
+  if (!Array.isArray(input)) return -1;
+  for (let index = 0; index < input.length; index += 1) {
+    const item = input[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    if ((item as { type?: unknown }).type !== "agent_message") continue;
+    const content = (item as { content?: unknown }).content;
+    if (typeof content === "string") {
+      if (fernetTokenRuns(content).length > 0) return index;
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const record = part as { type?: unknown; text?: unknown; encrypted_content?: unknown };
+      if (record.type === "encrypted_content" && typeof record.encrypted_content === "string") return index;
+      if (
+        (record.type === "input_text" || record.type === "text")
+        && typeof record.text === "string"
+        && fernetTokenRuns(record.text).length > 0
+      ) return index;
+    }
+  }
+  return -1;
+}
+
+
+
 export function sanitizeEncryptedContentInPlace(input: unknown): number {
   if (!Array.isArray(input)) return 0;
   let rewritten = 0;

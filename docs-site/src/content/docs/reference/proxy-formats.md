@@ -670,6 +670,7 @@ Errors use the client dialect's envelope where needed, but these status/code mea
 | 403 | `origin_rejected` | A Responses/OpenAI data-plane request or WebSocket upgrade came from a disallowed origin |
 | 503 | `combo_unavailable` | Every target in the selected combo is unavailable, in cooldown, disabled, or otherwise ineligible |
 | 400 | `unreadable_encrypted_agent_task` | An encrypted v2 worker task has no eligible canonical ChatGPT target or direct key-auth Responses target explicitly trusted with `allowEncryptedV2AgentTasks: true` that can consume it |
+| 400 | `unforwardable_encrypted_agent_message` | A replayed `agent_message` still carries ChatGPT-backend ciphertext and the selected routed Responses destination cannot read it. `item_index` names the position in `input` |
 | 426 | `upgrade_required` | The Responses WebSocket transport is disabled or the upgrade failed; use HTTP |
 
 Anthropic-origin failures are rendered in Anthropic's error envelope, so the origin rejection is a
@@ -688,3 +689,11 @@ that repair, it becomes a normal user message. If a current v2 task remains genu
 but the selected routed target cannot read native ChatGPT ciphertext, opencodex fails with
 `unreadable_encrypted_agent_task` instead of sending unreadable bytes to that provider. See
 [Sub-agent Surface](/guides/sub-agent-surface/) for the client behavior around worker tasks.
+
+The same rule covers history, not just the current task. A replayed `agent_message` that mixes
+readable text with backend ciphertext cannot be lowered to a public message, so a routed Responses
+destination would otherwise receive the ciphertext together with an item type only the ChatGPT
+backend declares. opencodex fails those requests with `unforwardable_encrypted_agent_message`
+before dispatch and reports only the item's position, never its contents. Native forward
+destinations, explicitly trusted `allowEncryptedV2AgentTasks` routes, and translated Chat or
+Anthropic wires are unaffected.

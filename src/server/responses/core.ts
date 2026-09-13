@@ -394,7 +394,7 @@ import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/cat
 
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
 import { mapCodexAuthContextErrorToResponse, nativeMainRefreshFailureResponse } from "./codex-auth-error";
-import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
+import { agentMessageCiphertextIndex, hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace } from "./encrypted-payload";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel, safeOriginLabel, storedPoolReplayDispatchNotifier, type ProviderFetchOptions } from "./fetch-helpers";
 import { classifyTransportFailureKind, transportErrorCode } from "../../lib/upstream-reachability";
 import {
@@ -2087,6 +2087,9 @@ export function buildComboChildHeaders(parentHeaders: HeadersInit): Headers {
 const UNREADABLE_ENCRYPTED_AGENT_TASK_MESSAGE =
   "Routed V2 worker task is encrypted for the native ChatGPT backend and cannot be read by the selected provider. Use plaintext V2 agent-message delivery or select a native ChatGPT model.";
 
+const UNFORWARDABLE_ENCRYPTED_AGENT_MESSAGE_MESSAGE =
+  "A replayed agent message still carries ChatGPT-backend ciphertext that the selected provider cannot read. opencodex will not forward the private item or its ciphertext. Continue this thread on a native ChatGPT model, or start one whose sub-agent results are delivered as plaintext.";
+
 // Whole-body policy for non-streaming upstream JSON responses (see the application/json
 // branch of the passthrough return path). 32 MiB matches the continuation snapshot read
 // bound and is far above any legitimate non-streaming completion, including base64 image
@@ -2129,6 +2132,27 @@ function unreadableEncryptedAgentTaskResponse(reason?: AgentTaskRecoveryFailureR
         type: "invalid_request_error",
         code: "unreadable_encrypted_agent_task",
         ...(reason === undefined ? {} : { recovery_reason: reason }),
+      },
+    }),
+    { status: 400, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+/**
+ * Deliberately a separate code from `unreadable_encrypted_agent_task`. That one says the
+ * current worker task cannot be delivered; this one says a message already in the history
+ * cannot leave the process. An operator reading a log needs to tell the two apart, because
+ * the second survives every retry of the same thread. `item_index` is positional metadata
+ * only -- no ciphertext, no plaintext, nothing from the item itself.
+ */
+function unforwardableEncryptedAgentMessageResponse(itemIndex: number): Response {
+  return new Response(
+    JSON.stringify({
+      error: {
+        message: UNFORWARDABLE_ENCRYPTED_AGENT_MESSAGE_MESSAGE,
+        type: "invalid_request_error",
+        code: "unforwardable_encrypted_agent_message",
+        item_index: itemIndex,
       },
     }),
     { status: 400, headers: { "Content-Type": "application/json" } },
@@ -4022,6 +4046,32 @@ async function handleResponsesInner(
     && unreadableEncryptedAgentTask
   ) {
     return unreadableEncryptedAgentTaskResponse(recoveryFailureReason);
+  }
+
+  // The guard above asks whether the CURRENT worker task is readable, and it only inspects the
+  // tail item. An `agent_message` that mixes readable text with backend ciphertext answers
+  // "readable" to that question at every position, so it passed -- and then
+  // `normalizeRoutedAgentMessages` refused to lower it, because lowering requires every part to
+  // be representable. The raw Responses passthrough serialized the private item as it stood and
+  // xAI answered `422 unknown item type "agent_message"`, with the ciphertext already on the
+  // wire (#4454). Ask the egress question here instead: after recovery has had its chance to
+  // turn that ciphertext into plaintext, and against the FINAL route.
+  if (inboundWire === "responses" && !finalRouteCanPassThroughEncryptedTask) {
+    const wireProvider = resolveWireProtocolOverride(
+      route.providerName,
+      route.modelId,
+      route.provider,
+      inboundWire,
+    );
+    // Mirror the adapter's own condition exactly. Only the raw Responses passthrough puts input
+    // items on the wire verbatim, and only when the destination is not `forward` -- a forward
+    // destination is Codex-backend-shaped and owns the private item by design. Translated wires
+    // rebuild the body from parsed messages, where `inputContentParts` drops an encrypted part
+    // instead of forwarding it.
+    if (wireProvider.adapter === "openai-responses" && (wireProvider.authMode ?? "key") !== "forward") {
+      const ciphertextIndex = agentMessageCiphertextIndex((body as { input?: unknown } | undefined)?.input);
+      if (ciphertextIndex >= 0) return unforwardableEncryptedAgentMessageResponse(ciphertextIndex);
+    }
   }
 
   // The canonical ChatGPT backend rejects previous_response_id, so a local replay miss leaves no

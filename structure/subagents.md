@@ -148,6 +148,42 @@ unreadable split-token shapes. The sanitizer preserves just those fragment objec
 normalizing independent plaintext slots. Detection never authorizes reconstruction or recovery;
 other fragment layouts and mixed readable content retain their documented residual boundaries.
 
+## Routed agent-message ciphertext egress
+
+Two questions about an `agent_message` were asked in two places, and the gap between them was
+open. `hasUnreadableEncryptedAgentTask` asks whether the CURRENT worker task can be read and
+inspects only the tail item; `normalizeRoutedAgentMessages` asks whether EVERY part can be lowered
+onto a public message and forwards the private item verbatim when one cannot. An item mixing
+`input_text` with `encrypted_content` is readable by the first measure and unlowerable by the
+second, so it passed the guard, kept its private type through the raw Responses passthrough, and
+left the process as backend ciphertext plus an item type only the Codex backend declares. The
+destination answered `422 unknown item type "agent_message"` after the bytes were already sent.
+Position was incidental: a replayed child result sits mid-history, where a tail-only scan cannot
+see it, and the tail is exposed the same way once it is mixed.
+
+`agentMessageCiphertextIndex` in `src/server/responses/encrypted-payload.ts` asks the egress
+question instead: does any `agent_message` anywhere in the expanded input still carry ciphertext,
+in an `encrypted_content` part, in the text of an `input_text` part, or as string content the
+adapter would lower verbatim? `src/server/responses/core.ts` asks it against the final route,
+after `expandPreviousResponseInput`, after the sanitizer has rewritten plaintext parked in
+encrypted slots, and after recovery has had its chance to replace ciphertext with plaintext. A hit
+returns HTTP 400 `unforwardable_encrypted_agent_message` carrying the item index and nothing else
+from the item.
+
+The gate resolves the same wire override the adapter is built from rather than restating routing
+policy, and fires only for `openai-responses` with a non-`forward` auth mode. That distinction
+decides the reported destination, where the provider-wide adapter is the Chat wire and a registry
+model default moves the model onto Responses. Translated wires are untouched because
+`inputContentParts` drops an encrypted part instead of forwarding it; forward destinations own the
+private item; `canPassThroughEncryptedV2AgentTask` keeps an explicitly trusted route exempt.
+
+This is an egress boundary, not a widening of recovery. Nothing here decrypts, the tail NEW_TASK
+envelope keeps `unreadable_encrypted_agent_task` and its opt-in recovery unchanged, and the two
+codes stay separate because an operator has to tell an undeliverable task from a history that
+cannot leave the process. An `agent_message` carrying unknown parts but no ciphertext still
+reaches the wire unchanged and still draws the destination's own 422: a compatibility gap rather
+than an egress one. Covered by `tests/server/v2-agent-message-failfast.test.ts`.
+
 ## Subagents
 
 New non-OAuth provider registrations carry `initialModelSelection` with a unique
