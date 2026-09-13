@@ -436,6 +436,8 @@ successful main usage refresh clears the runtime mark.
 Canonical forwarding alone can apply the optional client-output safety-buffering hint filter;
 API-key and custom forward destinations preserve their metadata. See [Responses transport](../transports/responses.md).
 
+Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.md#lifecycle); malformed optional listener blocks follow [config loading](../config.md#config-surface).
+
 ## Automatic pool plan exclusions
 
 `src/codex/routing.ts` applies optional `codexPool.excludedPlans` to both candidate selection and existing active/affined accounts. An all-excluded pool returns no automatic candidate, including preview and configured-account fallback. Native main remains exempt and unknown plans remain eligible. Explicit account-qualified routes retain pause, credential and entitlement checks while bypassing only this automatic policy.

@@ -17,6 +17,7 @@ import { saveConfig } from "../../src/config";
 import { startServer } from "../../src/server";
 import { runListenerShutdown } from "../../src/server/lifecycle";
 import {
+  AuxiliaryListenerBindError,
   findAvailablePort,
   PortUnavailableError,
   setEphemeralPortAllocatorForTests,
@@ -182,17 +183,21 @@ describe("hub management ingress", () => {
   });
 
   test("a failed management bind rolls back both earlier listeners", async () => {
-    const managementPort = await freePort();
-    const loopbackPort = await findAvailablePort(0, "127.0.0.1", { reservedPort: managementPort });
-    const publicPort = await findAvailablePort(0, "127.0.0.1", { reservedPort: loopbackPort });
     const squatter = Bun.serve({
-      port: managementPort,
+      port: 0,
       hostname: "127.0.0.1",
       fetch: () => new Response("occupied"),
     });
+    const managementPort = squatter.port!;
+    const loopbackPort = await freePort();
+    const publicPort = await findAvailablePort(0, "127.0.0.1", { reservedPort: loopbackPort });
     saveConfig(hubIngressConfig(managementPort, loopbackPort));
     try {
-      expect(() => startServer(publicPort)).toThrow();
+      let failure: unknown;
+      try { startServer(publicPort); } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(AuxiliaryListenerBindError);
+      expect(failure).toMatchObject({ listener: "hub.managementIngress", port: managementPort, hostname: "127.0.0.1" });
+      expect((failure as Error).cause).toBeDefined();
       for (const port of [publicPort, loopbackPort]) {
         const rebound = Bun.serve({ port, hostname: "127.0.0.1", fetch: () => new Response("ok") });
         await rebound.stop(true);
@@ -759,7 +764,11 @@ describe("unauthenticated loopback listener", () => {
     });
     saveConfig(baseConfig(loopbackPort));
     try {
-      expect(() => startServer(publicPort)).toThrow();
+      let failure: unknown;
+      try { startServer(publicPort); } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(AuxiliaryListenerBindError);
+      expect(failure).toMatchObject({ listener: "unauthenticatedLoopbackListener", port: loopbackPort, hostname: "127.0.0.1" });
+      expect((failure as Error).cause).toBeDefined();
 
       const rebound = Bun.serve({
         port: publicPort,
