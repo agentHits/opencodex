@@ -132,6 +132,15 @@ backup manifest. It owns the accepted provider/source provenance tuples, platfor
 path identity, backup filename id, and validation from unknown JSON to a typed manifest. It does
 not read files, inspect rollouts, open SQLite, retry, fingerprint, write, or delete anything.
 
+On Windows the path identity strips the extended-length prefix (`\\?\` and `\\?\UNC\`)
+before resolution, because Codex records both spellings for the same file and comparing them
+literally failed the integrity check for intact sessions (#4442). A database path spelled with
+that prefix hashed to a different backup filename before the normalization, so the readers
+(`history-provider.ts` for mutation, `native-residue.ts` for observation) fall back to the
+legacy filename when no canonical manifest exists. When both names exist the canonical manifest
+wins and the legacy file is left in place; a conflict is never resolved by silently replacing
+either file.
+
 `history-provider.ts` remains the strict mutation owner and maps shared validation failures to its
 restore/no-op integrity states. `native-residue.ts` remains a read-only observer and maps the same
 result to clean, residue, or indeterminate before inspecting referenced rollout files.
