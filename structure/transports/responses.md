@@ -5,10 +5,6 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 
 Plaintext collaboration restoration treats a null namespace as absent, rejects non-string namespace types, and restores the native namespace/name pair before HTTP/WS delivery and continuation publication.
 
-When internal Responses messages are translated to Chat, the adapter applies
-[OpenCode Go instruction ordering](../providers/chat-compat.md#opencode-go-chronological-instructions).
-Native Responses transport does not enter that conversion.
-
 ## Responses HTTP/SSE
 
 `/v1/responses` is the main Codex-facing endpoint. The server parses Responses input, routes to a

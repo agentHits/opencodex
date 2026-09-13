@@ -192,4 +192,27 @@ describe("OpenCode Go DeepSeek chronological system messages", () => {
     expect(messages[0].content).not.toContain("Synthetic reminder A.");
     expect(messages.at(-1)).toEqual({ role: "developer", content: "Synthetic reminder A." });
   });
+
+  test("drops a non-text timeline message instead of emitting an empty system message", () => {
+    const context = {
+      messages: [
+        { role: "user", content: "Inspect the synthetic project.", timestamp: 0 },
+        { role: "developer", content: [{ type: "video", videoUrl: "data:video/mp4;base64,AA==" }], timestamp: 0 },
+      ],
+    } as unknown as OcxParsedRequest["context"];
+    const request = (target: OcxProviderConfig) => JSON.parse(createOpenAIChatAdapter(target).buildRequest({
+      modelId: model,
+      context,
+      stream: false,
+      options: {},
+    } as unknown as Parameters<ReturnType<typeof createOpenAIChatAdapter>["buildRequest"]>[0]).body) as {
+      messages: Array<Record<string, unknown>>;
+    };
+
+    // The generic serializer drops this message, so the chronological exception
+    // must not introduce a content-free system message on the OCG route.
+    expect(request(ocg).messages).toEqual([{ role: "user", content: "Inspect the synthetic project." }]);
+    expect(request({ ...ocg, baseUrl: "http://localhost:1234/v1" }).messages)
+      .toEqual([{ role: "user", content: "Inspect the synthetic project." }]);
+  });
 });

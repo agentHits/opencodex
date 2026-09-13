@@ -776,6 +776,10 @@ function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderCon
           const text = typeof msg.content === "string"
             ? msg.content
             : parts!.map(p => (p as OcxTextContent).text).join("");
+          // A non-text timeline part (video, for example) serializes to nothing here.
+          // The generic path drops such a message; the chronological exception must not
+          // turn it into an empty system message that some upstreams reject.
+          if (!nativeOpenAI && text.length === 0) break;
           chatMsg = { role: nativeOpenAI ? "developer" : "system", content: text };
         } else if (typeof msg.content === "string") {
           chatMsg = { role: "user", content: msg.content };
