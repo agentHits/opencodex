@@ -246,6 +246,7 @@
     "aside-profiles-routes.test.ts": "server",
     "aside-profiles.test.ts": "clients",
     "assert-mergeable-review.test.ts": "ci-workflows",
+    "audio-transcriptions.test.ts": "server",
     "auto-compact-budget.test.ts": "providers",
     "autostart-health.test.ts": "service",
     "azure-adapter.test.ts": "providers",
@@ -633,6 +634,8 @@
     "desktop-remote-store.test.ts": "clients",
     "destination-policy-resolved.test.ts": "routing",
     "devin-adapter.test.ts": "providers",
+    "devin-cli-authmode-migration.test.ts": "providers",
+    "devin-cli-login.test.ts": "providers",
     "devin-hardening.test.ts": "providers",
     "digitalocean-scaleway-provider.test.ts": "providers",
     "docs-429-failover-claims.test.ts": "ci-workflows",
@@ -1373,9 +1376,7 @@
     "zhipu-bigmodel-responses-quota.test.ts": "providers",
     "zz-ci-api-usage-isolation.test.ts": "ci-workflows",
     "zz-ci-storage-policy-isolation.test.ts": "ci-workflows",
-    "zz-pr-coderabbit-readiness-revalidation.test.ts": "ci-workflows",
-    "devin-cli-login.test.ts": "providers",
-    "devin-cli-authmode-migration.test.ts": "providers"
+    "zz-pr-coderabbit-readiness-revalidation.test.ts": "ci-workflows"
   },
   "migrated": [
     "adapters",
