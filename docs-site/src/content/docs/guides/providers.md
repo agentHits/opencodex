@@ -193,7 +193,7 @@ ocx logout <provider>
 | `cursor` | `cursor` | `https://api2.cursor.sh` | Experimental PKCE login, live HTTP/2 transport with an opt-in HTTP/1.1 compatibility path, and account-filtered model discovery. |
 | `orcarouter-oauth` | `openai-chat` | `https://api.orcarouter.ai/v1` | Browser consent and key exchange use `https://www.orcarouter.ai` with S256 PKCE. The returned user-owned `sk-orca-…` API key is stored in the existing credential store and reused until revoked. |
 | `devin` | `devin` | `https://server.codeium.com` | Experimental unofficial Cognition/Devin bridge. Login opens Auth0 browser sign-in, then exchanges the token via Cognition's `RegisterUser` for a long-lived API key; models are discovered per account with `GetCascadeModelConfigs`. Not shown in the dashboard preset by default. Chat and usage reporting are verified against a live account across three models. |
-| `devin-cli` | `devin` | `https://server.codeium.com` | Imports the credential your installed Devin CLI already holds (`devin auth login` writes it to its own `credentials.toml`), then streams over Cognition's Connect-RPC api-server like the `devin` provider — no browser sign-in and no key to paste. Model discovery and context windows come from your account's own catalog. For the CLI's local agent loop over ACP stdio instead, use a custom-named row with `"adapter": "devin-cli"`. |
+| `devin-cli` | `devin` | `https://server.codeium.com` | Imports the credential your installed Devin CLI already holds (`devin auth login` writes it to its own `credentials.toml`), then streams over Cognition's Connect-RPC api-server like the `devin` provider — no browser sign-in and no key to paste. Model discovery and context windows come from your account's own catalog. |
 | `github-copilot` | `openai-chat` | `https://api.githubcopilot.com` | Experimental. GitHub device flow + `copilot_internal` exchange (VS Code OAuth client). Requires an active Copilot subscription; not an official third-party API. |
 
 Google Antigravity account and provider quota probes use fixed Google accounting endpoints, including the models fallback. They support transparent Fake-IP DNS for those destinations while retaining TLS verification, redirect rejection and private-address checks. A custom provider base URL changes model requests, not quota destinations; `NO_PROXY` continues to select the direct-route policy.
@@ -998,6 +998,48 @@ If a provider speaks Chat Completions, the `openai-chat` adapter handles it — 
 dashboard or `custom` in `ocx init` and enter the base URL. See the
 [Configuration reference](/reference/configuration/) for every provider field
 (`headers`, `noReasoningModels`, `noVisionModels`, `models`, …).
+
+## Approval reviewer per provider
+
+Codex asks a second model to review approval requests, and takes that reviewer from
+`auto_review_model_override` on the catalog row of the current turn's model. The root
+`auto_review_model` in `$CODEX_HOME/config.toml` applies one reviewer to every row. To give a
+routed provider its own — usually cheaper — reviewer, set the selector on that provider row in
+`~/.opencodex/config.json`:
+
+```json
+{
+  "providers": {
+    "blsc": {
+      "autoReviewModel": "opencode-go/deepseek-v4-flash",
+      "autoReviewModelOverrides": { "kimi-k3": "gpt-5.6-terra" }
+    }
+  }
+}
+```
+
+`autoReviewModel` covers every routed row of the provider. `autoReviewModelOverrides` targets a
+single upstream model id and wins over it. A value is either a bare model id of that same provider
+or a public catalog slug such as `opencode-go/deepseek-v4-flash`, and a provider stamp wins over the
+root selector on its own rows while the root selector stays the fallback elsewhere.
+
+A bare value resolves against the provider's own rows first and then against a bare catalog row,
+which is how a native model such as `gpt-5.6-terra` is named; a value that matches neither is left
+unresolved, and a bare value that lands outside the provider prints a note naming the row that
+supplies the reviewer. Giving the full slug avoids the question entirely when the reviewer is
+another provider's routed model.
+
+Selectors are resolved against the final catalog on the next sync, each one on its own, and each
+fails closed by itself: an unresolved `autoReviewModel` prints a diagnostic and stamps no
+provider-wide rows, an unresolved `autoReviewModelOverrides` entry prints a diagnostic and stamps
+no per-model override, leaving a valid provider-wide target as fallback. Whatever resolves is still applied. Rows without a provider stamp
+keep the root selector, or upstream behavior when that is unset. Removing the root selector leaves
+provider stamps alone, and removing a provider selector clears only that provider's stamps.
+
+These fields are available through configuration, `PATCH /api/providers?name=<provider>`, and
+the dashboard raw JSON provider editor; dedicated form controls are not present. The canonical `openai` provider
+rejects them. Field-by-field rules live in the
+[provider configuration reference](/reference/configuration/providers/#auto-review-approval-model-selection).
 
 ## Rate limits in the providers overview
 

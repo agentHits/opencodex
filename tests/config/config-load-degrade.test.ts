@@ -54,6 +54,23 @@ function writeCandidate(modelDisplayNames: unknown, provider = "xai"): void {
   writeFileSync(getConfigPath(), JSON.stringify(config), "utf8");
 }
 
+function writeAutoReviewConfig(autoReviewModel: unknown, autoReviewModelOverrides: unknown): void {
+  const defaults = getDefaultConfig();
+  writeFileSync(getConfigPath(), JSON.stringify({
+    ...defaults,
+    defaultProvider: "xai",
+    providers: {
+      xai: {
+        adapter: "openai-responses",
+        baseUrl: "https://api.x.ai/v1",
+        note: "keep me",
+        autoReviewModel,
+        autoReviewModelOverrides,
+      },
+    },
+  }), "utf8");
+}
+
 test("config validation accepts only safe provider model display names", () => {
   const valid = validateConfigCandidate(candidate({
     "grok-4.6": "Grok 4.6",
@@ -129,6 +146,25 @@ test("load warnings never reveal display values or secret shaped provider names"
 });
 
 
+test("load ignores malformed auto-review selectors without dropping the provider", () => {
+  writeAutoReviewConfig("bad selector", { model: "bad selector" });
+
+  const loaded = loadConfig();
+
+  expect(loaded.providers.xai).toMatchObject({ note: "keep me" });
+  expect(loaded.providers.xai.autoReviewModel).toBeUndefined();
+  expect(loaded.providers.xai.autoReviewModelOverrides).toBeUndefined();
+});
+
+test("load preserves valid auto-review selectors and trims boundary whitespace", () => {
+  writeAutoReviewConfig("  openai/gpt-test  ", { "glm-5.2": " gpt-test " });
+
+  const loaded = loadConfig();
+
+  expect(loaded.providers.xai.autoReviewModel).toBe("openai/gpt-test");
+  expect(loaded.providers.xai.autoReviewModelOverrides).toEqual({ "glm-5.2": "gpt-test" });
+});
+
 test("Fast rows default on for fresh and omitted config; explicit false and malformed values disable", () => {
   expect(getDefaultConfig().fastRows).toBe(true);
   for (const [value, expected] of [[undefined, true], [true, true], [false, false], ["invalid", false]] as const) {
@@ -138,4 +174,38 @@ test("Fast rows default on for fresh and omitted config; explicit false and malf
     expect(loaded.fastRows).toBe(expected);
     expect(loaded.providers.xai.note).toBe("keep me");
   }
+});
+
+
+test("model capability writes stay strict while load preserves independent restrictions", () => {
+  const raw = { ...candidate(undefined), providers: { xai: {
+    ...candidate(undefined).providers.xai,
+    apiKey: "fixture-key", modelCapabilities: {
+      ModelA: { inputModalities: ["text"] },
+      modela: { contextTier: "long_context" },
+      broken: { inputModalities: "image", contextTier: "typo" },
+    },
+  } } };
+  expect(validateConfigCandidate(raw).ok).toBe(false);
+  writeFileSync(getConfigPath(), JSON.stringify(raw), "utf8");
+  const loaded = loadConfig();
+  expect(loaded.providers.xai.modelCapabilities).toEqual({
+    ModelA: { inputModalities: ["text"] }, modela: { contextTier: "long_context" },
+    broken: { inputModalities: ["text"] },
+  });
+  expect(loaded.providers.xai.apiKey).toBe("fixture-key");
+  expect(validateConfigCandidate(loaded).ok).toBe(true);
+});
+
+test("model capabilities round-trip all explicit axes without expanding inference", () => {
+  const raw = { ...candidate(undefined), providers: { xai: {
+    ...candidate(undefined).providers.xai,
+    modelCapabilities: { ModelA: { inputModalities: ["text", "image"], contextTier: "long_context", video: { processing: "agentic" } } },
+  } } };
+  const validated = validateConfigCandidate(raw);
+  expect(validated.ok).toBe(true);
+  if (!validated.ok) return;
+  saveConfig(validated.config);
+  expect(loadConfig().providers.xai.modelCapabilities).toEqual(raw.providers.xai.modelCapabilities);
+  expect(loadConfig().providers.xai.modelContextWindows).toBeUndefined();
 });
