@@ -1,5 +1,30 @@
 # Subagents And Multi-Agent Surface
 
+## Plaintext V2 agent messages
+
+`src/responses/plaintext-v2-agent-messages.ts` owns the experimental, configuration-only
+`plaintextV2AgentMessages` request compiler and response restoration. The default is unset;
+only explicit true on Responses ingress to the final canonical ChatGPT forward route activates it.
+A default top-level collaboration catalog is required. The compiler preserves caller objects,
+aliases the namespace and three message functions, and removes only their true encryption marker.
+Declaration/reference collisions refuse the whole rewrite without changing the request.
+
+`src/adapters/openai-responses.ts` returns request-local alias capabilities. The Responses core
+refreshes them after every request rebuild and restores JSON, SSE and WebSocket identities after
+snapshot repair. Malformed, conflicting, unsupported or over-limit responses fail closed without
+retrying the model. Raw stream inspection cannot publish plaintext continuation state: only
+restored client blocks reach its dedicated bounded collector. Foreign namespaces and opaque
+argument/metadata values remain unchanged; the empty encrypted-function-args marker is preserved.
+
+Startup warns that task text can remain in Codex history, selected-provider requests and local
+response/debug state. This is application-level plaintext over HTTPS, depends on undocumented
+upstream behavior, and does not decrypt existing tasks or replace authenticated recovery.
+
+Restored calls and selectors carry an explicit collaboration namespace and unqualified child name.
+Codex treats qualified names literally and defaults absent namespaces to functions. Only child
+declarations inherit their restored namespace container; the compiler never invents an empty
+encryption marker when the upstream omitted it or returned a nonempty marker.
+
 ## Multi-agent surface mode (3-state)
 
 `OcxConfig.multiAgentMode` controls the `multi_agent_version` field stamped on catalog entries:
@@ -208,6 +233,11 @@ Provider-level Combo eligibility uses explicit inference evidence for the curren
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
 
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](transports/responses.md).
+
+Final-route summary visibility is recomputed after fallback from the original Responses preference; an earlier provider opt-in does not carry into a later provider. See [reasoning presentation](providers/chat-compat.md).
+
 ## Paginated history writer boundary
 
 `src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
@@ -215,6 +245,8 @@ see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-
 Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
+
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
 
 The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
 
