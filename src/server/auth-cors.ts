@@ -610,6 +610,23 @@ function sameCanonicalProviderSeed(actual: Record<string, unknown>, expected: Oc
   return actualKeys.every(key => JSON.stringify(actual[key]) === JSON.stringify((expected as unknown as Record<string, unknown>)[key]));
 }
 
+/**
+ * Operator-overlay tolerant variant of the canonical seed check: every key the registry
+ * seed defines must still match the submitted provider verbatim, but keys the seed never
+ * defines are ignored instead of failing the comparison. Field-masked writes (PATCH,
+ * the provider editor, reload) merge onto the persisted row, so the submitted candidate
+ * legitimately carries stored operator overlays like `selectedModels` or `disabled`.
+ * Those fields are validated by their own write boundaries and cannot widen what the
+ * forward proxy claims. Full-object writes (POST) keep the strict exact-key comparison
+ * so a forged overlay cannot ride in on a canonical transport seed.
+ */
+function matchesCanonicalProviderSeed(actual: Record<string, unknown>, expected: OcxProviderConfig): boolean {
+  return Object.keys(expected).every(
+    key => Object.hasOwn(actual, key)
+      && JSON.stringify(actual[key]) === JSON.stringify((expected as unknown as Record<string, unknown>)[key]),
+  );
+}
+
 function positiveWindowValue(value: unknown): boolean {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
@@ -646,7 +663,11 @@ function nativeContextOverlayError(raw: Record<string, unknown>): string | null 
  * string, or null when the provider may be persisted. Caller-controlled names/fields are
  * redacted and JSON-escaped so secrets never reach the response.
  */
-export function providerManagementConfigError(name: unknown, provider: unknown): string | null {
+export function providerManagementConfigError(
+  name: unknown,
+  provider: unknown,
+  options?: { allowOperatorOverlays?: boolean },
+): string | null {
   if (typeof name !== "string" || !provider || typeof provider !== "object" || Array.isArray(provider)) {
     return "provider must be a plain object";
   }
@@ -657,6 +678,12 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
   if (pinsError) return pinsError;
   if (name === "openai" && (Object.hasOwn(raw, "autoReviewModel") || Object.hasOwn(raw, "autoReviewModelOverrides"))) {
     return "provider openai must not include autoReviewModel or autoReviewModelOverrides";
+  }
+  // Canonical OpenAI is the ChatGPT forward seed. allowPrivateNetwork is the explicit
+  // opt-in that skips destination DNS classification (loopback, RFC1918, metadata).
+  // Overlay-tolerant comparison would otherwise treat it as an extra key and persist it.
+  if (name === "openai" && Object.hasOwn(raw, "allowPrivateNetwork")) {
+    return "provider openai must not include allowPrivateNetwork";
   }
   const autoReviewTargetError = autoReviewModelTargetConfigError(raw.autoReviewModel, "autoReviewModel", true);
   if (autoReviewTargetError) return autoReviewTargetError;
@@ -700,7 +727,9 @@ export function providerManagementConfigError(name: unknown, provider: unknown):
     // validation and then rejected by the seed comparison, so canonical OpenAI could never
     // set OR clear it — the value was admitted and then refused in the same request.
     delete canonicalCandidate.annotateEmptyToolOutputs;
-    const canonical = seed && sameCanonicalProviderSeed(canonicalCandidate, seed);
+    const canonical = seed && (options?.allowOperatorOverlays
+      ? matchesCanonicalProviderSeed(canonicalCandidate, seed)
+      : sameCanonicalProviderSeed(canonicalCandidate, seed));
     if (!canonical) {
       return `provider ${name} must equal the canonical built-in provider seed`;
     }
