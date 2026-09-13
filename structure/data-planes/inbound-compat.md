@@ -19,8 +19,20 @@ the native passthrough there is no canonical Fast injection and no wire mapping:
 and `fastMode` injects nothing here. Resolved-Fast-policy injection applies only to routes that
 take the Chat -> Responses -> Chat bridge below. `parallel_tool_calls` is emitted only for providers opted into
 parallel tools (or pinned false by the existing provider opt-out contract).
+
+On the response side, the upstream `service_tier` echo (xAI Priority Processing, OpenAI fast
+tier) relays to the Chat Completions caller on every delivery shape: the non-streaming body
+(`responsesJsonToChatCompletion` in `src/chat/outbound.ts`), the folded stream
+(`collectChatCompletion` in `src/chat/outbound.ts`), and each synthesized SSE chunk
+(`jsonCompletionSse` in `src/server/chat-native-sse.ts`). An upstream that sends no
+`service_tier` gets no injected key. The Responses lane already relayed the same field for
+responses-wire upstreams; the responses-lane assembly for chat-wire upstreams keeps it in
+attempt telemetry only.
+
 Combo/policy routes and requests that need Responses-only hosted tools, continuation, background,
 or storage semantics retain the existing Chat -> Responses -> Chat bridge.
+Chat-to-Responses traffic that lands on `api.meta.ai` inherits the same 64-character tool-name
+aliasing as native Responses; see [`responses.md`](../transports/responses.md).
 
 The direct SSE relay accepts CRLF and arbitrary transport chunk boundaries while retaining at most
 one bounded event. EOF with an unterminated event and an event above the translator limit are typed
