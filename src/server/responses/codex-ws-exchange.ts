@@ -448,6 +448,13 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         terminal = true;
         cleanup();
         try { controller.close(); } catch { /* already closed */ }
+        // Refresh the success record with the final counters: the commit-time
+        // snapshot predates every relayed event, and the record is more useful
+        // when it says what the exchange actually delivered. Still no byte
+        // count — the happy path never pays it.
+        if (committedResponse) {
+          markCodexWsStage(committedResponse, stageRecord(null));
+        }
         session.release(completedId);
       }
     };

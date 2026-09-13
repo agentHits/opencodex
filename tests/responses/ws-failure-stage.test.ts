@@ -304,6 +304,31 @@ describe("codex ws stage record marker (#4191)", () => {
     expect(readCodexWsStage(response)).toEqual(stage);
   });
 
+  test("a committed exchange ends with the final counters on its stage record", async () => {
+    installFake(ws => {
+      ws.emit("open", {});
+      ws.emit("message", { data: JSON.stringify({ type: "response.created", response: { id: "r1" } }) });
+      ws.emit("message", { data: JSON.stringify({ type: "response.completed", response: { id: "r1" } }) });
+    });
+    const noFallback = async () => {
+      throw new Error("fallback must not run after open");
+    };
+    const response = await codexWsUpstreamFetch(
+      CODEX_URL,
+      streamingInit(),
+      noFallback as unknown as typeof fetch,
+      BOUNDED_WS_RUNTIME,
+    );
+    expect(response.status).toBe(200);
+    await response.text();
+    const stage = readCodexWsStage(response);
+    expect(stage).toBeDefined();
+    expect(stage?.requestBytes).toBeNull();
+    expect(stage?.closeCode).toBeNull();
+    expect(stage?.sent).toBe(true);
+    expect(stage?.relayedEvents).toBeGreaterThan(0);
+  });
+
   test("the serialized record is numeric/boolean/semver only", () => {
     const json = JSON.stringify(stage);
     expect(json).not.toContain("reason");
