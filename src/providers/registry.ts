@@ -1814,6 +1814,9 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     },
     modelContextWindows: {
       "kimi-k3": KIMI_K3_STANDARD_CONTEXT_WINDOW,
+      // Zen Go discovers only the gateway id, so carry DeepSeek's official 1M V4.1
+      // window here or Codex falls back to its conservative 128k routed-model default.
+      "deepseek-v4.1-flash": 1_048_576,
       // The DeepSeek vision preview id is metadata-only here: the Go roster is
       // discovered live, so it applies the moment the gateway serves the id.
       [DEEPSEEK_VISION_PREVIEW_MODEL]: 1_048_576,

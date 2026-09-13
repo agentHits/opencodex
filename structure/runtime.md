@@ -173,6 +173,11 @@ OAuth presets resolve discovery against the same canonical registry transport as
 before any adapter-specific transport override, so a stale configured `baseUrl` cannot receive an
 OAuth bearer token.
 
+Provider-scoped capability hints remain authoritative when discovery returns an id without
+capabilities. In particular, `src/providers/registry.ts` assigns OpenCode Go's live
+`deepseek-v4.1-flash` route the official 1,048,576-token window instead of the conservative 128k
+routed-model fallback.
+
 The BigModel Coding Plan Responses preset uses the separately documented
 `https://open.bigmodel.cn/api/v1` transport and a static catalog. Its provider row
 disables live discovery: a local Codex `models.json` example does not establish an

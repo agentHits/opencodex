@@ -5662,6 +5662,21 @@ describe("Codex catalog routed normalization", () => {
     }
   });
 
+  test("opencode-go DeepSeek V4.1 live rows inherit the official 1M context window", () => {
+    const provider = providerConfigSeed(PROVIDER_REGISTRY.find(entry => entry.id === "opencode-go")!);
+    const model = applyProviderConfigHints(
+      "opencode-go",
+      provider,
+      { provider: "opencode-go", id: "deepseek-v4.1-flash" },
+    );
+    const entries = buildCatalogEntries(nativeTemplate(), [], [model]);
+    const routed = entries.find(entry => entry.slug === "opencode-go/deepseek-v4.1-flash");
+
+    expect(routed?.context_window).toBe(1_048_576);
+    expect(routed?.max_context_window).toBe(1_048_576);
+    expect(routed?.auto_compact_token_limit).toBe(943_718);
+  });
+
   test("opencode-go catalog sync appends official rows missing from /v1/models", () => {
     const models = augmentRoutedModelsWithMetadata(
       [{ provider: "opencode-go", id: "glm-5.2" }],
