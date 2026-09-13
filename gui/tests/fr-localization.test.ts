@@ -92,6 +92,8 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   "integrations.tab.codex",
   "integrations.tab.claude",
   "integrations.tab.grok",
+  // Product name for the remote hub; French keeps the same word.
+  "connection.pairing.hub",
   // Cursor product names and the two field labels Cursor's own gateway form renders in English.
   "integrations.tab.cursor",
   "integrations.cursor.title",

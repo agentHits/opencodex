@@ -9,6 +9,8 @@ Codex's local `image_gen.imagegen` tool makes a second Images request after the 
 `POST /v1/images/generations` for generation or `POST /v1/images/edits` for reference-image edits.
 These are standalone Images API routes, not the hosted Responses `image_generation` tool.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 `src/server/images.ts` uses the existing ChatGPT/OpenAI fallback unless `images.provider` explicitly
 selects a custom API-key `openai-responses` provider. Explicit selection fails closed when the
 provider is missing, disabled, registry-managed, incompatible, or lacks a usable key; it never
@@ -79,6 +81,7 @@ Connected CLI usage follows the [client-scoped hub usage contract](../gui-and-ma
 
 Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.
 
+Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.md#lifecycle); malformed optional listener blocks follow [config loading](../config.md#config-surface).
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -103,3 +106,5 @@ Pool quota producers and account commands follow the [bounded raw-observation co
 Account quota surfaces use [safe probe diagnostics](../transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
 
 Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](../transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](../runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.

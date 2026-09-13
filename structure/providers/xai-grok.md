@@ -8,6 +8,8 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 Grounded in the open-sourced official client (xai-org/grok-build); unit + evidence:
 `devlog/_fin/260716_grok_build_hardening/`.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 - **Reasoning folding:** the Responses parser folds `reasoning` items into the FOLLOWING
   assistant turn (`pendingReasoning` in `src/responses/parser.ts`) so the Grok chat wire carries
   ONE assistant message with `reasoning_content` — exact-prefix cache stability. Unsigned
@@ -63,6 +65,7 @@ Connected CLI usage follows the [client-scoped hub usage contract](../gui-and-ma
 
 Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.
 
+Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.md#lifecycle); malformed optional listener blocks follow [config loading](../config.md#config-surface).
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -112,7 +115,8 @@ The upstream tier echo relays to the client on every Chat Completions delivery s
 (`src/chat/outbound.ts` projections and `src/server/chat-native-sse.ts` chunks), matching
 what the Responses lane already relayed for responses-wire upstreams; the responses-lane
 assembly for chat-wire upstreams tracks the echo in attempt telemetry only.
-
 Pool quota producers and account commands follow the [bounded raw-observation contract](openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
 
 Account quota surfaces use [safe probe diagnostics](../transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](../runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.

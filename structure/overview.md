@@ -116,6 +116,8 @@ The shared atomic replacement publisher also identifies explicit Remote Workspac
 Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](remote-workspace.md) owns that integration.
 
 Usage consumers preserve positive incomplete-history metadata as specified in [usage accounting](gui-and-management-api.md#usage-accounting); readable totals are not represented as a complete ledger.
+
+Listener startup diagnostics follow [the runtime lifecycle contract](runtime.md#lifecycle); malformed optional listener blocks follow [config loading](config.md#config-surface).
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-quota).
 
@@ -126,8 +128,11 @@ its defaults and exclusions are owned by [Responses transport](transports/respon
 
 Raw reasoning content and provider-authored summaries remain distinct on the Responses wire. See [reasoning presentation](providers/chat-compat.md).
 
-Cline CLI is a managed file integration: its provider settings and catalog share one recoverable journal operation. The [paired-file contract](clients/integrations.md#cline-paired-files) defines its stop/restart requirement.
+Connected-browser pairing and dashboard failure meanings follow the [management UI contract](gui-and-management-api.md#dashboard-surfaces); machine enrollment alone does not authenticate a browser.
 
+Cline CLI is a managed file integration: its provider settings and catalog share one recoverable journal operation. The [paired-file contract](clients/integrations.md#cline-paired-files) defines its stop/restart requirement.
 Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
 
 Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
+
+Translated Chat request construction uses the [inline-image budget](transports/streaming-health.md#translated-chat-inline-image-budget); the shared normalizer counts retained bytes even when a wire-specific drop callback keeps the image attached.

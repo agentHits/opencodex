@@ -120,6 +120,20 @@ choices are not added to that provider's declared ladder.
 
 Full derivation with per-line citations: `devlog/_plan/260816_codexrs_multiagent_v2_and_history_perf/013_five_cap_v1_vs_v2.md`.
 
+## Multipart encrypted task recovery
+
+`src/server/responses/agent-task-recovery.ts` admits at most 32 consecutive, individually complete
+Fernet-shaped parts with a combined 2 MiB ciphertext limit. Every encrypted slot must belong to
+that run. The existing credential admission precedes cache access; the cache key includes an
+unambiguous ordered sequence. One fixed-endpoint request forwards separate parts, and assignment
+replacement compares the complete original item snapshot before splicing the run. Recovery output
+is model-transcribed plaintext, not cryptographic fidelity proof, and no internal outage retry is added.
+
+`src/server/responses/encrypted-payload.ts` uses bounded concatenation only to recognize otherwise
+unreadable split-token shapes. The sanitizer preserves just those fragment objects and continues
+normalizing independent plaintext slots. Detection never authorizes reconstruction or recovery;
+other fragment layouts and mixed readable content retain their documented residual boundaries.
+
 ## Subagents
 
 New non-OAuth provider registrations carry `initialModelSelection` with a unique
@@ -230,6 +244,7 @@ Connected CLI usage follows the [client-scoped hub usage contract](gui-and-manag
 
 Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](remote-workspace.md) owns that integration.
 
+Listener startup diagnostics follow [the runtime lifecycle contract](runtime.md#lifecycle); malformed optional listener blocks follow [config loading](config.md#config-surface).
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -266,3 +281,5 @@ The account history response can include a [low-confidence effective capacity es
 Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
 
 Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.

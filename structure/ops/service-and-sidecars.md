@@ -125,6 +125,8 @@ branches that return the original target failure keep that response.
 `recovery_unavailable` includes cache/singleflight capacity and does not prove an
 upstream request was attempted. No retry or broader envelope acceptance is enabled.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## Voice diagnostic metadata
 
 `src/server/live.ts` owns optional `OCX_LIVE_FRAME_LOG` diagnostics for both sideband directions.
@@ -141,6 +143,7 @@ Connected CLI usage follows the [client-scoped hub usage contract](../gui-and-ma
 
 Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.
 
+Auxiliary listener startup failures report their own effective address and do not trigger public-port retries; the synchronous rollback contract is described in [Runtime](../runtime.md#lifecycle).
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -165,3 +168,5 @@ Pool quota producers and account commands follow the [bounded raw-observation co
 Account quota surfaces use [safe probe diagnostics](../transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
 
 Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](../transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](../runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.

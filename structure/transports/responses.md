@@ -450,9 +450,7 @@ caller's abort signal, so a `connectTimeoutMs` shorter than 90 seconds cancels
 an already-sent create before the prelude timer fires.
 These are transport-fidelity guarantees, not a provider-billing guarantee.
 
-Every exchange also leaves a content-free stage record (`CodexWsStageRecord`, #4191): create-frame bytes (measured on failure only — the committed-success record keeps it null so the happy path never byte-counts a megabyte replay frame), send completion, numeric close code, elapsed and first-frame durations, frame counters, liveness ping/pong counts, pool reuse, and the OCX/Bun versions.
-The exchange pins the record on the resolved Response (`markCodexWsStage`, the same marker seam as `markCodexWsResponse`); `handleResponses` adopts it onto the serving attempt, and usage.jsonl persists it per attempt behind a drop-guard normalizer, so hand-edited rows cannot inject strings into the DTO.
-The record never carries conversation text, headers, close-reason text, or account identifiers, and it is not a fallback-eligibility signal: the no-replay-after-send contract stands regardless of what it says.
+Every exchange also leaves a content-free stage record (`CodexWsStageRecord`, #4191): create-frame bytes (measured on failure only — the committed-success record keeps it null so the happy path never byte-counts a megabyte replay frame), send completion, numeric close code, elapsed and first-frame durations, frame counters, liveness ping/pong counts, pool reuse, and the OCX/Bun versions. The exchange pins the record on the resolved Response (`markCodexWsStage`, the same marker seam as `markCodexWsResponse`); `handleResponses` adopts it onto the serving attempt, and usage.jsonl persists it per attempt behind a drop-guard normalizer, so hand-edited rows cannot inject strings into the DTO. The record never carries conversation text, headers, close-reason text, or account identifiers, and it is not a fallback-eligibility signal: the no-replay-after-send contract stands regardless of what it says.
 
 Eligible complete-input creates can retain a canonical upstream socket within
 one selected account, credential, thread and turn. Model/tier and immutable
@@ -540,6 +538,8 @@ removes those controls for unknown ladders and preserves `reasoning.summary`. Kn
 ladders retain the existing per-target effort resolution. This request normalization does not
 change target order, attempt accounting, or the existing provider-400 failover classification.
 
+The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## Combo streaming commit boundary
 
 An HTTP 200 does not by itself commit a streaming combo child. The combo parent runs the child's
@@ -565,20 +565,16 @@ not retried.
 
 > Decision record: [ADR-0071](../decisions/ADR-0071-combo-streaming-commit-boundary.md)
 
-Usage consumers preserve positive incomplete-history metadata and connected CLI usage follows the
-client-scoped hub contract, both specified in [usage accounting](../gui-and-management-api.md#usage-accounting):
-readable totals are not a complete ledger, and local management and account data stay separate.
-
-The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`. Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration and records its isolated owner and support limits.
+Usage consumers preserve positive incomplete-history metadata and connected CLI usage follows the client-scoped hub contract, both specified in [usage accounting](../gui-and-management-api.md#usage-accounting): readable totals are not a complete ledger, and local management and account data stay separate. Codex pool settings and their consumers follow the [reset-first ordering contract](../providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity. The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`. Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration and records its isolated owner and support limits.
 
 Console upload-rejection recovery excludes query-bearing and fragment-bearing destinations even when their host and generation path match the canonical endpoint.
+
+Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.md#lifecycle); malformed optional listener blocks follow [config loading](../config.md#config-surface).
 
 Chat helper admission in `src/server/responses/core.ts` follows the [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper claims stored main, after terminal vision, routed vision and search exclusions.
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
-
-Codex pool settings and their consumers follow the [reset-first ordering contract](../providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
 
 Spark Lite and routing metadata use the same suffix-normalized model object as serialization, including configured bracket-suffix removal.
 
@@ -597,3 +593,7 @@ privately to final dispatch; preliminary route selection does not inject Go-only
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
 
 Pool quota producers and account commands follow the [bounded raw-observation contract](../providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates; account quota surfaces use [safe probe diagnostics](inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](../runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
+
+Translated Chat request construction uses the [inline-image budget](streaming-health.md#translated-chat-inline-image-budget); the shared normalizer counts retained bytes even when a wire-specific drop callback keeps the image attached.
