@@ -201,7 +201,14 @@ Responses requests default to native `openai-responses`. Existing namespace, hos
 reasoning-replay normalization remains in force. The reserved `xai` OAuth transport is name-pinned
 to the Grok CLI gateway even if its saved base URL differs; custom provider IDs do not inherit this
 default. API-key requests, translated Chat/Anthropic defaults and other Grok models retain their
-existing wire and tier policy. OAuth still drops caller-owned `service_tier` on either wire.
+existing wire and tier policy. The OAuth lane is service-tier classified per model
+(`modelSupportsServiceTier` on the registry entry, live-probed 2026-09-13): grok-4.6, grok-4.5,
+grok-4.3, grok-4.20-0309-reasoning, grok-4.20-0309-non-reasoning, grok-build-0.1 and
+grok-composer-2.5-fast accept `service_tier: "priority"` over Grok OAuth and echo it, so those
+routes resolve Fast-eligible, publish `--fast` rows, and forward a caller-sent tier on either
+wire (`chatServiceTier: true`). grok-4.20-multi-agent-0309 stays unclassified with its
+caller-tier pin: the gateway accepts the field but answers `service_tier: "default"`, a live
+downgrade rather than a fast tier.
 
 Native Responses participates in the same pre-stream OAuth HTTP-429 account rotation as the Chat
 bridge. It uses the existing account quorum, cooldown and three-rotation request cap, refreshes
@@ -323,6 +330,21 @@ fixed key-auth destination still matches the registry; custom and lookalike URLs
 Muse Spark's Responses sanitizer also drops the provider-rejected `search_content_types` and
 `indexed_web_access` fields from plain `web_search` tools while preserving preview tools and
 unrelated models.
+
+Direct Meta Muse / Meta Model Responses (`https://api.meta.ai/v1`) also rejects function tool
+names longer than 64 characters or containing characters outside `[a-zA-Z0-9_-]`. After namespace
+flattening, `src/responses/muse-tool-name-alias.ts` rewrites those identities on the `api.meta.ai`
+host only — every model, including default `muse-spark-1.3` — and records
+`convertedMuseToolNameAliases` on the adapter request. Restore runs hashed-to-original before
+namespace restore and before the undeclared-tool guard, covering stream payloads, non-stream JSON,
+continuation cache, inspection, and failover rebuilds.
+Restore matches the tool identity on `function_call`, `custom_tool_call`, `function`, and
+`custom` objects and on `response.function_call_arguments.{done,delta}`, whose `name` sits
+outside any item and is read directly by the undeclared-tool guard.
+The restorable map is narrowed by `tool_choice` the same way `authorizedAliases` narrows the
+namespace layer: upstream still receives the whole aliased catalog, but a tool the caller
+disabled for the turn cannot be restored back into an executable client name.
+Arguments, user text, and schema property names are never rewritten.
 
 > Decision record: [ADR-0042](../decisions/ADR-0042-responses-http-sse.md)
 
@@ -474,6 +496,10 @@ retried. Guarded paths: the ChatGPT passthrough and generic adapter fetch in
 fallback. Adapters with their own `fetchResponse` (kiro, cursor, google) keep their own retry
 policies; kiro imports the shared abort/sleep helpers from this module.
 
+## Console upload rejection recovery
+
+`src/providers/opencode-zen-rate-limit.ts` recognizes the complete Console upload-rejection envelope only at the effective HTTPS opencode.ai Zen/Go generation endpoint. A provider row name cannot authorize another destination. The two recovery loops in `src/server/responses/core.ts` wait 800 ms and replay the captured serialized request once; cancellation, nonreplayable responses, other errors and a second upload rejection keep their failure semantics. The recovery kind is persisted as `console-go-upload-retry` and has a localized Logs label.
+
 ## Same-provider combo quota fallback
 
 For a failover combo with multiple models on the same Codex-login OpenAI provider, a pre-stream
@@ -485,6 +511,15 @@ This exception is request-scoped and is not applied to direct requests, round-ro
 combo whose remaining eligible targets use other providers.
 
 > Decision record: [ADR-0070](../decisions/ADR-0070-same-provider-combo-quota-fallback.md)
+
+## Combo per-target reasoning controls
+
+`src/server/responses/core.ts` passes the combo's `reasoningEffortMode` and the final target's
+`supportedLadderFor` result to `src/combos/request.ts` before adapter parsing. Explicit empty
+capability ladders remove effort and thinking controls in every combo mode; adaptive mode also
+removes those controls for unknown ladders and preserves `reasoning.summary`. Known non-empty
+ladders retain the existing per-target effort resolution. This request normalization does not
+change target order, attempt accounting, or the existing provider-400 failover classification.
 
 ## Combo streaming commit boundary
 
@@ -511,6 +546,8 @@ not retried.
 
 > Decision record: [ADR-0071](../decisions/ADR-0071-combo-streaming-commit-boundary.md)
 
+Console upload-rejection recovery excludes query-bearing and fragment-bearing destinations even when their host and generation path match the canonical endpoint.
+
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -520,3 +557,4 @@ see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routi
 
 Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
