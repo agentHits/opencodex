@@ -256,6 +256,19 @@ Admission and retention are deliberately narrow:
   fail-closed error; client cancellation returns 499. Neither path forwards ciphertext to the
   routed provider.
 
+Recovery accepts one consecutive run of up to 32 complete Fernet-shaped encrypted parts, with
+at most 2 MiB of combined ciphertext. Parts retain their order and boundaries in one authenticated
+request. Cache identity includes the sequence; the original input is revalidated before assignment
+replacement. HTTP failures retain the existing bounded diagnostic reason and do not trigger an
+internal retry.
+
+Split tokens are not reconstructed for recovery. A bounded run whose exact concatenation has
+Fernet structure stays classified as ciphertext through plaintext-slot normalization. If the task
+has no independent readable text, it fails closed without a recovery or routed-provider request.
+Independent readable text retains the existing mixed-content policy. Other fragment representations
+remain unsupported; this does not establish general token-split recovery or upstream multipart
+fidelity.
+
 ### Threat model
 
 This path assumes the local native Codex caller already holds a valid ChatGPT credential and that
