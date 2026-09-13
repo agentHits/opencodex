@@ -6,7 +6,7 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 Service startup and restore use the [catalog retirement policy](../catalog.md#shared-catalog);
 retirement does not itself change service registration or user-selected model configuration.
 
-Shared parsing and streaming follow the [request-copy](../transports/responses.md#request-copy-accounting) and [stream-buffer accounting](../transports/responses.md#stream-buffer-accounting) contracts.
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
 
 ## Background service command selection
 

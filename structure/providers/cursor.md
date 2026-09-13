@@ -10,7 +10,7 @@ namespace handling retain their provider contract; the bounded native scope live
 Cursor's direct adapter does not enter the OpenAI Chat serializer's
 [OpenCode Go instruction ordering](chat-compat.md#opencode-go-chronological-instructions).
 
-Shared parsing and streaming follow the [request-copy](../transports/responses.md#request-copy-accounting) and [stream-buffer accounting](../transports/responses.md#stream-buffer-accounting) contracts.
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
 
 ## Cursor Native Exec
 

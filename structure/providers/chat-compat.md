@@ -20,7 +20,7 @@ folding. This is independent of the Claude trailing-notice stabilization option
 and does not guarantee upstream cache hits. Regression coverage is in
 `tests/adapters/openai/openai-chat-system-order.test.ts`.
 
-Shared parsing and streaming follow the [request-copy](../transports/responses.md#request-copy-accounting) and [stream-buffer accounting](../transports/responses.md#stream-buffer-accounting) contracts.
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
 
 ## Reasoning and tool-result compatibility
 

@@ -7,7 +7,7 @@ Codex WebSocket quota-family normalization remains generic; retired-model eviden
 by the [OpenAI quota owner](../providers/openai-tiers.md#public-provider-contract), not by
 removing support for non-default WebSocket quota families.
 
-Shared parsing and streaming follow the [request-copy](responses.md#request-copy-accounting) and [stream-buffer accounting](responses.md#stream-buffer-accounting) contracts.
+Shared parsing and streaming follow the [request-copy](byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](byte-accounting.md#stream-buffer-accounting) contracts.
 
 ## Heartbeat and stall deadline
 

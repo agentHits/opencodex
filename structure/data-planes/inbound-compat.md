@@ -47,7 +47,7 @@ Translated Claude timeline reminders use the Chat adapter's
 on its exact supported route. This is separate from trailing-notice stabilization
 and from native Chat message passthrough.
 
-Shared parsing and streaming follow the [request-copy](../transports/responses.md#request-copy-accounting) and [stream-buffer accounting](../transports/responses.md#stream-buffer-accounting) contracts.
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
 
 ## Chat Completions inbound native path
 

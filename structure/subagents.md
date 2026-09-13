@@ -25,7 +25,7 @@ Codex treats qualified names literally and defaults absent namespaces to functio
 declarations inherit their restored namespace container; the compiler never invents an empty
 encryption marker when the upstream omitted it or returned a nonempty marker.
 
-Shared parsing and streaming follow the [request-copy](transports/responses.md#request-copy-accounting) and [stream-buffer accounting](transports/responses.md#stream-buffer-accounting) contracts.
+Shared parsing and streaming follow the [request-copy](transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](transports/byte-accounting.md#stream-buffer-accounting) contracts.
 
 ## Multi-agent surface mode (3-state)
 
