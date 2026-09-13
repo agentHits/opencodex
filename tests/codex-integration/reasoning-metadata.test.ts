@@ -31,6 +31,7 @@ const REJECTION_BODY = JSON.stringify({
 });
 
 const roots: string[] = [];
+const originalOpenCodexHome = process.env["OPENCODEX_HOME"];
 
 function snapshotFile(providers: Record<string, unknown>): Record<string, unknown> {
   return { version: 1, fetchedAt: Date.now(), source: "test", providers };
@@ -68,7 +69,11 @@ function supportFile(rows: Record<string, unknown>): Record<string, string> {
 
 afterEach(() => {
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
-  delete process.env["OPENCODEX_HOME"];
+  // Restore rather than delete. Unsetting it entirely pointed every later test file in the same
+  // bun process at the real ~/.opencodex, which read the machine's actual configuration and
+  // failed unrelated suites (tests/web-search) depending on file order.
+  if (originalOpenCodexHome === undefined) delete process.env["OPENCODEX_HOME"];
+  else process.env["OPENCODEX_HOME"] = originalOpenCodexHome;
 });
 
 describe("models.dev reasoning metadata", () => {

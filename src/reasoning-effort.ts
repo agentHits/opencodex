@@ -1,6 +1,6 @@
 import type { OcxProviderConfig } from "./types";
 import { modelInList } from "./types";
-import { dropLearnedUnsupportedReasoningEfforts, ensureReasoningMetadataSnapshot, reasoningEffortsFromMetadata } from "./providers/reasoning-metadata";
+import { dropLearnedUnsupportedReasoningEfforts, ensureReasoningMetadataSnapshot, providerUsesReasoningMetadata, reasoningEffortsFromMetadata } from "./providers/reasoning-metadata";
 
 // Descriptions mirror the upstream bundled models.json canonical wording (openai/codex PR #31684).
 export const CODEX_REASONING_LEVELS: { effort: string; description: string }[] = [
@@ -164,8 +164,10 @@ export function configuredReasoningEfforts(provider: OcxProviderConfig, modelId:
   // the background; no snapshot means the previous behaviour.
   // The refresh is requested before the lookup, not after a hit: a missing or corrupt snapshot
   // is exactly the case that returns undefined here, so asking only on success meant the one
-  // situation that needs a refresh never triggered one.
-  ensureReasoningMetadataSnapshot();
+  // situation that needs a refresh never triggered one. It stays behind the destination gate,
+  // because asking for every provider would put a background models.dev fetch on the request
+  // path of providers the snapshot does not cover and could never help.
+  if (providerUsesReasoningMetadata(provider)) ensureReasoningMetadataSnapshot();
   const fromMetadata = reasoningEffortsFromMetadata(provider, modelId);
   if (fromMetadata !== undefined) {
     return dropLearnedUnsupportedReasoningEfforts(provider, modelId, healMappedTiers(provider, modelId, fromMetadata));
