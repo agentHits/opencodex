@@ -1834,6 +1834,8 @@ export const ru: Record<TKey, string> = {
   "codexAuth.pause": "Приостановить",
   "codexAuth.resume": "Возобновить",
   "codexAuth.paused": "ПРИОСТАНОВЛЕН",
+  "codexAuth.planExcluded": "Не выбирается автоматически",
+  "codexAuth.planExcludedHint": "Тариф {plan} исключён из автоматического выбора. Явная маршрутизация на аккаунт доступна.",
   "codexAuth.pauseSucceeded": "Аккаунт {email} приостановлен",
   "codexAuth.resumeSucceeded": "Аккаунт {email} снова доступен в пуле",
   "codexAuth.pauseFailed": "Не удалось приостановить {email}. Изменений нет.",

@@ -203,6 +203,8 @@ Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
 
+Subagent automatic pool preview returns no candidate when all pool plans are excluded; explicit account-qualified models retain the [selection-policy distinction](providers/openai-tiers.md#automatic-pool-plan-exclusions).
+
 Provider-level Combo eligibility uses explicit inference evidence for the current single credential; account-specific admission remains separate. See [scoped provider quota](runtime.md#scoped-provider-quota-for-combo-selection).
 
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
@@ -210,9 +212,16 @@ see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-
 
 ## Paginated history writer boundary
 
-`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
 
 Codex pool settings and their consumers follow the [reset-first ordering contract](providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
 
 Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
+
+Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
+
+Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
+
+The account history response can include a [low-confidence effective capacity estimate](providers/openai-tiers.md#observed-effective-token-capacity); usage normalization retains local-answer provenance so local responses cannot supply samples.

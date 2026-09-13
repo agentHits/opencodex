@@ -1348,6 +1348,8 @@ export const zh: Record<TKey, string> = {
   "codexAuth.pause": "暂停",
   "codexAuth.resume": "恢复",
   "codexAuth.paused": "已暂停",
+  "codexAuth.planExcluded": "不自动选择",
+  "codexAuth.planExcludedHint": "套餐 {plan} 已从自动选择中排除。仍可明确指定此账号。",
   "codexAuth.pauseSucceeded": "已暂停 {email}",
   "codexAuth.resumeSucceeded": "{email} 已重新加入账号池",
   "codexAuth.pauseFailed": "无法暂停 {email}，未做任何更改。",

@@ -1331,6 +1331,8 @@ export const de: Record<TKey, string> = {
   "codexAuth.pause": "Pausieren",
   "codexAuth.resume": "Fortsetzen",
   "codexAuth.paused": "PAUSIERT",
+  "codexAuth.planExcluded": "Nicht automatisch gewählt",
+  "codexAuth.planExcludedHint": "Tarif {plan} ist von der automatischen Auswahl ausgeschlossen. Explizite Kontorouten bleiben verfügbar.",
   "codexAuth.pauseSucceeded": "{email} ist pausiert",
   "codexAuth.resumeSucceeded": "{email} ist wieder im Pool verfügbar",
   "codexAuth.pauseFailed": "{email} konnte nicht pausiert werden. Es wurde nichts geändert.",

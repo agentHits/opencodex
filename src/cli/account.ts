@@ -41,6 +41,7 @@ const REPLACEMENT_STYLE_OAUTH = new Set<string>();
 
 const ACCOUNT_USAGE = `Usage:
   ocx account list [provider] [--json] [--all] [--quota [--refresh]]
+  ocx account history openai <pool-account-id> [--limit <1-200>] [--json]
   ocx account current <provider> [--json]
   ocx account use <provider> <account-or-key-id|main> [--json]
   ocx account refresh <provider> [--json]
@@ -101,6 +102,9 @@ function statusText(row: AccountRow): string {
   if (row.active) parts.push(row.type === "codex" ? "selected" : "active");
   if (row.needsReauth) parts.push("needs-reauth");
   if (row.validationPending) parts.push("validation-pending");
+  if (row.selectionExcludedReason === "plan_excluded") {
+    parts.push(`not-auto-selected(plan=${row.selectionExcludedPlan ?? row.plan ?? "unknown"})`);
+  }
   return parts.join(" ");
 }
 
@@ -335,6 +339,10 @@ export async function cmdAccount(args: string[], deps: AccountDeps = {}): Promis
   const [sub, ...rest] = args;
   try {
     if (sub === "list") return await cmdList(rest, deps);
+    if (sub === "history") {
+      const { cmdAccountHistory } = await import("./account-history");
+      return await cmdAccountHistory(rest, deps);
+    }
     if (sub === "current") return await cmdCurrent(rest, deps);
     if (sub === "use") return await cmdUse(rest, deps);
     if (sub === "refresh") return await cmdRefresh(rest, deps);

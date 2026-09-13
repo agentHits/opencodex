@@ -80,6 +80,8 @@ Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
 
+Desktop requests routed to the Codex pool use the shared [automatic plan exclusion contract](../providers/openai-tiers.md#automatic-pool-plan-exclusions); explicit account-qualified targets retain their selection semantics.
+
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
@@ -93,3 +95,11 @@ The explicit sync coordinator also accepts Cline CLI as a separate file integrat
 `claudeCode.stabilizePromptCache` is a default-off operator setting for
 [translated instruction stabilization](../data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
+
+The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
+
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
+
+Pool quota producers and account commands follow the [bounded raw-observation contract](../providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
+
+The account history response can include a [low-confidence effective capacity estimate](../providers/openai-tiers.md#observed-effective-token-capacity); usage normalization retains local-answer provenance so local responses cannot supply samples.
