@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { resolveWireProtocolOverride } from "../../src/server/adapter-resolve";
 import {
   handleResponses,
   hasUnreadableEncryptedAgentTask,
@@ -512,11 +513,15 @@ describe("V2 routed agent-message ciphertext guard", () => {
  * tail item. The adapter asks whether EVERY part can be lowered onto a public message. An item
  * that mixes readable text with ciphertext answers "readable" to the first and "not lowerable"
  * to the second, so it passed the guard, kept its private `agent_message` type through the raw
- * Responses passthrough, and reached xAI as `422 unknown item type "agent_message"` -- with the
- * ciphertext already sent. Position is incidental: a replayed child result simply tends to sit
- * mid-history, where the tail-only scan could never have seen it.
+ * Responses passthrough, and reached the provider as backend ciphertext plus an item type only
+ * the Codex backend declares. Position is incidental: a replayed child result simply tends to
+ * sit mid-history, where the tail-only scan could never have seen it.
+ *
+ * The repair is the one the opaque-blob path already applies after an upstream rejection. It
+ * runs before dispatch here, because a destination that cannot accept the private item was
+ * never going to answer that request anyway.
  */
-describe("routed Responses agent-message ciphertext egress", () => {
+describe("routed Responses agent-message ciphertext repair", () => {
   function routedResponsesConfig(): OcxConfig {
     return {
       port: 0,
@@ -528,6 +533,20 @@ describe("routed Responses agent-message ciphertext egress", () => {
           authMode: "key",
           apiKey: "test-relay-key",
         },
+      },
+    } as OcxConfig;
+  }
+
+  // The reported destination: the provider-wide adapter is the Chat wire, and the registry moves
+  // grok-4.6 onto the raw Responses passthrough for an OAuth caller speaking Responses. Reading
+  // `route.provider.adapter` would miss it, so the repair resolves the same wire override the
+  // adapter is built from.
+  function xaiOAuthResponsesConfig(): OcxConfig {
+    return {
+      port: 0,
+      defaultProvider: "xai",
+      providers: {
+        xai: { adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", authMode: "oauth" },
       },
     } as OcxConfig;
   }
@@ -546,102 +565,77 @@ describe("routed Responses agent-message ciphertext egress", () => {
 
   const userTurn = { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] };
 
-  function refuseDispatch(): () => number {
-    let calls = 0;
-    globalThis.fetch = (async () => {
-      calls += 1;
-      throw new Error("provider dispatch must not happen");
-    }) as typeof fetch;
-    return () => calls;
-  }
-
-  test("blocks a mixed child result replayed behind a later user turn", async () => {
-    const dispatches = refuseDispatch();
-
-    const response = await post(routedResponsesConfig(), "relay/child-model", [mixedChildResult(), userTurn]);
-    const raw = await response.text();
-
-    expect(response.status).toBe(400);
-    expect(JSON.parse(raw)).toMatchObject({
-      error: {
-        type: "invalid_request_error",
-        code: "unforwardable_encrypted_agent_message",
-        item_index: 0,
-      },
-    });
-    expect(dispatches()).toBe(0);
-    expect(raw).not.toContain(FERNET_TASK);
-    expect(raw).not.toContain("gAAAA");
-  });
-
-  test("blocks the same shape at the tail, where the readability guard reports readable", async () => {
-    const input = [mixedChildResult()];
-    // The gap itself: this is the guard that was supposed to be the fail-closed boundary.
-    expect(hasUnreadableEncryptedAgentTask(input)).toBe(false);
-    const dispatches = refuseDispatch();
-
-    const response = await post(routedResponsesConfig(), "relay/child-model", input);
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: { code: "unforwardable_encrypted_agent_message", item_index: 0 },
-    });
-    expect(dispatches()).toBe(0);
-  });
-
-  test("blocks ciphertext that arrives as text rather than in an encrypted slot", async () => {
-    // #3021 saw a delegated reply reach the parent as raw `gAAAA...` text. The adapter lowers a
-    // readable-looking item like this one onto a public message, which would put the ciphertext
-    // on the wire as prose. The readability guard is unchanged and still reports it readable.
-    const input = [{ type: "agent_message", author: "/root/child", recipient: "/root", content: FERNET_TASK }];
-    expect(hasUnreadableEncryptedAgentTask(input)).toBe(false);
-    const dispatches = refuseDispatch();
-
-    const response = await post(routedResponsesConfig(), "relay/child-model", input);
-    const raw = await response.text();
-
-    expect(response.status).toBe(400);
-    expect(JSON.parse(raw)).toMatchObject({ error: { code: "unforwardable_encrypted_agent_message" } });
-    expect(dispatches()).toBe(0);
-    expect(raw).not.toContain(FERNET_TASK);
-  });
-
-  test("blocks the reported xAI destination, whose Responses wire comes from a model default", async () => {
-    // #4454 as filed: the provider-wide adapter is the Chat wire, and the registry moves
-    // grok-4.6 onto the raw Responses passthrough for an OAuth caller speaking Responses.
-    // Reading `route.provider.adapter` would miss exactly this case, so the gate resolves the
-    // same wire override the adapter is built from.
-    const config = {
-      port: 0,
-      defaultProvider: "xai",
-      providers: {
-        xai: { adapter: "openai-chat", baseUrl: "https://api.x.ai/v1", authMode: "oauth" },
-      },
-    } as OcxConfig;
-    const dispatches = refuseDispatch();
-
-    const response = await post(config, "xai/grok-4.6", [mixedChildResult(), userTurn]);
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: { code: "unforwardable_encrypted_agent_message", item_index: 0 },
-    });
-    expect(dispatches()).toBe(0);
-  });
-
-  test("still lowers a fully readable child result onto a public message", async () => {
-    let forwardedBody = "";
+  function captureOutbound(model: string): () => string[] {
+    const bodies: string[] = [];
     globalThis.fetch = (async (_input, init) => {
-      forwardedBody = typeof init?.body === "string" ? init.body : "";
+      bodies.push(typeof init?.body === "string" ? init.body : "");
       return Response.json({
-        id: "resp_routed",
+        id: "resp_repaired",
         object: "response",
         status: "completed",
-        model: "grok-4.6",
+        model,
         output: [],
         usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
       });
     }) as typeof fetch;
+    return () => bodies;
+  }
+
+  test("repairs a mixed child result replayed behind a later user turn", async () => {
+    const outbound = captureOutbound("relay-model");
+
+    const response = await post(routedResponsesConfig(), "relay/child-model", [mixedChildResult(), userTurn]);
+
+    expect(response.status).toBe(200);
+    expect(outbound()).toHaveLength(1);
+    const sent = outbound()[0]!;
+    expect(sent).not.toContain(FERNET_TASK);
+    expect(sent).not.toContain("gAAAA");
+    expect(sent).not.toContain("agent_message");
+    expect(sent).toContain("[encrypted content omitted]");
+    // The readable half of the item survives: only the bytes nobody could read are replaced.
+    expect(sent).toContain("the child finished the migration");
+  });
+
+  test("repairs the same shape at the tail, where the readability guard reports readable", async () => {
+    const input = [mixedChildResult()];
+    // The gap itself: this is the guard that was supposed to be the boundary.
+    expect(hasUnreadableEncryptedAgentTask(input)).toBe(false);
+    const outbound = captureOutbound("relay-model");
+
+    const response = await post(routedResponsesConfig(), "relay/child-model", input);
+
+    expect(response.status).toBe(200);
+    expect(outbound()[0]).not.toContain(FERNET_TASK);
+    expect(outbound()[0]).not.toContain("agent_message");
+  });
+
+  test("omits ciphertext that arrives as text rather than in an encrypted slot", async () => {
+    // #3021 saw a delegated reply reach the parent as raw `gAAAA...` text. The readability guard
+    // reports it readable, and the xAI lowering path would have forwarded it as prose.
+    const input = [{ type: "agent_message", author: "/root/child", recipient: "/root", content: FERNET_TASK }];
+    expect(hasUnreadableEncryptedAgentTask(input)).toBe(false);
+    const outbound = captureOutbound("relay-model");
+
+    const response = await post(routedResponsesConfig(), "relay/child-model", input);
+
+    expect(response.status).toBe(200);
+    expect(outbound()[0]).not.toContain(FERNET_TASK);
+    expect(outbound()[0]).toContain("[encrypted content omitted]");
+  });
+
+  test("the reported xAI destination resolves onto the raw Responses wire", () => {
+    // The repair has to see this destination as the passthrough it becomes, not as the Chat wire
+    // the provider row names. The dispatch itself needs an OAuth credential this fixture has no
+    // business minting, so the wire resolution is asserted directly.
+    const provider = xaiOAuthResponsesConfig().providers.xai!;
+    expect(resolveWireProtocolOverride("xai", "grok-4.6", provider, "responses").adapter)
+      .toBe("openai-responses");
+    expect(provider.adapter).toBe("openai-chat");
+  });
+
+  test("leaves a fully readable child result exactly as the adapter already lowered it", async () => {
+    const outbound = captureOutbound("relay-model");
 
     const response = await post(routedResponsesConfig(), "relay/child-model", [{
       type: "agent_message",
@@ -651,14 +645,14 @@ describe("routed Responses agent-message ciphertext egress", () => {
     }, userTurn]);
 
     expect(response.status).toBe(200);
-    expect(forwardedBody).toContain("the child finished the migration");
-    expect(forwardedBody).not.toContain("agent_message");
+    expect(outbound()[0]).toContain("the child finished the migration");
+    expect(outbound()[0]).not.toContain("[encrypted content omitted]");
+    expect(outbound()[0]).not.toContain("agent_message");
   });
 
   test("leaves a translated Chat destination on its existing path", async () => {
     // The private item never reaches that wire: the parser rebuilds the body from messages and
-    // drops an encrypted part outright. Failing this request closed would break a thread that
-    // works today, so the gate is scoped to the raw Responses passthrough.
+    // drops an encrypted part outright, so there is nothing to repair and no marker to add.
     let forwardedBody = "";
     globalThis.fetch = (async (_input, init) => {
       forwardedBody = typeof init?.body === "string" ? init.body : "";
@@ -676,10 +670,10 @@ describe("routed Responses agent-message ciphertext egress", () => {
     expect(response.status).toBe(200);
     expect(forwardedBody).toContain("the child finished the migration");
     expect(forwardedBody).not.toContain(FERNET_TASK);
-    expect(forwardedBody).not.toContain("agent_message");
+    expect(forwardedBody).not.toContain("[encrypted content omitted]");
   });
 
-  test("leaves a forward destination's private-item ownership untouched", async () => {
+  test("leaves a forward destination's private item and ciphertext untouched", async () => {
     let forwardedBody = "";
     globalThis.fetch = (async (_input, init) => {
       forwardedBody = typeof init?.body === "string" ? init.body : "";

@@ -333,12 +333,12 @@ export function hasEncryptedContentPart(content: unknown): boolean {
  * (#4454). Position was never the discriminator -- a replayed child result lands mid-history
  * and the tail-only scan cannot see it -- but the tail is equally exposed when it is mixed.
  *
- * This is the egress question, so it is deliberately not the readability question: every
- * surviving `encrypted_content` part counts, and so does a Fernet run embedded in text or in
- * string content, which the adapter would otherwise lower verbatim. Plaintext parked in an
- * encrypted slot is already rewritten by `sanitizeEncryptedContentInPlace` before this runs,
- * so a part that is still `encrypted_content` here is backend ciphertext or a protected
- * multipart fragment of one.
+ * This is the egress question, so it is deliberately not the readability question. It is also
+ * deliberately narrower than "any opaque blob": only backend-minted Fernet ciphertext counts,
+ * whether it sits in an `encrypted_content` slot, is split across consecutive slots, or is
+ * embedded in text or string content the adapter would otherwise lower verbatim. Every other
+ * opaque payload keeps its existing reactive opaque-blob recovery, which can still rescue a
+ * destination that merely fails to decrypt something it was entitled to read.
  */
 export function agentMessageCiphertextIndex(input: unknown): number {
   if (!Array.isArray(input)) return -1;
@@ -352,18 +352,102 @@ export function agentMessageCiphertextIndex(input: unknown): number {
       continue;
     }
     if (!Array.isArray(content)) continue;
+    if (splitFernetParts(content).size > 0) return index;
     for (const part of content) {
       if (!part || typeof part !== "object") continue;
       const record = part as { type?: unknown; text?: unknown; encrypted_content?: unknown };
-      if (record.type === "encrypted_content" && typeof record.encrypted_content === "string") return index;
       if (
-        (record.type === "input_text" || record.type === "text")
+        (record.type === "encrypted_content" && typeof record.encrypted_content === "string"
+          && fernetTokenRuns(record.encrypted_content).length > 0)
+        || ((record.type === "input_text" || record.type === "text")
         && typeof record.text === "string"
-        && fernetTokenRuns(record.text).length > 0
+          && fernetTokenRuns(record.text).length > 0)
       ) return index;
     }
   }
   return -1;
+}
+
+
+
+/** The marker `prepareOpaqueBlobRecovery` already substitutes for an undecryptable part. */
+export const OMITTED_ENCRYPTED_CONTENT_TEXT = "[encrypted content omitted]";
+
+function textWithRunsOmitted(payload: string, runs: readonly FernetTokenRun[]): string {
+  let last = 0;
+  let out = "";
+  for (const run of runs) {
+    out += payload.slice(last, run.index) + OMITTED_ENCRYPTED_CONTENT_TEXT;
+    last = run.index + run.token.length;
+  }
+  return out + payload.slice(last);
+}
+
+/**
+ * Replace ciphertext inside `agent_message` items with the omission marker, so
+ * `normalizeRoutedAgentMessages` can lower them onto public messages. Returns how many items
+ * were repaired. Items are replaced rather than mutated, and every other item type is left
+ * alone: reasoning and function-output blobs keep their own reactive recovery.
+ *
+ * This is the repair `prepareOpaqueBlobRecovery` performs after an upstream rejection, applied
+ * before dispatch for a destination that cannot accept the private item under any circumstances.
+ * The round trip it replaces was never going to succeed, and it sent backend ciphertext to a
+ * third party to find that out. Nothing is decrypted, and nothing readable is lost: the parent
+ * could not read these bytes either.
+ */
+export function stripAgentMessageCiphertextInPlace(input: unknown): number {
+  if (!Array.isArray(input)) return 0;
+  let repaired = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    const item = input[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (record.type !== "agent_message") continue;
+    const content = record.content;
+    if (typeof content === "string") {
+      const runs = fernetTokenRuns(content);
+      if (runs.length === 0) continue;
+      input[index] = { ...record, content: textWithRunsOmitted(content, runs) };
+      repaired += 1;
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    let changed = false;
+    // Consecutive slots that are individually invalid but valid once joined are one token.
+    const fragments = splitFernetParts(content);
+    const parts = content.map((part: unknown) => {
+      if (!part || typeof part !== "object") return part;
+      const partRecord = part as { type?: unknown; text?: unknown; encrypted_content?: unknown };
+      if (fragments.has(part)) {
+        changed = true;
+        return { type: "input_text", text: OMITTED_ENCRYPTED_CONTENT_TEXT };
+      }
+      if (
+        partRecord.type === "encrypted_content"
+        && typeof partRecord.encrypted_content === "string"
+        && partRecord.encrypted_content.length > 0
+      ) {
+        const runs = fernetTokenRuns(partRecord.encrypted_content);
+        if (runs.length === 0) return part;
+        changed = true;
+        return { type: "input_text", text: textWithRunsOmitted(partRecord.encrypted_content, runs) };
+      }
+      if (
+        (partRecord.type === "input_text" || partRecord.type === "text")
+        && typeof partRecord.text === "string"
+      ) {
+        const runs = fernetTokenRuns(partRecord.text);
+        if (runs.length === 0) return part;
+        changed = true;
+        return { ...partRecord, text: textWithRunsOmitted(partRecord.text, runs) };
+      }
+      return part;
+    });
+    if (!changed) continue;
+    input[index] = { ...record, content: parts };
+    repaired += 1;
+  }
+  return repaired;
 }
 
 
