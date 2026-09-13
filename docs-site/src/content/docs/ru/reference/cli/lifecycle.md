@@ -232,6 +232,20 @@ credential'ы и не выполняет repair.
 opencodex. Предупреждение о stale-`app-server` и optional `--restart-codex` работают так же, как
 и у `ocx sync`.
 
+### `ocx catalog pull <https-url> [--auth-env <NAME>] [--json] [--restart-codex]`
+
+Устанавливает полный каталог, который отдаёт эндпоинт `/v1/catalog` другого экземпляра OpenCodex,
+и затем синхронизирует `models_cache.json`. URL должен быть HTTPS; HTTP допускается только на
+loopback. Учётные данные в URL, query, фрагменты, редиректы, слишком большие ответы и невалидные
+каталоги отклоняются до любой локальной записи. Аутентификация необязательна и читается только по
+имени переменной окружения (`--auth-env`), но не из argv.
+
+Каталог и кэш пишутся под общей блокировкой каталога Codex; при сбое сохраняются last-known-good
+файлы. Идентичные байты — это no-op, сохраняющий mtime. `--restart-codex` применяется только после
+реальной записи. Условные запросы `ETag` и перезапуск Desktop-приложения в эту команду не входят.
+Полная `--json`-обёртка и коды выхода описаны в
+[английской справке](/reference/cli/lifecycle/).
+
 ## Фоновая служба
 
 ### `ocx service [install|repair|restart|start|stop|status|uninstall|remove]`
