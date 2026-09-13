@@ -17,6 +17,7 @@ import { antigravityUserAgent } from "../adapters/client-fingerprint";
 import { isCanonicalOllamaCloudUrl } from "../adapters/ollama-native-url";
 import { providerOutboundPost, providerRedirectError, type ProviderOutboundDependencies } from "../lib/provider-outbound";
 import { apiKeyPoolEntryId } from "./api-keys";
+import { fetchMuseKeyQuotaSnapshot } from "./muse-key-quota";
 import { XAI_GROK_CLIENT_VERSION, XAI_GROK_COMPATIBILITY } from "./xai-transport";
 import { getProviderRegistryEntry, providerCodexAccountMode, registryEntryForProviderDestination } from "./registry";
 import type { OcxConfig, OcxProviderConfig } from "../types";
@@ -39,7 +40,9 @@ import {
 } from "./quota-wire";
 import {
   clearCachedProviderQuotas,
+  providerQuotaRoutingBinding,
   replaceCachedProviderQuotas,
+  type ProviderQuotaRoutingEvidence,
 } from "./quota-routing-cache";
 import {
   aggregateCodexPoolCapacity,
@@ -52,6 +55,7 @@ import type {
   ProviderQuota,
   ProviderQuotaCreditsUsd,
   ProviderQuotaWindow,
+  ProviderRoutingQuota,
 } from "./quota-types";
 import {
   clearKiroAccountUsageState,
@@ -103,6 +107,7 @@ const XAI_CREDITS_URL = `${XAI_BILLING_URL}?format=credits`;
 const LAST_GOOD_MAX_AGE_MS = CODEX_CAPACITY_MAX_QUOTA_AGE_MS;
 const nativeMainReportGenerations = new WeakMap<ProviderQuotaReport, number>();
 const accountReportCurrent = new WeakMap<ProviderQuotaReport, () => boolean>();
+const routingEvidence = new WeakMap<ProviderQuotaReport, ProviderQuotaRoutingEvidence>();
 let providerQuotaBeforePublishForTests: (() => void | Promise<void>) | null = null;
 
 /** Test-only seam for identity/config invalidation after probes but before publication. */
@@ -136,6 +141,8 @@ export interface ProviderQuotaReport {
   source: string;
   quota: ProviderQuota;
   updatedAt: number;
+  /** Added by the management response projection, never stored on a cached report. */
+  routingQuota?: ProviderRoutingQuota;
   reverseEngineered?: boolean;
   /**
    * The row was OBSERVED in-band on a streaming turn rather than probed.
@@ -447,7 +454,9 @@ async function fetchA6apiQuota(provider: string, config: OcxProviderConfig): Pro
     ? { expiresAt: normalizedExpiry }
     : {};
   if (unlimited) {
-    return report(provider, "a6api:billing", {
+    // Every row is an API-credit constraint on inference, so the display quota is also
+    // the routing projection. Passing it explicitly is the opt-in.
+    const quota: ProviderQuota = {
       creditsUsd: {
         used: 0,
         limit: 0,
@@ -458,7 +467,8 @@ async function fetchA6apiQuota(provider: string, config: OcxProviderConfig): Pro
       },
       customWindows: [{ label: "Unlimited API credits", percent: 0 }],
       updatedAt: Date.now(),
-    });
+    };
+    return keyReport(provider, "a6api:billing", quota, config, apiKey, quota);
   }
   const limitUsd = firstFinite(subscription, ["hard_limit_usd"]);
   const grantedUnits = firstFinite(token, ["total_granted"]);
@@ -481,7 +491,7 @@ async function fetchA6apiQuota(provider: string, config: OcxProviderConfig): Pro
   const percent = normalizePercent((usedUsd / limitUsd) * 100);
   if (percent === undefined) return TERMINAL_QUOTA_FAILURE;
   const label = `API credits ($${remainingUsd.toFixed(2)} of $${limitUsd.toFixed(2)} remaining)`;
-  return report(provider, "a6api:billing", {
+  const quota: ProviderQuota = {
     creditsUsd: {
       used: usedUsd,
       limit: limitUsd,
@@ -491,7 +501,9 @@ async function fetchA6apiQuota(provider: string, config: OcxProviderConfig): Pro
     },
     customWindows: [{ label, percent }],
     updatedAt: Date.now(),
-  });
+  };
+  // The credit balance funds inference itself, so display and routing scope agree.
+  return keyReport(provider, "a6api:billing", quota, config, apiKey, quota);
 }
 
 function parseOpenCodeGoUsageWindow(value: unknown): { percent: number; resetAt?: number } | null {
@@ -539,7 +551,7 @@ async function fetchOpenCodeGoQuota(provider: string, config: OcxProviderConfig)
     } : {}),
     updatedAt: Date.now(),
   };
-  return report(provider, "opencode-go:usage", quota);
+  return keyReport(provider, "opencode-go:usage", quota, config, apiKey, quota);
 }
 
 /**
@@ -583,10 +595,13 @@ async function fetchOpenRouterQuota(provider: string, config: OcxProviderConfig)
   if (percent === undefined) return null;
   const remaining = Math.max(0, limit - used);
   const label = `API credits ($${remaining.toFixed(2)} of $${limit.toFixed(2)} remaining)`;
-  return report(provider, "openrouter:key-info", {
+  // The per-key spending cap stops every request this credential can make, so the
+  // whole report is inference-wide routing evidence.
+  const quota: ProviderQuota = {
     customWindows: [{ label, percent }],
     updatedAt: Date.now(),
-  });
+  };
+  return keyReport(provider, "openrouter:key-info", quota, config, apiKey, quota);
 }
 
 /**
@@ -685,7 +700,7 @@ async function fetchClineQuota(provider: string, config: OcxProviderConfig): Pro
       windows += 1;
     }
   }
-  return windows > 0 ? report(provider, "cline:plan-usage-limits", quota) : null;
+  return windows > 0 ? keyReport(provider, "cline:plan-usage-limits", quota, config, apiKey, quota) : null;
 }
 
 /**
@@ -757,7 +772,7 @@ async function fetchOllamaCloudQuota(provider: string, config: OcxProviderConfig
   }
   const body = asRecord(await readQuotaJson(response));
   const quota = parseOllamaCloudQuota(body);
-  return quota ? report(provider, "ollama-cloud:usage", quota) : null;
+  return quota ? keyReport(provider, "ollama-cloud:usage", quota, config, apiKey, quota) : null;
 }
 
 /**
@@ -887,10 +902,18 @@ async function fetchZaiQuota(provider: string, config: OcxProviderConfig): Promi
     // model window — for example a plan reporting only the monthly MCP `TIME_LIMIT` row.
     // Returning `null` here would preserve the previous token windows for up to 30 minutes
     // and keep quota-aware routing acting on a report the provider has already superseded.
-    return quota ? report(provider, "zai:quota-limit", quota) : AUTHORITATIVE_EMPTY_QUOTA;
+    return quota
+      ? keyReport(provider, "zai:quota-limit", quota, config, apiKey, quota)
+      : AUTHORITATIVE_EMPTY_QUOTA;
   }
   const legacy = parseZaiQuotaLegacyFields(data);
-  return legacy ? report(provider, "zai:quota-limit", legacy) : null;
+  if (!legacy) return null;
+  // The legacy monthly figure also carries MCP usage; it is display evidence, not
+  // proof that model inference is unavailable. Modern TOKEN_LIMIT rows above are scoped.
+  const inferenceQuota = { ...legacy };
+  delete inferenceQuota.monthlyPercent;
+  delete inferenceQuota.monthlyResetAt;
+  return keyReport(provider, "zai:quota-limit", legacy, config, apiKey, inferenceQuota);
 }
 
 /**
@@ -1073,7 +1096,9 @@ async function fetchSyntheticQuota(provider: string, config: OcxProviderConfig):
     quota.customWindows = [...(quota.customWindows ?? []), { label: "Search hourly", percent: searchHourly }];
     windows += 1;
   }
-  return windows > 0 ? report(provider, "synthetic:quotas", quota) : null;
+  const inferenceQuota = { ...quota };
+  delete inferenceQuota.customWindows; // search.hourly does not constrain model inference.
+  return windows > 0 ? keyReport(provider, "synthetic:quotas", quota, config, apiKey, inferenceQuota) : null;
 }
 
 /**
@@ -1185,12 +1210,58 @@ function report(
   };
 }
 
+/**
+ * Publish a credential-bound report, and routing evidence only when the producer
+ * hands over its inference-only projection.
+ *
+ * The projection is deliberately not defaulted to the display quota. A producer must
+ * decide that its rows really do constrain inference on the probed credential; omitting
+ * the argument leaves the report display-only, so a new producer cannot inherit
+ * provider-veto authority merely by calling this helper. Ownership alone is not the
+ * scope decision: providerQuotaRoutingBinding resolving is necessary, never sufficient.
+ */
+function keyReport(
+  provider: string,
+  source: string,
+  quota: ProviderQuota,
+  config: OcxProviderConfig,
+  probedCredential: string,
+  inferenceQuota?: ProviderQuota,
+): ProviderQuotaReport | null {
+  const result = report(provider, source, quota);
+  if (!result || !inferenceQuota) return result;
+  const binding = providerQuotaRoutingBinding(provider, config, probedCredential);
+  if (binding) routingEvidence.set(result, { quota: inferenceQuota, binding });
+  return result;
+}
+
 function tagNativeMainReport(
   value: ProviderQuotaReport | null,
   generation: number,
 ): ProviderQuotaReport | null {
   if (value) nativeMainReportGenerations.set(value, generation);
   return value;
+}
+
+/**
+ * Test-only seam: publish exactly as a credential-bound producer does, and hand back the
+ * routing evidence the publication actually attached.
+ *
+ * Live producers all pass a projection today, so no probe fixture can prove the OTHER half
+ * of the contract: that omitting it stays display-only. Routing an omitted argument through
+ * the real helper keeps that provable, and a re-introduced `= quota` default would be
+ * observed here (a defaulted parameter also fires for an explicitly undefined argument).
+ */
+export function publishKeyReportForTests(
+  provider: string,
+  source: string,
+  quota: ProviderQuota,
+  config: OcxProviderConfig,
+  probedCredential: string,
+  inferenceQuota?: ProviderQuota,
+): { report: ProviderQuotaReport | null; routing: ProviderQuotaRoutingEvidence | undefined } {
+  const result = keyReport(provider, source, quota, config, probedCredential, inferenceQuota);
+  return { report: result, routing: result ? routingEvidence.get(result) : undefined };
 }
 
 function isProviderQuotaReportCurrent(value: ProviderQuotaReport): boolean {
@@ -1532,6 +1603,36 @@ async function fetchKiroQuota(provider: string): Promise<ProviderQuotaReport | n
   return report(provider, "kiro:usage-limits", snapshot.quota);
 }
 
+/**
+ * Provider-level row probed from the key endpoint, for an account that CAN be probed.
+ *
+ * Written through the same account cache the passive path reads, so the measurement
+ * survives a restart and the per-account rows at oauth-account-routes.ts:313 pick it up
+ * with no mode change. Deliberately does not flip providerOAuthAccountQuotaMode: that
+ * mode selects readPassiveProviderAccountQuotas, and the probed per-account path it would
+ * switch to is gated on supportsPerAccountQuota, which has no meta-muse reader, so the
+ * GUI account list would go from showing observations to showing nothing.
+ */
+async function fetchMuseKeyQuota(provider: string): Promise<ProviderQuotaReport | null> {
+  const probedAccountId = getAccountSet(provider)?.activeAccountId;
+  if (!probedAccountId) return null;
+  const oauthAccessToken = getAccountCredential(provider, probedAccountId)?.muse?.oauthAccessToken;
+  // An imported or pasted credential has no account token and never will: it is
+  // capability, not provider id, that decides whether a probe is possible.
+  if (!oauthAccessToken) return null;
+  const probedAccountKey = accountCacheKey(provider, probedAccountId);
+  const writerGeneration = captureConfigGeneration();
+  const quota = await fetchMuseKeyQuotaSnapshot(probedAccountId, oauthAccessToken);
+  if (!quota) return null;
+  if (mayCommitAccountQuotaKey(probedAccountKey, writerGeneration)) {
+    // Hydrate before writing, for the same reason recordPassiveAccountQuota does:
+    // persistAccountQuotaCache serializes the whole in-memory map.
+    hydrateAccountQuotaCache();
+    accountQuotaCache.set(probedAccountKey, { ts: Date.now(), quota });
+    persistAccountQuotaCache();
+  }
+  return report(provider, `${provider}:key-endpoint`, quota);
+}
 /**
  * Provider-level row for a passive provider: the ACTIVE account's last observed
  * subscription windows, the same shape `fetchAnthropicQuota` and `fetchKiroQuota`
@@ -1888,7 +1989,7 @@ export function reconcileProviderAccountQuotaRows(context: GenerationContext): n
     const reports = cache.response.reports.filter(report => context.providerNames.has(report.provider));
     removed += cache.response.reports.length - reports.length;
     cache = { ...cache, response: { ...cache.response, reports } };
-    replaceCachedProviderQuotas(reports);
+    replaceCachedProviderQuotas(reports, routingEvidence);
   }
   liveAccountQuotaKeys = new Set(context.oauthAccountKeys);
   liveProviderQuotaKeys = new Set(context.providerNames);
@@ -2317,7 +2418,7 @@ async function fetchKimiQuota(provider: string, config: OcxProviderConfig, acces
   });
   if (!response.ok) return null;
   const quota = parseKimiQuotaPayload(await readQuotaJson(response));
-  return quota ? report(provider, "kimi:usages", quota) : null;
+  return quota ? keyReport(provider, "kimi:usages", quota, config, accessToken, quota) : null;
 }
 
 /**
@@ -2444,7 +2545,7 @@ async function fetchCommandCodeQuota(provider: string, config: OcxProviderConfig
   const fiveHour = parseCommandCodeWindow(limits?.fiveHour);
   const weekly = parseCommandCodeWindow(limits?.weekly);
   const creditsUsd = await fetchCommandCodeSpend(bearer, credits, orgQuery);
-  return report(provider, "command-code:credits", {
+  const quota: ProviderQuota = {
     ...(fiveHour ? {
       fiveHourPercent: fiveHour.percent,
       ...(fiveHour.resetAt !== undefined ? { fiveHourResetAt: fiveHour.resetAt } : {}),
@@ -2455,7 +2556,9 @@ async function fetchCommandCodeQuota(provider: string, config: OcxProviderConfig
     } : {}),
     ...(creditsUsd ? { creditsUsd } : {}),
     updatedAt: Date.now(),
-  });
+  };
+  // Rolling windows and the credit balance both gate inference on this bearer.
+  return keyReport(provider, "command-code:credits", quota, config, bearer, quota);
 }
 
 /** Cursor included usage via api2.cursor.sh (Bearer from OAuth) — unofficial, may change. */
@@ -2960,11 +3063,16 @@ async function maybeFetchProviderQuota(
     if (provider.authMode === "oauth" && name === "anthropic") return fetchAnthropicQuota(name);
     if (provider.authMode === "oauth" && name === "google-antigravity") return await fetchAntigravityQuota(name);
     if (provider.authMode === "oauth" && name === "kiro") return fetchKiroQuota(name);
-    // Passive providers (meta-muse): Meta publishes no quota endpoint, so there is no
-    // probe to run — the row is the active account's last in-band observation.
-    if (provider.authMode === "oauth" && hasPassiveAccountQuota(name)) return fetchPassiveProviderQuota(name);
+    // meta-muse: a device-logged-in account can be probed at the key endpoint; an
+    // imported or pasted one cannot, and falls back to its last in-band observation.
+    // The probe is tried first and its failure is never fatal to the row.
+    if (provider.authMode === "oauth" && hasPassiveAccountQuota(name)) {
+      return (await fetchMuseKeyQuota(name)) ?? await fetchPassiveProviderQuota(name);
+    }
     const reader = keyQuotaReaderForProvider(name, provider);
-    return reader ? reader(name, provider) : null;
+    // Keep destination/auth fields bound to the same request as the reader's captured
+    // bearer, even if the live provider object changes while the quota probe awaits.
+    return reader ? reader(name, { ...provider }) : null;
   } catch {
     return null;
   }
@@ -3151,7 +3259,7 @@ export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh 
     ) {
       const reports = response.reports.filter(item => mayCommitProviderQuotaKey(item.provider, writerGeneration));
       cache = { key, ts: Date.now(), response: { ...response, reports } };
-      replaceCachedProviderQuotas(reports);
+      replaceCachedProviderQuotas(reports, routingEvidence);
       notifyProviderQuotaSnapshot(reports, config);
     }
     return response;

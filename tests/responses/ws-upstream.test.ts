@@ -7,6 +7,7 @@ import { fetchWithTransientRetry, isNonReplayableResponse } from "../../src/lib/
 import { codexWsExchange } from "../../src/server/responses/codex-ws-exchange";
 import { CodexWsSession } from "../../src/server/responses/codex-ws-session";
 import { prepareCodexWsRequest } from "../../src/server/responses/codex-ws-request";
+import { readCodexWsStage } from "../../src/server/responses/codex-ws-wire";
 import { CodexWsMetadata, CODEX_WS_METADATA_MAX_BYTES, CODEX_WS_METADATA_MAX_VALUE_BYTES } from "../../src/server/responses/codex-ws-metadata";
 import {
   bunSupportsBoundedCodexWsRelay,
@@ -407,6 +408,26 @@ describe("handleResponses Codex WS relay selection", () => {
     expect(text).toContain("data: [DONE]");
     expect(logCtx.activeAttempt?.streamAborted).toBe(true);
     expect(FakeWebSocket.instances[0].closed).toBe(true);
+  });
+
+  test("handleResponses adopts the exchange stage onto the logged attempt (#4191)", async () => {
+    installFake(ws => {
+      ws.emit("open", {});
+      ws.emit("close", { code: 1006 });
+    });
+
+    const logCtx = { model: "", provider: "" };
+    const response = await handleResponses(request(), forwardConfig(), logCtx, {
+      codexWsRuntimeIdentity: BOUNDED_WS_RUNTIME,
+    });
+
+    expect([502, 504]).toContain(response.status);
+    const stage = (logCtx.activeAttempt as { codexWsStage?: Record<string, unknown> } | undefined)?.codexWsStage;
+    expect(stage).toBeDefined();
+    expect(stage?.closeCode).toBe(1006);
+    expect(stage?.sent).toBe(true);
+    expect(typeof stage?.ocxVersion).toBe("string");
+    expect(stage?.bunVersion).toBe(BOUNDED_WS_RUNTIME);
   });
 
   test.skipIf(bunSupportsBoundedCodexWsRelay())(
@@ -1680,6 +1701,52 @@ describe("oversized Codex create frames", () => {
     const failure = ((await response.json()) as { error: { code: string; message: string } }).error;
     expect(failure.code).toBe("upstream_closed_before_response");
     expect(failure.message).toContain("closed before a Responses terminal event (close 1006)");
+  });
+
+  test("a pre-terminal 1006 marks the response with a content-free stage record", async () => {
+    installFake(ws => {
+      ws.emit("open", {});
+      ws.emit("close", { code: 1006, reason: "abnormal closure detail" });
+    });
+    const response = await codexWsUpstreamFetch(CODEX_URL, streamingInit(), (() => {
+      throw new Error("fallback must not run after open");
+    }) as unknown as typeof fetch);
+
+    expect(response.status).toBe(502);
+    const stage = readCodexWsStage(response);
+    expect(stage).toBeDefined();
+    expect(stage?.closeCode).toBe(1006);
+    expect(stage?.sent).toBe(true);
+    expect(stage?.requestBytes).toBeGreaterThan(0);
+    expect(stage?.upstreamFrames).toBe(0);
+    expect(stage?.firstFrameMs).toBeNull();
+    expect(stage?.reused).toBe(false);
+    expect(typeof stage?.ocxVersion).toBe("string");
+    expect(stage?.bunVersion).toBe(BOUNDED_WS_RUNTIME);
+    // Content-free: the close reason is upstream text and never enters the record.
+    expect(JSON.stringify(stage)).not.toContain("abnormal closure detail");
+    expect(JSON.stringify(stage)).not.toContain("reason");
+  });
+
+  test("a committed exchange marks exactly one stage and never byte-counts the frame", async () => {
+    installFake(ws => {
+      ws.emit("open", {});
+      ws.emit("message", { data: JSON.stringify({ type: "response.created", response: { id: "r1" } }) });
+      ws.emit("message", { data: JSON.stringify({ type: "response.completed", response: { id: "r1" } }) });
+    });
+    const response = await codexWsUpstreamFetch(CODEX_URL, streamingInit(), (() => {
+      throw new Error("fallback must not run after open");
+    }) as unknown as typeof fetch);
+
+    expect(response.status).toBe(200);
+    await response.text();
+    const stage = readCodexWsStage(response);
+    expect(stage).toBeDefined();
+    // The happy path skips the UTF-8 walk of the create frame on purpose.
+    expect(stage?.requestBytes).toBeNull();
+    expect(stage?.closeCode).toBeNull();
+    expect(stage?.sent).toBe(true);
+    expect(stage?.relayedEvents).toBeGreaterThan(0);
   });
 
   test("dials the configured provider's own wss URL for an opt-in upstream", async () => {

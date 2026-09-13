@@ -19,8 +19,20 @@ the native passthrough there is no canonical Fast injection and no wire mapping:
 and `fastMode` injects nothing here. Resolved-Fast-policy injection applies only to routes that
 take the Chat -> Responses -> Chat bridge below. `parallel_tool_calls` is emitted only for providers opted into
 parallel tools (or pinned false by the existing provider opt-out contract).
+
+On the response side, the upstream `service_tier` echo (xAI Priority Processing, OpenAI fast
+tier) relays to the Chat Completions caller on every delivery shape: the non-streaming body
+(`responsesJsonToChatCompletion` in `src/chat/outbound.ts`), the folded stream
+(`collectChatCompletion` in `src/chat/outbound.ts`), and each synthesized SSE chunk
+(`jsonCompletionSse` in `src/server/chat-native-sse.ts`). An upstream that sends no
+`service_tier` gets no injected key. The Responses lane already relayed the same field for
+responses-wire upstreams; the responses-lane assembly for chat-wire upstreams keeps it in
+attempt telemetry only.
+
 Combo/policy routes and requests that need Responses-only hosted tools, continuation, background,
 or storage semantics retain the existing Chat -> Responses -> Chat bridge.
+Chat-to-Responses traffic that lands on `api.meta.ai` inherits the same 64-character tool-name
+aliasing as native Responses; see [`responses.md`](../transports/responses.md).
 
 The direct SSE relay accepts CRLF and arbitrary transport chunk boundaries while retaining at most
 one bounded event. EOF with an unterminated event and an event above the translator limit are typed
@@ -32,6 +44,15 @@ request-signal cancellation contracts as routed Responses transport. Because
 `src/server/chat-native.ts` repeats the pre-dispatch `selectProactiveApiKeyTransport`
 call before it binds the adapter; the pick remains inert unless a strategy is configured
 and the committed key is cooling. See [`responses.md`](../transports/responses.md).
+
+## Chat conversation identity forwarding
+
+`src/server/chat-completions.ts` preserves caller `prompt_cache_key` on the Chat-to-Responses
+bridge. Canonical ChatGPT Responses forwarding preserves `session_id`, `session-id`, `thread-id`
+and per-request `x-client-request-id` under their original names. Missing conversation identity
+stays missing; a shared prefix/cache key is not converted into a session. The direct-mode
+outbound contract is covered by `tests/responses/chat-conversation-affinity.test.ts`.
+This transport contract does not prove a client's emission, Pool selection stability or cache hits.
 
 ## Chat streaming client with a JSON upstream result
 
@@ -91,3 +112,43 @@ falling back to OpenCodex guesses, and the integration does not write the remove
 `thinking.effort` / `defaultEffort` fields because MCode owns the active effort per session.
 
 Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration.
+
+Chat helper admission in `src/server/responses/core.ts` follows the
+[deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
+claims stored main, after terminal vision, routed vision and search exclusions.
+
+The management quota DTO keeps Combo editing aligned with scoped inference evidence;
+see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+
+## Claude affinity at final Go dispatch
+
+`src/server/claude-messages.ts` carries validated conversation affinity privately through
+Responses options. Configured Go headers win; otherwise explicit session/thread identity,
+then an explicit Go header, then valid Claude metadata, then the original request-scoped
+allocation supplies the lane. `src/server/responses/core.ts` applies it only at the final
+canonical Go transport, including combo selection and failover. No Go-only replay header
+reaches non-Go destinations. Shared system cache keys never become conversation identity.
+The request-scoped fallback is stable across retries and distinct across client requests.
+
+Claude metadata also supplies a private native-session value. Only the final canonical ChatGPT
+attempt receives it, in copied forwarding headers; an explicit underscore session, hyphenated
+session or thread header suppresses synthesis. Refresh and alternate-account retries retain
+that value. Original request headers stay unchanged so policy fallback cannot promote a generated
+native identifier into a noncanonical replay. Go preliminary selection does not suppress the
+final native affinity, and shared-system keys do not provide either conversation value.
+
+## Opt-in Claude instruction stabilization
+
+`src/claude/inbound.ts` reads only literal `claudeCode.stabilizePromptCache: true` from
+its existing configuration argument. The default is off for every translated Messages caller.
+`src/claude/inbound-cache-stabilize.ts` relocates only exact single-line trailing unfenced harness notices
+into a trailing user input message; unmatched and fenced text is preserved, including an open
+fence through EOF. Native passthrough never enters this translator. Without opt-in the original
+system-parts cache-key derivation remains unchanged; with opt-in the metadata-less key uses
+stabilized instructions. Metadata-derived keys retain their existing derivation. This configuration
+changes prompt roles, not conversation identity, and cannot guarantee upstream cache reuse.
+
+Instruction notice extraction scans fence ranges once and walks original lines backwards with
+a decreasing cursor. It accepts exactly one ASCII space inside the token notice, preserves
+unmatched prefix bytes, and does not repeatedly scan or copy shrinking prompt prefixes.
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
