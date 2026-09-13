@@ -3,6 +3,7 @@ import type { AdapterRequest, IncomingMeta, ProviderAdapter } from "./base";
 import type { AdapterEvent, OcxAssistantMessage, OcxContentPart, OcxMessage, OcxParsedRequest, OcxProviderConfig, OcxTextContent, OcxThinkingContent, OcxToolCall, OcxUsage } from "../types";
 import { isAllowedToolChoice, modelInList, namespacedToolName, resolveToolChoiceWireName, toolChoiceToolPredicate } from "../types";
 import { mapReasoningEffort, modelRecordValue } from "../reasoning-effort";
+import { registryEntryForProviderDestination } from "../providers/registry";
 import { debugProviderDiagnostic } from "../lib/debug";
 import { sseFieldValue } from "../lib/sse-decoder";
 import { isDebugEnabled } from "../lib/debug-settings";
@@ -209,7 +210,7 @@ export function buildOpenAIChatPassthroughRequest(
       messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
       toolCount: Array.isArray(body.tools) ? body.tools.length : 0,
       hasCredential,
-      bodyBytes: new TextEncoder().encode(bodyJson).length,
+      bodyBytes: Buffer.byteLength(bodyJson, "utf8"),
     });
   }
 
@@ -738,10 +739,14 @@ function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderCon
   };
 
   const nativeOpenAI = isNativeOpenAIChatTarget(provider);
+  // Hoisting a newly appended reminder rewrites the reusable prompt prefix.
+  // Keep this compatibility exception on the destination/model tested with OCG.
+  const chronologicalSystem = parsed.modelId === "deepseek-v4.1-flash"
+    && registryEntryForProviderDestination(provider)?.id === "opencode-go";
   const toolCatalogNudge = shouldInjectNonOpenAIToolCatalogNudge(provider)
     ? buildNonOpenAIToolCatalogNudgeForTools(context.tools, options.toolChoice)
     : undefined;
-  const developerSystemParts = nativeOpenAI
+  const developerSystemParts = nativeOpenAI || chronologicalSystem
     ? []
     : context.messages
       .map(developerSystemText)
@@ -767,11 +772,15 @@ function messagesToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderCon
         const hasImages = parts?.some(p => p.type === "image") ?? false;
         let chatMsg: Record<string, unknown>;
         if (msg.role === "developer" && !hasImages) {
-          if (!nativeOpenAI) break;
+          if (!nativeOpenAI && !chronologicalSystem) break;
           const text = typeof msg.content === "string"
             ? msg.content
             : parts!.map(p => (p as OcxTextContent).text).join("");
-          chatMsg = { role: "developer", content: text };
+          // A non-text timeline part (video, for example) serializes to nothing here.
+          // The generic path drops such a message; the chronological exception must not
+          // turn it into an empty system message that some upstreams reject.
+          if (!nativeOpenAI && text.length === 0) break;
+          chatMsg = { role: nativeOpenAI ? "developer" : "system", content: text };
         } else if (typeof msg.content === "string") {
           chatMsg = { role: "user", content: msg.content };
         } else if (!hasImages) {
@@ -1656,7 +1665,7 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
             messageCount: Array.isArray(messages) ? messages.length : 0,
             toolCount: Array.isArray(tools) ? tools.length : 0,
             hasCredential,
-            bodyBytes: new TextEncoder().encode(bodyJson).length,
+            bodyBytes: Buffer.byteLength(bodyJson, "utf8"),
           });
         }
 
@@ -2091,7 +2100,7 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
       if (Object.hasOwn(json, "service_tier")) {
         tierMetadata?.observeResponseServiceTier(json.service_tier);
       }
-      const responseBytes = new TextEncoder().encode(JSON.stringify(json)).byteLength;
+      const responseBytes = Buffer.byteLength(JSON.stringify(json), "utf8");
       budget.chargeRetained(responseBytes, { kind: "retained_collectors" });
       try {
         const payload = unwrapChatCompletionPayload(json);
