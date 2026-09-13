@@ -446,3 +446,10 @@ opencodex를 로컬 OpenAI 호환 서버로 향하게 하세요 — 보통은 �
 **Custom**을 선택하거나 `ocx init`에서 `custom`을 선택한 뒤 베이스 URL을 입력하세요. 모든 프로바이더 필드
 (`headers`, `noReasoningModels`, `noVisionModels`, `models`, …)는
 [설정 레퍼런스](/ko/reference/configuration/)를 참고하세요.
+
+
+### Antigravity 쿼터 조회 실패 확인
+
+계정 쿼터 화면과 `ocx account list google-antigravity --quota --refresh`는 접근 거부, 요청 한도, 목적지·리디렉션 차단, DNS·연결·시간 초과, 읽을 수 없는 응답을 구분합니다. 조회가 실패해도 마지막 관측 막대와 시각은 유지합니다. 재로그인하면 이전 자격 증명의 진단을 버리고, 조회에 성공하면 오류 표시를 지웁니다.
+
+접근 거부만으로 로그인 만료나 플랜 사용 불가를 단정하지 않습니다. 목적지 차단도 Fake-IP 결함의 증거는 아닙니다. Google의 고정 쿼터 주소에는 TLS 인증서 확인과 리디렉션·사설 주소 제한이 유지됩니다. 인증된 TUN 환경의 동작은 해당 환경에서 별도로 확인해야 합니다.

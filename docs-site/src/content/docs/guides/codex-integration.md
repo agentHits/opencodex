@@ -820,8 +820,7 @@ ocx config set codexPool '{"excludedPlans":["free"]}'
 
 This is a selection policy, not a block. An excluded account keeps its credential, quota history, and thread affinity, stays visible on the account surface, and is still reachable by explicit account selection such as `work/gpt-5.5`. What changes is that automatic rotation stops choosing it, including when it is already the active account or already bound to a thread — which is the state a lapsed subscription leaves behind.
 
-Two deliberate limits. The main Codex account is never excluded by plan, because selection-only routing withholds its plan rather than reading the fenced native credential, so a rule covering it would disagree with itself. And when no unexcluded account remains, the excluded one still answers rather than failing closed; pausing every account is still the way to stop serving entirely. There is no `minimumPlan` counterpart, because ranking ChatGPT plans against each other needs a total ordering that does not exist here.
-
+The main Codex account remains exempt from plan exclusion; selection-only routing does not read its fenced native credential. If every eligible pool account is excluded, automatic selection returns no account. Explicit account-qualified routes remain available and still enforce pause, authentication and model entitlement. The account card and CLI show the excluded routing plan separately from credential health. There is no `minimumPlan` setting because the plan names do not define a total order.
 ## Restoring native Codex
 
 `ocx stop` stops the proxy and any installed background service, then attempts to restore native Codex. OpenCodex removes verified routing artifacts and reports an incomplete restore when it cannot safely recover configuration files.

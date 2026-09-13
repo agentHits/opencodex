@@ -13,7 +13,9 @@ the hub's own processes dial `127.0.0.1:<the same port>` with no credential, thr
 companion listener. Start from [the recipe below](#linux-systemd-or-macos-launchd), then hand a
 second machine a ready-made command with [`ocx hub invite`](#inviting-another-machine).
 
-The management ingress never serves `/v1/*`, `/healthz`, `/readyz`, or WebSockets. Do not publish its
+The management ingress never serves `/v1/*`, `/healthz`, or `/readyz`. When explicitly enabled,
+Remote Workspace admits only its paired bearer-authenticated agent WebSocket and one-time pairing
+exchange; see [Remote Workspace](/guides/remote-workspace/). Do not publish its
 port directly, do not add a cloud-firewall rule for it, and do not use Tailscale Funnel. Funnel is a
 public-internet surface and is outside this deployment model.
 
@@ -722,6 +724,13 @@ For a service rollback, stop the branch service and repair the prior release aga
   session, not a client data key.
 - **Outstanding revocation after disconnect:** use the hub dashboard's **Integrations → API Keys**
   page. It is the sole post-disconnect revocation path.
+### Usage from a connected client
+
+`ocx usage` reads the connected hub with this client's enrolled data key. Human output identifies the hub source and client-key scope; `--json` returns the same scoped data. Range, surface, provider/model filters and custom `--since`/`--until` bounds remain available. Account breakdowns and other clients' records are not shared. An old or unavailable hub produces an explicit error instead of substituting local usage; upgrade the hub if it does not support this read.
+
+The read-only data-plane endpoint is `GET /v1/usage`, using `x-opencodex-api-key` with a configured client key. Environment-wide and admin keys are refused. It accepts `range`, `surface`, `provider`, `model`, `since`, and `until`; unknown/repeated options and caller-selected key IDs are rejected. Oversized skipped rows retain the explicit incomplete-history warning.
+
+Client usage credentials are sent only over HTTPS or loopback HTTP. Both the request and response disable caching.
 
 ### Pairing this browser with a hub
 

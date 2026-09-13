@@ -39,6 +39,7 @@ import {
   normalizeAccountPoolStrategy,
   parseAccountPoolStickyLimit,
   parseAccountPoolStrategy,
+  parseCodexAccountPoolStrategy,
 } from "../../codex/pool-rotation";
 import { normalizeAccountPoolQuotaWindow, parseAccountPoolQuotaWindow } from "../../oauth/anthropic-routing";
 import { primeCodexPoolQuotas } from "../../codex/auth-api";
@@ -341,7 +342,9 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
         return {
           ...account,
           quota: row.quota,
-          ...(quotaMode === "probe" ? { quotaUnavailable: row.unavailable === true } : {}),
+          ...(quotaMode === "probe" ? { quotaUnavailable: row.unavailable === true,
+            ...(row.unavailable && row.quotaFailure && row.quotaFailureIsCurrent?.() === true ? { quotaFailure: row.quotaFailure } : {}),
+          } : {}),
         };
       }),
     });
@@ -399,8 +402,10 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     // sticky limit is refused identically whichever pool is addressed.
     let strategy: string | undefined;
     if (fields.strategy !== undefined) {
-      const parsed = parseGenericPoolStrategy(fields.strategy);
-      if (parsed === null) return jsonResponse({ error: "strategy must be one of: quota, round-robin, fill-first" }, 400);
+      const parsed = kind === "codex" ? parseCodexAccountPoolStrategy(fields.strategy) : parseGenericPoolStrategy(fields.strategy);
+      if (parsed === null) return jsonResponse({ error: kind === "codex"
+        ? "strategy must be one of: quota, round-robin, fill-first, reset-first"
+        : "strategy must be one of: quota, round-robin, fill-first" }, 400);
       strategy = parsed;
     }
     let stickyLimit: number | undefined;
@@ -853,7 +858,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       requestOrigin: req.headers.get("origin"),
     });
     const { readApiKeyUsageRollup } = await import("./api-key-usage");
-    const { rollup, attributionSince, historyTruncated } = await readApiKeyUsageRollup(keys.map(k => k.id), config.managementUsageMaxReadBytes);
+    const { rollup, attributionSince, historyTruncated, usageIncomplete, usageIncompleteReason } = await readApiKeyUsageRollup(keys.map(k => k.id), config.managementUsageMaxReadBytes);
     return jsonResponse({
       // 8 random hex past the fixed `ocx_data_` literal: enough to tell two keys
       // apart in a list, with 128 bits of the tail still unrevealed. Masking only
@@ -873,6 +878,7 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
       // Dataset-level and singular: it describes the usage log, not any one key.
       ...(attributionSince ? { attributionSince } : {}),
       ...(historyTruncated ? { historyTruncated: true } : {}),
+      ...(usageIncomplete ? { usageIncomplete: true, usageIncompleteReason } : {}),
       authMatrix: AUTH_MATRIX,
       ...endpoints,
     }, 200, req, config);
