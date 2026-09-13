@@ -696,6 +696,9 @@ ciphertext along with an item type only the ChatGPT backend declares. Before dis
 replaces that ciphertext with `[encrypted content omitted]` — the same marker it already
 substitutes after an upstream decrypt failure — which leaves the item lowerable and the readable
 text intact. The provider never sees the ciphertext or the private item, and the conversation
-continues. Native forward destinations, explicitly trusted `allowEncryptedV2AgentTasks` routes,
-and translated Chat or Anthropic wires are unaffected, as are opaque payloads that are not
-backend-minted ciphertext: those keep their existing decrypt-failure recovery.
+continues. Combo targets are repaired individually, since each receives its own copy of the
+request. The canonical ChatGPT Codex backend is exempt because it is the destination that minted
+and can read those bytes; a `forward` provider pointed at any other origin is not exempt.
+Explicitly trusted `allowEncryptedV2AgentTasks` routes and translated Chat or Anthropic wires are
+unaffected, as are other item types such as reasoning and tool-output blobs, which keep their
+existing decrypt-failure recovery.

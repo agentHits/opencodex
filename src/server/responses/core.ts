@@ -394,7 +394,7 @@ import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/cat
 
 import { buildToolBridgeMaps, collabSurface, injectDeveloperMessage, multiAgentGuidanceText } from "./collaboration";
 import { mapCodexAuthContextErrorToResponse, nativeMainRefreshFailureResponse } from "./codex-auth-error";
-import { agentMessageCiphertextIndex, hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace, stripAgentMessageCiphertextInPlace } from "./encrypted-payload";
+import { hasUnreadableEncryptedAgentTask, looksLikeBackendCiphertext, sanitizeEncryptedContentInPlace, stripAgentMessageCiphertextInPlace } from "./encrypted-payload";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel, safeOriginLabel, storedPoolReplayDispatchNotifier, type ProviderFetchOptions } from "./fetch-helpers";
 import { classifyTransportFailureKind, transportErrorCode } from "../../lib/upstream-reachability";
 import {
@@ -4038,28 +4038,26 @@ async function handleResponsesInner(
   // circumstances, that round trip was never going to succeed and sent the ciphertext to find
   // out, so do the repair here instead. Recovery above has already had its chance to turn the
   // same bytes into real plaintext; only what it could not rescue reaches this.
-  if (
-    inboundWire === "responses"
-    && !options.comboAttempt
-    && !finalRouteCanPassThroughEncryptedTask
-  ) {
-    // Mirror the adapter's own condition exactly. Only the raw Responses passthrough puts input
-    // items on the wire verbatim, and only when the destination is not `forward` -- a forward
-    // destination is Codex-backend-shaped and owns the private item by design. Translated wires
-    // rebuild the body from parsed messages, where `inputContentParts` drops an encrypted part
-    // instead of forwarding it. Combo attempts are excluded because their targets share one body
-    // object and a native target in the same combo can still read what this would erase.
+  if (inboundWire === "responses" && !finalRouteCanPassThroughEncryptedTask) {
+    // Only the raw Responses passthrough puts input items on the wire verbatim, so that is the
+    // only wire this has to repair: translated wires rebuild the body from parsed messages, where
+    // `inputContentParts` drops an encrypted part instead of forwarding it. The exemption is the
+    // canonical Codex backend alone, because it is the one destination that minted these bytes and
+    // can read them. `authMode: "forward"` is NOT that test -- a noncanonical forward gateway is
+    // somebody else's server that happens to be configured for passthrough, and it receives the
+    // ciphertext like any other third party.
+    //
+    // Combo children run this too. Each child carries its own `structuredClone` of the body
+    // (`concreteComboRequestBody`) and its own concrete route, so a sibling's repair is invisible
+    // here and a target that resolves to a routed Responses wire would otherwise send the
+    // ciphertext that the parent's own dispatch no longer does.
     const wireProvider = resolveWireProtocolOverride(
       route.providerName,
       route.modelId,
       route.provider,
       inboundWire,
     );
-    if (
-      wireProvider.adapter === "openai-responses"
-      && (wireProvider.authMode ?? "key") !== "forward"
-      && agentMessageCiphertextIndex((body as { input?: unknown } | undefined)?.input) >= 0
-    ) {
+    if (wireProvider.adapter === "openai-responses" && !isCanonicalOpenAiForwardProvider(wireProvider)) {
       const repaired = stripAgentMessageCiphertextInPlace((body as { input?: unknown } | undefined)?.input);
       if (repaired > 0) {
         console.warn(

@@ -319,59 +319,11 @@ export function hasEncryptedContentPart(content: unknown): boolean {
 }
 
 
-
-/**
- * Index of the first `agent_message` still carrying ChatGPT-backend ciphertext, or -1.
- *
- * `hasUnreadableEncryptedAgentTask` above answers a different question: can the CURRENT
- * worker task be read at all? It inspects only the tail item and reports false the moment any
- * plaintext survives the envelope. `normalizeRoutedAgentMessages` asks the opposite question --
- * is EVERY part lowerable? -- and forwards the private item verbatim when one is not. A mixed
- * `input_text` + `encrypted_content` item answers "readable" to the first and "not lowerable"
- * to the second, so it fell between them: the guard never fired, the adapter refused to lower
- * it, and the raw Responses passthrough put a private item and backend ciphertext on the wire
- * (#4454). Position was never the discriminator -- a replayed child result lands mid-history
- * and the tail-only scan cannot see it -- but the tail is equally exposed when it is mixed.
- *
- * This is the egress question, so it is deliberately not the readability question. It is also
- * deliberately narrower than "any opaque blob": only backend-minted Fernet ciphertext counts,
- * whether it sits in an `encrypted_content` slot, is split across consecutive slots, or is
- * embedded in text or string content the adapter would otherwise lower verbatim. Every other
- * opaque payload keeps its existing reactive opaque-blob recovery, which can still rescue a
- * destination that merely fails to decrypt something it was entitled to read.
- */
-export function agentMessageCiphertextIndex(input: unknown): number {
-  if (!Array.isArray(input)) return -1;
-  for (let index = 0; index < input.length; index += 1) {
-    const item = input[index];
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    if ((item as { type?: unknown }).type !== "agent_message") continue;
-    const content = (item as { content?: unknown }).content;
-    if (typeof content === "string") {
-      if (fernetTokenRuns(content).length > 0) return index;
-      continue;
-    }
-    if (!Array.isArray(content)) continue;
-    if (splitFernetParts(content).size > 0) return index;
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue;
-      const record = part as { type?: unknown; text?: unknown; encrypted_content?: unknown };
-      if (
-        (record.type === "encrypted_content" && typeof record.encrypted_content === "string"
-          && fernetTokenRuns(record.encrypted_content).length > 0)
-        || ((record.type === "input_text" || record.type === "text")
-        && typeof record.text === "string"
-          && fernetTokenRuns(record.text).length > 0)
-      ) return index;
-    }
-  }
-  return -1;
-}
-
-
-
 /** The marker `prepareOpaqueBlobRecovery` already substitutes for an undecryptable part. */
 export const OMITTED_ENCRYPTED_CONTENT_TEXT = "[encrypted content omitted]";
+
+/** A slot that is nothing but encoded bytes: the base64 and base64url alphabets, no spaces. */
+const BASE64_RUN_ONLY = /^[A-Za-z0-9+/=_-]+$/;
 
 function textWithRunsOmitted(payload: string, runs: readonly FernetTokenRun[]): string {
   let last = 0;
@@ -384,16 +336,34 @@ function textWithRunsOmitted(payload: string, runs: readonly FernetTokenRun[]): 
 }
 
 /**
- * Replace ciphertext inside `agent_message` items with the omission marker, so
+ * Replace ciphertext inside `agent_message` items with an omission marker, so
  * `normalizeRoutedAgentMessages` can lower them onto public messages. Returns how many items
  * were repaired. Items are replaced rather than mutated, and every other item type is left
  * alone: reasoning and function-output blobs keep their own reactive recovery.
  *
+ * `hasUnreadableEncryptedAgentTask` above answers a different question: can the CURRENT worker
+ * task be read at all? It inspects only the tail item and reports false the moment any plaintext
+ * survives the envelope. `normalizeRoutedAgentMessages` asks the opposite question -- is EVERY
+ * part lowerable? -- and forwards the private item verbatim when one is not. A mixed
+ * `input_text` + `encrypted_content` item answers "readable" to the first and "not lowerable"
+ * to the second, so it fell between them: the guard never fired, the adapter refused to lower it,
+ * and the raw Responses passthrough put a private item and backend ciphertext on the wire
+ * (#4454). Position was never the discriminator -- a replayed child result lands mid-history and
+ * the tail-only scan cannot see it -- but the tail is equally exposed when it is mixed.
+ *
  * This is the repair `prepareOpaqueBlobRecovery` performs after an upstream rejection, applied
  * before dispatch for a destination that cannot accept the private item under any circumstances.
- * The round trip it replaces was never going to succeed, and it sent backend ciphertext to a
- * third party to find that out. Nothing is decrypted, and nothing readable is lost: the parent
- * could not read these bytes either.
+ * The round trip it replaces was never going to succeed, and it sent ciphertext to a third party
+ * to find that out. Nothing is decrypted, and nothing readable is lost: the parent could not read
+ * these bytes either.
+ *
+ * The classification deliberately does NOT require a canonical Fernet token. Recognizing only
+ * well-formed tokens would reopen the same defect one payload later: a truncated token, a
+ * standard-base64 blob carrying `+` or `/`, an unexpected version byte, a run split across
+ * slots, or a run past the recovery size limits would each keep the item and forward the bytes.
+ * Every `encrypted_content` slot in an item the adapter cannot lower is therefore treated as
+ * ciphertext, and free text is judged by the same `looksLikeBackendCiphertext` heuristic the
+ * sanitizer already trusts. Prose cannot match it; a blob has no spaces.
  */
 export function stripAgentMessageCiphertextInPlace(input: unknown): number {
   if (!Array.isArray(input)) return 0;
@@ -405,49 +375,91 @@ export function stripAgentMessageCiphertextInPlace(input: unknown): number {
     if (record.type !== "agent_message") continue;
     const content = record.content;
     if (typeof content === "string") {
-      const runs = fernetTokenRuns(content);
-      if (runs.length === 0) continue;
-      input[index] = { ...record, content: textWithRunsOmitted(content, runs) };
+      const replaced = textWithoutCiphertext(content);
+      if (replaced === content) continue;
+      input[index] = { ...record, content: replaced };
       repaired += 1;
       continue;
     }
     if (!Array.isArray(content)) continue;
-    let changed = false;
-    // Consecutive slots that are individually invalid but valid once joined are one token.
-    const fragments = splitFernetParts(content);
-    const parts = content.map((part: unknown) => {
-      if (!part || typeof part !== "object") return part;
-      const partRecord = part as { type?: unknown; text?: unknown; encrypted_content?: unknown };
-      if (fragments.has(part)) {
-        changed = true;
-        return { type: "input_text", text: OMITTED_ENCRYPTED_CONTENT_TEXT };
-      }
-      if (
-        partRecord.type === "encrypted_content"
-        && typeof partRecord.encrypted_content === "string"
-        && partRecord.encrypted_content.length > 0
-      ) {
-        const runs = fernetTokenRuns(partRecord.encrypted_content);
-        if (runs.length === 0) return part;
-        changed = true;
-        return { type: "input_text", text: textWithRunsOmitted(partRecord.encrypted_content, runs) };
-      }
-      if (
-        (partRecord.type === "input_text" || partRecord.type === "text")
-        && typeof partRecord.text === "string"
-      ) {
-        const runs = fernetTokenRuns(partRecord.text);
-        if (runs.length === 0) return part;
-        changed = true;
-        return { ...partRecord, text: textWithRunsOmitted(partRecord.text, runs) };
-      }
-      return part;
-    });
-    if (!changed) continue;
+    const parts = contentWithoutCiphertext(content);
+    if (parts === content) continue;
     input[index] = { ...record, content: parts };
     repaired += 1;
   }
   return repaired;
+}
+
+/** Free text: drop embedded token runs, and replace a slot that is nothing but a blob. */
+function textWithoutCiphertext(text: string): string {
+  const runs = fernetTokenRuns(text);
+  if (runs.length > 0) return textWithRunsOmitted(text, runs);
+  return looksLikeBackendCiphertext(text.trim()) ? OMITTED_ENCRYPTED_CONTENT_TEXT : text;
+}
+
+function ciphertextTextOfPart(part: unknown): string | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const record = part as { type?: unknown; text?: unknown };
+  return (record.type === "input_text" || record.type === "text") && typeof record.text === "string"
+    ? record.text
+    : undefined;
+}
+
+/**
+ * Adjacent text slots that are one blob between them. Each fragment can be too short to judge
+ * on its own, which is the text-side twin of the split `encrypted_content` run.
+ */
+function joinedCiphertextTextParts(content: readonly unknown[]): Set<object> {
+  const flagged = new Set<object>();
+  let run: Array<{ part: object; text: string }> = [];
+  const finish = (): void => {
+    if (run.length > 1 && looksLikeBackendCiphertext(run.map(entry => entry.text).join(""))) {
+      for (const entry of run) flagged.add(entry.part);
+    }
+    run = [];
+  };
+  for (const part of content) {
+    const text = ciphertextTextOfPart(part);
+    if (text === undefined || text.trim().length === 0 || !BASE64_RUN_ONLY.test(text)) {
+      finish();
+      continue;
+    }
+    run.push({ part: part as object, text });
+  }
+  finish();
+  return flagged;
+}
+
+function contentWithoutCiphertext(content: unknown[]): unknown[] {
+  let changed = false;
+  const joined = joinedCiphertextTextParts(content);
+  const parts = content.map((part: unknown) => {
+    if (!part || typeof part !== "object") return part;
+    if (joined.has(part)) {
+      changed = true;
+      return { type: "input_text", text: OMITTED_ENCRYPTED_CONTENT_TEXT };
+    }
+    const record = part as { type?: unknown; text?: unknown; encrypted_content?: unknown };
+    if (record.type === "encrypted_content" && typeof record.encrypted_content === "string") {
+      changed = true;
+      // Keep whatever plaintext a recognizable slot carries around its token; a slot this
+      // cannot parse is replaced whole rather than forwarded on the chance that it is benign.
+      const runs = fernetTokenRuns(record.encrypted_content);
+      return {
+        type: "input_text",
+        text: runs.length > 0
+          ? textWithRunsOmitted(record.encrypted_content, runs)
+          : OMITTED_ENCRYPTED_CONTENT_TEXT,
+      };
+    }
+    const text = ciphertextTextOfPart(part);
+    if (text === undefined) return part;
+    const replaced = textWithoutCiphertext(text);
+    if (replaced === text) return part;
+    changed = true;
+    return { ...record, text: replaced };
+  });
+  return changed ? parts : content;
 }
 
 

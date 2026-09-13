@@ -165,24 +165,35 @@ The repair already existed reactively. `prepareOpaqueBlobRecovery` replaces an u
 with `[encrypted content omitted]`, which leaves the item lowerable, and it ran after an upstream
 rejection. A destination that cannot accept the private item under any circumstances was never
 going to answer that request, so the round trip only served to send the ciphertext.
-`stripAgentMessageCiphertextInPlace` applies the same repair before dispatch, and
-`agentMessageCiphertextIndex` decides whether anything needs it. Both live in
-`src/server/responses/encrypted-payload.ts`; `src/server/responses/core.ts` runs them against the
-final route, after `expandPreviousResponseInput`, after the sanitizer has rewritten plaintext
-parked in encrypted slots, and after encrypted-task recovery has had its chance to produce real
-plaintext instead of a marker.
+`stripAgentMessageCiphertextInPlace` in `src/server/responses/encrypted-payload.ts` applies the
+same repair before dispatch, and `src/server/responses/core.ts` runs it against the final route,
+after `expandPreviousResponseInput`, after the sanitizer has rewritten plaintext parked in
+encrypted slots, and after encrypted-task recovery has had its chance to produce real plaintext
+instead of a marker.
 
-Only backend-minted Fernet ciphertext qualifies, in an `encrypted_content` slot, split across
-consecutive slots, or embedded in text or string content. Any other opaque payload keeps the
-reactive opaque-blob recovery, which can still rescue a destination that merely failed to decrypt
-something it was entitled to read. The repair resolves the same wire override the adapter is built
-from rather than restating routing policy, and runs only for `openai-responses` with a
-non-`forward` auth mode. That distinction decides the reported destination, where the provider-wide
-adapter is the Chat wire and a registry model default moves the model onto Responses. Translated
-wires are untouched because `inputContentParts` drops an encrypted part instead of forwarding it;
-forward destinations own the private item; `canPassThroughEncryptedV2AgentTask` keeps an explicitly
-trusted route exempt; combo attempts are excluded because their targets share one body object and a
-native target in the same combo can still read what this would erase.
+The classification does not require a canonical Fernet token, and that is the point. Matching only
+well-formed tokens would reopen the same defect one payload later: a truncated token, a
+standard-base64 blob carrying `+` or `/`, an unexpected version byte, a run split across slots, or
+a run past the recovery size limits would each keep the item and forward the bytes. Every
+`encrypted_content` slot in an item the adapter cannot lower is therefore treated as ciphertext,
+and free text is judged by the same `looksLikeBackendCiphertext` heuristic the sanitizer already
+trusts, which prose cannot match because a blob has no spaces. Other item types are untouched:
+reasoning and function-output blobs keep the reactive opaque-blob recovery, which still rescues a
+destination that merely failed to decrypt something it was entitled to read.
+
+The repair resolves the same wire override the adapter is built from rather than restating routing
+policy, and runs for `openai-responses` whenever the destination is not the canonical Codex
+backend. `authMode: "forward"` is deliberately not that test: it describes how this proxy treats
+credentials, not who answers, and a forward-configured gateway at another origin receives the
+ciphertext like any third party. Only `isCanonicalOpenAiForwardProvider` is exempt, because it
+alone minted these bytes and can read them. The wire override matters for the reported destination,
+where the provider row names the Chat wire and a registry model default moves the model onto
+Responses. Translated wires are untouched because `inputContentParts` drops an encrypted part
+instead of forwarding it, and `canPassThroughEncryptedV2AgentTask` keeps an explicitly trusted
+route exempt. Combo children run the repair themselves: `concreteComboRequestBody` gives each
+target its own `structuredClone` and its own concrete route, so a sibling's repair is invisible to
+them and a target resolving to a routed Responses wire would otherwise send what the parent's own
+dispatch no longer does.
 
 Nothing here decrypts, and the tail NEW_TASK envelope keeps `unreadable_encrypted_agent_task` and
 its opt-in recovery unchanged: an unreadable current task still fails closed rather than reaching a

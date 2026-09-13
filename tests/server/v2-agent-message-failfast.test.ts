@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { resolveWireProtocolOverride } from "../../src/server/adapter-resolve";
+import { structurallyValidFernetTokens } from "../../src/server/responses/encrypted-payload";
 import {
   handleResponses,
   hasUnreadableEncryptedAgentTask,
@@ -694,5 +695,126 @@ describe("routed Responses agent-message ciphertext repair", () => {
     expect(response.status).toBe(200);
     expect(forwardedBody).toContain(FERNET_TASK);
     expect(forwardedBody).toContain("agent_message");
+  });
+
+  test("repairs a noncanonical forward gateway, which is not the backend that minted the bytes", async () => {
+    // `authMode: "forward"` describes how this proxy treats credentials, not who is on the other
+    // end. Only the canonical Codex backend can read its own ciphertext, so a forward-configured
+    // gateway at somebody else's origin is a third party like any other.
+    const config = {
+      port: 0,
+      defaultProvider: "relayfwd",
+      providers: {
+        relayfwd: { adapter: "openai-responses", baseUrl: "https://relay.example/v1", authMode: "forward" },
+      },
+    } as OcxConfig;
+    const outbound = captureOutbound("relay-model");
+
+    const response = await post(config, "relayfwd/child-model", [mixedChildResult(), userTurn]);
+
+    expect(response.status).toBe(200);
+    expect(outbound()[0]).not.toContain(FERNET_TASK);
+    expect(outbound()[0]).toContain("[encrypted content omitted]");
+  });
+
+  test("repairs a combo child, which carries its own clone of the body", async () => {
+    // `concreteComboRequestBody` structuredClones the body per target, so a repair applied on the
+    // parent's own dispatch is invisible here. A combo target that resolves to a routed Responses
+    // wire has to run the repair itself or it sends the ciphertext the parent no longer does.
+    const config = {
+      port: 0,
+      defaultProvider: "relay",
+      providers: {
+        relay: {
+          adapter: "openai-responses",
+          baseUrl: "https://relay.example/v1",
+          authMode: "key",
+          apiKey: "test-relay-key",
+        },
+      },
+      combos: { routed: { strategy: "failover", targets: [{ provider: "relay", model: "child-model" }] } },
+    } as OcxConfig;
+    const outbound = captureOutbound("relay-model");
+
+    const response = await post(config, "combo/routed", [mixedChildResult(), userTurn]);
+
+    expect(response.status).toBe(200);
+    expect(outbound()).toHaveLength(1);
+    expect(outbound()[0]).not.toContain(FERNET_TASK);
+    expect(outbound()[0]).not.toContain("agent_message");
+    expect(outbound()[0]).toContain("[encrypted content omitted]");
+  });
+
+  test("repairs a run split across consecutive encrypted slots", async () => {
+    // Each half fails structural validation on its own and only the join is a real token. A
+    // matcher that judged slots individually would forward both halves.
+    const first = FERNET_TASK.slice(0, 60);
+    const second = FERNET_TASK.slice(60);
+    expect(structurallyValidFernetTokens(first)).toEqual([]);
+    expect(structurallyValidFernetTokens(second)).toEqual([]);
+    expect(structurallyValidFernetTokens(`${first}${second}`)).toEqual([FERNET_TASK]);
+    const outbound = captureOutbound("relay-model");
+
+    const response = await post(routedResponsesConfig(), "relay/child-model", [{
+      type: "agent_message",
+      author: "/root/child",
+      recipient: "/root",
+      content: [
+        { type: "input_text", text: "Message Type: MESSAGE\nTask name: /root\nSender: /root/child\nPayload:" },
+        { type: "encrypted_content", encrypted_content: first },
+        { type: "encrypted_content", encrypted_content: second },
+      ],
+    }, userTurn]);
+
+    expect(response.status).toBe(200);
+    expect(outbound()[0]).not.toContain(first);
+    expect(outbound()[0]).not.toContain(second);
+    expect(outbound()[0]).not.toContain("agent_message");
+    expect(outbound()[0]).toContain("[encrypted content omitted]");
+  });
+
+  test("repairs a token embedded inside a text part and keeps the prose around it", async () => {
+    const outbound = captureOutbound("relay-model");
+
+    const response = await post(routedResponsesConfig(), "relay/child-model", [{
+      type: "agent_message",
+      author: "/root/child",
+      recipient: "/root",
+      content: [{ type: "input_text", text: `the child replied ${FERNET_TASK} and stopped` }],
+    }, userTurn]);
+
+    expect(response.status).toBe(200);
+    expect(outbound()[0]).not.toContain(FERNET_TASK);
+    expect(outbound()[0]).toContain("the child replied [encrypted content omitted] and stopped");
+  });
+
+  test("repairs a slot that is not a well-formed token, including standard base64", async () => {
+    // The original defect reached the wire because an item was not lowerable. Recognizing only
+    // canonical Fernet would reopen it one payload later: a truncated token, a bad version byte,
+    // or standard base64 carrying + and / would each keep the item and forward the bytes.
+    const nearMisses = {
+      truncated: FERNET_TASK.slice(0, 96),
+      standardBase64: `gAAA+${"B".repeat(120)}/x==`,
+      badVersion: `h${FERNET_TASK.slice(1)}`,
+    };
+    for (const [name, blob] of Object.entries(nearMisses)) {
+      expect(structurallyValidFernetTokens(blob)).toEqual([]);
+      const outbound = captureOutbound("relay-model");
+
+      const response = await post(routedResponsesConfig(), "relay/child-model", [{
+        type: "agent_message",
+        author: "/root/child",
+        recipient: "/root",
+        content: [
+          { type: "input_text", text: "visible child result" },
+          { type: "encrypted_content", encrypted_content: blob },
+        ],
+      }, userTurn]);
+
+      expect(response.status, name).toBe(200);
+      expect(outbound()[0], name).not.toContain(blob);
+      expect(outbound()[0], name).not.toContain("agent_message");
+      expect(outbound()[0], name).toContain("visible child result");
+    }
   });
 });
