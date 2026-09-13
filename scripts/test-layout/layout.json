@@ -475,6 +475,7 @@
     "codex-management-convergence.test.ts": "codex-integration",
     "codex-metadata-integrity.test.ts": "codex-integration",
     "codex-model-entitlements.test.ts": "codex-integration",
+    "codex-model-availability-error.test.ts": "codex-integration",
     "codex-models-cache-invalidate.test.ts": "codex-integration",
     "codex-native-residue.test.ts": "codex-integration",
     "codex-plan.test.ts": "codex-integration",
