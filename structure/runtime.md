@@ -91,6 +91,12 @@ scans may proceed if verification succeeds or the holder exits. The allowlist na
 eligibility and supplies no identity evidence by itself. This contract uses the existing verifier;
 it does not add process-instance proof or change the classification cache.
 
+Pinned post-update retries in `src/update/job.ts` retire a child after an observed exit, signal, spawn error, or close event.
+Both retry and final-timeout cleanup check the retained child object; a late exit from an older
+child cannot clear its replacement. Retirement removes only its own event listeners and preserves
+separate logging. A healthy child remains running. This does not provide an
+atomic OS guarantee against unobserved PID reuse.
+
 > Decision record: [ADR-0003](decisions/ADR-0003-lifecycle.md)
 
 An installed Codex shim is checked on ordinary CLI startup with a regular-file/1 MiB state bound plus
@@ -140,8 +146,10 @@ The server exposes `POST /api/stop` which restores native Codex config, stops an
 | `src/providers/registry.ts` | Canonical provider presets for CLI, dashboard, OAuth, key providers, and metadata. |
 | `src/providers/derive.ts` | Enrichment from provider presets into user config. |
 | `src/oauth/` | OAuth providers, token storage, refresh, and auth-token resolution. The login callback listener binds a per-provider FIXED loopback port, so consecutive logins reuse the same number; every response it sends ends its connection (`Connection: close`, including non-callback paths such as a stray `/favicon.ico` 404). Stopping the listener does not close an established socket, so without that a pooled client would deliver the next login's callback to the retired flow, which rejects the unknown state as a CSRF mismatch while the live flow waits. |
+| `src/combos/request.ts` | Clones each selected combo target request and applies the existing target capability ladder: adaptive unknown targets and explicit empty ladders receive no unsupported reasoning/thinking controls, while known ladders retain per-target resolution. |
 | `src/adapters/openai-responses.ts` | Native OpenAI/ChatGPT Responses passthrough. |
-| `src/adapters/openai-chat.ts` | OpenAI-compatible Chat Completions bridge. |
+| `src/responses/muse-tool-name-alias.ts` | Host-gated Meta Muse 64-char tool-name alias/restore used by the Responses passthrough. |
+| `src/adapters/openai-chat.ts` | OpenAI-compatible Chat Completions bridge. Its client delivery shapes in `src/chat/outbound.ts` and `src/server/chat-native-sse.ts` relay the upstream `service_tier` echo on non-stream, folded-stream, and synthesized-SSE bodies, never inventing the key when the upstream omits it. |
 | `src/adapters/anthropic.ts` | Anthropic Messages bridge. |
 | `src/adapters/google.ts` | Gemini bridge. |
 | `src/adapters/azure.ts` | Azure OpenAI bridge. |
@@ -215,9 +223,14 @@ see [Combo editor routing quota](gui-and-management-api.md#combo-editor-routing-
 
 Canonical Spark Lite metadata follows the final serialized model and surviving nonempty Lite tool catalog; see [Responses transport](transports/responses.md).
 
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](transports/responses.md).
+
+Responses route normalization resolves provider summary defaults from the original wire preference on every final route. See [reasoning presentation](providers/chat-compat.md) and [CCA summary provenance](providers/google.md).
+
 ## Paginated history writer boundary
 
-`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before artifact changes and compensates detected migration. Failed config restore stops later catalog/history work. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
 
 Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
@@ -227,3 +240,9 @@ Cline CLI joins the existing export/client integration registries. Explicit CLI 
 `claudeCode.stabilizePromptCache` is a default-off operator setting for
 [translated instruction stabilization](data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
+
+The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
+
+Devin CLI credential path composition in `src/oauth/devin-cli.ts` follows the selected platform: Windows uses Win32 APPDATA paths, other platforms use POSIX XDG-data paths. The explicit absolute override remains verbatim; credential parsing and login behavior are unchanged.
+
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.

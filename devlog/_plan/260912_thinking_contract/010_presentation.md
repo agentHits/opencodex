@@ -314,3 +314,9 @@ index e65130a4fa..b6374a991a 100644
 ## Reflection corrections accepted
 
 Explicit wire reasoning.summary:"none" wins. A client that serializes configured none as omission cannot be distinguished from unspecified preference. No client config rewrite or global catalog summary default changes. Summary classification is limited to built CCA Gemini requests; unknown/uninitialized, direct Google/Vertex and CCA Claude/gpt-oss remain raw. Streaming and buffered summary-to-tool continuations assert exact Google signature on correct call; never emit Google signatures as Anthropic thinking_signature. Hidden unsigned summaries may disappear but required tool replay state survives. Exercise final assistant text and terminal order, fallback in both directions, and remove replay-comparison rewrite alongside SSE/JSON rewrite. Desktop appearance remains client-controlled; source patch comments claiming an unconditional placeholder are replaced during adoption.
+
+## Presentation P revalidation
+
+Prior D: roadmap locked; next presentation implementation. Both source patches apply to baseline; combined application requires keeping the newer no-rewrite expectation. Shared classifier signatures remain current. Implement CCA-only provider default by recomputing parsed.options.hideThinkingSummary from raw summary each final route for inboundWire responses; other inbound types preserve their existing flag. Missing raw request leaves original hide flag authoritative. CCA Gemini classification records boolean in existing per-request adapter closure on each build; default false.
+
+C review corrections: fixture summary emission now depends on includeThoughts; provider false + client auto does not request upstream summaries. Signature regression exercises actual SSE and JSON serializers, visible/hidden modes, a tool-ending first turn, exact signature and real matching functionResponse. Final-answer behavior is covered separately by bridge and combo tests.

@@ -380,6 +380,8 @@ export interface OcxConfig {
   privacy?: OcxPrivacyConfig;
   /** Opt in to one identical-turn retry when a Responses completion has no text or tool call. */
   emptyCompletionRetry?: boolean;
+  /** Suppress allowlisted client-facing Codex transport hints; provider enforcement is unchanged. */
+  dropCodexSafetyBuffering?: boolean;
   /**
    * Whether a login may open a browser on the machine running the proxy.
    *
@@ -967,8 +969,9 @@ export type OcxComboDefaultEffort = "low" | "medium" | "high" | "xhigh" | "max" 
  * advertises no effort control (`reasoningEfforts: []`) empties the combo's picker.
  * `adaptive` excludes those empty ladders from the published intersection, keeping the
  * control usable for a mixed-capability group. Unknown (`undefined`) ladders stay
- * wildcards in both modes. Dispatch is unchanged: each concrete target still resolves
- * its own effort at request time.
+ * wildcards in both modes. An explicit empty ladder removes unsupported effort controls
+ * in either mode; adaptive dispatch also removes them before sending to an unknown target,
+ * while each known target still resolves its own effort.
  */
 export type OcxComboReasoningEffortMode = "strict" | "adaptive";
 

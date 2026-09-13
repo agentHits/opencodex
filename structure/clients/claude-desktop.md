@@ -83,6 +83,11 @@ claims stored main, after terminal vision, routed vision and search exclusions.
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](../transports/responses.md).
+
+Provider summary defaults are Responses-specific and do not rewrite connected Claude Desktop profiles. See [inbound compatibility](../data-planes/inbound-compat.md).
+
 Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
@@ -91,3 +96,9 @@ The explicit sync coordinator also accepts Cline CLI as a separate file integrat
 `claudeCode.stabilizePromptCache` is a default-off operator setting for
 [translated instruction stabilization](../data-planes/inbound-compat.md#opt-in-claude-instruction-stabilization).
 Config JSON preserves the boolean; only literal true activates the role-changing transform.
+
+The lightweight top-level CLI help counts Cline CLI among the fifteen registered export clients; registry parity remains covered by the client help and integration tests.
+
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
+
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](../transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.

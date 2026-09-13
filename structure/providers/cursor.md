@@ -84,3 +84,7 @@ Namespaced tools do not acquire bare-shell behavior. Regression coverage lives i
 `tests/providers/cursor/cursor-tool-definitions.test.ts`.
 
 Canonical Spark Lite metadata follows the final serialized model and surviving nonempty Lite tool catalog; see [Responses transport](../transports/responses.md).
+
+Shared raw-reasoning events retain content-channel presentation; provider-authored thinking keeps its existing summary path. See [bridge contract](chat-compat.md).
+
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](../transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
