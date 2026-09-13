@@ -1205,5 +1205,6 @@
   "devin-cli-authmode-migration.test.ts": "providers",
   "usage-log-ws-stage.test.ts": "usage",
   "main-device-reauth.test.ts": "codex-integration",
-  "main-device-reauth-api.test.ts": "codex-integration"
+  "main-device-reauth-api.test.ts": "codex-integration",
+  "main-device-reauth-ui.test.ts": "gui"
 }
