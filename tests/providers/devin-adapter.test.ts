@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createDevinAdapter, mapOcxMessagesToDevin, mapOcxToolsToDevin, resolveWireModelUidForTests } from "../../src/adapters/devin";
+import { createDevinAdapter, mapDevinToolCallStartForTests, mapOcxMessagesToDevin, mapOcxToolsToDevin, resolveWireModelUidForTests } from "../../src/adapters/devin";
 import { sanitizeToolDescriptionForCognitionForTests } from "../../src/adapters/devin/cloud-direct/chat";
 import { DEVIN_MODEL_CONTEXT_WINDOWS, DEVIN_STATIC_MODELS, collapseDevinModelUid } from "../../src/adapters/devin/live-models";
 import { parseCatalogBuffer } from "../../src/adapters/devin/cloud-direct/catalog";
@@ -75,6 +75,132 @@ describe("devin adapter", () => {
     expect(wireNames).toEqual(["exec_command", "list_threads"]);
     for (const name of wireNames) expect(system).toContain(`\`${name}\``);
     expect(system).not.toContain("codex_app__list_threads");
+  });
+
+  test("maps Cognition tool_call_start names to unique canonical request identities", () => {
+    const tools = [
+      { namespace: "mcp__cua_repl", name: "js", description: "control UI", parameters: { type: "object" } },
+      { name: "exec", description: "run code", parameters: { type: "object" } },
+    ];
+
+    expect(mapDevinToolCallStartForTests("call_js", "js", tools)).toEqual({
+      type: "tool_call_start",
+      id: "call_js",
+      name: "mcp__cua_repl__js",
+    });
+    expect(mapDevinToolCallStartForTests("call_canonical", "mcp__cua_repl__js", tools)).toEqual({
+      type: "tool_call_start",
+      id: "call_canonical",
+      name: "mcp__cua_repl__js",
+    });
+    expect(mapDevinToolCallStartForTests("call_exec", "exec", tools)).toEqual({
+      type: "tool_call_start",
+      id: "call_exec",
+      name: "exec",
+    });
+    expect(mapDevinToolCallStartForTests("call_unknown", "undeclared", tools)).toEqual({
+      type: "tool_call_start",
+      id: "call_unknown",
+      name: "undeclared",
+    });
+  });
+
+  test("maps ambiguous Cognition tool_call_start names to a non-retryable error", () => {
+    const namespaceCollision = [
+      { namespace: "mcp__first", name: "js", description: "first", parameters: { type: "object" } },
+      { namespace: "mcp__second", name: "js", description: "second", parameters: { type: "object" } },
+    ];
+    const bareCollision = [
+      { name: "js", description: "bare", parameters: { type: "object" } },
+      { namespace: "mcp__cua_repl", name: "js", description: "namespaced", parameters: { type: "object" } },
+    ];
+    const duplicateIdentity = [
+      { namespace: "mcp__cua_repl", name: "js", description: "first copy", parameters: { type: "object" } },
+      { namespace: "mcp__cua_repl", name: "js", description: "second copy", parameters: { type: "object" } },
+    ];
+
+    const expected = {
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    };
+    expect(mapDevinToolCallStartForTests("call_1", "js", namespaceCollision)).toEqual(expected);
+    expect(mapDevinToolCallStartForTests("call_1", "js", [...namespaceCollision].reverse())).toEqual(expected);
+    expect(mapDevinToolCallStartForTests("call_1", "js", bareCollision)).toEqual(expected);
+    expect(mapDevinToolCallStartForTests("call_1", "js", duplicateIdentity)).toEqual({
+      type: "tool_call_start",
+      id: "call_1",
+      name: "mcp__cua_repl__js",
+    });
+  });
+
+  test("fails closed when one tool's canonical identity is another tool's advertised name", () => {
+    // `a__x` is the first tool's canonical identity and also the second tool's advertised local
+    // name, whose own canonical identity is `b__a__x`. Both readings are legitimate, so resolving
+    // to either owner would dispatch the call to a tool the caller may not have named. Before the
+    // map tracked canonical aliases, a returned `a__x` silently became `b__a__x`.
+    const aliasCollision = [
+      { namespace: "a", name: "x", description: "namespaced", parameters: { type: "object" } },
+      { namespace: "b", name: "a__x", description: "lookalike local name", parameters: { type: "object" } },
+    ];
+
+    expect(mapDevinToolCallStartForTests("call_1", "a__x", aliasCollision)).toEqual({
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    });
+    expect(mapDevinToolCallStartForTests("call_1", "a__x", [...aliasCollision].reverse())).toEqual({
+      type: "error",
+      message: "Devin emitted a bare client tool name that maps to multiple request-declared tools.",
+      status: 502,
+      retryable: false,
+    });
+    // The unambiguous local name still resolves, and an unrelated canonical name is untouched.
+    expect(mapDevinToolCallStartForTests("call_2", "x", aliasCollision)).toEqual({
+      type: "tool_call_start",
+      id: "call_2",
+      name: "a__x",
+    });
+    expect(mapDevinToolCallStartForTests("call_3", "b__a__x", aliasCollision)).toEqual({
+      type: "tool_call_start",
+      id: "call_3",
+      name: "b__a__x",
+    });
+  });
+
+  test("replays a restored namespaced call under the same bare name Cognition was offered", () => {
+    const parsed: OcxParsedRequest = {
+      modelId: "swe-2",
+      stream: true,
+      context: {
+        messages: [{
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "js_0",
+            namespace: "mcp__cua_repl",
+            name: "js",
+            arguments: { code: "1+1" },
+          }],
+          timestamp: 1,
+        }],
+        tools: [{
+          namespace: "mcp__cua_repl",
+          name: "js",
+          description: "control UI",
+          parameters: { type: "object" },
+        }],
+      },
+      options: {},
+    };
+
+    expect(mapOcxMessagesToDevin(parsed).find(item => item.role === "assistant")?.tool_calls).toEqual([{
+      id: "js_0",
+      name: "js",
+      arguments: JSON.stringify({ code: "1+1" }),
+    }]);
   });
 
   test("a request with no tools keeps the system prompt exactly as it was", () => {

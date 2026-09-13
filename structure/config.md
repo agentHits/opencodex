@@ -60,6 +60,8 @@ the secret itself.
 
 Malformed optional data-loopback and nested hub-management listener blocks are disabled in memory and reported by load-time warnings and read-only config diagnostics. Ingress warnings validate the raw ingress independently, so an invalid hub sibling does not falsely blame a valid ingress. The warning names only the field; unrelated providers and keys survive. Explicit writes remain strictly validated.
 
+`claudeCode.desktopProfile` follows the same preserve-the-rest rule. JSON `null` (or any non-string) `appliedFingerprint` / `appliedAt` is treated as unset. A profile that is still invalid after that is dropped as a whole — `src/config.ts` salvage already does this for independent `routingProfiles` / `combos` entries — so one bad Desktop marker cannot replace the operator's providers with `getDefaultConfig()`. A `claudeCode` value that is not an object still fails the document, because there is no safe subtree to keep.
+
 The former `showCodexSparkQuota` key is inert passthrough data when loading an old config.
 It is absent from the typed settings contract and cannot re-enable Spark quota through the
 management API. Retirement does not migrate user-selected model ids or erase usage history.
@@ -131,6 +133,15 @@ restore must preserve later user edits while stripping those managed values.
 backup manifest. It owns the accepted provider/source provenance tuples, platform-aware database
 path identity, backup filename id, and validation from unknown JSON to a typed manifest. It does
 not read files, inspect rollouts, open SQLite, retry, fingerprint, write, or delete anything.
+
+On Windows the path identity strips the extended-length prefix (`\\?\` and `\\?\UNC\`)
+before resolution, because Codex records both spellings for the same file and comparing them
+literally failed the integrity check for intact sessions (#4442). A database path spelled with
+that prefix hashed to a different backup filename before the normalization, so the readers
+(`history-provider.ts` for mutation, `native-residue.ts` for observation) fall back to the
+legacy filename when no canonical manifest exists. When both names exist the canonical manifest
+wins and the legacy file is left in place; a conflict is never resolved by silently replacing
+either file.
 
 `history-provider.ts` remains the strict mutation owner and maps shared validation failures to its
 restore/no-op integrity states. `native-residue.ts` remains a read-only observer and maps the same
@@ -208,6 +219,9 @@ file is missing, malformed, or bound to another root, uninstall refuses config d
 the residual directory for manual review; there is no recursive-delete fallback.
 
 ## Remote client key files
+
+The connection's `tokenFingerprint` participates in
+[`ocx status` credential binding](runtime.md#remote-hub-status-credential-binding).
 
 Client connection metadata stores a stable `apiKeyId` and a non-secret rotation `pendingOperation`. The current data secret remains only in `service-api-token`; a bounded rotation temporarily keeps the old secret in owner-only `service-api-token.prev`. Commit or recovery clears the marker before orphan cleanup. `ocx disconnect` is local-only and leaves remote revocation to the hub's **Integrations → API Keys** page. Hub and local usage stores are not mirrored.
 

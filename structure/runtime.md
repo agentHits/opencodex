@@ -3,6 +3,12 @@
 The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+Chat request serialization owns the destination-scoped
+[OpenCode Go instruction ordering](providers/chat-compat.md#opencode-go-chronological-instructions);
+it requires no runtime lifecycle change or new configuration option.
+
+Shared parsing and streaming follow the [request-copy](transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](transports/byte-accounting.md#stream-buffer-accounting) contracts.
+
 ## Entrypoints
 
 | Path | Responsibility |
@@ -43,8 +49,11 @@ there. Feature code is grouped by responsibility:
 
 `src/server/` is split by responsibility: `index.ts` owns the listener and route ordering;
 `responses.ts` owns Responses handling and compaction; `images.ts` owns the standalone Images relay;
-`responses/codex-auth-error.ts` owns the shared Responses/compact Codex auth-context HTTP mapping,
-while account selection, credential materialization, logging, and transport stay in their existing handlers;
+`responses/codex-auth-error.ts` owns the shared Responses/compact Codex auth-context HTTP mapping.
+Model entitlement denial is a 400 request error and temporary exhaustion of every model-capable
+account is a retryable 429; neither is reported as an invalid API key. Images, Live, and Search
+reuse that model-availability mapping while retaining their existing credential handling. Account
+selection, credential materialization, logging, and transport stay in their existing handlers;
 `management-api.ts` owns `/api/*`;
 `lifecycle.ts`, `request-log.ts`, `relay.ts` (incl. the shared `createSseInspector` SSE inspection
 factory), `relay-eager.ts` (#314 gated eager bounded passthrough relay), `memory-watchdog.ts`
@@ -156,7 +165,7 @@ The server exposes `POST /api/stop` which restores native Codex config, stops an
 | --- | --- |
 | `src/providers/registry.ts` | Canonical provider presets for CLI, dashboard, OAuth, key providers, and metadata. |
 | `src/providers/derive.ts` | Enrichment from provider presets into user config. |
-| `src/oauth/` | OAuth providers, token storage, refresh, and auth-token resolution. The login callback listener binds a per-provider FIXED loopback port, so consecutive logins reuse the same number; every response it sends ends its connection (`Connection: close`, including non-callback paths such as a stray `/favicon.ico` 404). Stopping the listener does not close an established socket, so without that a pooled client would deliver the next login's callback to the retired flow, which rejects the unknown state as a CSRF mismatch while the live flow waits. |
+| `src/oauth/` | OAuth providers, token storage, refresh, and auth-token resolution. The login callback listener binds a per-provider FIXED loopback port, so consecutive logins reuse the same number; every response it sends ends its connection (`Connection: close`, including non-callback paths such as a stray `/favicon.ico` 404). Stopping the listener does not close an established socket, so without that a pooled client would deliver the next login's callback to the retired flow, which rejects the unknown state as a CSRF mismatch while the live flow waits. Kiro add-account identity prefers same-session `whoami` over a leftover SQLite state profile, and never persists the Builder ID service profile ARN as `accountId`. |
 | `src/combos/request.ts` | Clones each selected combo target request and applies the existing target capability ladder: adaptive unknown targets and explicit empty ladders receive no unsupported reasoning/thinking controls, while known ladders retain per-target resolution. |
 | `src/adapters/openai-responses.ts` | Native OpenAI/ChatGPT Responses passthrough. |
 | `src/responses/muse-tool-name-alias.ts` | Host-gated Meta Muse 64-char tool-name alias/restore used by the Responses passthrough. |
@@ -172,6 +181,9 @@ The server exposes `POST /api/stop` which restores native Codex config, stops an
 
 Adapter output must stay in internal `AdapterEvent` form until `bridge.ts` converts it back to
 Responses SSE or WebSocket frames.
+
+The image/video loop bounds each hidden iteration before replay or fulfillment; see
+[media iteration retention](transports/inventory.md#media-iteration-retention).
 
 Live model discovery is bounded and registry-driven through `src/providers/model-discovery.ts`.
 Custom providers keep the conventional `${baseUrl}/models` request; canonical presets may select a
@@ -213,6 +225,17 @@ The shared Responses path follows the [bounded multipart recovery contract](suba
 ## Remote Hub hardening ownership
 
 `src/remote/protocol.ts` owns pure interval/feature negotiation. `src/remote/hub-state.ts` owns the `GET|HEAD /v1/hub-state` contract, its caps, and the parser both sides share. `src/client/hub-client.ts` owns bounded, schema-validated remote catalog consumption, hub-state reads, and key-id probes; `src/client/hub-state.ts` owns the resolution and the owner-stamped 0600 cache, and a failed read reports "unavailable" rather than degrading to the client's own local provider and login state. `src/client/hub-relay.ts` is a fixed-authority management relay with URL, header, body, redirect, and stream bounds. The public data listener remains the direct client→hub path; the loopback management ingress never serves data-plane routes.
+
+### Remote Hub status credential binding
+
+`src/cli/status.ts` rereads the persisted client connection and `service-api-token` state before
+requesting hub state. It passes a usable token only when the current connection matches the
+status snapshot's `serverUrl`, `apiKeyId`, and `connectedAt`, and the token fingerprint matches
+the current connection's `tokenFingerprint`. Otherwise it skips the live request and uses the
+snapshot owner's matching cached hub state, or reports `unavailable`.
+A withheld token carries its own cause into the reported `reason` through
+`resolveHubState`'s `withheldTokenReason`, so a changed connection, a missing token file, and a
+fingerprint mismatch are named separately rather than all reported as a missing data key.
 
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
