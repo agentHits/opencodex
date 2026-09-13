@@ -89,8 +89,11 @@ async function mount(ui: Parameters<typeof cardProps>[1], state: MainDeviceReaut
 test("expired main card shows the device Re-login CTA and starts the flow", async () => {
   const calls = { starts: 0, cancels: 0 };
   await mount(calls, { phase: "idle" });
-  const button = host.querySelector("button.codex-auth-action-btn");
-  expect(button).not.toBeNull();
+  // The pause control ships the same class and renders first, so select the CTA by its
+  // label the way the cancel test below already does.
+  const actions = Array.from(host.querySelectorAll("button.codex-auth-action-btn"));
+  const button = actions.find(b => b.textContent?.includes("mainReauthDevice"));
+  expect(button).toBeDefined();
   expect(host.textContent).toContain("codexAuth.mainTokenExpired");
   expect(host.textContent).toContain("codexAuth.mainReauthDevice");
   await act(async () => { (button as HTMLButtonElement).click(); });
@@ -139,7 +142,15 @@ test("the hook POSTs an empty body to the dedicated route and polls to success",
     root.render(createElement(LanguageProvider, null, createElement(Probe)));
   });
   expect(captured).not.toBeNull();
-  await act(async () => { await captured!.start(); });
+  // start() owns the flow until a terminal status, and this mock stays pending forever,
+  // so drive it and wait for the first poll to land instead of awaiting completion.
+  await act(async () => {
+    void captured!.start();
+    const deadline = Date.now() + 2000;
+    while (captured!.state.phase !== "pending" && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  });
   expect(requests[0]).toEqual({ method: "POST", url: "/api/codex-auth/main/reauth-device" });
   expect(JSON.stringify(requests)).not.toContain("/api/codex-auth/login");
   const state = captured!.state;
