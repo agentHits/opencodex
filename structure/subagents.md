@@ -114,10 +114,25 @@ ordering behavior. This does not change the separate `opencodex_spawn_priority` 
 Retained rows recompute their natural ranks from the current featured roster and account-selector
 stride before display order is applied, so a discovery outage cannot preserve an obsolete
 featured or picker rank. Canonical `opencode-go` rows retain their configured reasoning ladder
-both when generated and when merged from retained catalog state; synthetic max/ultra choices
-are not added to that provider's declared ladder.
+and provider-scoped context metadata both when generated and when merged from retained catalog
+state; `deepseek-v4.1-flash` therefore keeps its 1,048,576-token window, while synthetic max/ultra
+choices are not added to that provider's declared ladder.
 
 Full derivation with per-line citations: `devlog/_plan/260816_codexrs_multiagent_v2_and_history_perf/013_five_cap_v1_vs_v2.md`.
+
+## Multipart encrypted task recovery
+
+`src/server/responses/agent-task-recovery.ts` admits at most 32 consecutive, individually complete
+Fernet-shaped parts with a combined 2 MiB ciphertext limit. Every encrypted slot must belong to
+that run. The existing credential admission precedes cache access; the cache key includes an
+unambiguous ordered sequence. One fixed-endpoint request forwards separate parts, and assignment
+replacement compares the complete original item snapshot before splicing the run. Recovery output
+is model-transcribed plaintext, not cryptographic fidelity proof, and no internal outage retry is added.
+
+`src/server/responses/encrypted-payload.ts` uses bounded concatenation only to recognize otherwise
+unreadable split-token shapes. The sanitizer preserves just those fragment objects and continues
+normalizing independent plaintext slots. Detection never authorizes reconstruction or recovery;
+other fragment layouts and mixed readable content retain their documented residual boundaries.
 
 ## Subagents
 
@@ -224,6 +239,8 @@ Native Codex advertisements still follow display priority; private guidance rank
 Codex display-cache expiry, retained main-policy evidence, and reset history follow the
 [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
 
+Listener startup diagnostics follow [the runtime lifecycle contract](runtime.md#lifecycle); malformed optional listener blocks follow [config loading](config.md#config-surface).
+
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper
 claims stored main, after terminal vision, routed vision and search exclusions.
@@ -247,6 +264,8 @@ privately to final dispatch; preliminary route selection does not inject Go-only
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
 
 Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
 
 Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
 

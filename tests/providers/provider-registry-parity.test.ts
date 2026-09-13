@@ -120,6 +120,7 @@ describe("provider registry parity", () => {
     expect(zenGo?.preserveReasoningContentModels).toContain("deepseek-v4.1-flash");
     expect(zenGo?.noVisionModels).toContain("deepseek-v4.1-flash");
     expect(Object.keys(zenGo?.modelReasoningEfforts ?? {})).toContain("deepseek-v4.1-flash");
+    expect(zenGo?.modelContextWindows?.["deepseek-v4.1-flash"]).toBe(1_048_576);
 
     // Negatives: neither spelling crosses into the other side.
     expect(JSON.stringify(nativeDeepseek)).not.toContain("deepseek-v4.1-flash");
