@@ -7,6 +7,11 @@ Codex-native retirement does not retire a Cursor-owned model name. Cursor transp
 namespace handling retain their provider contract; the bounded native scope lives in
 [the shared catalog](../catalog.md#shared-catalog).
 
+Cursor's direct adapter does not enter the OpenAI Chat serializer's
+[OpenCode Go instruction ordering](chat-compat.md#opencode-go-chronological-instructions).
+
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
+
 ## Cursor Native Exec
 
 Cursor's experimental live transport can receive server-driven local read/write/delete/ls/grep,

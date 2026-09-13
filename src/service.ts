@@ -2303,9 +2303,12 @@ export function buildWindowsTaskXml(
   // keeps spaces intact, and /b (batch mode) suppresses script error popups.
   const escapedLauncherArgs = taskXmlString(`/b /nologo "${launcher}"`);
   // `UserId` is optional in the schema, and omitting it makes a SessionStateChangeTrigger
-  // fire for ANY account's session change. Production registration resolves and passes the
-  // installing account SID explicitly; the optional parameter remains only for deterministic
-  // builders/tests, and the live validator rejects an unscoped recovery trigger.
+  // fire for ANY account's session change. An unscoped LogonTrigger is read as "any user's
+  // logon", which a non-elevated user may not register: schtasks /create answers "Access is
+  // denied" for a task whose design (InteractiveToken + LeastPrivilege) needs no elevation
+  // (#4425). Production registration resolves and passes the installing account SID
+  // explicitly; the optional parameter remains only for deterministic builders/tests, and
+  // the live validator rejects an unscoped recovery trigger.
   const sessionUserIdElement = sessionTriggerUserId
     ? `\n      <UserId>${taskXmlString(sessionTriggerUserId)}</UserId>`
     : "";
@@ -2316,7 +2319,7 @@ export function buildWindowsTaskXml(
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
-      <Enabled>true</Enabled>
+      <Enabled>true</Enabled>${sessionUserIdElement}
     </LogonTrigger>
     ${WINDOWS_SESSION_RECOVERY_STATE_CHANGES.map(stateChange => `<SessionStateChangeTrigger>
       <Enabled>true</Enabled>${sessionUserIdElement}

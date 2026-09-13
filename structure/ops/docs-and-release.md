@@ -3,6 +3,8 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
+
 ## Public docs
 
 The public documentation site lives in `docs-site/` and is built with Astro + Starlight. English is
@@ -307,6 +309,10 @@ This keeps release runs short and makes release a deployment of a verified commi
 The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
 
 ## Remote Hub locale and release gate
+
+The Remote Hub guide describes the
+[status credential binding](../runtime.md#remote-hub-status-credential-binding)
+and its matching-cache or `unavailable` result.
 
 The Remote Hub guide and affected CLI, server-config, management-API, and dashboard references have eight sources: root English plus `fr`, `ko`, `zh-cn`, `zh-tw`, `ru`, `ja`, and `tr`. English is canonical; commands, defaults, endpoint auth, and warnings remain exact in translations. A release requires the remote-only focused/full gates, privacy scan, GUI/docs builds, protocol compatibility receipts, and the MAINTAINERS security review for the exact head.
 

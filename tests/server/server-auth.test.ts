@@ -2754,7 +2754,10 @@ describe("server local API auth", () => {
     );
     try {
       const response = await harness.request({ model });
-      expect(response.status).toBe(401);
+      // No roster carries this model, so the failure is an unsupported selection rather than a
+      // credential problem: 400 invalid_request_error, not the 401 invalid_api_key this used to
+      // report. What the case actually pins is the empty dispatch list below.
+      expect(response.status).toBe(400);
       expect(await response.text()).toContain("No eligible Codex account supports this model");
       expect(harness.dispatches).toEqual([]);
     } finally {

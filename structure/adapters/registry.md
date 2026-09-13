@@ -3,9 +3,14 @@
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
+
 ## Decision
 
 Runtime adapter construction has one authority: `src/adapters/registry.ts`.
+
+The OpenCode Go [chronological instruction exception](../providers/chat-compat.md#opencode-go-chronological-instructions)
+uses the provider registry's destination identity inside the Chat adapter; it adds no adapter factory.
 
 `src/server/adapter-resolve.ts` may resolve a provider/model onto an adapter id, but it does not maintain a second adapter factory inventory. The selected persisted/configured adapter id remains an untrusted string until the registry lookup succeeds. Unknown ids fail with the existing `Unknown adapter: <id>` error instead of widening configuration types around a closed compile-time union.
 
@@ -29,7 +34,14 @@ Some adapters share another adapter's routed-tool semantics while retaining inde
   provider id, so the registry carries one Devin provider, not two.
   `AdapterFactoryContext.providerId` still tells the shared adapter which configured row it is
   serving: the Cognition tenant is recorded on the credential, not in the registry, so the
-  adapter has to know the row before it can resolve a host.
+  adapter has to know the row before it can resolve a host. That adapter advertises bare local
+  tool names to Cognition, so `runTurn` also owns a request-scoped return map from each unique
+  bare name to the canonical Codex namespace identity. Unknown names remain subject to the shared
+  undeclared-tool guard; duplicate bare names fail before dispatch rather than selecting a request
+  tool by declaration order. Canonical identities are registered in that map as well, because the
+  adapter accepts them on return. One tool's canonical identity can be another tool's advertised
+  local name, and resolving that name to either owner would dispatch the call to a tool the caller
+  may not have named, so it is treated as ambiguous and fails before dispatch too.
 
   There is no second Devin transport. An Agent Client Protocol adapter that spawned a local
   `devin acp` child once existed under the `devin-cli` adapter id and was removed: the CLI's
@@ -84,6 +96,8 @@ Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.
 ## Truncated tool finalization
 
 The bridge keeps an open function, custom, or tool-search call incomplete when an adapter ends with a recognized truncated stop reason. Streaming emits no argument/input completion frame for that open call, and buffered JSON applies the same status. A call already closed by its own tool-call end retains its completed state. The response remains incomplete, partial output is preserved, and truncated compaction never replaces history.
+
+A provider web search still in flight at that truncated terminal is finalized as `failed`, the same status it already receives from the error and explicit-incomplete terminals. It never returned results, so reporting it as `completed` would leave the client showing a finished search for a turn the provider cut short.
 
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper

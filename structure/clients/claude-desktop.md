@@ -6,6 +6,8 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 Codex-native model discovery follows the [shared retirement policy](../catalog.md#shared-catalog).
 That projection does not migrate existing user-selected Desktop configuration or usage history.
 
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
+
 ## Connected Claude Desktop profiles
 
 Connected `ocx claude desktop apply` reads the hub's Desktop snapshot and writes the hub origin
@@ -68,6 +70,9 @@ external copies. Model-list snapshot version 1 remains a read-only contract, not
 or profile-upload API. Thinking replay and prompt caching remain separate in #3719.
 
 The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
+Connected `ocx status` diagnostics follow the shared
+[status credential binding](../runtime.md#remote-hub-status-credential-binding).
 
 ## Claude Desktop config-library resolution
 
