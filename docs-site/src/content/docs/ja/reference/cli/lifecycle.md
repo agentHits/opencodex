@@ -158,6 +158,20 @@ ocx status --json
 
 Codex のローカル モデル ピッカー キャッシュを無効にし、アクティブな opencodex カタログから再構築されるようにします。 `ocx sync` と同じ、古い `app-server` 警告とオプションの `--restart-codex` 動作が適用されます。
 
+### `ocx catalog pull <https-url> [--auth-env <NAME>] [--json] [--restart-codex]`
+
+別の OpenCodex インスタンスの `/v1/catalog` エンドポイントが提供する完全なカタログをインストール
+し、続いて `models_cache.json` を同期します。URL は HTTPS が必須で、HTTP はループバックのみ許可
+されます。URL 埋め込み資格情報、クエリ、フラグメント、リダイレクト、サイズ超過の応答、不正な
+カタログは、ローカル書き込みの前に拒否されます。認証は任意で、環境変数参照 (`--auth-env`) から
+のみ読み取られ、argv からは読み取られません。
+
+カタログとキャッシュは共有の Codex カタログロックの下で書き込まれ、失敗時は last-known-good の
+ファイルが保持されます。バイトが同一の場合は mtime を保持する no-op です。`--restart-codex` は
+実際の書き込みの後にのみ適用されます。`ETag` 条件付きリクエストと Desktop アプリの再起動は、この
+コマンドには含まれません。`--json` エンベロープと終了コードの詳細は
+[英語版リファレンス](/reference/cli/lifecycle/)を参照してください。
+
 ## バックグラウンドサービス
 
 ### `ocx service [install|repair|restart|start|stop|status|uninstall|remove]`

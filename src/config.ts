@@ -2234,6 +2234,13 @@ function normalizePersistedClaudeCode(claudeCode: unknown): OcxConfig["claudeCod
     if (kept.length > 0) normalized.classifierFallbacks = kept;
     else delete normalized.classifierFallbacks;
   }
+  const desktopProfile = normalized.desktopProfile;
+  if (desktopProfile && typeof desktopProfile === "object" && !Array.isArray(desktopProfile)) {
+    const profile = { ...desktopProfile } as Record<string, unknown>;
+    if (typeof profile.appliedFingerprint !== "string") delete profile.appliedFingerprint;
+    if (typeof profile.appliedAt !== "string") delete profile.appliedAt;
+    normalized.desktopProfile = profile;
+  }
   return normalized as OcxConfig["claudeCode"];
 }
 
@@ -4363,6 +4370,16 @@ function warnConfigRepaired(configPath: string, error: z.ZodError): void {
  */
 const SALVAGEABLE_CONFIG_SECTIONS = ["routingProfiles", "combos"] as const;
 
+/** Optional nested fields that can be dropped whole without changing the rest of the document. */
+const SALVAGEABLE_OPTIONAL_FIELDS: ReadonlyArray<readonly [string, string]> = [
+  ["claudeCode", "desktopProfile"],
+];
+
+function isSalvageableConfigPath(section: string, id: string): boolean {
+  if ((SALVAGEABLE_CONFIG_SECTIONS as readonly string[]).includes(section)) return true;
+  return SALVAGEABLE_OPTIONAL_FIELDS.some(path => path[0] === section && path[1] === id);
+}
+
 /**
  * Drop just the named entries a parse failure blamed, so the rest of the
  * document survives.
@@ -4388,7 +4405,7 @@ function dropInvalidConfigSections(
     if (isUnsalvageableIssue(issue)) return null;
     const [section, id] = issue.path;
     if (typeof section !== "string" || typeof id !== "string") return null;
-    if (!(SALVAGEABLE_CONFIG_SECTIONS as readonly string[]).includes(section)) return null;
+    if (!isSalvageableConfigPath(section, id)) return null;
     // A complaint about the container itself ("combos must be an object") is
     // not about one entry, so there is nothing selective to drop.
     if (issue.path.length < 2) return null;
@@ -4486,6 +4503,13 @@ function countSalvageableEntries(document: unknown): number {
     const value = (document as Record<string, unknown>)[section];
     if (value && typeof value === "object" && !Array.isArray(value)) {
       total += Object.keys(value as Record<string, unknown>).length;
+    }
+  }
+  for (const [section, id] of SALVAGEABLE_OPTIONAL_FIELDS) {
+    const container = (document as Record<string, unknown>)[section];
+    if (container && typeof container === "object" && !Array.isArray(container)
+      && Object.hasOwn(container as Record<string, unknown>, id)) {
+      total += 1;
     }
   }
   return total;

@@ -236,6 +236,18 @@ single-flight/lock 파일을 만들 수 있는지, 건강하지 않은 OAuth 또
 Codex의 로컬 모델 선택기 캐시를 무효화하여, 활성 opencodex 카탈로그에서 다시 빌드되게 합니다.
 `ocx sync`와 같은 오래된 `app-server` 경고와 선택적 `--restart-codex` 동작이 적용됩니다.
 
+### `ocx catalog pull <https-url> [--auth-env <NAME>] [--json] [--restart-codex]`
+
+다른 OpenCodex 인스턴스의 `/v1/catalog` 엔드포인트가 제공하는 완성된 카탈로그를 설치한 뒤
+`models_cache.json`을 맞춥니다. URL은 HTTPS여야 하고 HTTP는 루프백만 허용합니다. URL에 박힌
+자격증명, 쿼리, 프래그먼트, 리다이렉트, 크기를 넘는 응답, 잘못된 카탈로그는 로컬에 쓰기 전에
+거절합니다. 인증은 선택이며 환경변수 이름(`--auth-env`)으로만 읽고 argv로는 받지 않습니다.
+
+카탈로그와 캐시는 공유 Codex 카탈로그 잠금 아래에서 쓰고, 실패하면 직전까지 정상이던 파일을
+그대로 둡니다. 바이트가 같으면 mtime까지 건드리지 않는 no-op입니다. `--restart-codex`는 실제로
+쓴 뒤에만 적용됩니다. `ETag` 조건부 요청과 Desktop 앱 재시작은 이 명령에 없습니다. `--json`
+envelope 필드와 종료 코드는 [영문 레퍼런스](/reference/cli/lifecycle/)를 보세요.
+
 ## 백그라운드 서비스
 
 ### `ocx service [install|repair|restart|start|stop|status|uninstall|remove]`

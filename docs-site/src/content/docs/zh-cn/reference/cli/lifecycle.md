@@ -154,6 +154,12 @@ ocx status --json
 
 使 Codex 的本地模型选择器缓存失效，让它根据当前激活的 opencodex 目录重新生成。与 `ocx sync` 相同的陈旧 `app-server` 警告和可选 `--restart-codex` 行为同样适用。
 
+### `ocx catalog pull <https-url> [--auth-env <NAME>] [--json] [--restart-codex]`
+
+安装由另一个 OpenCodex 实例的 `/v1/catalog` 端点提供的完整目录，然后同步 `models_cache.json`。URL 必须是 HTTPS；仅回环地址允许 HTTP。URL 内嵌凭据、查询、片段、重定向、超出大小的响应以及无效目录，都会在任何本地写入之前被拒绝。认证是可选的，并且只通过环境变量名（`--auth-env`）读取，不接受 argv 传入。
+
+目录和缓存在共享的 Codex 目录锁下写入；失败时保留 last-known-good 文件。字节完全相同时是保留 mtime 的空操作。`--restart-codex` 仅在发生真实写入之后生效。`ETag` 条件请求和 Desktop 应用重启不属于此命令。完整的 `--json` 信封与退出码请参见[英文参考](/reference/cli/lifecycle/)。
+
 ## 后台服务
 
 ### `ocx service [install|repair|restart|start|stop|status|uninstall|remove]`
