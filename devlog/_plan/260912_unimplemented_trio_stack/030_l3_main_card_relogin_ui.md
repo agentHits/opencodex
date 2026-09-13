@@ -61,6 +61,21 @@ MODIFY `gui/src/i18n/{en,de,fr,ja,ko,ru,tr,zh,zh-TW}.ts`
   failure copy (actionable, safe; no auto-retry wording). Revise
   `mainTokenExpired` so it no longer claims App login is the only path.
 
+## Audit folds (wp4 A)
+
+- Start POSTs an EMPTY body (the route rejects any body with 400); poll
+  immediately until verificationUrl/deviceCode arrive (they are empty in the
+  start response), and keep the last url/code through the committing state.
+- Map the full MainDeviceReauthStatus union + HTTP error shapes: committing
+  (no url/code), failed.code (identity_mismatch, credential_changed,
+  native_main_unavailable, device_authorization_failed,
+  publication_failed, reconciliation_failed), 409 flow_in_progress, 503
+  native_main_unavailable; when credentialUpdated is true the copy never
+  claims the file was unchanged; the verification URL is allowlisted to
+  https://auth.openai.com/codex/device.
+- structure claim lands in structure/gui-and-management-api.md (the
+  Codex-accounts row :312), not overview.md.
+
 ## Tests (red-first)
 
 NEW `gui/tests/main-device-reauth.test.tsx` — happy-dom mount per
