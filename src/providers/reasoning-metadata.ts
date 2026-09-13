@@ -541,13 +541,3 @@ export function ensureReasoningMetadataSnapshot(): void {
   if (refreshInFlight) return;
   void refreshReasoningMetadata().catch(() => undefined);
 }
-
-/**
- * True when this provider's destination is one of the gated ones models.dev ladders are stored
- * for. Callers use it to decide whether a snapshot refresh could possibly help before asking
- * for one: a provider outside the gate gains nothing from the fetch, and asking anyway would
- * put background network traffic on every routed request.
- */
-export function providerUsesReasoningMetadata(provider: OcxProviderConfig): boolean {
-  return metadataProviderKey(provider) !== undefined;
-}
