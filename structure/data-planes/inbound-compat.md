@@ -1,5 +1,8 @@
 # Inbound Compatibility Surfaces
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Standalone file transcription
 
 `src/server/audio-transcriptions.ts` owns `POST /v1/audio/transcriptions`, independently of
@@ -58,6 +61,9 @@ the native passthrough there is no canonical Fast injection and no wire mapping:
 and `fastMode` injects nothing here. Resolved-Fast-policy injection applies only to routes that
 take the Chat -> Responses -> Chat bridge below. `parallel_tool_calls` is emitted only for providers opted into
 parallel tools (or pinned false by the existing provider opt-out contract).
+The native passthrough still applies the existing model capability authority to reasoning: an
+explicit empty ladder removes caller `reasoning_effort`, while an unknown ladder remains
+unclassified. This guard does not alter the separate raw service-tier contract.
 
 On the response side, the upstream `service_tier` echo (xAI Priority Processing, OpenAI fast
 tier) relays to the Chat Completions caller on every delivery shape: the non-streaming body
@@ -164,6 +170,13 @@ The management quota DTO keeps Combo editing aligned with scoped inference evide
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
 Codex pool settings and their consumers follow the [reset-first ordering contract](../providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
+
+Canonical Spark Lite metadata follows the final serialized model and surviving nonempty Lite tool catalog; see [Responses transport](../transports/responses.md).
+
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](../transports/responses.md).
+
+The provider summary default applies at Responses ingress; native Chat and Anthropic inbound preferences keep their existing handling. Raw content is never renamed to a summary. See [bridge contract](../providers/chat-compat.md).
 
 ## Claude affinity at final Go dispatch
 

@@ -151,6 +151,7 @@ import {
 } from "./relay";
 export {
   consumeForInspection,
+  codexSafetyBufferingFilterOptions,
   relaySseWithFailedTail,
   relaySseWithHeartbeat,
   relayWithAbort,
@@ -718,6 +719,13 @@ export function warnAgentTaskRecoveryStartup(config: {
   console.warn("   Recovered plaintext assignment data is retained only in a bounded, process-local in-memory cache; exact fidelity is not guaranteed and the path depends on undocumented backend behavior.");
 }
 
+export function warnPlaintextV2AgentMessagesStartup(config: { plaintextV2AgentMessages?: boolean }): void {
+  if (config.plaintextV2AgentMessages !== true) return;
+  console.warn("⚠️  Experimental plaintext V2 agent messages are enabled.");
+  console.warn("   Eligible ChatGPT collaboration calls may carry plaintext message arguments. HTTPS remains encrypted, but task text may be retained in Codex history, selected providers, and local response/debug state.");
+  console.warn("   This depends on undocumented ChatGPT and Codex behavior; it does not decrypt existing tasks.");
+}
+
 export function startServer(port?: number, deps: StartServerDeps = {}): Server<WsData> {
   const localAttestationSecret = deps.localAttestationSecret ?? createLocalAttestationSecret();
   // Captured before loadConfig() starts the optional ACL flight so stop() drains the same dir
@@ -730,6 +738,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   // an in-memory wire upgrade when that upgrade's persistence is temporarily unavailable.
   reconcileOAuthProviders(startupConfig);
   const config = migrateStartupZaiResponses(migrateStartupXaiResponses(startupConfig));
+  warnPlaintextV2AgentMessagesStartup(config);
   warnAgentTaskRecoveryStartup(config);
   setLiveStateStoreConfig(config);
   applyProxyEnv(config);

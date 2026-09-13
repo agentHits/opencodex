@@ -1,5 +1,8 @@
 # Images Data Plane
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Standalone Images
 
 Codex's local `image_gen.imagegen` tool makes a second Images request after the model calls it:
@@ -85,6 +88,11 @@ see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routi
 
 Codex pool settings and their consumers follow the [reset-first ordering contract](../providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity.
 
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](../transports/responses.md).
+
+CCA image-capable requests do not acquire the text-summary includeThoughts opt-in. See [Google summary boundary](../providers/google.md).
+
 Claude replay carries [Go conversation affinity](inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
@@ -93,3 +101,5 @@ Native Chat applies qualifying effort ceilings independently of model pins; pin 
 Pool quota producers and account commands follow the [bounded raw-observation contract](../providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates.
 
 Account quota surfaces use [safe probe diagnostics](../transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
+
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](../transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
