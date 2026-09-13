@@ -573,8 +573,7 @@ Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.
 
 Chat helper admission in `src/server/responses/core.ts` follows the [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper claims stored main, after terminal vision, routed vision and search exclusions.
 
-The management quota DTO keeps Combo editing aligned with scoped inference evidence;
-see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
+The management quota DTO keeps Combo editing aligned with scoped inference evidence; see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
 Spark Lite and routing metadata use the same suffix-normalized model object as serialization, including configured bracket-suffix removal.
 
@@ -587,9 +586,7 @@ normalization; refusal/error semantics, retryability, cancellation and captured 
 intact. Internal inspection observes original upstream frames. Native codex.response.metadata.headers
 WebSocket metadata and compact are excluded. This does not disable upstream safety enforcement.
 
-Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
-privately to final dispatch; preliminary route selection does not inject Go-only headers.
-
+Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch) privately to final dispatch; preliminary route selection does not inject Go-only headers.
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
 
 Pool quota producers and account commands follow the [bounded raw-observation contract](../providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates; account quota surfaces use [safe probe diagnostics](inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
