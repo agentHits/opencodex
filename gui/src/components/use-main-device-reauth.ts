@@ -124,7 +124,7 @@ export function useMainDeviceReauth(apiBase: string, onCompleted: () => void) {
     let lastCode = "";
     // Poll immediately: the start response predates the usercode reply, so the
     // URL and human code only arrive through status reads.
-    for (;;) {
+    while (!ctrl.signal.aborted) {
       if (ctrl.signal.aborted || unmountedRef.current || flowRef.current !== flowId) return;
       try {
         const res = await fetch(

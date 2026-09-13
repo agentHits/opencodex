@@ -140,6 +140,10 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   "claudeDesktop.supports1m",
   "claudeDesktop.effort.supported",
   // Correct French words whose spelling is identical to English.
+  // "Code" is the same word in French, and the surrounding device-reauth copy already
+  // uses it ("code appareil", "Code de l'appareil"). Inventing a different label just
+  // to make the strings differ would be worse copy for a French reader.
+  "codexAuth.mainReauthCode",
   "routing.exclusions",
   "routing.score",
   "dash.actions",
