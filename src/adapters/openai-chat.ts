@@ -131,6 +131,10 @@ export function buildOpenAIChatPassthroughRequest(
   for (const field of CHAT_PASSTHROUGH_FIELDS) {
     if (rawBody[field] !== undefined) body[field] = rawBody[field];
   }
+  const rawEfforts = modelRecordValue(provider.modelReasoningEfforts, modelId) ?? provider.reasoningEfforts;
+  if (modelInList(provider.noReasoningModels, modelId) || rawEfforts?.length === 0) {
+    delete body.reasoning_effort;
+  }
 
   const openRouterRouting = resolveOpenRouterRouting(provider, modelId);
   if (openRouterRouting) body.provider = openRouterProviderPayload(openRouterRouting);

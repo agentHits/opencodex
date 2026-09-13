@@ -1,5 +1,8 @@
 # OpenAI Provider Account Modes
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 This current contract supersedes the provider-identity and account-selection sections of
 `devlog/_fin/260717_openai_hardening`; that archived unit remains historical evidence for the
 earlier three-tier implementation. The replacement contract and its verification evidence live in
@@ -429,6 +432,9 @@ model settings, and noncanonical `openai` rows never receive that recovery path.
 `GET /api/codex-auth/accounts?refresh=1` treats missing main credentials, HTTP 401, and allowlisted
 terminal 403 codes as `needsReauth`; generic permission failures remain non-terminal, and a
 successful main usage refresh clears the runtime mark.
+
+Canonical forwarding alone can apply the optional client-output safety-buffering hint filter;
+API-key and custom forward destinations preserve their metadata. See [Responses transport](../transports/responses.md).
 
 Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.md#lifecycle); malformed optional listener blocks follow [config loading](../config.md#config-surface).
 

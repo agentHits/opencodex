@@ -1,5 +1,8 @@
 # xAI Grok Provider
 
+The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## xAI Grok hardening (official Grok Build contract parity)
 
 Grounded in the open-sourced official client (xai-org/grok-build); unit + evidence:
@@ -67,12 +70,20 @@ Account-scoped OAuth quota remains display evidence for provider-level Combo sel
 The management quota DTO keeps Combo editing aligned with scoped inference evidence;
 see [Combo editor routing quota](../gui-and-management-api.md#combo-editor-routing-quota).
 
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](../transports/responses.md).
+
+Grok chat raw reasoning uses content-channel output with an empty summary; hidden replay envelopes retain continuation text. Native Responses content is not promoted to summaries. See [chat compatibility](chat-compat.md).
+
 Claude replay carries [Go conversation affinity](../data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch)
 privately to final dispatch; preliminary route selection does not inject Go-only headers.
 
 Devin CLI credential path composition in `src/oauth/devin-cli.ts` follows the selected platform: Windows uses Win32 APPDATA paths, other platforms use POSIX XDG-data paths. The explicit absolute override remains verbatim; credential parsing and login behavior are unchanged.
 
 Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](../catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
+
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](../transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
+
 ### OAuth Fast Tier (Priority Processing)
 
 xAI's Priority Processing (`service_tier: "priority"` on Chat Completions and Responses,
