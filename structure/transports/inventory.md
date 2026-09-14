@@ -36,7 +36,7 @@ surface is listed here so a maintainer can find the owner without grepping:
 The registry's first-party `deepseek-flash` row declares native `text` and `image` input, so image
 requests bypass the vision sidecar by default; explicit `noVisionModels` or text-only declarations
 remain authoritative. First-party `deepseek-chat`, `deepseek-reasoner`, and `deepseek-v4-flash`
-remain sidecar-backed by default. Zen routes are unchanged and unprobed in this update.
+remain sidecar-backed by default. Zen routes are unchanged and unprobed in this update. Zen `mimo-v2.5-free` and `longcat-2.0-free` now carry positive `modelInputModalities` image evidence rather than relying on absence from the text-only list.
 
 > Decision record: [ADR-0072](../decisions/ADR-0072-transport-inventory.md)
 
@@ -144,3 +144,4 @@ Provider-scoped approval reviewer settings are projected by the [catalog owner](
 Renamed fixed-key providers receive [missing reasoning metadata](../catalog.md#renamed-destination-reasoning-metadata) during derivation; explicit per-model entries and provider defaults retain precedence.
 
 Translated audio/file admission follows the [final-adapter input contract](../adapters/registry.md#untranslated-input-media); native raw passthrough remains separate.
+Canonical Responses identity sanitation and narrowly scoped pre-output combo recovery follow [request-local target compatibility](../runtime.md#request-local-target-compatibility); other adapter contracts remain unchanged.
