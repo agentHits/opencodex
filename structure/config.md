@@ -164,8 +164,10 @@ discovery or catalog/cache replacement. Deterministic config and ownership refus
 leave the existing catalog and cache untouched, and their concrete messages are emitted on stderr.
 Exactly one conversation-history refusal scopes the relabel unit instead of vetoing the apply
 transition, and only because it is permanent. Codex allocates paginated rollout ordinals inside
-its own writer, so `history_paginated_requires_native_writer` is not retryable: the transition
-writes config, profile, and `model_catalog_json`, the relabel job is skipped without spawning
+its own writer, so `history_paginated_requires_native_writer` is not retryable: when the admitted
+candidate does not remove a previously published provider table, the transition writes config, profile,
+and `model_catalog_json`; otherwise late pagination triggers the compensating rollback described below.
+On successful apply, the relabel job is skipped without spawning
 its Worker, and the reason travels in the human message and in the structured
 `historyPreflightFailureReason` field *alongside* `success: true`. Every other reason — an
 unreadable state database, a rollout whose identity changed, a preflight that could not run —
