@@ -172,6 +172,8 @@ describe("remote catalog acquisition", () => {
       env.OPENCODEX_HOME = home();
       env.CODEX_HOME = home();
       env.HOME = env.USERPROFILE = home();
+      // A local dotenv must not override the explicitly supplied routing fixture.
+      writeFileSync(join(env.OPENCODEX_HOME, ".env"), "no_proxy=*\n");
       env.HTTP_PROXY = `http://127.0.0.1:${proxy.port}`;
       env.NO_PROXY = bypass;
       const source = new URL("../../src/codex/catalog/remote.ts", import.meta.url).href;
@@ -185,7 +187,7 @@ describe("remote catalog acquisition", () => {
           console.log(JSON.stringify({ code: error?.code ?? "unexpected_error" }));
         }
       `;
-      child = Bun.spawn([process.execPath, "--eval", script], { env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      child = Bun.spawn([process.execPath, "--no-env-file", "--eval", script], { cwd: env.OPENCODEX_HOME, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
       timer = setTimeout(() => { timedOut = true; child?.kill("SIGKILL"); }, 10_000);
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
