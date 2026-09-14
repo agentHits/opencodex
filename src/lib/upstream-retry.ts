@@ -139,7 +139,11 @@ export interface RetryBackoffOptions {
    * first instead of silently lengthening every adapter's backoff.
    */
   retryAfterIsLowerBound?: boolean;
-  /** Hard ceiling for an honoured `Retry-After`, so an hour-long wait cannot park a request. */
+  /**
+   * The wait deadline a caller applies to an honoured `Retry-After`. The delay itself is
+   * never shortened: an instruction longer than the deadline is a reason to END with the
+   * upstream answer, not to send early. Kept for callers that still pass it.
+   */
   retryAfterCeilingMs?: number;
 }
 
@@ -305,10 +309,10 @@ export function retryBackoffDelayMs(attempt: number, opts: RetryBackoffOptions):
   // A provider that names a wait is stating when it will serve again; sending earlier is a
   // request we already know will be refused, and refusing it twice is the retry storm the
   // header exists to prevent. The local maximum bounds our OWN exponential backoff and has no
-  // business shortening someone else's instruction. The ceiling is separate: it stops an
-  // hour-long Retry-After from parking a request forever.
-  const ceiling = opts.retryAfterCeilingMs ?? RETRY_AFTER_CEILING_MS;
-  return Math.min(Math.max(retryAfter, jittered), ceiling);
+  // business shortening someone else's instruction, so the instruction is returned in full.
+  // Whether the request can afford to wait that long is the caller's deadline decision --
+  // fetchWithTransientRetry ends with the upstream answer rather than retrying early.
+  return Math.max(retryAfter, jittered);
 }
 
 export function cancelResponseBodyBestEffort(res: Response): void {
@@ -364,6 +368,15 @@ export interface TransientRetryOptions extends ResetRetryOptions {
    * keep them on ONE budget instead of handing each leg a fresh one.
    */
   onSendsConsumed?: (sends: number) => void;
+  /**
+   * How long this caller can wait on an honoured `Retry-After`, defaulting to
+   * {@link RETRY_AFTER_CEILING_MS}. It is a deadline, never a clamp: an instruction inside it
+   * is slept in full, and an instruction past it ends the call with the upstream answer and
+   * its `Retry-After` intact rather than sending early at a provider that already said it
+   * would refuse. A caller with a shorter budget than a minute says so and is not parked past
+   * it; a caller that can genuinely wait longer says so and is not cut short.
+   */
+  retryAfterCeilingMs?: number;
 }
 
 export type UpstreamSendRecovery = "connection-reset" | "transient-5xx";
@@ -519,6 +532,19 @@ export async function fetchWithTransientRetry(
     // a response whose body we just cancelled.
     if (opts.abortSignal?.aborted) return res;
     if (Date.now() - attemptStart > slowAttemptMs) return res;
+    const instructedDelay = retryAfterDelayMs(res.headers);
+    // The deadline is the CALLER'S, not this module's default. Reading the constant directly
+    // broke it in both directions: a caller with a 30s budget slept the full 45s an upstream
+    // asked for, and a caller that could genuinely wait 120s was handed the error back for a
+    // 90s instruction it was willing to honour.
+    const waitDeadlineMs = opts.retryAfterCeilingMs ?? RETRY_AFTER_CEILING_MS;
+    if (instructedDelay !== undefined && instructedDelay > waitDeadlineMs) {
+      // Honouring the stated wait would park this request past the deadline it can commit
+      // to, and sleeping only up to the deadline is a send the provider already said it will
+      // refuse. End here instead: the caller receives the upstream answer with its
+      // Retry-After intact and applies its own policy, exactly as on the direct path.
+      return res;
+    }
     console.warn(
       `[upstream-retry] transient ${res.status}${opts.label ? ` (${opts.label})` : ""} — retrying (${sent + 1}/${budget})`,
     );
