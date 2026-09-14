@@ -7,13 +7,27 @@ import {
 import {
   admitWorkflowTurn,
   chargeWorkflowSends,
+  clearWorkflowBudgetForRoot,
   DEFAULT_WORKFLOW_BUDGET_POLICY,
+  listTrackedWorkflowRoots,
+  listWorkflowBudgetEvents,
   resetWorkflowBudgetsForTest,
   settleWorkflowSpend,
   workflowBudgetSnapshot,
+  workflowDenialSummary,
   workflowSendCeilingReached,
+  WORKFLOW_EVENT_CAPACITY,
+  WORKFLOW_LOCAL_REFUSAL_HEADER,
+  type WorkflowDenial,
   type WorkflowBudgetPolicy,
 } from "../../src/lib/workflow-budget";
+import { workflowRefusalResponse } from "../../src/server/workflow-refusal";
+import { repoPath } from "../helpers/repo-root";
+import {
+  clearRequestLogsForTests,
+  getRequestLogEntries,
+  type RequestLogContext,
+} from "../../src/server/request-log";
 
 const memoryJournal = (): SpendJournal & { lines: string[] } => {
   const lines: string[] = [];
@@ -370,5 +384,197 @@ describe("every ceiling on this path reads the caller's clock", () => {
       // lastSeenMs feeds eviction ordering, not a ceiling, and its comment says so.
       .filter(entry => !entry.line.includes("lastSeenMs = Date.now()"));
     expect(ambient).toEqual([]);
+  });
+});
+
+describe("a refusal an operator can read, name and clear (#4546)", () => {
+  const ALL_DENIALS: WorkflowDenial[] = [
+    "workflow-concurrency-exhausted",
+    "workflow-sends-exhausted",
+    "workflow-children-exhausted",
+    "workflow-spend-exhausted",
+    "workflow-tracking-exhausted",
+    "workflow-send-replayed",
+    "workflow-spend-undurable",
+  ];
+
+  beforeEach(() => {
+    resetWorkflowBudgetsForTest();
+  });
+
+  test("each ceiling gets its own sentence rather than one shared with the others", () => {
+    // The bug this replaces: all four count denials emitted one sentence about a
+    // "concurrent-work limit", so an operator who had hit the SEND ceiling was told to wait for
+    // turns to finish. Waiting never helped, because no turn was running.
+    const messages = ALL_DENIALS.map(reason => workflowDenialSummary(reason).message);
+    expect(new Set(messages).size).toBe(ALL_DENIALS.length);
+    for (const message of messages) {
+      // Every one of them has to say whose decision this was; that is the half an operator
+      // cannot recover from the wire, since the body is shaped like a provider rate limit.
+      expect(message).toContain("This proxy refused the request locally");
+    }
+    expect(workflowDenialSummary("workflow-sends-exhausted").message).toContain("send ceiling");
+    expect(workflowDenialSummary("workflow-children-exhausted").message).toContain("child threads");
+  });
+
+  test("the response carries the machine-readable ceiling name a 429 body cannot", () => {
+    const refusal = workflowRefusalResponse("workflow-children-exhausted");
+    expect(refusal.status).toBe(429);
+    expect(refusal.headers.get(WORKFLOW_LOCAL_REFUSAL_HEADER)).toBe("workflow_children_exhausted");
+  });
+
+  test("a refusal with a log context marks its row synthetic", () => {
+    const logCtx = { model: "m", provider: "p" } as RequestLogContext;
+    workflowRefusalResponse("workflow-sends-exhausted", logCtx);
+    expect(logCtx.terminalSource).toBe("synthetic");
+    expect(logCtx.localTerminalReason).toBe("workflow_sends_exhausted");
+    // A locally assigned code wins over the 429 classification, so this is what the logs
+    // column shows instead of a generic rate limit.
+    expect(logCtx.errorCode).toBe("workflow_sends_exhausted");
+  });
+
+  test("a refusal before the body is parsed still leaves a row in the logs", () => {
+    // The defect this closes: the HTTP admission check returns before the turn runs, so a
+    // refused request left no trace at all on /api/logs. The model and provider stay
+    // "unknown" because they genuinely never resolved -- the same placeholder the native
+    // passthrough path already writes -- and the row says who refused and why.
+    clearRequestLogsForTests();
+    const before = getRequestLogEntries().length;
+    const logCtx = { model: "unknown", provider: "unknown" } as RequestLogContext;
+    const refusal = workflowRefusalResponse("workflow-children-exhausted", undefined, {
+      requestId: "req-refusal-1",
+      start: Date.now() - 5,
+      logCtx,
+    });
+    expect(refusal.status).toBe(429);
+
+    const written = getRequestLogEntries();
+    expect(written.length).toBe(before + 1);
+    const row = written.find(entry => entry.requestId === "req-refusal-1");
+    expect(row?.terminalSource).toBe("synthetic");
+    expect(row?.localTerminalReason).toBe("workflow_children_exhausted");
+    expect(row?.errorCode).toBe("workflow_children_exhausted");
+    clearRequestLogsForTests();
+  });
+
+  test("the ceiling name is readable by a browser dashboard, not only by curl", () => {
+    // A header the data plane never exposes is invisible to cross-origin JavaScript, which
+    // would have made this marker useful to curl and to nothing else.
+    const refusal = workflowRefusalResponse("workflow-sends-exhausted");
+    expect(refusal.headers.get("Access-Control-Expose-Headers"))
+      .toContain(WORKFLOW_LOCAL_REFUSAL_HEADER);
+  });
+
+  test("every inbound surface that opens a log row threads its refusal into one", async () => {
+    // A unit test on the helper proves the helper. It does not prove the wiring, and the
+    // wiring is where this went wrong twice: the refusal originally reached no surface's log
+    // at all, and the fix first reached only one of nine. Exposing the header was likewise
+    // pointless until the refusal was CORS-wrapped, because without an allow-origin a browser
+    // cannot read an exposed header either.
+    const source = await Bun.file(repoPath("src/server/index.ts")).text();
+    const callSites = source.match(/return runAdmittedHttpTurn\(/g) ?? [];
+    const threaded = source.match(/, \{ requestId, start, logCtx \}\);/g) ?? [];
+    expect(callSites.length).toBeGreaterThan(1);
+    // Exactly one surface has no log context to thread: /v1/messages/count_tokens opens no
+    // request-log row at all. Every other one must, or a refusal there leaves no trace.
+    expect(callSites.length - threaded.length).toBe(1);
+    expect(source).toContain("withCors(workflowRefusalResponse(");
+  });
+
+  test("every refusal lands on the record with the counts that caused it", () => {
+    const now = 1_700_000_000_000;
+    const policy: WorkflowBudgetPolicy = { ...DEFAULT_WORKFLOW_BUDGET_POLICY, maxPhysicalSends: 2 };
+    const seeded = admitWorkflowTurn("root-r", "worker", policy, undefined, now);
+    seeded?.lease.release();
+    chargeWorkflowSends("root-r", 2, now);
+    const denied = admitWorkflowTurn("root-r", "worker", policy, undefined, now + 1);
+    expect(denied?.admitted).toBe(false);
+
+    const [latest] = listWorkflowBudgetEvents(4);
+    expect(latest?.kind).toBe("refused");
+    expect(latest?.rootId).toBe("root-r");
+    expect(latest?.reason).toBe("workflow-sends-exhausted");
+    expect(latest?.sends).toBe(2);
+  });
+
+  test("the event record is bounded", () => {
+    const now = 1_700_000_000_000;
+    const policy: WorkflowBudgetPolicy = { ...DEFAULT_WORKFLOW_BUDGET_POLICY, maxPhysicalSends: 1 };
+    const seeded = admitWorkflowTurn("root-s", "worker", policy, undefined, now);
+    seeded?.lease.release();
+    chargeWorkflowSends("root-s", 1, now);
+    for (let i = 0; i < WORKFLOW_EVENT_CAPACITY * 2; i += 1) {
+      admitWorkflowTurn("root-s", "worker", policy, undefined, now + 1 + i);
+    }
+    expect(listWorkflowBudgetEvents(1_000).length).toBe(WORKFLOW_EVENT_CAPACITY);
+  });
+
+  test("clearing one root moves its ceilings and nothing else", () => {
+    const now = 1_700_000_000_000;
+    const policy: WorkflowBudgetPolicy = { ...DEFAULT_WORKFLOW_BUDGET_POLICY, maxPhysicalSends: 2 };
+    const held = admitWorkflowTurn("root-t", "worker", policy, "child-1", now);
+    expect(held?.admitted).toBe(true);
+    chargeWorkflowSends("root-t", 2, now);
+    expect(workflowSendCeilingReached("root-t", policy, now)).toBe(true);
+
+    const before = clearWorkflowBudgetForRoot("root-t", policy, now);
+    expect(before?.sends).toBe(2);
+    expect(before?.children).toBe(1);
+
+    const after = workflowBudgetSnapshot("root-t", policy, now);
+    expect(after?.sends).toBe(0);
+    expect(after?.children).toBe(0);
+    // The turn holding a slot is still holding it: zeroing `active` would let its release drive
+    // the count negative and hand out concurrency that is already taken.
+    expect(after?.active).toBe(1);
+    // And the lifetime total survives, so clearing a ceiling cannot launder the record of what
+    // the root actually did.
+    expect(after?.lifetimeSends).toBe(2);
+    expect(workflowSendCeilingReached("root-t", policy, now)).toBe(false);
+    held?.lease.release();
+
+    const [latest] = listWorkflowBudgetEvents(1);
+    expect(latest?.kind).toBe("cleared");
+    expect(latest?.rootId).toBe("root-t");
+    expect(latest?.sends).toBe(2);
+  });
+
+  test("clearing a count ceiling does not forgive spend", () => {
+    // The dangerous version of this feature. A count ceiling is a rate guard an operator may
+    // reasonably wave off; a token ceiling is money, and one button must not do both.
+    const ledger = createSpendReservationLedger({ journal: memoryJournal(), policy: spendPolicy(100), now: () => 1_000 });
+    const spend = (sendId: string) => ({ sendId, inputTokens: 60, outputCeilingTokens: 40 });
+    expect(admitWorkflowTurn("root-u", "interactive", DEFAULT_WORKFLOW_BUDGET_POLICY,
+      undefined, 1_000, spend("s1"), ledger)?.admitted).toBe(true);
+
+    clearWorkflowBudgetForRoot("root-u", DEFAULT_WORKFLOW_BUDGET_POLICY, 1_000);
+
+    const denied = admitWorkflowTurn("root-u", "interactive", DEFAULT_WORKFLOW_BUDGET_POLICY,
+      undefined, 1_000, spend("s2"), ledger);
+    expect(denied?.admitted).toBe(false);
+    if (denied && !denied.admitted) expect(denied.reason).toBe("workflow-spend-exhausted");
+  });
+
+  test("clearing an untracked root reports that rather than inventing one", () => {
+    expect(clearWorkflowBudgetForRoot("never-seen")).toBeUndefined();
+    expect(workflowBudgetSnapshot("never-seen")).toBeUndefined();
+    expect(listWorkflowBudgetEvents(1)).toEqual([]);
+  });
+
+  test("tracked roots are listed most recently active first and bounded", () => {
+    const now = 1_700_000_000_000;
+    // The leases are deliberately left open. `release()` stamps `lastSeenMs` from the wall
+    // clock -- it feeds eviction ordering, not a ceiling -- which would collapse the injected
+    // ordering this test is about into three near-identical real timestamps.
+    for (const [index, root] of ["root-v", "root-w", "root-x"].entries()) {
+      const admitted = admitWorkflowTurn(
+        root, "worker", DEFAULT_WORKFLOW_BUDGET_POLICY, undefined, now + index,
+      );
+      expect(admitted?.admitted).toBe(true);
+    }
+    const listed = listTrackedWorkflowRoots(2, DEFAULT_WORKFLOW_BUDGET_POLICY, now + 10);
+    expect(listed.length).toBe(2);
+    expect(listed[0]?.rootId).toBe("root-x");
+    expect(listed[1]?.rootId).toBe("root-w");
   });
 });
