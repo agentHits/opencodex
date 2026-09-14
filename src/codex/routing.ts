@@ -12,6 +12,9 @@ import { isSelectableCodexPoolAccount } from "./account-id";
 import type { OcxConfig } from "../types";
 import { captureConfigGeneration, type GenerationContext } from "../lib/state-store-sweeper";
 import { recordUpstreamHostFailure } from "./upstream-host-health";
+import type { CodexThreadLineage } from "./lineage";
+
+import { isCodexPoolRefreshCooling } from "./pool-refresh-backoff";
 import {
   classifyCodexUpstreamOutcome,
   computeCodexUsageScore,
@@ -52,6 +55,7 @@ import {
 } from "./routing/health-store";
 import { ownsProbeLease, probeMayClearCooldown, withProbeLeaseReleased } from "./routing/probe-lease";
 import {
+  adoptLegacyLineageAffinity,
   affinityAfterRelease,
   affinityOnNoAccount,
   bindModelDetourAffinity,
@@ -164,10 +168,13 @@ export {
   CODEX_THREAD_AFFINITY_MAX_ENTRIES,
   CODEX_THREAD_AFFINITY_REEVAL_INTERVAL_MS,
   CODEX_TRANSIENT_AFFINITY_HOLD_MS,
+  clearConversationStateIssuerMap,
   clearThreadAccountMap,
   clearThreadAccountMapForAccount,
   debugCodexAffinityGenerations,
   handOffThreadAffinityGeneration,
+  peekConversationStateIssuer,
+  rememberConversationStateIssuer,
 } from "./routing/thread-affinity";
 export type {
   CodexThreadResolution,
@@ -264,7 +271,9 @@ function isTransientOnlyAffinityBlock(
   if (!isCodexAccountUsable(config, entry.accountId, selectionOptions)) return false;
   if (getCodexQuotaHealthSnapshot(entry.accountId, quotaScope, now) !== null) return false;
   if (isCodexQuotaAvoided(entry.accountId, quotaScope, now)) return false;
-  return shouldFailover(config, entry.accountId, now) || isCodexAccountSoftAvoided(entry.accountId, now);
+  return shouldFailover(config, entry.accountId, now)
+    || isCodexAccountSoftAvoided(entry.accountId, now)
+    || isCodexPoolRefreshCooling(entry.accountId, now);
 }
 
 /** Has a held binding waited longer than a transient failure can reasonably explain? */
@@ -321,6 +330,78 @@ function transientDetourAccount(
   return mode === "peek"
     ? peekAlternateCodexAccount(config, entry.accountId, now, quotaScope, selectionOptions)
     : pickAlternateCodexAccount(config, entry.accountId, now, quotaScope, selectionOptions);
+}
+
+/**
+ * Which account is ACTUALLY answering for one conversation key right now (#4546, wp8).
+ *
+ * First placement reads this, not the binding alone: a parent parked on a transient detour
+ * is being served by the detour, so a new child placed "where the parent lives" would miss
+ * the warm account by one hop. A dead binding, an expired hold, and an ineligible serving
+ * account all answer null -- the caller then tries a sibling, then falls back to cold
+ * placement, which is the correct order because a stale home is worse than no hint.
+ *
+ * "Right now" includes the MODEL lane. A parent whose home account is not entitled to this
+ * model is being served through a model-scoped detour, which is the same "serving, not stale
+ * home" case one level further in: reading only the ordinary binding would hand the child an
+ * account this request cannot use, and it would then start cold on the very model whose
+ * warm account the family already found. The detour scope embeds the model and the quota
+ * scope, so the entry consulted here is compatible by construction.
+ */
+function lineageServingAccountId(
+  conversationKey: string,
+  config: OcxConfig,
+  now: number,
+  quotaScope?: CodexQuotaScope,
+  selectionOptions?: CodexAccountUsabilityOptions,
+  modelId?: string,
+): string | null {
+  const entry = (modelId !== undefined
+    ? getModelDetourAffinity(conversationKey, modelId, quotaScope)
+    : undefined)
+    ?? getThreadAffinity(conversationKey, quotaScope);
+  if (!entry || isThreadAffinityExpired(entry, now) || !isThreadAffinityGenerationLive(entry)) {
+    return null;
+  }
+  const holdLive = entry.transientHoldSince !== undefined && !isTransientHoldExpired(entry, now);
+  const serving = holdLive && entry.transientDetourAccountId !== undefined
+    ? entry.transientDetourAccountId
+    : entry.accountId;
+  return isCodexAccountSelectable(config, serving, now, quotaScope, selectionOptions)
+      && !hasUnrecoveredCodexQuotaRefusal(serving, quotaScope)
+      && !shouldFailover(config, serving, now)
+      && !isCodexAccountSoftAvoided(serving, now)
+    ? serving
+    : null;
+}
+
+/**
+ * First placement only: where a child with NO binding of its own should start. Parent's
+ * current serving account first, then a compatible sibling's -- "compatible" meaning the
+ * same quota-scope slot, since a Reserve sibling says nothing about the shared lane. The
+ * child still binds under its own key; this is a hint for turn one, not a root-wide pin.
+ */
+function pickLineageServingAccount(
+  config: OcxConfig,
+  lineage: CodexThreadLineage,
+  now: number,
+  quotaScope?: CodexQuotaScope,
+  selectionOptions?: CodexAccountUsabilityOptions,
+  modelId?: string,
+): { accountId: string; reason: CodexAffinityReason } | null {
+  if (lineage.parentConversationKey !== undefined) {
+    const parent = lineageServingAccountId(
+      lineage.parentConversationKey, config, now, quotaScope, selectionOptions, modelId,
+    );
+    if (parent) return { accountId: parent, reason: "lineage_parent" };
+    for (const siblingKey of lineage.siblingConversationKeys) {
+      const sibling = lineageServingAccountId(
+        siblingKey, config, now, quotaScope, selectionOptions, modelId,
+      );
+      if (sibling) return { accountId: sibling, reason: "lineage_sibling" };
+    }
+  }
+  return null;
 }
 
 /**
@@ -393,8 +474,9 @@ export function resolveCodexAccountForThread(
   config: OcxConfig,
   now = Date.now(),
   quotaScope?: CodexQuotaScope,
+  lineage?: CodexThreadLineage,
 ): string | null {
-  const resolution = resolveCodexAccountForThreadDetailed(threadId, config, now, quotaScope);
+  const resolution = resolveCodexAccountForThreadDetailed(threadId, config, now, quotaScope, undefined, undefined, lineage);
   return resolution.status === "selected" ? resolution.accountId : null;
 }
 
@@ -670,6 +752,7 @@ export function previewCodexAccountForRequest(
   quotaScope?: CodexQuotaScope,
   selectionOptions?: CodexAccountUsabilityOptions,
   modelId?: string,
+  lineage?: CodexThreadLineage,
 ): string | null {
   // A request-scoped model detour keeps its own serving-account affinity. Preview
   // reads it before the ordinary lane, but never repairs or deletes it. Roster
@@ -694,6 +777,30 @@ export function previewCodexAccountForRequest(
     selectionOptions,
   );
   if (ordinaryPreview) return ordinaryPreview;
+
+  // A conversation carried across an in-process swap is still bound under the pre-#4546 raw
+  // parent key, and resolve adopts that binding rather than rebinding cold. Preview has to name
+  // the same account. Read-only, as everything here is: it neither adopts nor retires the entry.
+  if (threadId && !entry && lineage?.legacyConversationKey !== undefined) {
+    const legacyPreview = previewReusableAffinityAccount(
+      getThreadAffinity(lineage.legacyConversationKey, quotaScope),
+      config,
+      now,
+      quotaScope,
+      selectionOptions,
+    );
+    if (legacyPreview) return legacyPreview;
+  }
+
+  // First placement mirrors resolve: a child with no binding previews the account actually
+  // serving its parent (or a compatible sibling), so the subagent fallback does not decide
+  // against a cold pick the real request would never make. Read-only: nothing binds here.
+  if (threadId && !entry && lineage) {
+    const lineagePreview = pickLineageServingAccount(
+      config, lineage, now, quotaScope, selectionOptions, modelId,
+    );
+    if (lineagePreview) return lineagePreview.accountId;
+  }
 
   const strategyPick = pickUnboundStrategyAccount(
     config,
@@ -753,6 +860,7 @@ export function resolveCodexAccountForThreadDetailed(
   quotaScope?: CodexQuotaScope,
   selectionOptions?: CodexAccountUsabilityOptions,
   modelId?: string,
+  lineage?: CodexThreadLineage,
 ): CodexThreadResolution {
   // An entitlement roster constrains only this model request. It must not rewrite
   // the operator's shared active/pin choice or the task's ordinary-model affinity.
@@ -779,6 +887,13 @@ export function resolveCodexAccountForThreadDetailed(
       sharedSelectionOptions,
     )
   );
+
+  // A conversation that was live across an in-process code swap is still bound under the
+  // pre-#4546 raw parent key. Adopt that binding onto this thread's key BEFORE anything below
+  // reads an entry, so the conversation arrives here as an ordinary bound thread instead of a
+  // cold one: every branch that follows -- detour reuse, transient hold, quota re-eval --
+  // should treat it as the continuing conversation it is. No-op on a fresh process.
+  if (threadId) adoptLegacyLineageAffinity(threadId, lineage, now, quotaScope, modelId);
 
   if (threadId && modelScopedSelection) {
     const detourEntry = getModelDetourAffinity(threadId, modelId, quotaScope);
@@ -959,6 +1074,38 @@ export function resolveCodexAccountForThreadDetailed(
   // A release recorded by the outcome path (a 429 clears the pin before the next request even
   // arrives) is the reason this request is starting cold, so it outranks having found nothing.
   releaseReason ??= peekPendingReleaseReason(threadId);
+
+  // FIRST PLACEMENT for a child thread (#4546, wp8). A child with no binding of its own used
+  // to bind under the raw parent id -- an entry unrelated to the root's real binding -- or
+  // land cold while its parent was being served warm somewhere. Consult the family's CURRENT
+  // serving account first (detour included), then a compatible sibling's, and only then fall
+  // through to cold placement. The child binds under its OWN key below: this is a warm start,
+  // not a root-wide pin, so a later move of the parent never drags the child with it.
+  //
+  // Guarded on `entry === undefined`, which is strictly narrower than "has no usable binding":
+  // a thread whose binding was just released above still holds its own history and re-decides
+  // through the ordinary path. Only a thread that has never bound takes a family hint. That
+  // also makes `preserveExistingModelScopedAffinity` unreachable here -- it is only ever set
+  // while reusing an existing model-detour entry -- so this binds through the ordinary lane.
+  if (threadId && entry === undefined && lineage) {
+    const lineagePick = pickLineageServingAccount(
+      config, lineage, now, quotaScope, selectionOptions, modelId,
+    );
+    if (lineagePick) {
+      bindThreadAffinity(threadId, lineagePick.accountId, now, quotaScope);
+      // Deliberately no promoteActiveCodexAccount: a family hint places THIS request, it does
+      // not move the operator-visible shared cursor for unrelated new threads.
+      return {
+        status: "selected",
+        accountId: lineagePick.accountId,
+        // A pending release still outranks the hint as the reported reason, and consuming it
+        // here is what stops the next request reporting the same release a second time.
+        affinity: releaseReason === undefined
+          ? { move: "new_bind", reason: lineagePick.reason }
+          : affinityAfterRelease(threadId, releaseReason),
+      };
+    }
+  }
 
   // A request-scoped roster may still contain unhealthy candidates. Non-quota strategies return
   // before the quota/failover helpers below, so prefer only shared-healthy roster members here;

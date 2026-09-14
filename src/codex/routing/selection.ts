@@ -3,6 +3,7 @@ import { codexAccountPriorityLookup, pinnedCodexAccountId } from "../account-pri
 import { isSelectableCodexPoolAccount } from "../account-id";
 import { isAccountNeedsReauth } from "../account-runtime-state";
 import { isCodexAccountUsable, type CodexAccountUsabilityOptions } from "../account-usability";
+import { isCodexPoolRefreshCooling } from "../pool-refresh-backoff";
 import {
   normalizeAccountPoolStickyLimit,
   normalizeCodexAccountPoolStrategy,
@@ -91,6 +92,7 @@ export function isCodexAccountSelectable(
     && getCodexQuotaHealthSnapshot(accountId, quotaScope, now) === null
     && !isCodexQuotaAvoided(accountId, quotaScope, now)
     && !isCodexAccountSoftAvoided(accountId, now)
+    && !isCodexPoolRefreshCooling(accountId, now)
     && isCodexAccountUsable(config, accountId, selectionOptions);
 }
 
@@ -116,6 +118,7 @@ export function codexAccountBlockReason(
   if (getCodexQuotaHealthSnapshot(accountId, quotaScope, now) !== null) return "cooldown";
   if (isCodexQuotaAvoided(accountId, quotaScope, now)) return "quota_avoided";
   if (isCodexAccountSoftAvoided(accountId, now)) return "transient";
+  if (isCodexPoolRefreshCooling(accountId, now)) return "transient";
   if (!isCodexAccountUsable(config, accountId, selectionOptions)) return "unusable";
   return undefined;
 }
@@ -139,6 +142,7 @@ export function getEligiblePoolAccounts(
     .filter(account => getCodexQuotaHealthSnapshot(account.id, quotaScope, now) === null)
     .filter(account => !isCodexAccountSoftAvoided(account.id, now))
     .filter(account => !isCodexQuotaAvoided(account.id, quotaScope, now))
+    .filter(account => !isCodexPoolRefreshCooling(account.id, now))
     .filter(account => isCodexAccountUsable(config, account.id, selectionOptions))
     .map(account => account.id);
   // The main Codex account is not stored in config.codexAccounts; include it as a
@@ -155,6 +159,7 @@ export function getEligiblePoolAccounts(
     // earned it: the cooldown caps at fifteen minutes, the window runs up to six hours, and
     // in between the main account returns as a first-class candidate.
     && !isCodexQuotaAvoided(MAIN_CODEX_ACCOUNT_ID, quotaScope, now)
+    && !isCodexPoolRefreshCooling(MAIN_CODEX_ACCOUNT_ID, now)
     && (!skipFailoverReadyCandidates || !shouldFailover(config, MAIN_CODEX_ACCOUNT_ID, now))
     && isCodexAccountUsable(config, MAIN_CODEX_ACCOUNT_ID, selectionOptions)
   ) {

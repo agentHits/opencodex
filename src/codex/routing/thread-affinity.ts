@@ -1,6 +1,8 @@
 import { isCodexAccountGenerationLive, readCodexAccountRecord } from "../account-store";
 import { MAIN_CODEX_ACCOUNT_ID } from "../main-account";
 import { retainedUtf8Bytes } from "../../lib/admission";
+import { clearAllCodexPoolRefreshFailures } from "../pool-refresh-backoff";
+import type { CodexThreadLineage } from "../lineage";
 import type { CodexQuotaScope } from "./health-store";
 
 export type ThreadAffinityEntry = {
@@ -61,7 +63,11 @@ export type CodexAffinityReason =
   | "quota_avoided"
   | "generation"
   | "expired"
-  | "model_lane";
+  | "model_lane"
+  /** First placement followed the parent's CURRENT serving account (#4546, wp8). */
+  | "lineage_parent"
+  /** First placement followed a compatible sibling's current serving account. */
+  | "lineage_sibling";
 
 export interface CodexAffinityDecision {
   move: CodexAffinityMove;
@@ -139,9 +145,29 @@ const LEGACY_THREAD_AFFINITY_SCOPE = "legacy" as const;
 const threadAccountMap = new Map<string, Map<ThreadAffinityScope, ThreadAffinityEntry>>();
 let threadAffinityEntryTotal = 0;
 
+/**
+ * Which pool account minted the conversation's carried OpenAI state
+ * (`previous_response_id`, encrypted reasoning, provider conversation/file ids).
+ * Keyed by the same affinity key as {@link threadAccountMap}, bounded the same
+ * way, and process-local — raw account ids never reach a log.
+ */
+type ConversationStateIssuerEntry = {
+  accountId: string;
+  lastUsedAt: number;
+};
+const conversationStateIssuerMap = new Map<string, ConversationStateIssuerEntry>();
+
 export function clearThreadAccountMap(): void {
   threadAccountMap.clear();
   threadAffinityEntryTotal = 0;
+  // A refresh cooldown is per-account runtime state learned alongside these bindings. Leaving it
+  // behind here keeps an account out of selection after the roster it belonged to is gone.
+  clearAllCodexPoolRefreshFailures();
+  conversationStateIssuerMap.clear();
+}
+
+export function clearConversationStateIssuerMap(): void {
+  conversationStateIssuerMap.clear();
 }
 
 export function clearThreadAccountMapForAccount(
@@ -157,6 +183,55 @@ export function clearThreadAccountMapForAccount(
     }
     if (affinities.size === 0) threadAccountMap.delete(threadId);
   }
+}
+
+function pruneConversationStateIssuers(now: number): void {
+  for (const [key, entry] of conversationStateIssuerMap) {
+    if (now - entry.lastUsedAt > CODEX_THREAD_AFFINITY_IDLE_TTL_MS) {
+      conversationStateIssuerMap.delete(key);
+    }
+  }
+  while (conversationStateIssuerMap.size > CODEX_THREAD_AFFINITY_MAX_ENTRIES) {
+    let oldestKey: string | null = null;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    for (const [key, entry] of conversationStateIssuerMap) {
+      if (entry.lastUsedAt < oldestAt) {
+        oldestAt = entry.lastUsedAt;
+        oldestKey = key;
+      }
+    }
+    if (!oldestKey) break;
+    conversationStateIssuerMap.delete(oldestKey);
+  }
+}
+
+/**
+ * Record the pool account that just issued carried conversation state for this
+ * binding key. In-memory only; the id is never written to a request log.
+ */
+export function rememberConversationStateIssuer(
+  bindingKey: string,
+  accountId: string,
+  now = Date.now(),
+): void {
+  if (!bindingKey.trim() || !accountId.trim()) return;
+  if (!admissibleAffinityComponent(bindingKey) || !admissibleAffinityComponent(accountId)) return;
+  pruneConversationStateIssuers(now);
+  conversationStateIssuerMap.set(bindingKey, { accountId, lastUsedAt: now });
+  pruneConversationStateIssuers(now);
+}
+
+/** Last account that minted carried state for this binding, if still in the TTL window. */
+export function peekConversationStateIssuer(
+  bindingKey: string,
+  now = Date.now(),
+): string | undefined {
+  if (!bindingKey.trim() || !admissibleAffinityComponent(bindingKey)) return undefined;
+  pruneConversationStateIssuers(now);
+  const entry = conversationStateIssuerMap.get(bindingKey);
+  if (!entry) return undefined;
+  entry.lastUsedAt = now;
+  return entry.accountId;
 }
 
 /**
@@ -416,4 +491,48 @@ export function getThreadAffinityScopes(
   threadId: string,
 ): ReadonlyMap<ThreadAffinityScope, ThreadAffinityEntry> | undefined {
   return threadAccountMap.get(threadId);
+}
+
+/**
+ * Move one scope's binding from the pre-#4546 RAW parent key onto the key this thread uses now.
+ *
+ * Bindings and the key that derives them are process-local, so an ordinary restart already
+ * discards every binding and there is nothing to migrate. The case this exists for is the
+ * narrow one: a code swap under a live conversation, where the map still holds entries made by
+ * the old rule. Rebinding those cold is precisely the defect the lineage work exists to prevent,
+ * so the conversation keeps its account and the legacy entry is retired in the same step.
+ *
+ * One way, once. The legacy entry is deleted even when it was dead on arrival, because nothing
+ * can reach it again under the new rule and an orphan only spends an LRU slot a live
+ * conversation needs. Only the account moves: a transient hold describes a failure happening
+ * right now, and the ordinary path re-derives it on this very request.
+ */
+function adoptLegacyAffinityForScope(
+  threadId: string,
+  legacyKey: string,
+  now: number,
+  scope: ThreadAffinityScope,
+): void {
+  if (getThreadAffinityForScope(threadId, scope) !== undefined) return;
+  const legacy = getThreadAffinityForScope(legacyKey, scope);
+  if (legacy === undefined) return;
+  if (!isThreadAffinityExpired(legacy, now) && isThreadAffinityGenerationLive(legacy)) {
+    bindThreadAffinityForScope(threadId, legacy.accountId, now, scope);
+  }
+  deleteThreadAffinityForScope(legacyKey, scope);
+}
+
+/** Both lanes of the legacy migration: the ordinary binding and this request's model detour. */
+export function adoptLegacyLineageAffinity(
+  threadId: string,
+  lineage: CodexThreadLineage | undefined,
+  now: number,
+  quotaScope?: CodexQuotaScope,
+  modelId?: string,
+): void {
+  const legacyKey = lineage?.legacyConversationKey;
+  if (legacyKey === undefined || legacyKey === threadId) return;
+  adoptLegacyAffinityForScope(threadId, legacyKey, now, threadAffinityScope(quotaScope));
+  const detourScope = modelDetourAffinityScope(modelId, quotaScope);
+  if (detourScope) adoptLegacyAffinityForScope(threadId, legacyKey, now, detourScope);
 }
