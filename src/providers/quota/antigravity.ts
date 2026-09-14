@@ -5,9 +5,9 @@ import { ProviderOutboundPolicyError, providerOutboundPost, providerRedirectErro
 import { getValidAccessToken } from "../../oauth";
 import { getAccountCredential, getCredential } from "../../oauth/store";
 import { asRecord, normalizePercent, normalizeResetAt, readQuotaJson, REQUEST_TIMEOUT_MS, toFiniteNumber } from "../quota-wire";
-import { report } from "./report-cache";
+import { report, type ProviderQuotaReport } from "./report-cache";
 import { quotaCredentialIdentity } from "./account-cache";
-import type { ProviderQuota, ProviderQuotaReport, ProviderQuotaWindow, QuotaFailureCode } from "../quota-types";
+import type { ProviderQuota, ProviderQuotaWindow, QuotaFailureCode } from "../quota-types";
 
 export function antigravityQuotaDiagnosticIdentity(accountId: string, credential = getAccountCredential("google-antigravity", accountId)): string | undefined {
   return credential ? quotaCredentialIdentity("google-antigravity", accountId, credential, {

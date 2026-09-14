@@ -131,6 +131,10 @@ export const CODEX_TRANSIENT_AFFINITY_HOLD_MS = 10 * 60_000;
 type BaseThreadAffinityScope = CodexQuotaScope | "legacy";
 type ModelDetourAffinityScope = `model-detour:${BaseThreadAffinityScope}:${string}`;
 type ThreadAffinityScope = BaseThreadAffinityScope | ModelDetourAffinityScope;
+
+function isModelDetourAffinityScope(scope: ThreadAffinityScope): scope is ModelDetourAffinityScope {
+  return scope.startsWith("model-detour:");
+}
 const LEGACY_THREAD_AFFINITY_SCOPE = "legacy" as const;
 const threadAccountMap = new Map<string, Map<ThreadAffinityScope, ThreadAffinityEntry>>();
 let threadAffinityEntryTotal = 0;

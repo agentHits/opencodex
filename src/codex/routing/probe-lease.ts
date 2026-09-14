@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readCodexAccountRecord, type CodexRefreshProvenance } from "../account-store";
+import { isCodexAccountGenerationLive, readCodexAccountRecord, type CodexRefreshProvenance } from "../account-store";
 import { isCodexAccountPaused } from "../account-pause";
 import { isSelectableCodexPoolAccount } from "../account-id";
 import { isAccountNeedsReauth } from "../account-runtime-state";

@@ -14,7 +14,7 @@ import {
 } from "./kiro-usage";
 import { mapQuotaRoster, readProviderApiKeyQuotas, type ProviderApiKeyQuota } from "./quota-key-accounts";
 import type { OcxConfig, OcxProviderConfig } from "../types";
-import type { QuotaFailureCode } from "./quota-types";
+import type { ProviderQuota, QuotaFailureCode } from "./quota-types";
 import {
   accountReportCurrent,
   AUTHORITATIVE_EMPTY_QUOTA,

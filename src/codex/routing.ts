@@ -23,6 +23,7 @@ import {
   type CodexUpstreamOutcomeMeta,
 } from "./routing/cooldown-math";
 import {
+  codexPoolKeyForScope,
   codexQuotaScopeForModel,
   deleteAccountHealth,
   deleteAllScopedHealth,
@@ -55,6 +56,7 @@ import {
   affinityOnNoAccount,
   bindModelDetourAffinity,
   bindThreadAffinity,
+  clearThreadAccountMapForAccount,
   deleteModelDetourAffinity,
   deleteThreadAffinity,
   deleteThreadAffinitiesForAccount,
@@ -93,6 +95,7 @@ import {
   sharedStateSelectionOptions,
   strategySelectionOptionsForModelDetour,
   shouldFailover,
+  peekAlternateCodexAccount,
 } from "./routing/selection";
 import {
   clearAllManualPreferences,

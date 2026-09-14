@@ -1,7 +1,7 @@
 import { resolveProviderApiKey } from "../key-store";
 import { getProviderRegistryEntry, registryEntryForProviderDestination } from "../registry";
 import { isCanonicalOllamaCloudUrl } from "../../adapters/ollama-native-url";
-import { asRecord, normalizePercent, normalizeResetAt, readQuotaJson, REQUEST_TIMEOUT_MS, toFiniteNumber } from "../quota-wire";
+import { QUOTA_JSON_READ_FAILURE, asRecord, normalizePercent, normalizeResetAt, readQuotaJson, REQUEST_TIMEOUT_MS, toFiniteNumber } from "../quota-wire";
 import {
   AUTHORITATIVE_EMPTY_QUOTA,
   hasQuotaRows,
@@ -929,11 +929,11 @@ function quotaResetAt(row: Record<string, unknown>): number | undefined {
   return normalizeResetAt(row.resetTime ?? row.resetAt ?? row.reset_time ?? row.reset_at);
 }
 
-function isCanonicalKimiCodeBaseUrl(baseUrl: string): boolean {
+export function isCanonicalKimiCodeBaseUrl(baseUrl: string): boolean {
   return normalizedBaseUrl(baseUrl) === KIMI_CODE_BASE_URL;
 }
 
-function isCanonicalCommandCodeBaseUrl(baseUrl: string): boolean {
+export function isCanonicalCommandCodeBaseUrl(baseUrl: string): boolean {
   const normalized = normalizedBaseUrl(baseUrl);
   // OAuth preset points at the API root; the Provider-API preset at /provider/v1.
   return normalized === COMMAND_CODE_BASE_URL || normalized === `${COMMAND_CODE_BASE_URL}/provider/v1`;
@@ -1046,7 +1046,7 @@ async function resolveKimiQuotaBearer(config: OcxProviderConfig, accountId?: str
   return primary || null;
 }
 
-async function fetchKimiQuota(provider: string, config: OcxProviderConfig, accessToken: string): Promise<ProviderQuotaReport | null> {
+export async function fetchKimiQuota(provider: string, config: OcxProviderConfig, accessToken: string): Promise<ProviderQuotaReport | null> {
   // Never release credentials to a user-edited or lookalike provider host.
   if (!isCanonicalKimiCodeBaseUrl(config.baseUrl)) return null;
   if (!accessToken) return null;
@@ -1157,7 +1157,7 @@ async function resolveCommandCodeQuotaBearer(config: OcxProviderConfig, accountI
  * usage view uses (windowLimits.fiveHour / windowLimits.weekly), plus soft
  * whoami (team orgId scoping) and subscription-scoped spend for creditsUsd.
  */
-async function fetchCommandCodeQuota(provider: string, config: OcxProviderConfig, bearer: string): Promise<ProviderQuotaProbeResult> {
+export async function fetchCommandCodeQuota(provider: string, config: OcxProviderConfig, bearer: string): Promise<ProviderQuotaProbeResult> {
   // Never release credentials to a user-edited or lookalike provider host.
   if (!isCanonicalCommandCodeBaseUrl(config.baseUrl)) return null;
   if (!bearer) return null;

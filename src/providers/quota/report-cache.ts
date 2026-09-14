@@ -11,14 +11,15 @@ import { CODEX_CAPACITY_MAX_QUOTA_AGE_MS, type CodexCapacityAggregation, type Co
 import { clearCachedProviderQuotas, providerQuotaRoutingBinding, type ProviderQuotaRoutingEvidence } from "../quota-routing-cache";
 import { clearProviderApiKeyQuotaCache } from "../quota-key-accounts";
 import { QUOTA_JSON_READ_FAILURE, readQuotaJson } from "../quota-wire";
-import type { OcxConfig, OcxProviderConfig, ProviderQuota, ProviderRoutingQuota } from "../../types";
+import type { OcxConfig, OcxProviderConfig } from "../../types";
+import type { ProviderQuota, ProviderRoutingQuota } from "../quota-types";
 
 /** Keep a failed probe's previous row at most this long before dropping it. */
 export const LAST_GOOD_MAX_AGE_MS = CODEX_CAPACITY_MAX_QUOTA_AGE_MS;
 const nativeMainReportGenerations = new WeakMap<ProviderQuotaReport, number>();
 export const accountReportCurrent = new WeakMap<ProviderQuotaReport, () => boolean>();
 export const routingEvidence = new WeakMap<ProviderQuotaReport, ProviderQuotaRoutingEvidence>();
-let providerQuotaBeforePublishForTests: (() => void | Promise<void>) | null = null;
+export let providerQuotaBeforePublishForTests: (() => void | Promise<void>) | null = null;
 
 /** Test-only seam for identity/config invalidation after probes but before publication. */
 export function setProviderQuotaBeforePublishForTests(

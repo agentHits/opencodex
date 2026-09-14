@@ -31,7 +31,8 @@ import {
   mayCommitAccountQuotaKey,
   persistAccountQuotaCache,
 } from "./account-cache";
-import type { OcxConfig, OcxProviderConfig, ProviderQuota, ProviderQuotaWindow } from "../../types";
+import type { OcxConfig, OcxProviderConfig } from "../../types";
+import type { ProviderQuota, ProviderQuotaWindow } from "../quota-types";
 
 const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing";
 const XAI_CREDITS_URL = `${XAI_BILLING_URL}?format=credits`;

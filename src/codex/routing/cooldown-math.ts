@@ -4,6 +4,7 @@ import {
   resetAtToMs,
 } from "../quota";
 import { isThirtyDayOnlyCodexPlan } from "../plan";
+import type { CodexQuotaScope } from "./health-store";
 
 export const CODEX_DEFAULT_QUOTA_COOLDOWN_MS = 60_000;
 export const CODEX_MAX_QUOTA_COOLDOWN_MS = 24 * 60 * 60_000;
@@ -255,7 +256,7 @@ export function computeQuotaCooldown(meta: CodexUpstreamOutcomeMeta = {}): {
  * and never shorter than the cooldown the same refusal produced — a Retry-After directive that
  * outlasts every announcement still governs.
  */
-function quotaAvoidUntilFor(meta: CodexUpstreamOutcomeMeta, now: number, cooldownUntil: number): number {
+export function quotaAvoidUntilFor(meta: CodexUpstreamOutcomeMeta, now: number, cooldownUntil: number): number {
   const values = Array.isArray(meta.resetAt) ? meta.resetAt : [meta.resetAt];
   let announced: number | undefined;
   for (const value of values) {
