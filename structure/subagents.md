@@ -42,10 +42,10 @@ The override is applied as a final pass in both `buildCatalogEntries` (live `/v1
 ensures `normalizeRoutedCatalogEntry` (which deletes `multi_agent_version` from routed entries) does
 not clobber the forced value.
 
-`getDefaultConfig()` (`src/config.ts`) writes `multiAgentMode: "v1"` explicitly, using the version
+`getDefaultConfig()` (`src/config/proxy-env.ts`) writes `multiAgentMode: "v1"` explicitly, using the version
 constant from `src/config/multi-agent-surface.ts`, so v1 is the install default while a v2
 native-to-routed child task is undeliverable ciphertext. The repair and salvage merges in
-`src/config.ts` pin `multiAgentMode` and `multiAgentSurfaceAdvisoryVersion` to the stored
+`src/config/diagnostics.ts` pin `multiAgentMode` and `multiAgentSurfaceAdvisoryVersion` to the stored
 document, because spreading the defaults underneath would repair an unrelated missing field
 into a surface change its operator never made.
 An absent key still means `"default"`, because selecting base deletes the key — absence cannot be

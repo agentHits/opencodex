@@ -343,7 +343,7 @@ The historical v1 backup is never overwritten. Restoring the v2 backup intention
 shipped v1 shape; the next startup re-migrates to the same marker-2 bytes.
 
 A pre-existing snapshot that differs from the current config is classified before anything is written
-(`src/config.ts` `classifyOpenAiTierBackup`): a snapshot that parses as a valid pre-migration (v1)
+(`src/config/openai-tier-backup.ts` `classifyOpenAiTierBackup`, re-exported through the `src/config.ts` facade): a snapshot that parses as a valid pre-migration (v1)
 config is a user-intentional rollback point and is copied to a unique
 `config.json.pre-openai-tiers-v1-rollback.<timestamp>.bak` path before startup retries the v2
 migration backup; a snapshot that is unparseable or already tier-v2 is stale and is replaced with a
@@ -470,7 +470,7 @@ Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.
 
 `src/codex/routing/selection.ts` applies optional `codexPool.excludedPlans` to both candidate selection and existing active/affined accounts. An all-excluded pool returns no automatic candidate, including preview and configured-account fallback. Native main remains exempt and unknown plans remain eligible. Explicit account-qualified routes retain pause, credential and entitlement checks while bypassing only this automatic policy.
 
-`src/codex/auth-api.ts` projects `selectionExcludedReason: "plan_excluded"` and `selectionExcludedPlan` from the routing config, even when a newer display-only WHAM plan could not be persisted. The dashboard and account CLI show the policy reason separately from credential health; renewal clears the derived fields. The automatic next-session action and badge are omitted for excluded rows.
+`src/codex/auth-api/account-list.ts` projects `selectionExcludedReason: "plan_excluded"` and `selectionExcludedPlan` from the routing config, even when a newer display-only WHAM plan could not be persisted. The dashboard and account CLI show the policy reason separately from credential health; renewal clears the derived fields. The automatic next-session action and badge are omitted for excluded rows.
 ## Paginated history writer boundary
 `src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](../codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
 
