@@ -2,7 +2,7 @@
 
 How opencodex measures request and stream bytes without allocating copies solely to count
 them. These contracts are shared by request parsing, SSE rewriting, the provider adapters and
-the translator budget, which is why so many documents link here rather than restating them.
+the translator budget, which is why so many documents link here rather than restating them. Cursor's localized native-shell names follow the [routing-commentary guard contract](../providers/cursor.md#cursor-native-exec).
 
 ## Request-copy accounting
 
