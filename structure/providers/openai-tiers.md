@@ -408,6 +408,10 @@ Pool mode needs stable public names and a store that survives concurrent refresh
 - The credential store is generation-guarded and refresh-locked (`src/codex/account-store.ts`): a
   refresh persists only if the generation it started from still holds, and a lost race raises a
   generation-conflict error instead of overwriting the newer credential.
+  The lock is held and released by file identity rather than by path. A lock that exists but is
+  not yet readable counts as held until it ages past the stale window, because its owner creates
+  the file and writes its metadata as two steps, and a holder deletes the lock only while the
+  path still resolves to the file it created.
 
 ## Sidecars, management, and UI
 

@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
@@ -622,6 +622,50 @@ describe("codex-account-store CRUD", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("a refresh lock that is still being initialized is not reclaimed as stale", async () => {
+    const { getValidCodexToken, saveCodexAccountCredential } = await import("../../src/codex/account-store");
+    saveCodexAccountCredential("refresh-empty-lock", { accessToken: "old", refreshToken: "empty-r", expiresAt: 0, chatgptAccountId: "acc" });
+    // The owner creates the lock file and writes its metadata as two steps, so a live lock is
+    // briefly unreadable. Treating that window as stale let a waiter delete a lock whose owner
+    // was still inside its critical section, and both then ran the refresh.
+    const lockPath = refreshLockPathForToken("empty-r");
+    writeFileSync(lockPath, "");
+    let fetchCalls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ access_token: "new", expires_in: 3600 }), { status: 200 });
+    }) as typeof fetch;
+
+    try {
+      const pending = getValidCodexToken("refresh-empty-lock");
+      await new Promise(resolve => setTimeout(resolve, 200));
+      expect(existsSync(lockPath)).toBe(true);
+      expect(fetchCalls).toBe(0);
+      unlinkSync(lockPath);
+      const result = await pending;
+      expect(result.accessToken).toBe("new");
+      expect(fetchCalls).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("releasing a refresh lock leaves a lock another owner recreated in place", async () => {
+    const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
+    const lockKey = "recreated-owner";
+    const lockPath = join(TEST_DIR, `codex-refresh-${createHash("sha256").update(lockKey).digest("hex").slice(0, 32)}.lock`);
+    await withCodexRefreshFileLock(lockKey, new AbortController().signal, async () => {
+      // A waiter reclaimed this path and a second owner took it over while we held it.
+      renameSync(lockPath, `${lockPath}.reclaimed`);
+      writeFileSync(lockPath, JSON.stringify({ acquiredAt: Date.now(), pid: 999_001 }) + "\n");
+    });
+    expect(existsSync(lockPath)).toBe(true);
+    expect((JSON.parse(readFileSync(lockPath, "utf-8")) as { pid: number }).pid).toBe(999_001);
+    unlinkSync(lockPath);
+    unlinkSync(`${lockPath}.reclaimed`);
   });
 
   test("same refresh grant joins a live flight", async () => {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, readFileSync, mkdirSync, openSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, readFileSync, mkdirSync, openSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ConfigMutationLockError,
@@ -612,7 +612,14 @@ function isRefreshLockStale(path: string): boolean {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as { acquiredAt?: unknown };
     return typeof parsed.acquiredAt !== "number" || Date.now() - parsed.acquiredAt > REFRESH_LOCK_STALE_MS;
   } catch {
-    return true;
+    // The owner creates the file and writes its metadata in two steps, so a live lock is
+    // briefly unreadable. Age the file itself instead of calling that window stale, which
+    // let a waiter delete a lock whose owner was still inside its critical section.
+    try {
+      return Date.now() - statSync(path).mtimeMs > REFRESH_LOCK_STALE_MS;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -648,9 +655,21 @@ export async function withCodexRefreshFileLock<T>(lockKey: string, signal: Abort
   try {
     return await fn();
   } finally {
-    if (fd != null) closeSync(fd);
+    // Release only the lock this call created. If a waiter reclaimed the path as stale and a
+    // new owner recreated it, unlinking by name would delete the live lock of that owner.
+    let owned: { dev: number; ino: number } | null = null;
+    if (fd != null) {
+      try {
+        const info = fstatSync(fd);
+        owned = { dev: info.dev, ino: info.ino };
+      } catch {
+        owned = null;
+      }
+      closeSync(fd);
+    }
     try {
-      unlinkSync(path);
+      const current = statSync(path);
+      if (!owned || (current.dev === owned.dev && current.ino === owned.ino)) unlinkSync(path);
     } catch (err) {
       if (errCode(err) !== "ENOENT") throw err;
     }
