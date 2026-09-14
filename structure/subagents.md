@@ -1,5 +1,7 @@
 # Subagents And Multi-Agent Surface
 
+Catalog HTTP acquisition follows the [proxy-routing contract](catalog.md#remote-catalog-http-proxy-routing).
+
 ## Plaintext V2 agent messages
 
 `src/responses/plaintext-v2-agent-messages.ts` owns the experimental, configuration-only
