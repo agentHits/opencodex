@@ -5,6 +5,7 @@ import { COMBO_NAMESPACE } from "../../combos";
 import {
   CODEX_CUSTOM_MODEL_CATALOG_KIND,
   applyCatalogMetadata,
+  applyNativeOpenAiContextOverride,
   applyRoutedCodexToolMode,
   catalogModelSlug,
   ensureStrictCatalogFields,
@@ -13,7 +14,6 @@ import {
 } from "./parsing";
 import type { CatalogModel, RawEntry } from "./parsing";
 import {
-  applyNativeOpenAiContextOverride,
   hasNativeOpenAiCapabilityMetadata,
   upstreamNativeEntry,
   type NativeContextLimitsInput,

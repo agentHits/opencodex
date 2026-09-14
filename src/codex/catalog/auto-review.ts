@@ -4,6 +4,7 @@ import { encodeRoutedModelId } from "../../providers/slug-codec";
 import { canonicalAutoReviewModelKey, isValidAutoReviewModel as isValidAutoReviewTarget } from "../../config/provider-validation";
 import { readConfiguredAutoReviewModel } from "./parsing";
 import type { RawEntry } from "./parsing";
+import { configuredCatalogEntry } from "./subagent-roster";
 
 const AUTO_REVIEW_ROOT_MARKER = "opencodex_auto_review_root";
 

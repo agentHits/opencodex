@@ -1,4 +1,5 @@
-import { loadConfig, shouldSyncCodexOnStart } from "../../config";
+import { loadConfig } from "../../config";
+import { shouldSyncCodexOnStart } from "../desired-state";
 import { withCatalogWriteSerialization } from "../catalog-write-serialization";
 import { restoreCodexCatalogWithPermit } from "../catalog/sync";
 import { withCodexWriteLock, CodexWriteLockSkipped } from "../codex-write-lock";

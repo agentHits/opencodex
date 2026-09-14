@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { loadConfig, websocketsEnabled } from "../../config";
 import { shouldSyncCodexOnStart } from "../desired-state";
 import { legacyCustomModelCatalogSlugs } from "../custom-model-catalog-migration";
-import { activeCodexModelsCachePath, getCodexHome, readCodexCatalogPath, readCodexCatalogPathForHome } from "../paths";
+import { getCodexHome } from "../paths";
 import type { OcxConfig } from "../../types";
 import { pendingModelSelectionProviders } from "../../providers/initial-model-selection";
 import { OPENAI_CODEX_PROVIDER_ID } from "../../providers/openai-tiers";
@@ -21,6 +21,7 @@ import {
 import { isAccountNeedsReauth } from "../account-runtime-state";
 import { codexRuntimeStatePath } from "../runtime";
 import {
+  activeCodexModelsCachePath,
   catalogBackupPathFor,
   catalogHasRoutedEntries,
   findNativeTemplate,
@@ -29,6 +30,8 @@ import {
   legacyCatalogBackupPath,
   readCatalog,
   readCatalogBackup,
+  readCodexCatalogPath,
+  readCodexCatalogPathForHome,
   readNativeBaseline,
 } from "./parsing";
 import type { CatalogModel, MultiAgentMode, RawCatalog, RawEntry } from "./parsing";
@@ -41,9 +44,9 @@ import {
   observedReserveCatalogSource,
   shouldIncludeAccountBoundNativeOpenAi,
   shouldIncludeNativeOpenAi,
-  trustedAccountBoundNativeCatalogSlug,
   upstreamNativeEntry,
 } from "./metadata";
+import { trustedAccountBoundNativeCatalogSlug } from "./account-models";
 import { bundledCatalogCacheState, loadBundledCodexCatalog } from "./bundled";
 import { isMultiAgentV2Enabled } from "../features";
 import { clampCatalogModelsToCodexSupport } from "./effort";
