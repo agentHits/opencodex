@@ -1,4 +1,4 @@
-import { saveConfigPreservingClaudeCode } from "../config";
+import { saveConfigPreservingClaudeCode } from "../../config";
 import { clearCodexAccountPin, pinnedCodexAccountId } from "../account-priority";
 import {
   POOL_KEY_CODEX,
