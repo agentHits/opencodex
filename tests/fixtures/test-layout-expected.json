@@ -1195,6 +1195,7 @@
   "usage-log.test.ts": "usage",
   "usage-provider-label.test.ts": "usage",
   "usage-shape-extraction.test.ts": "usage",
+  "usage-spend-cache-provenance.test.ts": "usage",
   "usage-summary.test.ts": "usage",
   "usage-surfaces.test.ts": "usage",
   "usage-time-range.test.ts": "usage",
@@ -1280,5 +1281,6 @@
   "main-device-reauth-ui.test.ts": "gui",
   "adapter-input-media-guard.test.ts": "adapters",
   "chat-media-translation.test.ts": "responses",
-  "execution-budget-permits.test.ts": "lib"
+  "execution-budget-permits.test.ts": "lib",
+  "spend-instrumentation-log.test.ts": "server"
 }
