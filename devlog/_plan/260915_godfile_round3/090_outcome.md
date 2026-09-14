@@ -35,3 +35,11 @@
 `000_plan.md`가 `auth-api.ts`의 credential 이동에 "별도 검토 기록"을 요구했다. 그 기록은 [`#4655`의 통합 코멘트](https://github.com/lidge-jun/opencodex/pull/4655#issuecomment-5670986566)에 있다. access·refresh 토큰이 라우트 모듈에 도달하지 않고, Pool/Direct/API-key 조기 반환 술어 두 개가 한 게이트 모듈에 함께 남았으며, 로직 변경 없이 위치만 이동했다는 내용이다.
 
 자동 리뷰어는 이 PR들을 보지 않았다. CodeRabbit은 base가 기본 브랜치가 아니면 auto review를 건너뛰고, `#4658`의 base는 `codex/m3-l1-roadmap`이었다. 그래서 이 단위의 코드 검토는 hosted CI와 위 독립 감사가 전부다.
+
+## 감사에서 나온 산출물
+
+이 라운드와 직전 라운드가 같은 결함으로 CI를 깼다. 리프가 원본보다 한 단계 깊어졌는데 상대 경로를 그대로 들고 간 것이다. 1라운드에서는 `src/codex/routing/active-account.ts`의 `../config`가 존재하지 않는 `src/codex/config`로 해석돼 routing 그래프를 로드하는 테스트 샤드가 전부 import 시점에 죽었고, 2라운드에서는 `src/config/schema/config-schema.ts`의 인라인 `import("./types")`가 같은 이유로 어긋났다. 둘 다 파서에도, export 표면 대조에도, diff를 읽는 사람에게도 보이지 않는다. 지정자 자체는 문법적으로 멀쩡하고 해석만 실패하기 때문이다.
+
+저장소에 그걸 막는 검사가 없어서 `tests/ci-workflows/repo-import-resolution.test.ts`를 만들었다. `src/`와 `gui/src`의 모든 상대 지정자를 전수 해석해 어긋난 것을 경로와 함께 노출하고, 알려진 miss로 적색 구동해 빈 목록이 무의미하지 않음을 증명한다. 해석 기계는 `tests/helpers/import-graph.ts`의 `resolveSpec`을 재사용한다. 그 파일이 스스로 적어둔 이유 그대로다 — 사본은 원본이 흔들릴 때 같이 실패하지 못한다.
+
+범위는 재어서 정했다. `tests/`와 `scripts/`까지 넓히자 59건이 잡혔는데 전부 오탐이었다. 소스 오라클이 자식 프로세스에 넘기는 문자열 안에 프로덕션 경로를 적어두기 때문이다. 한 테스트에 `"./src/config.ts"`가 세 번 나오는데 그 파일은 그걸 import하지 않는다. 정적 매처는 그 둘을 구별할 수 없고, 59번 잘못 우는 가드는 누군가 지우는 가드다. `gui/src`를 넣을 때는 반대 방향으로 346건이 나왔는데, 공용 해석기가 `.tsx`를 시도하지 않아서였다. 프록시 런타임에는 JSX가 없으니 런타임 규칙으로는 맞다. 확장자 후보는 표면을 아는 호출자가 정하는 게 맞다는 뜻이다.
