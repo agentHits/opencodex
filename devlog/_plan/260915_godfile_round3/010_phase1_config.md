@@ -2,6 +2,9 @@
 
 src/config.ts 4,799줄(기준 트리 ce0ac617da)이 스키마·로드 열화·salvage·잠금·치환 쓰기·라이브 재결합을 한 파일에 들고 있어 래칫 이후에도 2,000줄을 넘긴다. 이 문서는 `devlog/_plan/260914_godfile_round2/050_phase5_config.md`를 대체하는 복붙 가능한 이동 계약이다. 그 라운드가 dev에서 이 파일에 +92줄(#4546/#4624 credentialGroups)을 더했으므로 모든 원본 행 번호를 이 트리에서 다시 잡았다. 구현자는 아래 원본 행을 새 리프로 옮기고 파사드가 기존 export 이름을 그대로 다시보내며, 소비자는 import 경로를 건드리지 않는다. create-only 경로 initializePersistedConfigIfMissing와 치환 경로 saveConfig는 공용 헬퍼로 합치지 않고 잔여 파사드에 함께 남기고, 경고 메모 세 값은 warn-memo 단일 소유 모듈로 먼저 분리하며, configSchema는 키 그룹으로 쪼개지 않는다. PR 순서는 실제 의존(salvage→schema, diagnostics→salvage/load-degrade, live-reconcile→persist)을 따라 warn-memo·독립 잎 → schema → salvage+load-degrade → mutation-lock+persist-unlocked+diagnostics → live-reconcile로 고정했다.
 
+> 전달 형태 정정: 이 문서가 적은 브랜치 이름과 PR 개수는 실행되지 않았다. 다섯 파일이 한 워킹트리에서 동시에 작업돼 두 개의 PR로 수렴했다. 이동 계약과 함정 항목은 그대로 실행됐다. 실제 전달은 [090_outcome.md](./090_outcome.md) 를 보라.
+
+
 브랜치 `codex/m3-l6-config`, base는 라운드3 체인의 직전 링크(라운드3 000_plan 확정 시 따름). 순수 이동, 동작 변경 없음. 로컬 스위트·typecheck·build는 이 단위 금지(hosted CI). 새 테스트 파일을 만들지 않으므로 layout.json과 test-layout-expected.json은 등록하지 않는다. 기준 트리 ce0ac617da(origin/dev ce0ac617da), 파일 4,799줄 실측. 열린 PR 충돌은 순서에서 제외한다.
 
 ## 260914 050 대비 재계측 (dev +92줄의 정체)

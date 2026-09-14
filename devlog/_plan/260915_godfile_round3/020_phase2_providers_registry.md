@@ -2,6 +2,9 @@
 
 이 문서는 `src/providers/registry.ts`(3,744줄)를 facade 보존 순수 이동으로 네 개의 리프(`registry/types.ts`, `registry/model-seeds.ts`, `registry/entries-core.ts`, `registry/entries-extended.ts`)와 잔여 facade로 나누는 계약이다. 이 파일은 로직 5.4%(203줄)와 provider 엔트리 93개(배열 본문 2,241줄), 공유 시드 상수(906줄), 타입(349줄)으로 이뤄져 있고 모듈 스코프 가변 바인딩이 0개다. 분해 후에도 소비자 52곳은 기존 facade 경로를 그대로 import하고, 배열 순서와 엔트리 객체 아이덴티티는 원본과 동일하게 유지된다. 단일 어댑터 생성 권한은 `src/adapters/registry.ts`에 그대로 두며 이 단위는 그 파일을 건드리지 않는다.
 
+> 전달 형태 정정: 이 문서가 적은 브랜치 이름과 PR 개수는 실행되지 않았다. 다섯 파일이 한 워킹트리에서 동시에 작업돼 두 개의 PR로 수렴했다. 이동 계약과 함정 항목은 그대로 실행됐다. 실제 전달은 [090_outcome.md](./090_outcome.md) 를 보라.
+
+
 로프 위치: 라운드 lane의 phase 2. 브랜치는 phase 안에서 3개로 쌓는다 — `codex/m3-l2-registry-types` → `codex/m3-l2-registry-seeds` → `codex/m3-l2-registry-entries`. 최하단 base는 phase 1(010 문서) head이고 lane bottom은 `codex/m3-l1-roadmap`(origin/dev `ce0ac617da` 기준)이다. 010 문서가 lane 명명과 skip-ci 정책을 소유하며 이 문서와 충돌하면 000/010을 따른다. 로컬 install/build/typecheck/suite는 NOT RUN이고 모든 검증은 hosted CI(레인 tip exact-head)다. 새 테스트 파일을 만들지 않으므로 `scripts/test-layout/layout.json`과 `tests/fixtures/test-layout-expected.json`은 등록하지 않는다.
 
 ## 단일 생성 권한 계약 (실측 근거)

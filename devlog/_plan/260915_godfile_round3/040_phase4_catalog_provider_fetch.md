@@ -2,6 +2,9 @@
 
 provider-fetch.ts 2,944줄은 카탈로그의 "살아있는 발견" 전부 — gather single-flight, 인증 캡처, 모델 API 파싱, 콤보 합성, 설정 힌트 병합 — 를 한 파일에 쌓아 올린 파일이다. 이 문서는 그것을 상태 소유권이 겹치지 않는 6개 리프로 나눈 원본 행 범위, 예상 줄 수, PR별 write set, 재수출, 주석 오라클 패치를 복붙 실행 가능하게 고정한다. 실행자는 이 순서대로만 옮기고, 소비자(convergence, retained-sync, build-entries, management 서버, CLI)는 facade 경로를 유지하므로 아무것도 바뀌지 않으며, 마지막 PR에서 provider-fetch.ts는 sync.ts 52줄 선례와 같은 named re-export 전용 파사드가 된다.
 
+> 전달 형태 정정: 이 문서가 적은 브랜치 이름과 PR 개수는 실행되지 않았다. 다섯 파일이 한 워킹트리에서 동시에 작업돼 두 개의 PR로 수렴했다. 이동 계약과 함정 항목은 그대로 실행됐다. 실제 전달은 [090_outcome.md](./090_outcome.md) 를 보라.
+
+
 기준 트리: 작업 디렉터리 `/Users/jun/.codex/worktrees/5880/opencodex`, 브랜치 `codex/m3-l1-roadmap`, `origin/dev` `ce0ac617da`, HEAD `ce0ac617da`. 이 문서의 모든 행 번호는 그 HEAD에서 `wc -l`과 `rg -n`으로 실측한 값이다. PR1 base는 L4 체인 tip(`codex/m3-l4-auth-api`)이고 PR6 head가 사이클 4 tip(`codex/m3-l5-provider-fetch`)이다. 앞선 PR이 줄을 지운 뒤에는 sed 범위가 아니라 심볼 표가 권위다. 로컬 install/build/test는 하지 않는다. 로컬 검증은 `/tmp/m3_verify.ts`(`000_plan.md` 정의) 하나이고 나머지는 hosted exact-head CI다.
 
 순수 이동. 동작 변경 금지. 원본 경로 facade 재수출 필수.

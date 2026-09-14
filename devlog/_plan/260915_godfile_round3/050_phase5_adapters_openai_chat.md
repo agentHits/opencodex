@@ -2,6 +2,9 @@
 
 src/adapters/openai-chat.ts 2,234줄이 요청 직렬화·passthrough·오류 본문 추출·SSE 스트림 해석·도구 스키마 정규화(zen/azure/moonshot/volcengine/xai)·메시지 변환을 한 파일에 들고 있어 래칫 기준 1,999줄을 넘긴다. 이 문서는 그 파일을 4개 PR로 줄이는 복붙 가능한 이동 계약이다. 구현자는 아래 원본 행 범위를 새 리프로 옮기고, 파사드는 createOpenAIChatAdapter 본문과 현행 공개 export 4종을 그대로 유지하며, 소비자(registry·mimo-free·openai-responses·chat-native·src/index·lab executor)는 import 경로를 건드리지 않는다. 상태는 오직 파사드 팩토리 클로저의 lastRequestedModelId 한 개뿐이고, 이동은 순수 잘라 붙이기다. translator budget 위치 인자 계약과 reasoning-replay 소스 오라클 승계, 라운드 2에서 CI가 실제로 잡은 5종 결함(리프 미export·파사드 로컬 import 누락·타입 오import·정의 소실·상대 경로 깊이 오류)에 대한 예방 항목을 포함한다.
 
+> 전달 형태 정정: 이 문서가 적은 브랜치 이름과 PR 개수는 실행되지 않았다. 다섯 파일이 한 워킹트리에서 동시에 작업돼 두 개의 PR로 수렴했다. 이동 계약과 함정 항목은 그대로 실행됐다. 실제 전달은 [090_outcome.md](./090_outcome.md) 를 보라.
+
+
 브랜치는 round3 레인 패턴을 따르는 `codex/m3-l6-adapters-chat`(round2 기준 phase5=여섯 번째 링크. 레인 명칭 확정은 round3 000_plan 소유이며, 확정되면 그 이름을 따른다). base는 round3 레인에서 바로 앞 링크의 head이고, 레인 밖 기준 트리는 origin/dev ce0ac617da이다(이 문서의 실측 HEAD와 동일 커밋). 순수 이동, 동작 변경 없음. 로컬 스위트·typecheck·build·install은 이 단위 금지(hosted CI). 새 테스트 파일을 만들지 않으므로 layout.json과 tests/fixtures/test-layout-expected.json은 등록하지 않는다. 기준 파일 2,234줄.
 
 ## 실측 기록 (이 트리, ce0ac617da)
