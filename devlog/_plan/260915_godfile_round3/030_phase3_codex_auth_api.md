@@ -2,6 +2,9 @@
 
 이 단위는 facade 보존 순수 이동으로 `src/codex/auth-api.ts`(3,134줄, 실측 HEAD `ce0ac617da`)를 `src/codex/auth-api/` 아래 10개 리프 모듈로 나누고, 원래 경로는 전량 re-export facade로 남겨 소비자 import를 바꾸지 않는다. 최대 함수 `handleCodexAuthAPI`(2217-3134, 918줄)는 22개 경로 가드로 23개 (method, path) 관리 라우트를 디스패치하며(`/api/codex-auth/pool-strategy` 가드 하나가 PUT과 PATCH 두 쌍을 등록한다), 분해 후 이 함수는 서비스 모듈 호출로만 구성된다. 이 문서의 계약은 보안 경계다. accessToken/refreshToken은 main-probe·pool-probe·reset-credit·login-flow 네 리프 안에만 존재하고 라우트 모듈과 facade를 통과하지 않으며, Pool/Direct/API-key 조기 반환 술어 두 곳(1699-1702, 1834-1839)은 한 모듈에 함께 둔다. 9개 PR 중 6개는 AGENTS.md 심사 경계(인증·credential·OAuth 표면)에 따라 보안 검토가 필요하고 나머지 3개는 순수 이동임을 각 PR 표기로 명시한다.
 
+> 전달 형태 정정: 이 문서가 적은 브랜치 이름과 PR 개수는 실행되지 않았다. 다섯 파일이 한 워킹트리에서 동시에 작업돼 두 개의 PR로 수렴했다. 이동 계약과 함정 항목은 그대로 실행됐다. 실제 전달은 [090_outcome.md](./090_outcome.md) 를 보라.
+
+
 로프 위치: 레인·브랜치 배치는 `000_plan.md`가 소유하며 이 문서는 파일 분해 계약만 고정한다. 모든 원본 행 번호는 브랜치 `codex/m3-l1-roadmap` HEAD `ce0ac617da`(origin/dev와 동일) 실측값이다. 로컬 install/build/typecheck/suite는 NOT RUN이고 검증은 hosted CI(레인 tip exact-head)다. 새 테스트 파일을 만들지 않으므로 `scripts/test-layout/layout.json:427`의 기존 `codex-auth-api.test.ts` 항목과 `tests/fixtures/test-layout-expected.json` 등록은 변경하지 않는다.
 
 ## 범위와 비범위
