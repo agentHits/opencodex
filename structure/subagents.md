@@ -68,7 +68,7 @@ v2. An explicit attempt to enable the global flag while the hybrid pin is active
 
 ### What the five-model `spawn_agent` window is, and how V1 differs from V2
 
-`MAX_SPAWN_AGENT_MODEL_OVERRIDES = 5` (mirrored in `src/codex/catalog/sync.ts`) is **not** a
+`MAX_SPAWN_AGENT_MODEL_OVERRIDES = 5` (mirrored in `src/codex/catalog/subagent-roster.ts`) is **not** a
 subagent concurrency limit and **not** an eligibility limit. Upstream uses it in exactly two
 places: the model list rendered into the `spawn_agent` tool description
 (`multi_agents_spec.rs:789`) and the "Available models:" suggestions in an unknown-model error

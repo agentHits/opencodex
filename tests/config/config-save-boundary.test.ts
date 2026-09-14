@@ -20,6 +20,7 @@ const GUARDED_FILES = [
   "providers/api-keys.ts",       // request-path + management key pool
   "providers/key-failover.ts",   // 429 rotation, reached mid-turn with no user action
   "codex/routing.ts",            // account auto-switch during a turn
+  "codex/routing/active-account.ts", // setActiveCodexAccount moved here in the routing split
   "codex/auth-api.ts",           // runtime account/quota persistence
   "cli/claude-desktop.ts",       // CLI against a running service
   "server/management-api.ts",
