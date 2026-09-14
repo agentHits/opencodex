@@ -7,6 +7,8 @@ Connected-client catalog diagnostics use the [terminal rendering contract](runti
 
 Hub management ingress also selects the [local dashboard address](runtime.md#hub-management-dashboard-address) using its configured port.
 
+The Codex restart command follows the [CLI restart scope contract](runtime.md#cli-codex-restart-scope).
+
 ## Config surface
 
 ### OpenCodex home and live process state

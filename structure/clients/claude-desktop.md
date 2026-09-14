@@ -12,6 +12,8 @@ Claude-only connections keep their existing non-failing readiness policy; displa
 
 The hub-side CLI dashboard uses the [management ingress address](../runtime.md#hub-management-dashboard-address); this does not change connected Desktop profile endpoints.
 
+The Codex restart command follows the [CLI restart scope contract](../runtime.md#cli-codex-restart-scope).
+
 ## Connected Claude Desktop profiles
 
 The connection's local Codex readiness check follows the [selected-runtime probe contract](../runtime.md#remote-hub-hardening-ownership); general status hands its resolved command to this check instead of probing the version twice.
