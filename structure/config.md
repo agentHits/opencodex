@@ -180,6 +180,11 @@ in the same pass. With the relabel stood down, a table the home already publishe
 write, so those conversations keep a provider id that exists. Paginated rollout bytes and thread
 rows are never modified in this state.
 
+Retention is decided before the candidate witness. If pagination first appears during the
+artifact transaction while a loopback candidate would remove an existing table, injection
+refuses and compensates config/profile/journal instead of committing an orphaned provider
+reference. A candidate already using provider-table mode can still finish without relabeling.
+
 Treating the refusal as a veto is what made every current Codex home unusable: paginated
 rollouts refuse unconditionally, so `model_catalog_json` never reached config.toml and both the
 app and the CLI fell back to their built-in model list. `ocx sync` reported success anyway,

@@ -1220,14 +1220,19 @@ async function injectCodexConfigImpl(
    */
   /*
    * Re-observed inside the artifact transaction. A store that migrates to paginated history
-   * mid-write retires the relabel unit, because the config half writes no history and rolling
-   * it back is what left every paginated home with no OpenCodex models. Any other reason is
-   * still treated as a failed transition so compensation can restore the pre-images.
+   * mid-write can retire the relabel unit only while its already-admitted candidate leaves
+   * existing provider references resolvable. A candidate that removes the old provider table
+   * needs compensation; adding it after witness construction would change admitted bytes.
    */
   const observeHistoryRefusalOrThrow = (known: string | null): string | null => {
     if (known) return known;
     const observed = historyPreflight();
     if (observed && observed !== HISTORY_RELABEL_STANDS_DOWN) throw new CodexHistoryPreflightRefusal(observed);
+    if (observed === HISTORY_RELABEL_STANDS_DOWN && hadOcxProviderTableOnDisk && !providerTableMode) {
+      // Pagination appeared after retention was decided. Skipping relabel while publishing
+      // this table-removing candidate would orphan the still-opencodex conversations.
+      throw new CodexHistoryPreflightRefusal(observed);
+    }
     return observed;
   };
   const observedHistoryRefusal = historyPreflight();

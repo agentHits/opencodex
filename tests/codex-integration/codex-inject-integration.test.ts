@@ -163,6 +163,65 @@ describe("injectCodexConfig integration (Design B)", () => {
     });
   });
 
+  test.each([
+    ["before-preflight", false, false],
+    ["after-preflight", false, false],
+    ["after-config", false, false],
+    ["after-artifacts", false, false],
+    ["after-config", true, false],
+    ["after-config", false, true],
+  ] as const)("late pagination preserves an existing provider (%s, coordinated=%s, authless=%s)", (stage, coordinated, authless) => {
+    const original = 'model_provider="opencodex"\n[model_providers.opencodex]\nname="OpenCodex"\nbase_url="http://127.0.0.1:10100/v1"\nwire_api="responses"\nrequires_openai_auth=true\n';
+    const configPath = join(codexHome, "config.toml");
+    const profilePath = join(codexHome, "opencodex.config.toml");
+    writeFileSync(configPath, original);
+    if (!coordinated) writeFileSync(profilePath, "# original profile\n");
+    if (coordinated) {
+      writeFileSync(configPath, 'model="test"\n');
+      const seed = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
+      expect(seed.status).toBe(0);
+      expect(JSON.parse(seed.stdout).success).toBe(true);
+    }
+    const journalPath = join(codexHome, "opencodex-journal.json");
+    const before = [configPath, profilePath, journalPath].map(path => existsSync(path) ? readFileSync(path, "utf8") : null);
+    const script = `
+      const {Database}=require("bun:sqlite");
+      const {join}=require("node:path");
+      const {injectCodexConfig,setBeforeHistoryArtifactCommitForTests,setHistoryArtifactStageForTests}=require("./src/codex/inject");
+      const migrate=()=>{
+        const db=new Database(join(process.env.CODEX_HOME,"state_5.sqlite"));
+        db.run("CREATE TABLE threads (rollout_path TEXT, model_provider TEXT, history_mode TEXT)");
+        db.run("INSERT INTO threads VALUES (\'fixture\',\'opencodex\',\'paginated\')");
+        db.close();
+      };
+      let kind;
+      setBeforeHistoryArtifactCommitForTests(value=>{kind=value;if(${JSON.stringify(stage)}==="before-preflight")migrate();});
+      setHistoryArtifactStageForTests(value=>{if(value===${JSON.stringify(stage)})migrate();});
+      const readState=${coordinated ? 'require("./src/codex/transition-state").readCodexTransitionState' : "()=>null"};
+      const before=readState();
+      const result=await injectCodexConfig(10100,{codexDesktopAuthless:${authless}});
+      console.log(JSON.stringify({kind,result,before,after:readState()}));
+    `;
+    const child=spawnSync(process.execPath,["--eval",script],{cwd:repoRoot,env:{...process.env,CODEX_HOME:codexHome,OPENCODEX_HOME:ocxHome},encoding:"utf8",timeout:SPAWN_BUDGET_MS-5000});
+    expect(child.status, child.stderr).toBe(0);
+    const value = JSON.parse(child.stdout);
+    expect(value.kind, child.stdout).toBe(coordinated ? "coordinated" : "legacy-uncoordinated");
+    expect(value.result).toMatchObject({success:authless,historyPreflightFailureReason:"history_paginated_requires_native_writer"});
+    if (authless) {
+      const config = Bun.TOML.parse(readFileSync(configPath,"utf8")) as any;
+      expect(config.model_provider).toBe("opencodex");
+      expect(config.model_providers.opencodex.base_url).toBe("http://127.0.0.1:10100/v1");
+      expect(readFileSync(profilePath,"utf8")).not.toBe(before[1]);
+    } else {
+      expect([configPath, profilePath, journalPath].map(path => existsSync(path) ? readFileSync(path, "utf8") : null)).toEqual(before);
+      expect(value.after).toEqual(value.before);
+    }
+    const db = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
+    try {
+      expect(db.query("SELECT model_provider FROM threads").get()).toEqual({model_provider:"opencodex"});
+    } finally { db.close(); }
+  });
+
   for (const stage of ["before-preflight", "after-preflight", "after-config", "after-artifacts"]) {
   test.each([false,true])(`a store that migrates mid-transaction retires the relabel unit and keeps the config (${stage}, legacy=%s)`,(legacy)=>{
     const original=legacy ? DESIGN_B_BLOCK+"\n" : 'model="test"\n';
@@ -192,7 +251,7 @@ describe("injectCodexConfig integration (Design B)", () => {
     const value=JSON.parse(child.stdout);
     expect(value.kind).toBe(legacy?"legacy-uncoordinated":"coordinated");
     // A migration observed at ANY point in the transaction stands the relabel unit down and
-    // says so. It never rolls the config back: the config half writes no history, and
+    // says so. With no prior provider table to retire, it need not roll the config back:
     // rolling it back is what left every paginated home with no OpenCodex models at all.
     expect(value.result).toMatchObject({success:true,historyPreflightFailureReason:"history_paginated_requires_native_writer"});
     expect(value.result.message).toContain("left to Codex's native writer");
