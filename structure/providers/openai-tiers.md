@@ -546,8 +546,8 @@ consulted, and they run in `resolveCodexAccountForThreadDetailed` ahead of it. A
 with no recorded refusal is deliberately not a release path on its own — stickiness until the
 account actually refuses is intended — but it does surrender the binding as soon as a sibling with
 headroom exists. Unbound assignment is untouched and still takes the coolest eligible account,
-because a fresh request has no warm prefix to lose. `pool.cacheAffinity` remains the stronger
-opt-in, raising the bar from the threshold to genuine exhaustion.
+because a fresh request has no warm prefix to lose. `pool.cacheAffinity` is enabled by default,
+raising the bar from the threshold to genuine exhaustion.
 
 Two call sites need the rule — the live path in `reevaluateAffinityQuota` and the side-effect-free
 `previewReusableAffinityAccount` that subagent fallback reads — and they share one helper rather
