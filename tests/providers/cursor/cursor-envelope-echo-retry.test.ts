@@ -211,12 +211,20 @@ describe("cursor external output quarantine + corrective retry (devlog 260826 ga
     expect(contextFree.finish().kind).toBe("flush");
   });
 
-  test.each(["네이티브 셸", "네이티브 쉘", "네이티브셸", "네이티브\t쉘"])(
+  test.each(["네이티브 셸", "네이티브 쉘", "네이티브셸", "네이티브\t쉘", "“네이티브 셸”", "(네이티브쉘)"])(
     "localized shell requires a redirect or a second distinct tool (%s)", nativeShell => {
       const redirect = new CursorRoutingCommentarySniffer();
       expect(redirect.feed(`${nativeShell}이 차단되어 exec_command로 전환합니다.`).kind).toBe("hallucination");
       const distinct = new CursorRoutingCommentarySniffer();
       expect(distinct.feed(`${nativeShell}과 Read가 모두 unavailable 상태입니다.`).kind).toBe("hallucination");
+    },
+  );
+
+  test.each(["비네이티브 셸", "비네이티브쉘", "x네이티브 셸", "_네이티브쉘", "1네이티브 셸", "a\u0301네이티브 셸"])(
+    "embedded Korean shell wording does not fabricate a second tool (%s)", nativeShell => {
+      const sniffer = new CursorRoutingCommentarySniffer();
+      expect(sniffer.feed(`${nativeShell} 관련 Read가 unavailable 상태입니다.`).kind).toBe("hold");
+      expect(sniffer.finish().kind).toBe("flush");
     },
   );
 
