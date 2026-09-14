@@ -59,9 +59,52 @@ type ThreadAffinityEntry = {
 };
 
 export type CodexThreadResolution =
-  | { status: "selected"; accountId: string }
-  | { status: "none" }
-  | { status: "expired"; accountId: string };
+  | { status: "selected"; accountId: string; affinity?: CodexAffinityDecision }
+  | { status: "none"; affinity?: CodexAffinityDecision }
+  | { status: "expired"; accountId: string; affinity?: CodexAffinityDecision };
+
+/** What happened to this thread's binding on this request (#4546). */
+export type CodexAffinityMove =
+  /** Served by its own bound account, which was healthy. */
+  | "reused"
+  /** Served by its own bound account while something transient was wrong with it. */
+  | "held"
+  /** Served by another account while the binding stayed put. */
+  | "detour"
+  /** The binding was released and a different account took the thread. */
+  | "rebound"
+  /** There was no live binding; this request established one. */
+  | "new_bind"
+  /** The binding was released without a replacement on this request. */
+  | "cleared";
+
+/**
+ * Why. A move is the expensive event -- it discards the prompt-cache prefix warmed on the old
+ * account -- so the operator should not have to infer it from account labels across log lines,
+ * which is how #4546 had to be diagnosed.
+ */
+export type CodexAffinityReason =
+  | "healthy"
+  | "quota_headroom"
+  | "quota_refusal"
+  | "transient"
+  | "transient_hold_expired"
+  | "unusable"
+  | "generation"
+  | "expired"
+  | "model_lane";
+
+export interface CodexAffinityDecision {
+  move: CodexAffinityMove;
+  reason: CodexAffinityReason;
+}
+
+/** The decision to report once a binding has been released and selection starts over. */
+function affinityAfterRelease(releaseReason: CodexAffinityReason | undefined): CodexAffinityDecision {
+  return releaseReason === undefined
+    ? { move: "new_bind", reason: "healthy" }
+    : { move: "rebound", reason: releaseReason };
+}
 
 /**
  * Process-local cursor for automatic RR/fill-first (and quota-429 when not
@@ -360,15 +403,44 @@ export function clearThreadAccountMap(): void {
   threadAffinityEntryTotal = 0;
 }
 
-export function clearThreadAccountMapForAccount(accountId: string): void {
+export function clearThreadAccountMapForAccount(
+  accountId: string,
+  reason: CodexAffinityReason = "unusable",
+): void {
   for (const [threadId, affinities] of threadAccountMap) {
     for (const [scope, entry] of affinities) {
       if (entry.accountId === accountId && affinities.delete(scope)) {
         threadAffinityEntryTotal = Math.max(0, threadAffinityEntryTotal - 1);
+        notePendingReleaseReason(threadId, reason);
       }
     }
     if (affinities.size === 0) threadAccountMap.delete(threadId);
   }
+}
+
+/**
+ * Why a binding was released, held until that thread's next resolve can report it (#4546).
+ *
+ * A release and the request that pays for it are two different moments: a 429 clears the pin
+ * inside the outcome recorder, and the next request arrives with nothing left to explain why it
+ * is starting cold. Bounded, because it is a diagnostic and must not become a leak.
+ */
+const pendingReleaseReasons = new Map<string, CodexAffinityReason>();
+const MAX_PENDING_RELEASE_REASONS = 4096;
+
+function notePendingReleaseReason(threadId: string, reason: CodexAffinityReason): void {
+  if (!pendingReleaseReasons.has(threadId) && pendingReleaseReasons.size >= MAX_PENDING_RELEASE_REASONS) {
+    const oldest = pendingReleaseReasons.keys().next();
+    if (!oldest.done) pendingReleaseReasons.delete(oldest.value);
+  }
+  pendingReleaseReasons.set(threadId, reason);
+}
+
+function consumePendingReleaseReason(threadId: string | null): CodexAffinityReason | undefined {
+  if (threadId === null) return undefined;
+  const reason = pendingReleaseReasons.get(threadId);
+  if (reason !== undefined) pendingReleaseReasons.delete(threadId);
+  return reason;
 }
 
 export function clearCodexUpstreamHealth(): void {
@@ -2701,9 +2773,9 @@ export function resolveCodexAccountForThreadDetailed(
         );
         if (cooler) {
           bindModelDetourAffinity(threadId, cooler, now, modelId, quotaScope);
-          return { status: "selected", accountId: cooler };
+          return { status: "selected", accountId: cooler, affinity: { move: "rebound", reason: "model_lane" } };
         }
-        return { status: "selected", accountId: detourEntry.accountId };
+        return { status: "selected", accountId: detourEntry.accountId, affinity: { move: "reused", reason: "model_lane" } };
       }
       // The model lane gets the same transient hold as the ordinary one. Without it a
       // model-scoped request drops its detour pin on three 503s and falls back to an ordinary
@@ -2717,13 +2789,13 @@ export function resolveCodexAccountForThreadDetailed(
         detourEntry.lastUsedAt = now;
         if (lane !== null && lane !== detourEntry.accountId) {
           detourEntry.transientDetourAccountId = lane;
-          return { status: "selected", accountId: lane };
+          return { status: "selected", accountId: lane, affinity: { move: "detour", reason: "transient" } };
         }
         // A provider-wide outage soft-avoids every sibling, so there is nowhere to detour.
         // That is a statement about where this request can go, not about who owns the
         // conversation: dropping the pin here would rebuild the cold prefix elsewhere for
         // exactly the failure mode the hold exists to survive.
-        return { status: "selected", accountId: detourEntry.accountId };
+        return { status: "selected", accountId: detourEntry.accountId, affinity: { move: "held", reason: "transient" } };
       }
       // Detour expiry or invalidation must not expire the ordinary task. Drop only
       // this model lane and select from ordinary/shared state below.
@@ -2731,11 +2803,14 @@ export function resolveCodexAccountForThreadDetailed(
     }
   }
 
+  // Why the binding went away, when it did. Carried to the selection below so the request that
+  // pays for a cold prefix can say what it paid for.
+  let releaseReason: CodexAffinityReason | undefined;
   const entry = threadId ? getThreadAffinity(threadId, quotaScope) : undefined;
   if (threadId && entry) {
     if (isThreadAffinityExpired(entry, now)) {
       deleteThreadAffinity(threadId, quotaScope);
-      return { status: "expired", accountId: entry.accountId };
+      return { status: "expired", accountId: entry.accountId, affinity: { move: "cleared", reason: "expired" } };
     }
     const generationLive = isThreadAffinityGenerationLive(entry);
     const selectableForSharedState = generationLive
@@ -2779,9 +2854,9 @@ export function resolveCodexAccountForThreadDetailed(
           promoteActiveCodexAccount(config, cooler);
         }
         bindThreadAffinity(threadId, cooler, now, quotaScope); // rebinds + resets clocks
-        return { status: "selected", accountId: cooler };
+        return { status: "selected", accountId: cooler, affinity: { move: "rebound", reason: "quota_headroom" } };
       }
-      return { status: "selected", accountId: entry.accountId };
+      return { status: "selected", accountId: entry.accountId, affinity: { move: "reused", reason: "healthy" } };
     }
     // Transient trouble on the bound account is a reason to send elsewhere, not a reason to
     // give up the conversation. Detour this request and KEEP the binding, so recovery is free
@@ -2798,21 +2873,33 @@ export function resolveCodexAccountForThreadDetailed(
         entry.transientDetourAccountId = detour;
         // Deliberately no promoteActiveCodexAccount and no rebind: this is one request routing
         // around a blip, not the pool deciding where the conversation now lives.
-        return { status: "selected", accountId: detour };
+        return { status: "selected", accountId: detour, affinity: { move: "detour", reason: "transient" } };
       }
       // No sibling can take it either -- the usual shape of a provider-wide 503. The binding
       // survives: "cannot send right now" and "forget which account owns this conversation"
       // are different answers, and conflating them is what the hold was added to stop.
-      return { status: "selected", accountId: entry.accountId };
+      return { status: "selected", accountId: entry.accountId, affinity: { move: "held", reason: "transient" } };
     }
     // A model-only exclusion does not invalidate the shared task binding. Health,
     // generation, pause, cooldown, and failure evidence still retire it normally.
     if (!modelScopedSelection || !healthyForSharedAffinity) {
+      releaseReason = !generationLive
+        ? "generation"
+        : quotaRefused
+          ? "quota_refusal"
+          : isTransientHoldExpired(entry, now)
+            ? "transient_hold_expired"
+            : !isCodexAccountUsable(config, entry.accountId, selectionOptions)
+              ? "unusable"
+              : "quota_headroom";
       deleteThreadAffinity(threadId, quotaScope);
     } else {
       preserveExistingModelScopedAffinity = true;
     }
   }
+  // A release recorded by the outcome path (a 429 clears the pin before the next request even
+  // arrives) is the reason this request is starting cold, so it outranks having found nothing.
+  releaseReason ??= consumePendingReleaseReason(threadId);
 
   // A request-scoped roster may still contain unhealthy candidates. Non-quota strategies return
   // before the quota/failover helpers below, so prefer only shared-healthy roster members here;
@@ -2853,7 +2940,7 @@ export function resolveCodexAccountForThreadDetailed(
       // the thing the preference exists to protect.
       promoteActiveCodexAccount(config, strategyPick);
     }
-    return { status: "selected", accountId: strategyPick };
+    return { status: "selected", accountId: strategyPick, affinity: affinityAfterRelease(releaseReason) };
   }
 
   let active = getEffectiveActiveCodexAccountId(config);
@@ -2864,7 +2951,7 @@ export function resolveCodexAccountForThreadDetailed(
         selectionOptions?.nativeMainSelectionOnly === true
         && selectionOptions.modelEligibleAccountIds !== undefined
       ) {
-        return { status: "selected", accountId: MAIN_CODEX_ACCOUNT_ID };
+        return { status: "selected", accountId: MAIN_CODEX_ACCOUNT_ID, affinity: affinityAfterRelease(releaseReason) };
       }
       return { status: "none" };
     }
@@ -2902,13 +2989,13 @@ export function resolveCodexAccountForThreadDetailed(
       // return main only as a non-mutating sentinel so the caller's atomic claim can
       // classify maintenance. Do not fall through to the configured-but-ineligible
       // active account or persist/bind this synthetic selection.
-      return { status: "selected", accountId: MAIN_CODEX_ACCOUNT_ID };
+      return { status: "selected", accountId: MAIN_CODEX_ACCOUNT_ID, affinity: affinityAfterRelease(releaseReason) };
     } else if (
       hasConfiguredPoolAccount(config, active, selectionOptions)
       && !isCodexAccountPaused(config, active)
       && !isCodexAccountPlanExcluded(config, active)
     ) {
-      return { status: "selected", accountId: active };
+      return { status: "selected", accountId: active, affinity: affinityAfterRelease(releaseReason) };
     } else {
       return { status: "none" };
     }
@@ -2950,13 +3037,13 @@ export function resolveCodexAccountForThreadDetailed(
   );
   if (!isCodexAccountUsable(config, active, selectionOptions)) {
     return hasConfiguredPoolAccount(config, active, selectionOptions)
-      ? { status: "selected", accountId: active }
+      ? { status: "selected", accountId: active, affinity: affinityAfterRelease(releaseReason) }
       : { status: "none" };
   }
   if (isCodexAccountPaused(config, active)) return { status: "none" };
   if (getCodexQuotaHealthSnapshot(active, quotaScope, now)) {
     return hasConfiguredPoolAccount(config, active, selectionOptions)
-      ? { status: "selected", accountId: active }
+      ? { status: "selected", accountId: active, affinity: affinityAfterRelease(releaseReason) }
       : { status: "none" };
   }
   if (threadId) {
@@ -2966,7 +3053,7 @@ export function resolveCodexAccountForThreadDetailed(
       bindThreadAffinity(threadId, active, now, quotaScope);
     }
   }
-  return { status: "selected", accountId: active };
+  return { status: "selected", accountId: active, affinity: affinityAfterRelease(releaseReason) };
 }
 
 export function recordCodexUpstreamOutcome(
@@ -3153,7 +3240,7 @@ export function recordCodexUpstreamOutcome(
     // The reauth flag carries the same provenance, so a replacement landing after this call cannot
     // inherit a quarantine that was never about it.
     markAccountNeedsReauth(accountId, writerGeneration, meta.credentialGeneration);
-    clearThreadAccountMapForAccount(accountId);
+    clearThreadAccountMapForAccount(accountId, "quota_refusal");
     return;
   }
 
@@ -3188,7 +3275,7 @@ export function recordCodexUpstreamOutcome(
       // threads must leave it and new requests should prefer an eligible account.
       // Reserve remains isolated so a same-account Terra/Luna combo fallback can run.
       if (quotaScope === "shared" && !meta.fixedAccount) {
-        clearThreadAccountMapForAccount(accountId);
+        clearThreadAccountMapForAccount(accountId, "quota_refusal");
         notePoolRotationFailure(POOL_KEY_CODEX, accountId);
         if (getEffectiveActiveCodexAccountId(config) === accountId) {
           // Same-request 429 retry already picked via excludeAccountId — reuse it so
@@ -3234,7 +3321,7 @@ export function recordCodexUpstreamOutcome(
         }),
     });
     if (!meta.fixedAccount) {
-      clearThreadAccountMapForAccount(accountId);
+      clearThreadAccountMapForAccount(accountId, "quota_refusal");
       // An independent native quota request may discover an account-wide throttle,
       // but it still must not advance the shared RR ring or active cursor. The next
       // shared request observes the cooldown and chooses its own fallback.
