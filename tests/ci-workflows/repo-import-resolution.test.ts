@@ -52,26 +52,35 @@ function typeImportSpecs(source: string): string[] {
  * written that way, so the .js -> .ts rewrite is part of resolution here rather than a
  * tolerated exception. Without it this guard would report 23 healthy edges as broken,
  * which is the way a guard gets disabled.
+ *
+ * resolveSpec answers for the proxy runtime, which has no JSX, so it never tries .tsx. The
+ * dashboard is half .tsx and every one of its component specifiers looked broken until
+ * that candidate was added -- 346 of them. The extension list belongs to the caller for
+ * exactly this reason: the shared helper states the runtime rule and each guard states the
+ * surface it is scanning.
  */
 function resolvesFrom(spec: string, absoluteFile: string): boolean {
   if (resolveSpec(spec, absoluteFile) !== null) return true;
   const literal = resolve(dirname(absoluteFile), spec);
   if (existsSync(literal)) return true;
+  if (existsSync(literal + ".tsx")) return true;
+  if (existsSync(resolve(literal, "index.tsx"))) return true;
   const asSource = literal.replace(/\.js$/, ".ts").replace(/\.mjs$/, ".mts");
   return asSource !== literal && existsSync(asSource);
 }
 
 /**
- * src/ only, and that boundary was measured rather than assumed.
+ * src/ and gui/src, and that boundary was measured rather than assumed.
  *
  * Extending the scan to tests/ and scripts/ produced 59 offenders, all false. A source
  * oracle spells a production path inside a string it hands to a spawned child -- the
  * literal "./src/config.ts" appears three times in one test that never imports it -- and a
  * seam declaration lists "../quota/reset-observer" as data for a boundary check. A static
  * matcher cannot tell those from an import, and a guard that cries wolf 59 times is a
- * guard somebody deletes. Under src/ a relative specifier in import position is an import.
+ * guard somebody deletes. Under src/ and gui/src a relative specifier in import position
+ * is an import, and the dashboard is production code that moves for the same reasons.
  */
-const SCANNED_ROOTS = ["src"] as const;
+const SCANNED_ROOTS = ["src", "gui/src"] as const;
 
 function trackedSourceFiles(): string[] {
   const listed = Bun.spawnSync(["git", "ls-files", ...SCANNED_ROOTS], { cwd: repoRoot });
@@ -94,7 +103,7 @@ describe("relative import resolution", () => {
     expect(resolvesFrom("../config", from)).toBe(false);
   });
 
-  test("every relative specifier under src/ resolves", () => {
+  test("every relative specifier under the scanned production roots resolves", () => {
     const offenders: string[] = [];
     const files = trackedSourceFiles();
     for (const file of files) {
