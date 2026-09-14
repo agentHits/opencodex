@@ -22,6 +22,7 @@ const GUARDED_FILES = [
   "codex/routing.ts",            // account auto-switch during a turn
   "codex/routing/active-account.ts", // setActiveCodexAccount moved here in the routing split
   "codex/auth-api.ts",           // runtime account/quota persistence
+  "codex/auth-api/runtime-config.ts", // saveRuntimeConfig via saveConfigPreservingClaudeCode
   "cli/claude-desktop.ts",       // CLI against a running service
   "server/management-api.ts",
 ];
