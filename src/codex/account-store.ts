@@ -657,19 +657,23 @@ export async function withCodexRefreshFileLock<T>(lockKey: string, signal: Abort
   } finally {
     // Release only the lock this call created. If a waiter reclaimed the path as stale and a
     // new owner recreated it, unlinking by name would delete the live lock of that owner.
-    let owned: { dev: number; ino: number } | null = null;
+    let owned: { dev: bigint; ino: bigint } | null = null;
     if (fd != null) {
       try {
-        const info = fstatSync(fd);
-        owned = { dev: info.dev, ino: info.ino };
+        const info = fstatSync(fd, { bigint: true });
+        if (info.dev >= 0n && info.ino > 0n) {
+          owned = { dev: info.dev, ino: info.ino };
+        }
       } catch {
         owned = null;
       }
       closeSync(fd);
     }
     try {
-      const current = statSync(path);
-      if (!owned || (current.dev === owned.dev && current.ino === owned.ino)) unlinkSync(path);
+      const current = statSync(path, { bigint: true });
+      // An unreadable or unusable identity never authorizes removing the current path.
+      // Leave it for stale-lock recovery instead of deleting a possible replacement owner.
+      if (owned && current.dev === owned.dev && current.ino === owned.ino) unlinkSync(path);
     } catch (err) {
       if (errCode(err) !== "ENOENT") throw err;
     }

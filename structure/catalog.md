@@ -235,7 +235,8 @@ Pool mode routes across main plus added Codex credentials. Key rules:
   than overwriting the newer credential (`src/codex/account-store.ts`). Callers handle that error;
   they do not assume a silent retry.
   The lock itself is identity-scoped: a not-yet-readable lock counts as held until it ages out,
-  and a holder releases only the file it created, so a reclaimed path is not deleted twice.
+  and release requires a usable matching descriptor identity. Unknown identity leaves the path
+  for stale recovery; stat followed by unlink does not provide atomic compare-and-delete.
 
 Warmup issues a bounded request with a fallback model so a cold account reports usability before a
 real turn depends on it (`src/codex/warmup.ts`).

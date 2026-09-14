@@ -1,5 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -666,6 +667,28 @@ describe("codex-account-store CRUD", () => {
     expect((JSON.parse(readFileSync(lockPath, "utf-8")) as { pid: number }).pid).toBe(999_001);
     unlinkSync(lockPath);
     unlinkSync(`${lockPath}.reclaimed`);
+  });
+
+  test("refresh release preserves the path when descriptor identity cannot be read", async () => {
+    const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
+    const lockKey = "unknown-owner";
+    const lockPath = join(TEST_DIR, `codex-refresh-${createHash("sha256").update(lockKey).digest("hex").slice(0, 32)}.lock`);
+    const original = fs.fstatSync;
+    let released = false;
+    const probe = spyOn(fs, "fstatSync").mockImplementation((...args: Parameters<typeof fs.fstatSync>) => {
+      if (released) throw new Error("identity probe unavailable");
+      return original(...args);
+    });
+    try {
+      await withCodexRefreshFileLock(lockKey, new AbortController().signal, async () => {
+        renameSync(lockPath, `${lockPath}.reclaimed`);
+        writeFileSync(lockPath, "replacement-owner");
+        released = true;
+      });
+      expect(readFileSync(lockPath, "utf8")).toBe("replacement-owner");
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   test("same refresh grant joins a live flight", async () => {
