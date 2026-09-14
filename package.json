@@ -53,6 +53,7 @@
     "skill:surface:check": "bun scripts/generate-ocx-skill-surface.ts --check",
     "structure:index": "bun scripts/structure-ssot.ts --fix",
     "structure:check": "bun scripts/structure-ssot.ts",
+    "ratchet:update": "bun scripts/file-size-ratchet.ts --update",
     "generate:model-metadata": "bun scripts/generate-model-metadata.ts",
     "build:gui": "cd gui && bun install --frozen-lockfile && bun run build && cd .. && bun run prepare:package",
     "build:remote-workspace-helper": "cargo build --release --locked --manifest-path native/remote-workspace-helper/Cargo.toml",

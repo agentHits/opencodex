@@ -529,7 +529,7 @@ untouched.
 
 ## Z.ai quota destination ownership
 
-`src/providers/quota.ts` uses one exact normalized-base mapping for both Z.ai quota
+`src/providers/quota/vendor-probes-key.ts` uses one exact normalized-base mapping for both Z.ai quota
 eligibility and monitor selection. International root, coding Chat, Anthropic and
 Responses bases use `api.z.ai` with Bearer authentication. Existing BigModel CN root,
 coding Chat and Responses bases use `open.bigmodel.cn` with the raw key. Unsupported

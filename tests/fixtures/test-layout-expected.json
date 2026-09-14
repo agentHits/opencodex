@@ -535,6 +535,7 @@
   "fastwire-policy.test.ts": "routing",
   "featherless-provider.test.ts": "providers",
   "fetch-header-timeout.test.ts": "server",
+  "file-size-ratchet.test.ts": "ci-workflows",
   "fixture-dir-uniqueness.test.ts": "ci-workflows",
   "flash-route-image-modalities.test.ts": "providers",
   "format-result.test.ts": "web-search",
