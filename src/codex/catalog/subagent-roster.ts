@@ -2,7 +2,8 @@
 import { slugsEquivalent } from "../../providers/slug-codec";
 import { readCatalog, readCodexCatalogPath } from "./parsing";
 import type { RawEntry } from "./parsing";
-import { SUPPORTED_NATIVE_OPENAI_SLUGS, trustedAccountBoundNativeCatalogSlug } from "./metadata";
+import { SUPPORTED_NATIVE_OPENAI_SLUGS } from "./metadata";
+import { trustedAccountBoundNativeCatalogSlug } from "./account-models";
 import { catalogEntryEfforts } from "./effort";
 
 export const MAX_SPAWN_AGENT_MODEL_OVERRIDES = 5;

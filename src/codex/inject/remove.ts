@@ -4,7 +4,6 @@ import {
   OCX_SECTION_MARKER,
   REALTIME_WS_BASE_URL_KEY,
   hasInjectedOpenaiBaseUrl,
-  readRootTomlString,
   rootTomlString,
   stripJournaledOpenaiBaseUrl,
 } from "../injected-marker";
@@ -13,7 +12,7 @@ import {
   journaledInjectedOpenaiBaseUrl,
   journaledInjectedRealtimeWsBaseUrl,
 } from "../journal";
-import { CODEX_CONFIG_PATH, CODEX_PROFILE_PATH } from "../paths";
+import { CODEX_CONFIG_PATH, CODEX_PROFILE_PATH, readRootTomlString } from "../paths";
 import { transformManagedSubagentDefaults } from "../subagent-defaults";
 import {
   applyEol,
@@ -191,4 +190,3 @@ export function removeCodexConfig(
     message: removedMessage,
   };
 }
-

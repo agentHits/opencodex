@@ -6,6 +6,7 @@ import type {
   StoredResponseState,
 } from "../state";
 import type { ResponseSpillRef } from "../spill-store";
+import type { OcxProviderContinuationState } from "../../types";
 
 export interface SnapshotLoadStore {
   replaceMapEntry(id: string, next: StoredResponseState, expected?: StoredResponseState): boolean;
