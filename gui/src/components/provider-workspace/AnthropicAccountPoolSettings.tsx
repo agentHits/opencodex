@@ -22,6 +22,7 @@ import {
   type AccountPoolStrategy,
 } from "../../account-pool-strategy";
 import AccountPoolStrategyControls from "../AccountPoolStrategyControls";
+import AccountPoolStrategyPreview from "../AccountPoolStrategyPreview";
 import { Select } from "../../ui";
 
 const QUOTA_WINDOW_LABEL_KEYS = {
@@ -162,6 +163,10 @@ export default function AnthropicAccountPoolSettings({
   const threshold = state?.threshold ?? 80;
   const strategy = state?.strategy ?? DEFAULT_ACCOUNT_POOL_STRATEGY;
   const stickyLimit = state?.stickyLimit ?? DEFAULT_ACCOUNT_POOL_STICKY_LIMIT;
+  const parsedDraft = Number(draft);
+  const previewThreshold = Number.isInteger(parsedDraft) && parsedDraft >= 0 && parsedDraft <= 100
+    ? parsedDraft
+    : threshold;
   const quotaWindow = state?.quotaWindow ?? DEFAULT_ACCOUNT_POOL_QUOTA_WINDOW;
   const showQuotaWindow = isAnthropic || (state?.supported ?? []).includes("quotaWindow");
   const quotaWindowInert = strategy === "round-robin";
@@ -294,6 +299,13 @@ export default function AnthropicAccountPoolSettings({
                 quotaWindow,
               });
             }}
+          />
+
+          <AccountPoolStrategyPreview
+            strategy={strategy}
+            threshold={previewThreshold}
+            kind={isAnthropic ? "anthropic" : "generic"}
+            enabled={enabled}
           />
 
           {showQuotaWindow && (
