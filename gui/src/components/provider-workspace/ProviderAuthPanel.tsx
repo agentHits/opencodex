@@ -3,7 +3,7 @@
  * embedding for the workspace Settings tab (WP091). Consumes WP040+WP060
  * handlers via props-down; no internal auth machinery.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
 import { IconLock, IconRefresh, IconTrash } from "../../icons";
 import type { WorkspaceItem } from "../../provider-workspace/catalog";
@@ -15,6 +15,8 @@ import CodexAccountPool from "../CodexAccountPool";
 import AnthropicAccountPoolSettings from "./AnthropicAccountPoolSettings";
 import { LoginHint as LoginHintView } from "../login-url-block";
 import { OpenBrowserPrefToggle } from "../open-browser-pref-toggle";
+import { getPoolSettings, putPoolSettings } from "../../pool-settings";
+import { normalizeAccountPoolStrategy, type AccountPoolStrategy } from "../../account-pool-strategy";
 import ProviderAccountQuota from "./ProviderAccountQuota";
 import ProviderAccountsToolbar from "./ProviderAccountsToolbar";
 import ProviderAccountCard from "./ProviderAccountCard";
@@ -229,6 +231,40 @@ export default function ProviderAuthPanel({
   const [accountSearch, setAccountSearch] = useState("");
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | null>(null);
 
+  const [genericPool, setGenericPool] = useState<{ enabled: boolean; strategy: AccountPoolStrategy } | null>(null);
+
+  useEffect(() => {
+    if (!isOauth || item.name === "openai" || item.name === "anthropic") return;
+    let cancelled = false;
+    void getPoolSettings(apiBase, item.name).then(res => {
+      if (cancelled || !res) return;
+      setGenericPool({
+        enabled: res.enabled === true || res.enabledEffective === true,
+        strategy: normalizeAccountPoolStrategy(res.strategy),
+      });
+    });
+    return () => { cancelled = true; };
+  }, [apiBase, isOauth, item.name]);
+
+  const handleTogglePoolEnabled = useCallback(() => {
+    if (!genericPool) return;
+    const nextEnabled = !genericPool.enabled;
+    setGenericPool(prev => prev ? { ...prev, enabled: nextEnabled } : null);
+    void putPoolSettings(apiBase, item.name, {
+      enabled: nextEnabled,
+      strategy: genericPool.strategy,
+    });
+  }, [apiBase, genericPool, item.name]);
+
+  const handleSelectPoolStrategy = useCallback((nextStrategy: AccountPoolStrategy) => {
+    if (!genericPool) return;
+    setGenericPool(prev => prev ? { ...prev, strategy: nextStrategy } : null);
+    void putPoolSettings(apiBase, item.name, {
+      enabled: genericPool.enabled,
+      strategy: nextStrategy,
+    });
+  }, [apiBase, genericPool, item.name]);
+
   const showModelFamilies = item.name === "google-antigravity";
 
   useEffect(() => {
@@ -389,7 +425,7 @@ export default function ProviderAuthPanel({
         )}
         {isOauth && (
           <>
-            {item.name !== "openai" && (
+            {item.name === "anthropic" && (
               <AnthropicAccountPoolSettings
                 apiBase={apiBase}
                 accountCount={accounts.length}
@@ -487,6 +523,11 @@ export default function ProviderAuthPanel({
                   onRefreshAll={canRefreshQuota ? () => { void refreshQuota(); } : undefined}
                   quotaRefreshResultText={quotaRefreshResult?.text}
                   quotaRefreshResultOk={quotaRefreshResult?.ok}
+                  poolSupported={isOauth && item.name !== "openai" && item.name !== "anthropic"}
+                  poolEnabled={genericPool?.enabled ?? true}
+                  onTogglePoolEnabled={handleTogglePoolEnabled}
+                  poolStrategy={genericPool?.strategy ?? "reset-first"}
+                  onSelectPoolStrategy={handleSelectPoolStrategy}
                 />
 
                 {filteredAndSortedAccounts.length > 0 ? (

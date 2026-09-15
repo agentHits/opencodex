@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useT } from "../../i18n/shared";
 import { IconRefresh, IconSearch, IconX } from "../../icons";
+import type { AccountPoolStrategy } from "../../account-pool-strategy";
 import type {
   AccountDisplayKey,
   AccountFilterKey,
@@ -31,6 +32,11 @@ export interface ProviderAccountsToolbarProps {
   onRefreshAll?: () => void;
   quotaRefreshResultText?: string | null;
   quotaRefreshResultOk?: boolean;
+  poolSupported?: boolean;
+  poolEnabled?: boolean;
+  onTogglePoolEnabled?: () => void;
+  poolStrategy?: AccountPoolStrategy;
+  onSelectPoolStrategy?: (strategy: AccountPoolStrategy) => void;
 }
 
 export default function ProviderAccountsToolbar({
@@ -50,6 +56,11 @@ export default function ProviderAccountsToolbar({
   onRefreshAll,
   quotaRefreshResultText,
   quotaRefreshResultOk,
+  poolSupported = false,
+  poolEnabled = false,
+  onTogglePoolEnabled,
+  poolStrategy = "reset-first",
+  onSelectPoolStrategy,
 }: ProviderAccountsToolbarProps) {
   const t = useT();
   const [limitsMenuOpen, setLimitsMenuOpen] = useState(false);
@@ -57,6 +68,7 @@ export default function ProviderAccountsToolbar({
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortMenuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
 
   const hasSearch = searchQuery.trim().length > 0;
 
@@ -203,26 +215,58 @@ export default function ProviderAccountsToolbar({
                   <span className="pwi-stat-tag-blue">✓ {t("pws.statsReady")}</span>
                 </div>
               </div>
+
+              <div className="pwi-stat-sep" />
+
+              <div className="pwi-stat-unit">
+                <span className="pwi-stat-lbl">{t("pws.statsClaudeExhausted")}</span>
+                <div className="pwi-stat-val-line">
+                  <span className="pwi-stat-num pwi-text-orange">{claudeExhaustedCount}</span>
+                  <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
+                </div>
+              </div>
+
+              <div className="pwi-stat-sep" />
+
+              <div className="pwi-stat-unit">
+                <span className="pwi-stat-lbl">{t("pws.statsGeminiExhausted")}</span>
+                <div className="pwi-stat-val-line">
+                  <span className="pwi-stat-num pwi-text-blue">{geminiExhaustedCount}</span>
+                  <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
+                </div>
+              </div>
+
+              <div className="pwi-stat-sep" />
+
+              <div className="pwi-stat-unit">
+                <span className="pwi-stat-lbl">{t("pws.statsFullyExhausted")}</span>
+                <div className="pwi-stat-val-line">
+                  <span className="pwi-stat-num pwi-text-warn">{fullyExhaustedCount}</span>
+                  <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
+                </div>
+              </div>
             </>
           ) : (
-            <div className="pwi-stat-unit">
-              <span className="pwi-stat-lbl">{t("pws.statsAvailable")}</span>
-              <div className="pwi-stat-val-line">
-                <span className="pwi-stat-num pwi-text-orange">{withLimitsCount}</span>
-                <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
+            <>
+              <div className="pwi-stat-unit">
+                <span className="pwi-stat-lbl">{t("pws.statsAvailable")}</span>
+                <div className="pwi-stat-val-line">
+                  <span className="pwi-stat-num pwi-text-orange">{withLimitsCount}</span>
+                  <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
+                </div>
               </div>
-            </div>
+
+              <div className="pwi-stat-sep" />
+
+              <div className="pwi-stat-unit">
+                <span className="pwi-stat-lbl">{t("pws.statsExhausted")}</span>
+                <div className="pwi-stat-val-line">
+                  <span className="pwi-stat-num pwi-text-warn">{fullyExhaustedCount}</span>
+                  <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
+                </div>
+              </div>
+            </>
           )}
-
-          <div className="pwi-stat-sep" />
-
-          <div className="pwi-stat-unit">
-            <span className="pwi-stat-lbl">{t("pws.statsExhausted")}</span>
-            <div className="pwi-stat-val-line">
-              <span className="pwi-stat-num pwi-text-warn">{fullyExhaustedCount}</span>
-              <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
-            </div>
-          </div>
         </div>
 
         {onRefreshAll && (
@@ -593,6 +637,60 @@ export default function ProviderAccountsToolbar({
               </button>
             </div>
           </div>
+
+          {/* Center: Integrated Pool Cluster */}
+          {poolSupported && (
+            <div className="pwi-pool-integrated-cluster">
+              <span className="pwi-pool-label">⚡ {t("genericPool.title")}</span>
+              {onTogglePoolEnabled && (
+                <button
+                  type="button"
+                  className={`toggle ${poolEnabled ? "on" : ""}`}
+                  style={{ width: "32px", height: "18px" }}
+                  onClick={onTogglePoolEnabled}
+                  title={poolEnabled ? t("anthropicPool.on") : t("anthropicPool.off")}
+                  aria-pressed={poolEnabled}
+                >
+                  <span className="toggle-knob" style={{ width: "12px", height: "12px", top: "2px", left: poolEnabled ? "16px" : "2px" }} />
+                </button>
+              )}
+              {poolEnabled && onSelectPoolStrategy && (
+                <select
+                  className="pwi-pool-select"
+                  value={poolStrategy}
+                  onChange={e => onSelectPoolStrategy(e.target.value as AccountPoolStrategy)}
+                  aria-label={t("accountPool.strategy")}
+                >
+                  <option value="reset-first">📅 {t("accountPool.strategyResetFirst")}</option>
+                  <option value="quota">⚡ {t("accountPool.strategyQuota")}</option>
+                  <option value="round-robin">🔄 {t("accountPool.strategyRoundRobin")}</option>
+                  <option value="fill-first">🎯 {t("accountPool.strategyFillFirst")}</option>
+                </select>
+              )}
+              <div className={`pwi-pool-tooltip-wrap${tooltipOpen ? " is-open" : ""}`}>
+                <button
+                  type="button"
+                  className="pwi-pool-tooltip-btn"
+                  onClick={() => setTooltipOpen(prev => !prev)}
+                  aria-label={t("accountPool.strategyDesc")}
+                >
+                  ?
+                </button>
+                <div className="pwi-pool-popover" role="tooltip">
+                  <strong>⚡ {t("genericPool.title")} — {t("accountPool.strategy")}:</strong>
+                  <div className="pwi-pool-mode-desc">
+                    <span style={{ color: "var(--green, #4ecb9d)", fontWeight: 600 }}>📅 {t("accountPool.strategyResetFirst")}:</span> {t("genericPool.visualResetFirst")}
+                  </div>
+                  <div className="pwi-pool-mode-desc">
+                    <span style={{ color: "var(--blue, #60a5fa)", fontWeight: 600 }}>⚡ {t("accountPool.strategyQuota")}:</span> {t("accountPool.strategyHintQuota")}
+                  </div>
+                  <div className="pwi-pool-mode-desc">
+                    <span style={{ color: "var(--orange, #f97316)", fontWeight: 600 }}>🔄 {t("accountPool.strategyRoundRobin")}:</span> {t("accountPool.strategyHintRoundRobin")}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* View Mode */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>

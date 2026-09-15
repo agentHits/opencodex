@@ -1484,3 +1484,96 @@
   gap: 8px;
   align-items: center;
 }
+
+/* Integrated Pool Controls in Accounts Toolbar */
+.pwi-pool-integrated-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--green, #4ecb9d) 8%, var(--surface, #262626));
+  border: 1px solid color-mix(in srgb, var(--green, #4ecb9d) 24%, var(--border, #3d3d3d));
+  padding: 3px 10px;
+  border-radius: var(--radius-sm, 8px);
+}
+.pwi-pool-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--green, #4ecb9d);
+  letter-spacing: 0.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pwi-pool-select {
+  background: var(--surface, #1e1e1e);
+  border: 1px solid var(--border, #3d3d3d);
+  color: var(--text, #ececec);
+  padding: 3px 8px;
+  border-radius: var(--radius-xs, 6px);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pwi-pool-select:focus {
+  outline: 2px solid var(--green, #4ecb9d);
+}
+.pwi-pool-tooltip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.pwi-pool-tooltip-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--raised, #303030);
+  border: 1px solid var(--border, #3d3d3d);
+  color: var(--muted, #a6a6a6);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+.pwi-pool-tooltip-btn:hover,
+.pwi-pool-tooltip-btn:focus {
+  background: var(--raised-hover, #3a3a3a);
+  color: var(--text, #ececec);
+}
+.pwi-pool-popover {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  background: var(--surface, #1e1e1e);
+  border: 1px solid var(--border, #3d3d3d);
+  border-radius: var(--radius-sm, 8px);
+  padding: 10px 12px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text, #ececec);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  z-index: 120;
+}
+.pwi-pool-tooltip-wrap:hover .pwi-pool-popover,
+.pwi-pool-tooltip-wrap:focus-within .pwi-pool-popover,
+.pwi-pool-tooltip-wrap.is-open .pwi-pool-popover {
+  display: block;
+}
+.pwi-pool-popover strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text, #fff);
+}
+.pwi-pool-mode-desc {
+  margin-bottom: 6px;
+}
+.pwi-pool-mode-desc:last-child {
+  margin-bottom: 0;
+}

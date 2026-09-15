@@ -2988,6 +2988,9 @@ export const en = {
   "pws.removeAccountTooltip": "Remove account",
   "pws.statsClaudeAvailable": "Available for Claude",
   "pws.statsGeminiAvailable": "Available for Gemini",
+  "pws.statsClaudeExhausted": "Claude exhausted",
+  "pws.statsGeminiExhausted": "Gemini exhausted",
+  "pws.statsFullyExhausted": "Fully exhausted",
   "pws.statsAvailable": "Available",
 } as const;
 
