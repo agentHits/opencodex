@@ -392,7 +392,7 @@ export default function ProviderAuthPanel({
             {item.name === "anthropic" && (
               <AnthropicAccountPoolSettings apiBase={apiBase} accountCount={accounts.length} />
             )}
-            
+
             {/* Only show initial login row when no accounts exist yet */}
             {accounts.length === 0 && (
               <div className="pwi-auth-status-row">
@@ -632,4 +632,3 @@ export default function ProviderAuthPanel({
     </section>
   );
 }
-

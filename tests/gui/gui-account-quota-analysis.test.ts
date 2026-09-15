@@ -230,4 +230,3 @@ describe("account-quota-analysis", () => {
     expect(analyzed.hasAnyLimitsLeft).toBe(true);
   });
 });
-
