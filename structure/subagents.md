@@ -1,5 +1,8 @@
 # Subagents And Multi-Agent Surface
 
+Encrypted-task and fallback request handling follow the Responses
+[core module ownership](transports/responses.md#core-module-ownership). This surface retains its existing behavior.
+
 Concurrent refreshes triggered by independent agent work share the [credential refresh-lock contract](catalog.md#accounts-namespaces-and-pool-rotation); unknown lock identity remains available for stale recovery rather than immediate removal, and a failed path probe cannot mask the callback outcome. Cooperating lock metadata changes serialize through the existing SQLite mutation transaction; release keeps the descriptor open through identity comparison and any unlink, then closes it. Failed metadata writes remove only a matching owned path after successful coordination; unknown identity, failed probes or unavailable coordination retain the path for stale recovery. Async refresh work holds no metadata transaction.
 
 ## Plaintext V2 agent messages
@@ -27,7 +30,7 @@ Codex treats qualified names literally and defaults absent namespaces to functio
 declarations inherit their restored namespace container; the compiler never invents an empty
 encryption marker when the upstream omitted it or returned a nonempty marker.
 
-Shared parsing and streaming follow the [request-copy](transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](transports/byte-accounting.md#stream-buffer-accounting) contracts.
+Shared parsing and streaming follow the [request-copy](transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](transports/byte-accounting.md#stream-buffer-accounting) contracts. Response-attached WebSocket telemetry follows the [stage record identity contract](transports/responses.md#passthrough-sse-stream-shapes-314).
 
 ## Multi-agent surface mode (3-state)
 
