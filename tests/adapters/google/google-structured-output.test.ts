@@ -18,6 +18,16 @@ import type { OcxParsedRequest, OcxProviderConfig } from "../../../src/types";
 const aiStudio = { adapter: "google", baseUrl: "https://generativelanguage.googleapis.com", apiKey: "key" } as unknown as OcxProviderConfig;
 const vertex = { adapter: "google", googleMode: "vertex", baseUrl: "https://aiplatform.googleapis.com", apiKey: "key" } as unknown as OcxProviderConfig;
 const cca = { adapter: "google", googleMode: "cloud-code-assist", baseUrl: "https://cloudcode-pa.googleapis.com", apiKey: "token", project: "test-project" } as unknown as OcxProviderConfig;
+type CloudCodeAssistEnvelope = {
+  generationConfig?: unknown;
+  request?: {
+    generationConfig?: {
+      responseMimeType?: unknown;
+      responseJsonSchema?: unknown;
+      responseSchema?: unknown;
+    };
+  };
+};
 
 const SCHEMA = {
   type: "object",
@@ -61,7 +71,7 @@ describe("F3 Google structured output reaches the generateContent wire", () => {
     const { body } = await createGoogleAdapter(cca).buildRequest(
       parsed({ type: "json_schema", name: "answer", schema: SCHEMA, strict: true }),
     );
-    const envelope = JSON.parse(typeof body === "string" ? body : JSON.stringify(body)) as Record<string, any>;
+    const envelope = JSON.parse(typeof body === "string" ? body : JSON.stringify(body)) as CloudCodeAssistEnvelope;
 
     expect(envelope.generationConfig).toBeUndefined();
     expect(envelope.request?.generationConfig?.responseMimeType).toBe("application/json");
@@ -71,7 +81,7 @@ describe("F3 Google structured output reaches the generateContent wire", () => {
 
   test("json_object on Cloud Code Assist sets only responseMimeType in envelope.request", async () => {
     const { body } = await createGoogleAdapter(cca).buildRequest(parsed({ type: "json_object" }));
-    const envelope = JSON.parse(typeof body === "string" ? body : JSON.stringify(body)) as Record<string, any>;
+    const envelope = JSON.parse(typeof body === "string" ? body : JSON.stringify(body)) as CloudCodeAssistEnvelope;
 
     expect(envelope.generationConfig).toBeUndefined();
     expect(envelope.request?.generationConfig?.responseMimeType).toBe("application/json");
@@ -119,6 +129,13 @@ describe("F3 unsupported modes refuse explicitly instead of dropping the schema"
       parsed({ type: "json_schema", schema: SCHEMA }, "gemini-3-pro-image-preview"),
     );
     await expect(promise).rejects.toThrow(/cannot combine image output with structured output/);
+  });
+
+  test("an image-capable Cloud Code Assist model refuses the structured-output conflict", async () => {
+    const promise = createGoogleAdapter(cca).buildRequest(
+      parsed({ type: "json_schema", schema: SCHEMA }, "gemini-3-pro-image-preview"),
+    );
+    await expect(promise).rejects.toThrow("cannot combine image output with structured output");
   });
 
   test("an image-capable model with NO schema keeps its image behavior", async () => {
