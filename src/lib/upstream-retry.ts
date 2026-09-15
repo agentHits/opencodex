@@ -133,7 +133,22 @@ export interface RetryBackoffOptions {
   baseDelayMs: number;
   maxDelayMs: number;
   headers?: Headers;
+  /**
+   * Treat a provider's `Retry-After` as the earliest legal send rather than something the
+   * local maximum may shorten. Opt-in per caller so the change lands on the transient path
+   * first instead of silently lengthening every adapter's backoff.
+   */
+  retryAfterIsLowerBound?: boolean;
+  /**
+   * The wait deadline a caller applies to an honoured `Retry-After`. The delay itself is
+   * never shortened: an instruction longer than the deadline is a reason to END with the
+   * upstream answer, not to send early. Kept for callers that still pass it.
+   */
+  retryAfterCeilingMs?: number;
 }
+
+/** One minute, matching the same-target 429 ceiling the key-failover path already uses. */
+export const RETRY_AFTER_CEILING_MS = 60_000;
 
 export function abortError(signal?: AbortSignal): unknown {
   return signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
@@ -284,9 +299,20 @@ function retryAfterDelayMs(headers: Headers): number | undefined {
 
 export function retryBackoffDelayMs(attempt: number, opts: RetryBackoffOptions): number {
   const retryAfter = opts.headers ? retryAfterDelayMs(opts.headers) : undefined;
-  if (retryAfter !== undefined) return Math.min(retryAfter, opts.maxDelayMs);
   const exp = Math.min(opts.baseDelayMs * (2 ** attempt), opts.maxDelayMs);
-  return Math.floor(exp * (0.8 + Math.random() * 0.4));
+  const jittered = Math.floor(exp * (0.8 + Math.random() * 0.4));
+  if (retryAfter === undefined) return jittered;
+  if (opts.retryAfterIsLowerBound !== true) {
+    // Historical behaviour, still the default for every caller that has not opted in.
+    return Math.min(retryAfter, opts.maxDelayMs);
+  }
+  // A provider that names a wait is stating when it will serve again; sending earlier is a
+  // request we already know will be refused, and refusing it twice is the retry storm the
+  // header exists to prevent. The local maximum bounds our OWN exponential backoff and has no
+  // business shortening someone else's instruction, so the instruction is returned in full.
+  // Whether the request can afford to wait that long is the caller's deadline decision --
+  // fetchWithTransientRetry ends with the upstream answer rather than retrying early.
+  return Math.max(retryAfter, jittered);
 }
 
 export function cancelResponseBodyBestEffort(res: Response): void {
@@ -331,17 +357,31 @@ export interface ResetRetryOptions {
   label?: string;
   /** Total upstream sends allowed, including the first one. Not a per-layer retry count. */
   attempts?: number;
+  /**
+   * Reports how many upstream sends this call actually consumed, so a caller that spans
+   * several legs of one request (initial send, then a 429/account-recovery refetch) can
+   * keep them on ONE budget instead of handing each leg a fresh one.
+   *
+   * It lives on the RESET options, not on the transient ones, because every leg that falls
+   * back to reset-only retry -- the non-policy adapter initial send, and every
+   * `rebuildAndRefetch` recovery kind whose provider has no transient policy -- was not merely
+   * uncounted but UNCOUNTABLE: the callback existed on a type those call sites never reach.
+   */
+  onSendsConsumed?: (sends: number) => void;
 }
 
 export interface TransientRetryOptions extends ResetRetryOptions {
   /** Test seam: per-attempt slow budget override (defaults to TRANSIENT_RETRY_SLOW_ATTEMPT_MS). */
   slowAttemptMs?: number;
   /**
-   * Reports how many upstream sends this call actually consumed, so a caller that spans
-   * several legs of one request (initial send, then a 429/account-recovery refetch) can
-   * keep them on ONE budget instead of handing each leg a fresh one.
+   * How long this caller can wait on an honoured `Retry-After`, defaulting to
+   * {@link RETRY_AFTER_CEILING_MS}. It is a deadline, never a clamp: an instruction inside it
+   * is slept in full, and an instruction past it ends the call with the upstream answer and
+   * its `Retry-After` intact rather than sending early at a provider that already said it
+   * would refuse. A caller with a shorter budget than a minute says so and is not parked past
+   * it; a caller that can genuinely wait longer says so and is not cut short.
    */
-  onSendsConsumed?: (sends: number) => void;
+  retryAfterCeilingMs?: number;
 }
 
 export type UpstreamSendRecovery = "connection-reset" | "transient-5xx";
@@ -420,6 +460,10 @@ export async function fetchWithResetRetry(
   let sawReset = false;
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (opts.abortSignal?.aborted) throw abortError(opts.abortSignal);
+    // Reported before the await, one physical send at a time: a send that rejects has still
+    // been made, and this helper leaves through four exits (return, reset give-up, non-reset
+    // rethrow, abort), so a per-send report is the only shape that is correct on all of them.
+    opts.onSendsConsumed?.(1);
     try {
       return await doFetch(attempt === 0 ? firstRecovery : "connection-reset");
     } catch (err) {
@@ -482,13 +526,22 @@ export async function fetchWithTransientRetry(
   // more send -- the loop condition alone was never enough, because every later recovery leg
   // called this helper again and the floor funded each of them.
   const remaining = () => Math.max(0, budget - sent);
+  // The inner reset layer now has its own `onSendsConsumed`, and these are the same physical
+  // sends `countedFetch` already counts. Forwarding the reporter down the `remaining()` path
+  // would report each of them twice, which is how a four-send cap becomes a two-send cap. One
+  // send is counted once, by the outermost layer that owns the budget.
+  const innerResetOptions = (): ResetRetryOptions => ({
+    ...opts,
+    attempts: remaining(),
+    onSendsConsumed: undefined,
+  });
   // Reported in `finally` rather than at each exit: this function returns from five places
   // and throws from one, and a caller sharing the budget across request legs must be told the
   // real count on every one of them.
   try {
   if (budget === 0) throw new SendBudgetExhaustedError(opts.label);
   let attemptStart = Date.now();
-  let res = await fetchWithResetRetry(countedFetch, { ...opts, attempts: remaining() });
+  let res = await fetchWithResetRetry(countedFetch, innerResetOptions());
   for (let attempt = 0; sent < budget; attempt++) {
     // A non-replayable gateway status was settled after the request body had already left
     // for the origin; retrying it here is the automatic resend the marker exists to forbid.
@@ -497,6 +550,19 @@ export async function fetchWithTransientRetry(
     // a response whose body we just cancelled.
     if (opts.abortSignal?.aborted) return res;
     if (Date.now() - attemptStart > slowAttemptMs) return res;
+    const instructedDelay = retryAfterDelayMs(res.headers);
+    // The deadline is the CALLER'S, not this module's default. Reading the constant directly
+    // broke it in both directions: a caller with a 30s budget slept the full 45s an upstream
+    // asked for, and a caller that could genuinely wait 120s was handed the error back for a
+    // 90s instruction it was willing to honour.
+    const waitDeadlineMs = opts.retryAfterCeilingMs ?? RETRY_AFTER_CEILING_MS;
+    if (instructedDelay !== undefined && instructedDelay > waitDeadlineMs) {
+      // Honouring the stated wait would park this request past the deadline it can commit
+      // to, and sleeping only up to the deadline is a send the provider already said it will
+      // refuse. End here instead: the caller receives the upstream answer with its
+      // Retry-After intact and applies its own policy, exactly as on the direct path.
+      return res;
+    }
     console.warn(
       `[upstream-retry] transient ${res.status}${opts.label ? ` (${opts.label})` : ""} — retrying (${sent + 1}/${budget})`,
     );
@@ -504,6 +570,7 @@ export async function fetchWithTransientRetry(
       baseDelayMs: TRANSIENT_RETRY_BASE_DELAY_MS,
       maxDelayMs: TRANSIENT_RETRY_MAX_DELAY_MS,
       headers: res.headers,
+      retryAfterIsLowerBound: true,
     });
     cancelResponseBodyBestEffort(res);
     // Throws on abort (see sleepWithAbort): the rejection propagates, and the body we just
@@ -512,7 +579,7 @@ export async function fetchWithTransientRetry(
     attemptStart = Date.now();
     transientStatuses.push(res.status);
     try {
-      res = await fetchWithResetRetry(countedFetch, { ...opts, attempts: remaining() }, "transient-5xx");
+      res = await fetchWithResetRetry(countedFetch, innerResetOptions(), "transient-5xx");
     } catch (err) {
       // Keep the prior 5xx evidence attached: the origin already responded, so
       // this rejection is not pre-connection and must not classify as neutral.
