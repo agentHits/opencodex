@@ -9,6 +9,8 @@ Human-readable connect and sync-refresh diagnostics follow the [terminal renderi
 
 The CLI default dashboard address follows the [management ingress bind](../runtime.md#hub-management-dashboard-address), covered by `tests/cli/cli-dispatch.test.ts`.
 
+Native main reauthentication follows the [CLI JSON output contract](../runtime.md#native-main-reauth-json-output).
+
 The Codex restart command follows the [CLI restart scope contract](../runtime.md#cli-codex-restart-scope).
 
 ## Public docs
