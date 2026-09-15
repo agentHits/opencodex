@@ -1,9 +1,12 @@
 # Adapter Registry Authority
 
+Request-local adapter bindings are separate from registry authority in the Responses
+[core module ownership](../transports/responses.md#core-module-ownership). This surface retains its existing behavior.
+
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
-Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts.
+Shared parsing and streaming follow the [request-copy](../transports/byte-accounting.md#request-copy-accounting) and [stream-buffer accounting](../transports/byte-accounting.md#stream-buffer-accounting) contracts. Response-attached WebSocket telemetry follows the [stage record identity contract](../transports/responses.md#passthrough-sse-stream-shapes-314).
 
 ## Decision
 
@@ -108,6 +111,8 @@ Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.
 The bridge keeps an open function, custom, or tool-search call incomplete when an adapter ends with a recognized truncated stop reason. Streaming emits no argument/input completion frame for that open call, and buffered JSON applies the same status. A call already closed by its own tool-call end retains its completed state. The response remains incomplete, partial output is preserved, and truncated compaction never replaces history.
 
 A provider web search still in flight at that truncated terminal is finalized as `failed`, the same status it already receives from the error and explicit-incomplete terminals. It never returned results, so reporting it as `completed` would leave the client showing a finished search for a turn the provider cut short.
+
+`src/adapters/anthropic.ts` maps a `refusal` or `content_filter` stop reason to an explicit `incomplete` adapter event with `reason: "content_filter"` and `retryable: false` instead of `done` with that stopReason (#4312). Codex otherwise treats a filter incomplete without retryable as a dropped stream and retries a refusal that cannot succeed. Partial output, tool-call integrity, and usage are preserved; `max_tokens` remains a `done` so a legitimate truncation can continue.
 
 Chat helper admission in `src/server/responses/core.ts` follows the
 [deferred stored-main contract](../providers/openai-tiers.md): only a needed Direct OpenAI helper
