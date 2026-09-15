@@ -156,7 +156,7 @@ Kiro 的 assistant 文本本身没有可靠的回合结束标记，但终止的 
 
 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 和 `claude-opus-5` 支持原生 effort，且请求字段名不同。`low` / `medium` / `high` /
 `xhigh` / `max` 在 GPT-5.6 系列中通过 `additionalModelRequestFields.reasoning.effort` 发送，
-在 `claude-opus-5` 上通过 `output_config.effort` 发送。
+在 `claude-opus-5` 上通过 `additionalModelRequestFields.output_config.effort` 发送。
 
 
 ## `cursor`
