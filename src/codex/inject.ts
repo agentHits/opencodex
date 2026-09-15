@@ -489,11 +489,10 @@ async function injectCodexConfigImpl(
 
   /*
    * Rows this home may have tagged `opencodex` resolve only through a provider table. Design B
-   * selects the built-in `openai` provider for new work, but its background relabel is not
-   * atomic with native artifact publication. Codex can paginate immediately after the final
-   * check or while that worker starts. Keep an existing definition regardless of the current
-   * preflight result, BEFORE the witness, so those old references remain resolvable even if
-   * the worker fails. Explicit restoration retains its separate removal and history guards.
+   * selects built-in `openai` for new work, but background relabel and native publication are
+   * not atomic. Codex can paginate after the final check or when the worker starts. Retain
+   * an existing definition BEFORE the witness regardless of preflight, so worker failure
+   * cannot orphan old references. Explicit restoration keeps its removal and history guards.
    */
   if (hadOcxProviderTableOnDisk && !providerTableMode) {
     content = applyEol(
