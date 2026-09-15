@@ -36,6 +36,19 @@ type RefreshFailureBackoff = {
 };
 
 const backoffByAccount = new Map<string, RefreshFailureBackoff>();
+/**
+ * Bumped whenever an account's failures are cleared because something proved them obsolete — a
+ * successful refresh, or a replacement credential written by login/reauth. A refresh flight that
+ * started before that moment is reporting on a grant that no longer exists, and its late failure
+ * must not re-quarantine the credential that replaced it.
+ */
+const fenceByAccount = new Map<string, number>();
+/**
+ * Invalidates every account fence without having to know which refresh flights are currently in
+ * progress. A bulk routing-state reset can race a first failure for an account that has no map
+ * entry yet, so iterating either map cannot close this boundary.
+ */
+let globalFence = 0;
 let nowOverride: number | undefined;
 
 export function setCodexPoolRefreshFailureNowForTests(now?: number): void {
@@ -44,11 +57,19 @@ export function setCodexPoolRefreshFailureNowForTests(now?: number): void {
 
 export function resetCodexPoolRefreshFailureBackoffForTests(): void {
   backoffByAccount.clear();
+  fenceByAccount.clear();
+  globalFence = 0;
   nowOverride = undefined;
+}
+
+/** The value a refresh flight captures before it starts, to be handed back on failure. */
+export function codexPoolRefreshFence(accountId: string): string {
+  return `${globalFence}:${fenceByAccount.get(accountId) ?? 0}`;
 }
 
 export function clearCodexPoolRefreshFailure(accountId: string): void {
   backoffByAccount.delete(accountId);
+  fenceByAccount.set(accountId, (fenceByAccount.get(accountId) ?? 0) + 1);
 }
 
 /**
@@ -58,6 +79,8 @@ export function clearCodexPoolRefreshFailure(accountId: string): void {
  */
 export function clearAllCodexPoolRefreshFailures(): void {
   backoffByAccount.clear();
+  fenceByAccount.clear();
+  globalFence += 1;
 }
 
 function currentNow(now?: number): number {
@@ -101,8 +124,19 @@ export function noteCodexPoolRefreshFailure(
   accountId: string,
   reason: string,
   now = currentNow(),
+  fence?: string,
 ): { consecutiveFailures: number; cooldownUntil: number; openedWindow: boolean } {
   const existing = backoffByAccount.get(accountId);
+  // A flight that started before the account's failures were cleared is speaking for a grant
+  // that has since been replaced or proven healthy. Recording it would put the new credential
+  // back in the quarantine its predecessor earned.
+  if (fence !== undefined && fence !== codexPoolRefreshFence(accountId)) {
+    return {
+      consecutiveFailures: existing?.consecutiveFailures ?? 0,
+      cooldownUntil: existing?.cooldownUntil ?? 0,
+      openedWindow: false,
+    };
+  }
   // The "do not grow inside an open window" rule applies only once the window is actually
   // WITHHOLDING. Below the threshold no refresh is being withheld, so every failure is a real
   // attempt that really failed and must count -- otherwise a client retrying the 503 once a

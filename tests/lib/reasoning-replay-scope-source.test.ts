@@ -1,3 +1,4 @@
+import { readResponsesCoreSource } from "../helpers/responses-core-source";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ const source = (relative: string): string =>
 
 describe("reasoning replay scope propagation", () => {
   test("every production bridge call passes the provider-bound scope holder", () => {
-    const core = source("server/responses/core.ts");
+    const core = readResponsesCoreSource();
     const images = source("images/loop.ts");
     const webSearch = source("web-search/loop.ts");
     expect(core.match(/replayCacheScope: parsed\._reasoningReplayScope,/g)).toHaveLength(4);
