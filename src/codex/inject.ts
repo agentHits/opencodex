@@ -465,19 +465,14 @@ async function injectCodexConfigImpl(
    */
   /*
    * Re-observed inside the artifact transaction. A store that migrates to paginated history
-   * mid-write can retire the relabel unit only while its already-admitted candidate leaves
-   * existing provider references resolvable. A candidate that removes the old provider table
-   * needs compensation; adding it after witness construction would change admitted bytes.
+   * mid-write can retire the relabel unit while its already-admitted candidate leaves
+   * existing provider references resolvable. Existing provider definitions are retained
+   * before the witness; no post-commit compensation may overwrite a newer native write.
    */
   const observeHistoryRefusalOrThrow = (known: string | null): string | null => {
     if (known) return known;
     const observed = historyPreflight();
     if (observed && observed !== HISTORY_RELABEL_STANDS_DOWN) throw new CodexHistoryPreflightRefusal(observed);
-    if (observed === HISTORY_RELABEL_STANDS_DOWN && hadOcxProviderTableOnDisk && !providerTableMode) {
-      // Pagination appeared after retention was decided. Skipping relabel while publishing
-      // this table-removing candidate would orphan the still-opencodex conversations.
-      throw new CodexHistoryPreflightRefusal(observed);
-    }
     return observed;
   };
   const observedHistoryRefusal = historyPreflight();
@@ -494,12 +489,13 @@ async function injectCodexConfigImpl(
 
   /*
    * Rows this home may have tagged `opencodex` resolve only through a provider table. Design B
-   * normally retires that table because the relabel migrates those rows back to `openai` in
-   * the same pass; with the relabel stood down, stripping it anyway would leave every such
-   * conversation pointing at a provider id that no longer exists. Keep what was already
-   * published, and keep it BEFORE the witness so the lock admits the bytes actually written.
+   * selects the built-in `openai` provider for new work, but its background relabel is not
+   * atomic with native artifact publication. Codex can paginate immediately after the final
+   * check or while that worker starts. Keep an existing definition regardless of the current
+   * preflight result, BEFORE the witness, so those old references remain resolvable even if
+   * the worker fails. Explicit restoration retains its separate removal and history guards.
    */
-  if (historyRelabelRefusal && hadOcxProviderTableOnDisk && !providerTableMode) {
+  if (hadOcxProviderTableOnDisk && !providerTableMode) {
     content = applyEol(
       content.trimEnd() + "\n" + buildProviderTableBlockForTarget(routingTarget, websocketsEnabled(config ?? {})),
       eol,
@@ -792,6 +788,7 @@ async function injectCodexConfigImpl(
   // handed down fixed; the Worker never takes a direction from its caller.
   // A stood-down relabel unit spawns no Worker: the preflight it would run first has
   // already refused, and the config half is committed either way.
+  historyArtifactStageForTests?.("before-history-worker");
   const historyOutcome: CodexHistoryJobOutcome = historyRelabelRefusal
     ? { kind: "skipped" }
     : await runCodexHistoryJob({
@@ -989,4 +986,3 @@ export {
   setBeforeRestoreConfigForTests,
   skippedRestoreEnvelope,
 } from "./inject/restore";
-

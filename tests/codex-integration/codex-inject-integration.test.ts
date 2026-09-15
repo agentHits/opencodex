@@ -221,20 +221,57 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(child.status, child.stderr).toBe(0);
     const value = JSON.parse(child.stdout);
     expect(value.kind, child.stdout).toBe(coordinated ? "coordinated" : "legacy-uncoordinated");
-    expect(value.result).toMatchObject({success:authless,historyPreflightFailureReason:"history_paginated_requires_native_writer"});
-    if (authless) {
-      const config = Bun.TOML.parse(readFileSync(configPath,"utf8")) as any;
-      expect(config.model_provider).toBe("opencodex");
-      expect(config.model_providers.opencodex.base_url).toBe("http://127.0.0.1:10100/v1");
-      expect(readFileSync(profilePath,"utf8")).not.toBe(before[1]);
-    } else {
-      expect([configPath, profilePath, journalPath].map(path => existsSync(path) ? readFileSync(path, "utf8") : null)).toEqual(before);
-      expect(value.after).toEqual(value.before);
-    }
+    expect(value.result).toMatchObject({success:true,historyPreflightFailureReason:"history_paginated_requires_native_writer"});
+    const config = Bun.TOML.parse(readFileSync(configPath,"utf8")) as any;
+    expect(config.model_provider).toBe(authless ? "opencodex" : undefined);
+    expect(config.model_providers.opencodex.base_url).toBe("http://127.0.0.1:10100/v1");
+    expect(readFileSync(profilePath,"utf8")).not.toBe(before[1]);
+    if (coordinated) expect(value.after).not.toEqual(value.before);
     const db = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
     try {
       expect(db.query("SELECT model_provider FROM threads").get()).toEqual({model_provider:"opencodex"});
     } finally { db.close(); }
+  });
+
+  test.each([false, true])("pagination after artifact commit keeps the existing provider (coordinated=%s)", coordinated => {
+    const configPath = join(codexHome, "config.toml");
+    writeFileSync(configPath, coordinated ? 'model="test"\n' : DESIGN_B_BLOCK + "\n");
+    if (coordinated) {
+      const seed = runInject(codexHome, ocxHome, JSON.stringify({ codexClientCompaction: true }));
+      expect(seed.status, seed.stderr).toBe(0);
+      expect(JSON.parse(seed.stdout).success).toBe(true);
+    } else {
+      writeFileSync(configPath, 'model_provider="opencodex"\n[model_providers.opencodex]\nname="OpenCodex"\nbase_url="http://127.0.0.1:10100/v1"\nwire_api="responses"\n');
+      writeFileSync(join(codexHome, "opencodex.config.toml"), "# legacy profile\n");
+    }
+    const script = `
+      const {Database}=require("bun:sqlite");
+      const {join}=require("node:path");
+      const {injectCodexConfig,setHistoryArtifactStageForTests}=require("./src/codex/inject");
+      let migrated=false;
+      setHistoryArtifactStageForTests(stage=>{
+        if(stage!=="before-history-worker") return;
+        const db=new Database(join(process.env.CODEX_HOME,"state_5.sqlite"));
+        db.run("CREATE TABLE threads (rollout_path TEXT, model_provider TEXT, history_mode TEXT)");
+        db.run("INSERT INTO threads VALUES ('fixture','opencodex','paginated')");
+        db.close();migrated=true;
+      });
+      const result=await injectCodexConfig(10100,{});
+      console.log(JSON.stringify({migrated,result}));
+    `;
+    const child = spawnSync(process.execPath, ["--eval", script], {
+      cwd: repoRoot, env: { ...process.env, CODEX_HOME: codexHome, OPENCODEX_HOME: ocxHome },
+      encoding: "utf8", timeout: SPAWN_BUDGET_MS - 5_000,
+    });
+    expect(child.status, child.stderr).toBe(0);
+    const value = JSON.parse(child.stdout);
+    expect(value.migrated).toBe(true);
+    const parsed = Bun.TOML.parse(readFileSync(configPath, "utf8")) as any;
+    expect(parsed.model_providers?.opencodex?.base_url).toBe("http://127.0.0.1:10100/v1");
+    expect(value.result.success).toBe(true);
+    const db = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
+    try { expect(db.query("SELECT model_provider FROM threads").get()).toEqual({ model_provider: "opencodex" }); }
+    finally { db.close(); }
   });
 
   for (const stage of ["before-preflight", "after-preflight", "after-config", "after-artifacts"]) {
@@ -592,11 +629,11 @@ describe("injectCodexConfig integration (Design B)", () => {
     const config = readFileSync(join(codexHome, "config.toml"), "utf8");
     expect(config).toContain('openai_base_url = "http://127.0.0.1:10100/v1"');
     expect(config).toContain("# Auto-injected by opencodex");
-    expect(config).not.toContain("[model_providers.opencodex]");
+    expect(config).toContain("[model_providers.opencodex]");
     expect(config).not.toContain('model_provider = "opencodex"');
     expect(config).toContain('model = "gpt-5.5"');
-    // Exactly the Design B markers survive (routing + realtime sideband) — no accumulation.
-    expect(config.match(/Auto-injected by opencodex/g)?.length).toBe(2);
+    // Routing, realtime sideband and the retained compatibility provider each have one marker.
+    expect(config.match(/Auto-injected by opencodex/g)?.length).toBe(3);
     expect(config).toContain(DESIGN_B_BLOCK);
   });
 
@@ -1320,9 +1357,10 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(runInject(codexHome, ocxHome).status).toBe(0);
     const back = readFileSync(join(codexHome, "config.toml"), "utf8");
     expect(back).toContain('openai_base_url = "http://127.0.0.1:10100/v1"');
-    expect(back).not.toContain("[model_providers.opencodex]");
+    expect(back).toContain("[model_providers.opencodex]");
+    expect(back).toContain("requires_openai_auth = true");
     expect(back).not.toContain('model_provider = "opencodex"');
-    expect(back.match(/Auto-injected by opencodex/g)?.length).toBe(2);
+    expect(back.match(/Auto-injected by opencodex/g)?.length).toBe(3);
     expect(back).toContain(DESIGN_B_BLOCK);
 
     expect(runInject(codexHome, ocxHome, JSON.stringify({ codexDesktopAuthless: true })).status).toBe(0);
@@ -1350,7 +1388,7 @@ describe("injectCodexConfig integration (Design B)", () => {
     expect(runInject(codexHome, ocxHome).status).toBe(0);
     const designB = readFileSync(join(codexHome, "config.toml"), "utf8");
     expect(designB).toContain(DESIGN_B_BLOCK);
-    expect(designB).not.toContain("[model_providers.opencodex]");
+    expect(designB).toContain("[model_providers.opencodex]");
     expect(designB).not.toContain('model_provider = "opencodex"');
     // Disabling leaves exactly one root override, not the table form's copy plus a new one.
     expect(designB.match(/openai_base_url/g)?.length).toBe(1);
