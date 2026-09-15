@@ -494,7 +494,7 @@ export async function prepareResponsesTransport(
           // Advance the pool cursor only now that this account is actually admitted. The
           // helper returns immediately unless the kernel is on AND the strategy is
           // round-robin, so quota and fill-first pools reach it without being touched.
-          noteGenericPoolSelection(config, route.providerName, resolved.accountId);
+          noteGenericPoolSelection(config, route.providerName, resolved.accountId, route.modelId);
         }
         // Anthropic is excluded from isGenericFailoverProvider -- its own pool owns affinity and
         // a fail-closed local-cli credential rule -- so without this stamp its identity is

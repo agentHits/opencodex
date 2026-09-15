@@ -282,11 +282,17 @@ function pickFillFirstGenericAccount(
  * advance and round-robin would propose the same account forever. This is the same shape
  * `commitAnthropicSelectionRouting` already commits with.
  */
-export function noteGenericPoolSelection(config: OcxConfig, providerName: string, accountId: string): void {
+export function noteGenericPoolSelection(
+  config: OcxConfig,
+  providerName: string,
+  accountId: string,
+  requestedModelId?: string | null,
+): void {
   if (activeGenericStrategy(config, providerName) !== "round-robin") return;
   const poolKey = genericPoolKey(providerName);
   const limit = genericStickyLimit(config, providerName);
-  const picked = pickRoundRobinAccount(poolKey, eligibleFailoverAccounts(providerName), limit);
+  const family = classifyModelFamilyForQuota(providerName, requestedModelId);
+  const picked = pickRoundRobinAccount(poolKey, eligibleFailoverAccounts(providerName, Date.now(), family), limit);
   // The resolver may have admitted a different account than the ring proposed: a removal, a
   // reauth verdict or a manual selection can land during credential resolution. Realign the
   // cursor onto what actually served rather than leaving it on a road not taken.

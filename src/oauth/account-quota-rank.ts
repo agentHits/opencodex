@@ -26,7 +26,9 @@ export function classifyModelFamilyForQuota(
   const id = modelId.toLowerCase();
   // Gemma is not Gemini: a substring/prefix match would poison Gemini ranking.
   if (/(?:^|[^a-z])gemma(?:[^a-z]|$)/.test(id)) return undefined;
-  if (/(?:^|[^a-z])gemini(?:[^a-z]|$)/.test(id) || /(?:^|[^a-z])gem(?:[^a-z]|$)/.test(id)) return "gem";
+  // Catalog ids are gemini-*, never a bare gem- token. Window labels still match Gem via
+  // windowMatchesFamily; this classifier is only for request model ids.
+  if (/(?:^|[^a-z])gemini(?:[^a-z]|$)/.test(id)) return "gem";
   if (
     /(?:^|[^a-z])claude(?:[^a-z]|$)/.test(id)
     || /(?:^|[^a-z])opus(?:[^a-z]|$)/.test(id)

@@ -10,6 +10,8 @@ import {
 } from "../../src/oauth/account-quota-rank";
 import {
   clearGenericFailoverHealth,
+  eligibleFailoverAccounts,
+  genericFailoverRetryAfterSeconds,
   preferredInitialAccount,
   rotateGenericOAuthAccountOn429,
 } from "../../src/oauth/generic-account-failover";
@@ -68,6 +70,11 @@ describe("classifyModelFamilyForQuota", () => {
     expect(classifyModelFamilyForQuota("google-antigravity", "gemma-3-27b")).toBeUndefined();
     expect(classifyModelFamilyForQuota("xai", "gemini-3.8-flash")).toBeUndefined();
     expect(classifyModelFamilyForQuota("google-antigravity", undefined)).toBeUndefined();
+    expect(classifyModelFamilyForQuota("google-antigravity", "gemini-pro-agent")).toBe("gem");
+    expect(classifyModelFamilyForQuota("google-antigravity", "gemini-3.1-flash-image")).toBe("gem");
+    expect(classifyModelFamilyForQuota("google-antigravity", "claude-sonnet-4-6")).toBe("cla");
+    expect(classifyModelFamilyForQuota("google-antigravity", "claude-opus-4-6-thinking")).toBe("cla");
+    expect(classifyModelFamilyForQuota("google-antigravity", "gem-experimental")).toBeUndefined();
   });
 });
 
@@ -113,5 +120,55 @@ describe("Antigravity family-scoped cooldown", () => {
     const cfg = config();
     expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", ids[0]!, null, Date.now(), "claude-sonnet-4-5")).toBe(ids[1]);
     expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "gemini-3.8-flash")).toBeNull();
+  });
+});
+
+function kernelConfig(strategy: "fill-first" | "round-robin"): OcxConfig {
+  return {
+    pool: { kernel: true },
+    providers: {
+      "google-antigravity": {
+        ...PROVIDER,
+        oauthAccountFailover: { enabled: true, strategy, autoSwitchThreshold: 80 },
+      },
+    },
+    oauthAccountFailover: { enabled: true },
+  } as unknown as OcxConfig;
+}
+
+async function seedPair(): Promise<string[]> {
+  for (const accountId of ["acct-a", "acct-b"]) {
+    await saveCredential("google-antigravity", {
+      access: "access-" + accountId,
+      refresh: "refresh-" + accountId,
+      expires: Date.now() + 3_600_000,
+      accountId,
+    } as never, { addAccount: true });
+  }
+  const ids = getAccountSet("google-antigravity")?.accounts.map((account) => account.id) ?? [];
+  expect(ids.length).toBe(2);
+  await setActiveAccount("google-antigravity", ids[0]!);
+  return ids;
+}
+
+describe("Antigravity family strategies behind pool.kernel", () => {
+  test("fill-first stays on Gemini headroom when only Claude is over the threshold", async () => {
+    const ids = await seedPair();
+    seedWindows(ids[0]!, 40, 90);
+    seedWindows(ids[1]!, 10, 10);
+    const cfg = kernelConfig("fill-first");
+    expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "gemini-3.8-flash")).toBeNull();
+    expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "claude-sonnet-4-6")).toBe(ids[1]);
+  });
+
+  test("a Claude 429 does not hide the account from Gemini round-robin", async () => {
+    const ids = await seedPair();
+    seedWindows(ids[0]!, 20, 20);
+    seedWindows(ids[1]!, 20, 20);
+    const cfg = kernelConfig("round-robin");
+    expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", ids[0]!, null, Date.now(), "claude-sonnet-4-6")).toBe(ids[1]);
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "gem")).toContain(ids[0]);
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "cla")).not.toContain(ids[0]);
+    expect(genericFailoverRetryAfterSeconds("google-antigravity")).toBeGreaterThan(0);
   });
 });
