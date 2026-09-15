@@ -458,7 +458,7 @@ estimated` split exists for, and why coverage is reported alongside totals. The 
 main Dashboard surfaces a 30d token / coverage summary. The in-memory `requestLog` is capped at
 200 entries and is **not** the source of truth for aggregation — the JSONL on disk is.
 
-A row also carries what its logical request cost upstream. `logicalRequestId` names the turn
+A row also records the upstream cost of its logical request. `logicalRequestId` names the turn
 that a retry leg, a repair refetch and a combo child all belong to, and `spend` aggregates their
 physical sends: `sends` totals every attempt on the row, `settled` counts the sends whose attempt
 reached a terminal status, and `unresolved` holds the rest — an attempt abandoned in flight, or a
