@@ -97,16 +97,18 @@ git push origin agentHits/dev
 | --- | --- | --- | --- |
 | `upstream/dev` | официальный код | база | да |
 | `agentHits/dev` | локальный прокси | — | нет, не PR |
-| `agentHits/antigravity` | GUI accounts + Cockpit Tools | да, тот же коммит `904db7036` | [PR #4560](https://github.com/lidge-jun/opencodex/pull/4560) |
-| `agentHits/antigravity+cockpitTools` | старый алиас того же SHA | да | нет |
-| `fix/cca-gemini-structured-output` | Gemini CCA structured output | нет | [PR #4670](https://github.com/lidge-jun/opencodex/pull/4670) / [issue #4669](https://github.com/lidge-jun/opencodex/issues/4669) |
+| `agentHits/antigravity` | GUI accounts + Cockpit Tools | да, база GUI `904db7036` | [PR #4560](https://github.com/lidge-jun/opencodex/pull/4560) |
+| `agentHits/antigravity+cockpitTools` | старый алиас GUI-SHA | да | нет |
+| `fix/cca-gemini-structured-output` | Gemini CCA structured output | да, влито `11e343e5f` | открыт [PR #4670](https://github.com/lidge-jun/opencodex/pull/4670) / [issue #4669](https://github.com/lidge-jun/opencodex/issues/4669) |
 
 Когда вливаешь новую фичу в `agentHits/dev`, допиши строку в эту таблицу.
 Когда апстрим принял PR — пометь и дальше тяни через `upstream/dev`.
 
 ## Как забрать готовый апстрим-фикс себе раньше мержа
 
-Пример: structured output ещё не в `dev`, а worker на Antigravity уже нужен:
+CCA structured output уже влит в `agentHits/dev`. После мержа #4670 в `upstream/dev` обычный `git merge upstream/dev` это подхватит и дублировать merge этой ветки не нужно.
+
+Шаблон для следующего такого фикса:
 
 ```bash
 git checkout agentHits/dev
