@@ -16,6 +16,7 @@ import type {
 
 export interface ProviderAccountsToolbarProps {
   analyzedList: AnalyzedAccountQuota[];
+  showModelFamilies?: boolean;
   filter: AccountFilterKey;
   onFilterChange: (next: AccountFilterKey) => void;
   sortKey: AccountSortKey;
@@ -34,6 +35,7 @@ export interface ProviderAccountsToolbarProps {
 
 export default function ProviderAccountsToolbar({
   analyzedList,
+  showModelFamilies = false,
   filter,
   onFilterChange,
   sortKey,
@@ -182,23 +184,35 @@ export default function ProviderAccountsToolbar({
 
           <div className="pwi-stat-sep" />
 
-          <div className="pwi-stat-unit">
-            <span className="pwi-stat-lbl">{t("pws.statsClaudeAvailable")}</span>
-            <div className="pwi-stat-val-line">
-              <span className="pwi-stat-num pwi-text-orange">{withLimitsClaudeCount}</span>
-              <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
-            </div>
-          </div>
+          {showModelFamilies ? (
+            <>
+              <div className="pwi-stat-unit">
+                <span className="pwi-stat-lbl">{t("pws.statsClaudeAvailable")}</span>
+                <div className="pwi-stat-val-line">
+                  <span className="pwi-stat-num pwi-text-orange">{withLimitsClaudeCount}</span>
+                  <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
+                </div>
+              </div>
 
-          <div className="pwi-stat-sep" />
+              <div className="pwi-stat-sep" />
 
-          <div className="pwi-stat-unit">
-            <span className="pwi-stat-lbl">{t("pws.statsGeminiAvailable")}</span>
-            <div className="pwi-stat-val-line">
-              <span className="pwi-stat-num pwi-text-blue">{withLimitsGeminiCount}</span>
-              <span className="pwi-stat-tag-blue">✓ {t("pws.statsReady")}</span>
+              <div className="pwi-stat-unit">
+                <span className="pwi-stat-lbl">{t("pws.statsGeminiAvailable")}</span>
+                <div className="pwi-stat-val-line">
+                  <span className="pwi-stat-num pwi-text-blue">{withLimitsGeminiCount}</span>
+                  <span className="pwi-stat-tag-blue">✓ {t("pws.statsReady")}</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="pwi-stat-unit">
+              <span className="pwi-stat-lbl">{t("pws.statsAvailable")}</span>
+              <div className="pwi-stat-val-line">
+                <span className="pwi-stat-num pwi-text-orange">{withLimitsCount}</span>
+                <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="pwi-stat-sep" />
 
@@ -308,6 +322,8 @@ export default function ProviderAccountsToolbar({
                       <span className="pwi-dropdown-badge" style={{ padding: "2px 7px", borderRadius: "999px", background: "rgba(255,255,255,0.08)", fontSize: "11px", fontWeight: "700" }}>{totalCount}</span>
                     </button>
 
+                    {showModelFamilies && (
+                    <>
                     <div className="pwi-dropdown-divider" />
 
                     <button
@@ -388,6 +404,11 @@ export default function ProviderAccountsToolbar({
                       <span className="pwi-dropdown-badge" style={{ padding: "2px 7px", borderRadius: "999px", background: "rgba(249, 115, 22, 0.15)", color: "#f97316", fontSize: "11px", fontWeight: "700" }}>{claudeExhaustedCount}</span>
                     </button>
 
+                    </>
+                    )}
+
+                    <div className="pwi-dropdown-divider" />
+
                     <button
                       type="button"
                       
@@ -457,6 +478,7 @@ export default function ProviderAccountsToolbar({
 
                     <div className="pwi-dropdown-divider" />
 
+                    {analyzedList.some(a => Boolean(a.generic5h || a.gemini5h || a.claude5h)) && (
                     <button
                       type="button"
                       
@@ -468,6 +490,7 @@ export default function ProviderAccountsToolbar({
                         <span>{t("pws.sortReset5h")}</span>
                       </span>
                     </button>
+                    )}
 
                     <button
                       type="button"

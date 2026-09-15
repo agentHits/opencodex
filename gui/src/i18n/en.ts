@@ -2959,6 +2959,7 @@ export const en = {
   "pws.removeAccountTooltip": "Remove account",
   "pws.statsClaudeAvailable": "Available for Claude",
   "pws.statsGeminiAvailable": "Available for Gemini",
+  "pws.statsAvailable": "Available",
 } as const;
 
 export type TKey = keyof typeof en;

@@ -2948,4 +2948,5 @@ export const ru: Record<TKey, string> = {
   "pws.removeAccountTooltip": "Удалить аккаунт",
   "pws.statsClaudeAvailable": "Доступны Claude",
   "pws.statsGeminiAvailable": "Доступны Gemini",
+  "pws.statsAvailable": "Доступны",
 };

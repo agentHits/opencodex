@@ -214,5 +214,20 @@ describe("account-quota-analysis", () => {
     const by7d = sortAccounts([acc1, acc2], "reset_7d_soonest");
     expect(by7d[0].emailLogin).toBe("cla-full");
   });
+  test("xai weekly quota stays generic and is not treated as Antigravity families", () => {
+    const analyzed = analyzeAccountQuota({
+      id: "xai-1",
+      email: "grok@example.com",
+      active: true,
+      quotaMode: "probe",
+      quota: { weeklyPercent: 10, weeklyResetAt: 1_800_000_000 },
+    }, "xai");
+    expect(analyzed.isAntigravity).toBe(false);
+    expect(analyzed.genericWeekly?.percent).toBe(10);
+    expect(analyzed.gemini5h).toBeUndefined();
+    expect(analyzed.claude5h).toBeUndefined();
+    expect(analyzed.readinessStatus).toBe("ready");
+    expect(analyzed.hasAnyLimitsLeft).toBe(true);
+  });
 });
 
