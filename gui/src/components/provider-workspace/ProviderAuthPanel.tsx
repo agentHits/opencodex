@@ -389,10 +389,14 @@ export default function ProviderAuthPanel({
         )}
         {isOauth && (
           <>
-            {item.name === "anthropic" && (
-              <AnthropicAccountPoolSettings apiBase={apiBase} accountCount={accounts.length} />
+            {item.name !== "openai" && (
+              <AnthropicAccountPoolSettings
+                apiBase={apiBase}
+                accountCount={accounts.length}
+                provider={item.name}
+              />
             )}
-            
+
             {/* Only show initial login row when no accounts exist yet */}
             {accounts.length === 0 && (
               <div className="pwi-auth-status-row">
@@ -632,4 +636,3 @@ export default function ProviderAuthPanel({
     </section>
   );
 }
-

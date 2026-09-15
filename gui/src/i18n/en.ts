@@ -2051,6 +2051,18 @@ export const en = {
   "anthropicPool.on": "On",
   "anthropicPool.off": "Off",
 
+  "genericPool.title": "Account pool",
+  "genericPool.enabledDesc": "New sessions prefer remaining quota under {threshold}%. A 429 still failovers among logged-in accounts.",
+  "genericPool.enabledNoProactiveDesc": "Proactive usage-based switching is off at threshold 0. A 429 still failovers among logged-in accounts.",
+  "genericPool.disabledDesc": "The active account is kept until it fails. A 429 still failovers among logged-in accounts — that cannot be turned off.",
+  "genericPool.notice": "This switch only controls proactive selection before dispatch. Round-robin and fill-first are saved here and apply when the shared pool kernel is on.",
+  "genericPool.needTwoAccounts": "Add at least two OAuth accounts before enabling proactive selection.",
+  "genericPool.threshold": "Proactive usage threshold",
+  "genericPool.thresholdAria": "Proactive usage threshold, percent",
+  "genericPool.thresholdHelp": "0 disables proactive picking and keeps the active account until a 429. Default 80. Applies when quota evidence exists.",
+  "genericPool.loadFailed": "Pool settings could not be loaded.",
+  "genericPool.saveFailed": "Pool settings could not be saved.",
+
   "accountPool.strategy": "Rotation strategy",
   "accountPool.strategyDesc": "How OpenCodex assigns an account to a new/unbound task.",
   "accountPool.strategyResetFirst": "Soonest reset first",
