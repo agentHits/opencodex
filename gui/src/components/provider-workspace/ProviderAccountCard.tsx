@@ -380,7 +380,7 @@ export default function ProviderAccountCard({
         {!analyzed.gemini5h && !analyzed.geminiWeekly && !analyzed.claude5h && !analyzed.claudeWeekly && (
           <div className="pwi-quota-col" style={{ gridColumn: "span 2" }}>
             {renderSingleQuotaBar("5-Hour", analyzed.generic5h?.percent, analyzed.generic5h?.resetAt)}
-            {renderSingleQuotaBar("Weekly", analyzed.genericWeekly?.percent, analyzed.genericWeekly?.resetAt)}
+            {renderSingleQuotaBar(t("pws.windowWeeklyLabel"), analyzed.genericWeekly?.percent, analyzed.genericWeekly?.resetAt)}
           </div>
         )}
       </div>

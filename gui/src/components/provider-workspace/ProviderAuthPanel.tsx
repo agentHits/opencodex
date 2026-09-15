@@ -229,6 +229,20 @@ export default function ProviderAuthPanel({
   const [accountSearch, setAccountSearch] = useState("");
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | null>(null);
 
+  const showModelFamilies = item.name === "google-antigravity";
+
+  useEffect(() => {
+    if (showModelFamilies) return;
+    if (
+      accountFilter === "with_limits_gemini"
+      || accountFilter === "with_limits_claude"
+      || accountFilter === "gemini_exhausted"
+      || accountFilter === "claude_exhausted"
+    ) {
+      handleFilterChange("with_limits");
+    }
+  }, [showModelFamilies, accountFilter]);
+
   const analyzedAccounts = useMemo(() => {
     return accounts.map(a => analyzeAccountQuota(a, item.name));
   }, [accounts, item.name]);
@@ -454,6 +468,7 @@ export default function ProviderAuthPanel({
               <>
                 <ProviderAccountsToolbar
                   analyzedList={analyzedAccounts}
+                  showModelFamilies={showModelFamilies}
                   filter={accountFilter}
                   onFilterChange={handleFilterChange}
                   sortKey={accountSort}

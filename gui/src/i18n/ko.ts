@@ -2947,4 +2947,5 @@ export const ko: Record<TKey, string> = {
   "pws.removeAccountTooltip": "계정 삭제",
   "pws.statsClaudeAvailable": "Claude 사용 가능",
   "pws.statsGeminiAvailable": "Gemini 사용 가능",
+  "pws.statsAvailable": "사용 가능",
 };
