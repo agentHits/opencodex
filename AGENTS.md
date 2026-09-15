@@ -352,6 +352,29 @@ The bypass is PR-only, so a direct push to `dev` remains rejected regardless of
 policy (approvals, CI requirements, security review, promotion). This file
 summarizes; it never overrides it.
 
+## Personal agentHits line
+
+This section is fork-only. It must not land in a pull request to
+`lidge-jun/opencodex`. Keep it on `agentHits/dev`.
+
+The local integration branch is `agentHits/dev`, not `agentHits`: Git cannot
+hold `agentHits` and `agentHits/antigravity` at once.
+
+Three layers:
+
+- `upstream/dev` — official code; every upstream PR targets this.
+- `agentHits/dev` — the checkout this machine runs: latest `dev` plus accepted
+  personal work.
+- `agentHits/<topic>` or `feat/` / `fix/` — one task, one branch.
+
+[`AGENTHITS.md`](./AGENTHITS.md) is the required ledger. Update its branch table
+in the same change that merges into `agentHits/dev`, opens or lands an upstream
+PR, or changes a feature's status. Do not leave the table stale.
+
+Never open an upstream PR from `agentHits/dev`. Keep an open upstream PR on its
+own topic branch (`agentHits/antigravity` is PR #4560). Sync `agentHits/dev` with
+`git merge --no-edit upstream/dev`, not rebase.
+
 ## Review guidelines
 
 These rules apply to all code reviews on this repository, including automated
