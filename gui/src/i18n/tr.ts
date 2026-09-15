@@ -2948,4 +2948,5 @@ export const tr: Record<TKey, string> = {
   "pws.removeAccountTooltip": "Hesabı kaldır",
   "pws.statsClaudeAvailable": "Claude için uygun",
   "pws.statsGeminiAvailable": "Gemini için uygun",
+  "pws.statsAvailable": "Kullanılabilir",
 };
