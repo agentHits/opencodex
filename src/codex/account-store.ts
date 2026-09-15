@@ -665,6 +665,33 @@ function isRefreshLockStale(path: string): boolean {
   }
 }
 
+function releaseCodexRefreshFileLock(path: string, fd: number): void {
+  let owned: { dev: bigint; ino: bigint } | null = null;
+  try {
+    const info = fstatSync(fd, { bigint: true });
+    if (info.dev >= 0n && info.ino > 0n) owned = { dev: info.dev, ino: info.ino };
+  } catch { /* Unknown descriptor identity never authorizes unlink. */ }
+  closeSync(fd);
+  try {
+    withConfigMutationLockSync(() => {
+      let current: { dev: bigint; ino: bigint } | null = null;
+      try {
+        const info = statSync(path, { bigint: true });
+        if (info.dev >= 0n && info.ino > 0n) current = { dev: info.dev, ino: info.ino };
+      } catch { /* Keep the lock and the callback outcome when the path probe fails. */ }
+      if (owned && current && current.dev === owned.dev && current.ino === owned.ino) {
+        try { unlinkSync(path); } catch (err) {
+          if (errCode(err) !== "ENOENT") throw err;
+        }
+      }
+    });
+  } catch (err) {
+    // The descriptor is already closed. A busy/unavailable metadata transaction leaves the
+    // path for stale recovery rather than masking the completed refresh with cleanup failure.
+    if (!(err instanceof ConfigMutationLockError)) throw err;
+  }
+}
+
 export async function withCodexRefreshFileLock<T>(lockKey: string, signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
   hardenConfigDir();
   const dir = getConfigDir();
@@ -676,53 +703,45 @@ export async function withCodexRefreshFileLock<T>(lockKey: string, signal: Abort
   while (fd == null) {
     if (signal.aborted) throw signal.reason;
     try {
-      fd = openSync(path, "wx", 0o600);
-      writeFileSync(fd, JSON.stringify({ acquiredAt: Date.now(), pid: process.pid }) + "\n");
-      break;
-    } catch (err) {
-      if (errCode(err) !== "EEXIST") throw err;
-      if (isRefreshLockStale(path)) {
+      // Serialize only metadata operations, never the async refresh callback. Cooperating
+      // contenders cannot reclaim a successor between stale observation and path mutation.
+      withConfigMutationLockSync(() => {
         try {
-          unlinkSync(path);
-        } catch (unlinkErr) {
-          if (errCode(unlinkErr) !== "ENOENT") throw unlinkErr;
+          fd = openSync(path, "wx", 0o600);
+          writeFileSync(fd, JSON.stringify({ acquiredAt: Date.now(), pid: process.pid }) + "\n");
+        } catch (err) {
+          if (fd != null) {
+            const failedFd = fd;
+            fd = null;
+            try { releaseCodexRefreshFileLock(path, failedFd); } catch { /* Preserve write failure. */ }
+            throw err;
+          }
+          if (errCode(err) !== "EEXIST") throw err;
+          if (isRefreshLockStale(path)) {
+            try { unlinkSync(path); } catch (unlinkErr) {
+              if (errCode(unlinkErr) !== "ENOENT") throw unlinkErr;
+            }
+          }
         }
-        continue;
+      });
+    } catch (err) {
+      // A failed SQLite commit can follow successful file creation; it still owns an fd.
+      if (fd != null) {
+        const failedFd = fd;
+        fd = null;
+        try { releaseCodexRefreshFileLock(path, failedFd); } catch { /* Preserve admission failure. */ }
       }
-      if (Date.now() >= deadline) throw new CodexCredentialRefreshLockTimeoutError();
-      await sleep(REFRESH_LOCK_POLL_MS, signal);
+      if (!(err instanceof ConfigMutationLockError)) throw err;
     }
+    if (fd != null) break;
+    if (Date.now() >= deadline) throw new CodexCredentialRefreshLockTimeoutError();
+    await sleep(REFRESH_LOCK_POLL_MS, signal);
   }
 
   try {
     return await fn();
   } finally {
-    // Release only the lock this call created. If a waiter reclaimed the path as stale and a
-    // new owner recreated it, unlinking by name would delete the live lock of that owner.
-    let owned: { dev: bigint; ino: bigint } | null = null;
-    if (fd != null) {
-      try {
-        const info = fstatSync(fd, { bigint: true });
-        if (info.dev >= 0n && info.ino > 0n) {
-          owned = { dev: info.dev, ino: info.ino };
-        }
-      } catch {
-        owned = null;
-      }
-      closeSync(fd);
-    }
-    let current: { dev: bigint; ino: bigint } | null = null;
-    try {
-      const info = statSync(path, { bigint: true });
-      if (info.dev >= 0n && info.ino > 0n) current = { dev: info.dev, ino: info.ino };
-    } catch {
-      // Unknown path identity leaves the lock for stale recovery without masking fn().
-    }
-    if (owned && current && current.dev === owned.dev && current.ino === owned.ino) {
-      try { unlinkSync(path); } catch (err) {
-        if (errCode(err) !== "ENOENT") throw err;
-      }
-    }
+    releaseCodexRefreshFileLock(path, fd);
   }
 }
 

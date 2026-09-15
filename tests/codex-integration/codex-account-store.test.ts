@@ -1,5 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
+import { Database } from "bun:sqlite";
 import * as fs from "node:fs";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -735,6 +736,71 @@ describe("codex-account-store CRUD", () => {
       else await expect(pending).rejects.toBe(unlinkError);
       expect(attempts).toBe(1);
     } finally { probe.mockRestore(); }
+  });
+
+  test("refresh stale reclamation excludes a second SQLite writer until acquisition finishes", async () => {
+    const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
+    const key = "serialized-stale";
+    const path = join(TEST_DIR, `codex-refresh-${createHash("sha256").update(key).digest("hex").slice(0, 32)}.lock`);
+    writeFileSync(path, JSON.stringify({ acquiredAt: 0 }));
+    const db = new Database(join(TEST_DIR, "config-mutation.sqlite"), { create: true });
+    const original = fs.unlinkSync;
+    let blocked = false;
+    const probe = spyOn(fs, "unlinkSync").mockImplementation((candidate) => {
+      if (candidate === path && !blocked) {
+        try { db.exec("BEGIN IMMEDIATE"); db.exec("ROLLBACK"); }
+        catch (error) { blocked = (error as { code?: string }).code === "SQLITE_BUSY"; }
+      }
+      return original(candidate);
+    });
+    try {
+      await withCodexRefreshFileLock(key, new AbortController().signal, async () => {
+        expect(blocked).toBe(true);
+        // The callback must not hold the metadata transaction across network/async work.
+        db.exec("BEGIN IMMEDIATE"); db.exec("ROLLBACK");
+      });
+      expect(existsSync(path)).toBe(false);
+    } finally { probe.mockRestore(); db.close(); }
+  });
+
+  test.each([false, true])("refresh metadata failure closes its descriptor and preserves replacement=%s", async (replacement) => {
+    const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
+    const key = `metadata-write-${replacement}`;
+    const path = join(TEST_DIR, `codex-refresh-${createHash("sha256").update(key).digest("hex").slice(0, 32)}.lock`);
+    const original = fs.writeFileSync;
+    const failure = Object.assign(new Error("metadata write failed"), { code: "EIO" });
+    let descriptor: number | undefined;
+    let called = false;
+    const probe = spyOn(fs, "writeFileSync").mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
+      if (typeof args[0] === "number") {
+        descriptor = args[0];
+        if (replacement) { renameSync(path, `${path}.reclaimed`); original(path, "successor"); }
+        throw failure;
+      }
+      return original(...args);
+    });
+    try {
+      await expect(withCodexRefreshFileLock(key, new AbortController().signal, async () => { called = true; })).rejects.toBe(failure);
+      expect(called).toBe(false);
+      expect(descriptor).toBeDefined();
+      expect(() => fs.fstatSync(descriptor!)).toThrow();
+      expect(existsSync(path)).toBe(replacement);
+      if (replacement) expect(readFileSync(path, "utf8")).toBe("successor");
+    } finally { probe.mockRestore(); }
+  });
+
+  test("refresh release keeps its result and lock when metadata coordination is busy", async () => {
+    const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
+    const key = "release-coordination-busy";
+    const path = join(TEST_DIR, `codex-refresh-${createHash("sha256").update(key).digest("hex").slice(0, 32)}.lock`);
+    const db = new Database(join(TEST_DIR, "config-mutation.sqlite"), { create: true });
+    try {
+      expect(await withCodexRefreshFileLock(key, new AbortController().signal, async () => {
+        db.exec("BEGIN IMMEDIATE");
+        return "refreshed";
+      })).toBe("refreshed");
+      expect(existsSync(path)).toBe(true);
+    } finally { db.exec("ROLLBACK"); db.close(); }
   });
 
   test("same refresh grant joins a live flight", async () => {

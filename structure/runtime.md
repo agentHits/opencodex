@@ -1,6 +1,6 @@
 # Runtime
 
-OAuth refresh coordination follows the [refresh-lock identity contract](catalog.md#accounts-namespaces-and-pool-rotation): a fresh unreadable lock remains held, and release requires matching descriptor identity. A failed path-identity probe preserves the refresh callback outcome.
+OAuth refresh coordination follows the [refresh-lock identity contract](catalog.md#accounts-namespaces-and-pool-rotation): a fresh unreadable lock remains held, and release requires matching descriptor identity. A failed path-identity probe preserves the refresh callback outcome. Cooperating lock metadata changes serialize through the existing SQLite mutation transaction; failed metadata writes close and clean only their owned file, and async refresh work holds no metadata transaction.
 
 The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.

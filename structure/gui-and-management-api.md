@@ -5,7 +5,7 @@ is scoped to canonical ChatGPT Responses forwarding; other source-area behavior 
 
 ## Dashboard serving
 
-Account refresh actions follow the [credential refresh-lock identity contract](catalog.md#accounts-namespaces-and-pool-rotation): a held unreadable lock is distinct from one this process may release, and path-probe errors preserve the callback outcome. The bundled React dashboard is built into `gui/dist` and served by the same Bun proxy. `ocx gui` starts
+Account refresh actions follow the [credential refresh-lock identity contract](catalog.md#accounts-namespaces-and-pool-rotation): a held unreadable lock is distinct from one this process may release, and path-probe errors preserve the callback outcome. Cooperating lock metadata changes serialize through the existing SQLite mutation transaction; failed metadata writes close and clean only their owned file, and async refresh work holds no metadata transaction. The bundled React dashboard is built into `gui/dist` and served by the same Bun proxy. `ocx gui` starts
 the proxy when needed and opens `http://localhost:<port>`, or `http://127.0.0.1:<management port>` when `hub.managementIngress.enabled` is true — see [the hub management dashboard address](runtime.md#hub-management-dashboard-address).
 
 All ordinary HTTP responses (excluding successful WebSocket upgrades) include `X-Frame-Options: DENY` and

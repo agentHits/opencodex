@@ -243,7 +243,7 @@ Pool mode routes across main plus added Codex credentials. Key rules:
   they do not assume a silent retry.
   The lock itself is identity-scoped: a not-yet-readable lock counts as held until it ages out,
   and release requires a usable matching descriptor identity. Unknown identity leaves the path
-  for stale recovery without replacing the callback outcome when the path probe fails; confirmed-owner unlink errors other than `ENOENT` still propagate. Stat followed by unlink does not provide atomic compare-and-delete.
+  for stale recovery without replacing the callback outcome when the path probe fails; confirmed-owner unlink errors other than `ENOENT` still propagate. Acquisition, stale reclamation and identity-checked release run inside the existing synchronous SQLite config-mutation transaction; the async refresh callback runs outside it. A failed metadata write closes its descriptor and removes only a matching owned path. Busy release coordination preserves the callback outcome and leaves the path for stale recovery. This serializes cooperating writers; stat/unlink is not atomic against non-cooperating filesystem writers.
 - **Authentication identity, quota domain, and cache domain are tracked separately**
   (`src/routing/identity-domains.ts`). `classifyCredential` returns all three with provenance:
   `pool.credentialGroups` supplies operator-declared quota domains, a small built-in table

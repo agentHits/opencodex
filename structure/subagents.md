@@ -1,6 +1,6 @@
 # Subagents And Multi-Agent Surface
 
-Concurrent refreshes triggered by independent agent work share the [credential refresh-lock contract](catalog.md#accounts-namespaces-and-pool-rotation); unknown lock identity remains available for stale recovery rather than immediate removal, and a failed path probe cannot mask the callback outcome.
+Concurrent refreshes triggered by independent agent work share the [credential refresh-lock contract](catalog.md#accounts-namespaces-and-pool-rotation); unknown lock identity remains available for stale recovery rather than immediate removal, and a failed path probe cannot mask the callback outcome. Cooperating lock metadata changes serialize through the existing SQLite mutation transaction; failed metadata writes close and clean only their owned file, and async refresh work holds no metadata transaction.
 
 ## Plaintext V2 agent messages
 
