@@ -2967,6 +2967,7 @@ export const ja: Record<TKey, string> = {
   "genericPool.visualUsageAria": "アクティブアカウントの使用量の例（パーセント）",
   "genericPool.visualStay": "次のリクエストはアクティブなアカウントに留まります。",
   "genericPool.visualSwitch": "次のリクエストはログイン済みの次のアカウントへ移ります。",
+  "genericPool.visualResetFirst": "7日間の週間クォータが最も早くリセットされるアカウントを優先して消費します。リクエストは枯渇（100%または429）するまでアクティブなアカウントに留まり、次にリセットが近いアカウントへ切り替わります。",
   "genericPool.visualQuota": "クォータは 5 時間または週次ウィンドウが 100% になるか 429 が来るまでアクティブアカウントを維持します。しきい値ではそれより早く切り替わりません。",
   "genericPool.visualFillFirst": "フィルファーストなら使用量が {threshold}% に達するまでアクティブアカウントを維持し、その後次を開きます。",
   "genericPool.visualRoundRobin": "ラウンドロビンなら新しい未紐付けリクエストを準備できたアカウントへ分散します。",

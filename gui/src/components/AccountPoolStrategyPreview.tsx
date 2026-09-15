@@ -27,7 +27,7 @@ export default function AccountPoolStrategyPreview({
 }) {
   const t = useT();
   const [usage, setUsage] = useState(90);
-  const storedOnly = kind === "generic" && strategy !== "quota";
+  const storedOnly = kind === "generic" && strategy !== "quota" && strategy !== "reset-first";
   const liveStrategy: AccountPoolStrategy = storedOnly ? "quota" : strategy;
   const switchAt = useMemo(() => {
     if (!enabled) return null;
@@ -46,7 +46,46 @@ export default function AccountPoolStrategyPreview({
     ? t("genericPool.visualFillFirst", { threshold })
     : liveStrategy === "round-robin"
       ? t("genericPool.visualRoundRobin")
+      : liveStrategy === "reset-first"
+        ? t("genericPool.visualResetFirst")
       : t("genericPool.visualQuota");
+
+  if (kind === "generic") {
+    return (
+      <div className="account-pool-preview" style={{ marginTop: "8px" }}>
+        <div className="account-pool-minimal-info" style={{
+          padding: "10px 14px",
+          borderRadius: "8px",
+          background: "var(--raised, #2a2a2a)",
+          border: "1px solid var(--border-soft, #383838)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "6px",
+          fontSize: "13px",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <strong style={{ color: "var(--text)" }}>
+              {strategy === "reset-first" && "📅 " + t("accountPool.strategyResetFirst")}
+              {strategy === "quota" && "⚡ " + t("accountPool.strategyQuota")}
+              {strategy === "round-robin" && "🔄 " + t("accountPool.strategyRoundRobin")}
+              {strategy === "fill-first" && "🎯 " + t("accountPool.strategyFillFirst")}
+            </strong>
+            {storedOnly && (
+              <span className="account-pool-preview__tag account-pool-preview__tag--stored">
+                {t("genericPool.visualStored")}
+              </span>
+            )}
+          </div>
+          <div className="card-sub" style={{ margin: 0, lineHeight: 1.4 }}>
+            {liveCaption}
+          </div>
+          <div className="card-sub" style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>
+            {t("genericPool.visual429")}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="account-pool-preview">
