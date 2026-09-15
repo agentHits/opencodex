@@ -270,6 +270,7 @@ export default function AnthropicAccountPoolSettings({
           <AccountPoolStrategyControls
             strategy={strategy}
             allowResetFirst={!isAnthropic}
+            compact={!isAnthropic}
             stickyDraft={stickyDraft}
             disabled={saving}
             strategySelectId={controlId(provider, "strategy")}
@@ -306,12 +307,14 @@ export default function AnthropicAccountPoolSettings({
             }}
           />
 
-          <AccountPoolStrategyPreview
-            strategy={strategy}
-            threshold={previewThreshold}
-            kind={isAnthropic ? "anthropic" : "generic"}
-            enabled={enabled}
-          />
+          {isAnthropic && (
+            <AccountPoolStrategyPreview
+              strategy={strategy}
+              threshold={previewThreshold}
+              kind="anthropic"
+              enabled={enabled}
+            />
+          )}
 
           {showQuotaWindow && (
             <div className="field anthropic-pool-card__field anthropic-pool-card__field--quota-window">

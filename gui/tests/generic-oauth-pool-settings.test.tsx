@@ -142,7 +142,6 @@ describe("generic OAuth account pool settings", () => {
     });
     const host = await mountPool();
     expect(host.textContent).toContain("Quota");
-    expect(host.textContent).toContain("A 429 always failovers among logged-in accounts.");
   });
 
   test("supports soonest reset strategy for generic providers", async () => {
@@ -157,7 +156,7 @@ describe("generic OAuth account pool settings", () => {
     expect(host.textContent).toContain("Consumes the account whose 7-day weekly allowance resets earliest");
   });
 
-  test("labels fill-first as saved while the live path is active", async () => {
+  test("renders fill-first strategy for generic providers", async () => {
     stubPool({
       enabled: true,
       autoSwitchThreshold: 90,
@@ -165,7 +164,7 @@ describe("generic OAuth account pool settings", () => {
       stickyLimit: 1,
     });
     const host = await mountPool();
-    expect(host.textContent).toContain("Saved, not live");
+    expect(host.textContent).toContain("Fill-first");
   });
 
   test("omits quotaWindow from generic saves", async () => {
