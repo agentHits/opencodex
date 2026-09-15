@@ -231,16 +231,16 @@ export default function ProviderAuthPanel({
 
   const showModelFamilies = item.name === "google-antigravity";
 
-  useEffect(() => {
-    if (showModelFamilies) return;
-    if (
+  const effectiveAccountFilter = useMemo(() => {
+    if (!showModelFamilies && (
       accountFilter === "with_limits_gemini"
       || accountFilter === "with_limits_claude"
       || accountFilter === "gemini_exhausted"
       || accountFilter === "claude_exhausted"
-    ) {
-      handleFilterChange("with_limits");
+    )) {
+      return "with_limits";
     }
+    return accountFilter;
   }, [showModelFamilies, accountFilter]);
 
   const analyzedAccounts = useMemo(() => {
@@ -248,9 +248,9 @@ export default function ProviderAuthPanel({
   }, [accounts, item.name]);
 
   const filteredAndSortedAccounts = useMemo(() => {
-    const filtered = filterAccounts(analyzedAccounts, accountFilter, accountSearch);
-    return sortAccounts(filtered, accountSort, accountFilter);
-  }, [analyzedAccounts, accountFilter, accountSearch, accountSort]);
+    const filtered = filterAccounts(analyzedAccounts, effectiveAccountFilter, accountSearch);
+    return sortAccounts(filtered, accountSort, effectiveAccountFilter);
+  }, [analyzedAccounts, effectiveAccountFilter, accountSearch, accountSort]);
   const refreshQuota = async () => {
     if (!onRefreshQuota || refreshingQuota) return;
     const generation = ++quotaRefreshGeneration.current;
