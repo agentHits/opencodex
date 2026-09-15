@@ -364,9 +364,10 @@ important than cosmetic de-duplication. Tool-free requests retain normal text co
 
 ### Reasoning effort
 
-`gpt-5.6-sol` and `claude-opus-5` have verified native effort support, and each model family names
-the request field differently. A selected `low`, `medium`, `high`, `xhigh`, or `max` value is sent
-as `additionalModelRequestFields.reasoning.effort` for `gpt-5.6-sol` and as
+The Kiro GPT-5.6 family (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) and `claude-opus-5` have
+verified native effort support, and each model family names the request field differently. A
+selected `low`, `medium`, `high`, `xhigh`, or `max` value is sent as
+`additionalModelRequestFields.reasoning.effort` for the GPT-5.6 models and as
 `additionalModelRequestFields.output_config.effort` for `claude-opus-5`. Other Kiro models currently
 use emulated reasoning: opencodex converts the selected level into bounded thinking instructions in
 the user content because their native effort field has not been verified. Do not interpret an

@@ -167,9 +167,9 @@ commentary로 유지하고 비공개 완료 툴을 한 번 검증합니다.
 
 ### Reasoning effort
 
-`gpt-5.6-sol`과 `claude-opus-5`는 네이티브 effort를 지원하며 요청 필드 이름이 다릅니다.
-`low` / `medium` / `high` / `xhigh` / `max` 값은 각각
-`additionalModelRequestFields.reasoning.effort`와 `output_config.effort`로 전송됩니다.
+`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`와 `claude-opus-5`는 네이티브 effort를 지원하며 요청 필드 이름이 다릅니다.
+`low` / `medium` / `high` / `xhigh` / `max` 값은 GPT-5.6 계열에서는
+`additionalModelRequestFields.reasoning.effort`, `claude-opus-5`에서는 `output_config.effort`로 전송됩니다.
 
 
 ## `cursor`

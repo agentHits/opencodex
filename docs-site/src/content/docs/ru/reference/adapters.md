@@ -189,9 +189,9 @@ incomplete. `TOOL_USE` без фактического вызова инстру
 
 ### Reasoning effort
 
-`gpt-5.6-sol` и `claude-opus-5` поддерживают нативный effort, но называют поле запроса по-разному.
+Модели семейства GPT-5.6 (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) и `claude-opus-5` поддерживают нативный effort, но называют поле запроса по-разному.
 Значения `low` / `medium` / `high` / `xhigh` / `max` отправляются как
-`additionalModelRequestFields.reasoning.effort` и `output_config.effort` соответственно.
+`additionalModelRequestFields.reasoning.effort` для моделей GPT-5.6 и `output_config.effort` для `claude-opus-5`.
 
 
 ## `cursor`

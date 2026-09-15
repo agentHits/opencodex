@@ -154,9 +154,9 @@ filtered incomplete になります。実際のツール呼び出しを伴わな
 
 ### Reasoning effort
 
-`gpt-5.6-sol` と `claude-opus-5` はネイティブ effort をサポートし、リクエストフィールド名が異なります。
-`low` / `medium` / `high` / `xhigh` / `max` は、前者では
-`additionalModelRequestFields.reasoning.effort`、後者では `output_config.effort` として送信されます。
+`gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` と `claude-opus-5` はネイティブ effort をサポートし、リクエストフィールド名が異なります。
+`low` / `medium` / `high` / `xhigh` / `max` は、GPT-5.6 系では
+`additionalModelRequestFields.reasoning.effort`、`claude-opus-5` では `output_config.effort` として送信されます。
 
 
 ## `cursor`

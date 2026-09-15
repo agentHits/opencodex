@@ -145,9 +145,9 @@ Kiro 的 assistant 文字本身沒有可靠的回合結束標記，但終止的 
 
 ### Reasoning effort
 
-`gpt-5.6-sol` 和 `claude-opus-5` 支援原生 effort，且請求欄位名不同。`low` / `medium` / `high` /
-`xhigh` / `max` 分別透過 `additionalModelRequestFields.reasoning.effort` 和
-`output_config.effort` 傳送。
+`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 和 `claude-opus-5` 支援原生 effort，且請求欄位名不同。`low` / `medium` / `high` /
+`xhigh` / `max` 在 GPT-5.6 系列中透過 `additionalModelRequestFields.reasoning.effort` 傳送，
+在 `claude-opus-5` 上透過 `output_config.effort` 傳送。
 
 
 ## `cursor`

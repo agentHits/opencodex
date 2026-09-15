@@ -38,7 +38,12 @@ import {
   validateKiroConversationState,
   type KiroTurn,
 } from "./conversation";
-import { injectKiroThinkingTags, kiroNativeEffortField, KIRO_NATIVE_EFFORTS } from "./reasoning";
+import {
+  injectKiroThinkingTags,
+  kiroNativeEffortField,
+  kiroReasoningContent,
+  KIRO_NATIVE_EFFORTS,
+} from "./reasoning";
 import { kiroPayloadMessages, userContentText } from "./usage";
 import {
   kiroToolWireNames,
@@ -388,7 +393,11 @@ export function buildKiroPayload(
         assistantResponseMessage: {
           content: turn.content,
           ...(turn.toolUses.length > 0 ? { toolUses: turn.toolUses } : {}),
-          ...(turn.redactedReasoning ? { reasoningContent: { redactedContent: turn.redactedReasoning } } : {}),
+          // Replayed on the field it was received on: the GPT-5.6 signature is not base64 and is
+          // rejected when sent as `redactedContent`.
+          ...(turn.redactedReasoning
+            ? { reasoningContent: kiroReasoningContent(turn.redactedReasoning) }
+            : {}),
         },
       }
     : {

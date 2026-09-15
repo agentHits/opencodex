@@ -268,9 +268,9 @@ tam olarak tekrarlasa bile, çünkü aşama doğruluğu kozmetik tekilleştirmed
 
 ### Akıl yürütme çabası
 
-`gpt-5.6-sol` ve `claude-opus-5` doğrulanmış yerel çaba desteğine sahiptir ve
+Kiro'nun GPT-5.6 ailesi (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) ve `claude-opus-5` doğrulanmış yerel çaba desteğine sahiptir ve
 her model ailesi istek alanını farklı şekilde adlandırır. Seçilen `low`,
-`medium`, `high`, `xhigh` veya `max` değeri `gpt-5.6-sol` için
+`medium`, `high`, `xhigh` veya `max` değeri GPT-5.6 modelleri için
 `additionalModelRequestFields.reasoning.effort` olarak ve `claude-opus-5` için
 `additionalModelRequestFields.output_config.effort` olarak gönderilir. Diğer
 Kiro modelleri şu anda öykünülmüş akıl yürütme kullanır: opencodex yerel çaba
