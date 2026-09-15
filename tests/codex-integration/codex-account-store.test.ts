@@ -670,6 +670,46 @@ describe("codex-account-store CRUD", () => {
     unlinkSync(`${lockPath}.reclaimed`);
   });
 
+  test.each([false, true])("refresh release prevents inode reuse before comparison (callback failure=%s)", async (callbackFails) => {
+    const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
+    const key = `release-inode-reuse-${callbackFails}`;
+    const path = join(TEST_DIR, `codex-refresh-${createHash("sha256").update(key).digest("hex").slice(0, 32)}.lock`);
+    const originalFstat = fs.fstatSync;
+    const originalStat = fs.statSync;
+    let fd: number | undefined;
+    let owned: ReturnType<typeof fs.fstatSync> | undefined;
+    let openDuringComparison = false;
+    const descriptor = spyOn(fs, "fstatSync").mockImplementation((...args: Parameters<typeof fs.fstatSync>) => {
+      fd = args[0];
+      owned = originalFstat(...args);
+      return owned;
+    });
+    const probe = spyOn(fs, "statSync").mockImplementation((...args: Parameters<typeof fs.statSync>) => {
+      if (args[0] === path && fd !== undefined && owned) {
+        try { originalFstat(fd); openDuringComparison = true; } catch { /* Descriptor closed early. */ }
+        // Model an allocator reusing the unlinked owner's inode only after its last fd closes.
+        // Holding that fd alive must prevent this ABA regardless of the host filesystem.
+        if (!openDuringComparison) return owned;
+      }
+      return originalStat(...args);
+    });
+    const failure = new Error("original refresh failure");
+    try {
+      const pending = withCodexRefreshFileLock(key, new AbortController().signal, async () => {
+        unlinkSync(path);
+        writeFileSync(path, "successor");
+        if (callbackFails) throw failure;
+        return "refreshed";
+      });
+      if (callbackFails) await expect(pending).rejects.toBe(failure);
+      else expect(await pending).toBe("refreshed");
+      expect(openDuringComparison).toBe(true);
+      expect(readFileSync(path, "utf8")).toBe("successor");
+      expect(fd).toBeDefined();
+      expect(() => originalFstat(fd!)).toThrow();
+    } finally { descriptor.mockRestore(); probe.mockRestore(); }
+  });
+
   test("refresh release preserves the path when descriptor identity cannot be read", async () => {
     const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
     const lockKey = "unknown-owner";

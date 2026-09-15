@@ -433,7 +433,7 @@ Pool mode needs stable public names and a store that survives concurrent refresh
   the file and writes its metadata as two steps, and a holder deletes the lock only while the
   path still resolves to the file it created. If descriptor identity is unavailable or unusable,
   release leaves the path for stale-lock recovery. Path-probe errors preserve the callback outcome; confirmed-owner unlink errors other than `ENOENT` still propagate. The stat/unlink pair is not an atomic
-  compare-and-delete against non-cooperating writers. Cooperating acquisition, stale reclamation and release serialize inside the synchronous config-mutation transaction, released before the async callback. Failed metadata writes close their descriptor and clean only a matching owned path.
+  compare-and-delete against non-cooperating writers. Cooperating acquisition, stale reclamation and release serialize inside the synchronous config-mutation transaction, released before the async callback. Release keeps its descriptor open through identity comparison and any unlink, then closes it. Failed metadata writes remove only a matching owned path after successful coordination; unknown identity, failed probes or unavailable coordination retain the path for stale recovery.
 
 ## Sidecars, management, and UI
 

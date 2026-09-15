@@ -671,7 +671,6 @@ function releaseCodexRefreshFileLock(path: string, fd: number): void {
     const info = fstatSync(fd, { bigint: true });
     if (info.dev >= 0n && info.ino > 0n) owned = { dev: info.dev, ino: info.ino };
   } catch { /* Unknown descriptor identity never authorizes unlink. */ }
-  closeSync(fd);
   try {
     withConfigMutationLockSync(() => {
       let current: { dev: bigint; ino: bigint } | null = null;
@@ -686,10 +685,10 @@ function releaseCodexRefreshFileLock(path: string, fd: number): void {
       }
     });
   } catch (err) {
-    // The descriptor is already closed. A busy/unavailable metadata transaction leaves the
-    // path for stale recovery rather than masking the completed refresh with cleanup failure.
+    // Keep the descriptor alive through comparison/unlink so its inode cannot be recycled.
+    // Unavailable coordination leaves the path without masking the completed refresh.
     if (!(err instanceof ConfigMutationLockError)) throw err;
-  }
+  } finally { closeSync(fd); }
 }
 
 export async function withCodexRefreshFileLock<T>(lockKey: string, signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
