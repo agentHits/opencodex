@@ -1,5 +1,7 @@
 # Codex Home
 
+A lock in the Codex credential store is governed by [descriptor identity and age](catalog.md#accounts-namespaces-and-pool-rotation), so the mere presence of its filename is neither acquisition nor release authority.
+
 ## Codex home
 
 `src/codex/paths.ts` resolves Codex state from `CODEX_HOME` when set and valid, otherwise from

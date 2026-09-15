@@ -1,5 +1,7 @@
 # Runtime
 
+OAuth refresh coordination follows the [refresh-lock identity contract](catalog.md#accounts-namespaces-and-pool-rotation): a fresh unreadable lock remains held, and release requires matching descriptor identity.
+
 The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 

@@ -1,5 +1,7 @@
 # Subagents And Multi-Agent Surface
 
+Concurrent refreshes triggered by independent agent work share the [credential refresh-lock contract](catalog.md#accounts-namespaces-and-pool-rotation); unknown lock identity remains available for stale recovery rather than immediate removal.
+
 ## Plaintext V2 agent messages
 
 `src/responses/plaintext-v2-agent-messages.ts` owns the experimental, configuration-only
