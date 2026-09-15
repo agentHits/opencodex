@@ -109,12 +109,10 @@ export function extractEmailLogin(
   email?: string,
   alias?: string,
   id?: string,
-  rawEmail?: string,
 ): string {
-  const source = (rawEmail && rawEmail.trim() && !rawEmail.includes("*") ? rawEmail.trim() : null)
-    || (email && email.trim() && !email.includes("*") ? email.trim() : null)
-    || (rawEmail && rawEmail.trim())
-    || (email && email.trim());
+  // Display follows the management-API projection: never prefer a side-channel
+  // rawEmail over the masked `email` the privacy SSOT already chose.
+  const source = email && email.trim() ? email.trim() : null;
   if (source) {
     const atIndex = source.indexOf("@");
     if (atIndex > 0) return source.slice(0, atIndex);
@@ -142,7 +140,7 @@ function isWeeklyWindow(label: string): boolean {
 }
 
 export function analyzeAccountQuota(account: OAuthAccountRow, providerName = "google-antigravity"): AnalyzedAccountQuota {
-  const emailLogin = extractEmailLogin(account.email, account.alias, account.id, account.rawEmail);
+  const emailLogin = extractEmailLogin(account.email, account.alias, account.id);
   const maskedLogin = extractMaskedLogin(account.maskedEmail, account.email, account.rawEmail, account.alias, account.id);
   const quota = account.quota;
 

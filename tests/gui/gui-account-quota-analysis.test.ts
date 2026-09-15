@@ -20,7 +20,7 @@ describe("account-quota-analysis", () => {
     expect(extractEmailLogin("g***1@example.com")).toBe("g***1");
     expect(extractEmailLogin("alphauser@example.com")).toBe("alphauser");
     expect(extractEmailLogin("admin@example.com")).toBe("admin");
-    expect(extractEmailLogin("z***2@example.com", undefined, undefined, "testuser26@example.com")).toBe("testuser26");
+    expect(extractEmailLogin("z***2@example.com")).toBe("z***2");
     expect(extractEmailLogin(undefined, "my-alias")).toBe("my-alias");
     expect(extractEmailLogin("", "only-alias")).toBe("only-alias");
     expect(extractEmailLogin(undefined, undefined, "account-12345678")).toBe("account-…5678");
