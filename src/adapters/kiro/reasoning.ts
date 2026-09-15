@@ -28,12 +28,22 @@ export const KIRO_NATIVE_EFFORT_FIELDS: Record<string, "reasoning" | "output_con
 
 export const KIRO_NATIVE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
-export function kiroNativeEffortField(modelId: string): "reasoning" | "output_config" | undefined {
-  return KIRO_NATIVE_EFFORT_FIELDS[normalizeKiroModelId(modelId)];
+// The newly enabled models have evidence for these rungs only. Keep the previous
+// emulation for xhigh, and never widen their native wire when the shared ladder grows.
+const KIRO_LUNA_TERRA_NATIVE_EFFORTS = new Set(["low", "medium", "high", "max"]);
+
+export function kiroNativeEffortField(
+  modelId: string,
+  effort?: string,
+): "reasoning" | "output_config" | undefined {
+  const model = normalizeKiroModelId(modelId);
+  if ((model === "gpt-5.6-luna" || model === "gpt-5.6-terra")
+    && effort !== undefined && !KIRO_LUNA_TERRA_NATIVE_EFFORTS.has(effort)) return undefined;
+  return KIRO_NATIVE_EFFORT_FIELDS[model];
 }
 
-export function kiroReasoningMode(modelId: string): KiroReasoningMode {
-  return kiroNativeEffortField(modelId) ? "native" : "emulated";
+export function kiroReasoningMode(modelId: string, effort?: string): KiroReasoningMode {
+  return kiroNativeEffortField(modelId, effort) ? "native" : "emulated";
 }
 
 export function kiroThinkingBudget(parsed: OcxParsedRequest): number | undefined {
@@ -53,7 +63,7 @@ export function kiroThinkingBudget(parsed: OcxParsedRequest): number | undefined
 }
 
 export function injectKiroThinkingTags(content: string, parsed: OcxParsedRequest): string {
-  if (kiroReasoningMode(parsed.modelId) !== "emulated") return content;
+  if (kiroReasoningMode(parsed.modelId, parsed.options.reasoning) !== "emulated") return content;
   const budget = kiroThinkingBudget(parsed);
   if (!budget) return content;
   const instruction = [

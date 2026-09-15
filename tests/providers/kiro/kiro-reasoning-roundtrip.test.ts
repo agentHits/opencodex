@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildKiroPayload } from "../../../src/adapters/kiro/payload";
+import { kiroNativeEffortField } from "../../../src/adapters/kiro/reasoning";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../../../src/bridge";
 import { parseRequest } from "../../../src/responses/parser";
 import { decodeReasoningEnvelope } from "../../../src/responses/reasoning-envelope";
@@ -253,13 +254,13 @@ describe("kiro reasoning blob — the stream records the field it arrived on", (
 // <thinking_mode> block, a strictly weaker signal: on one fixed hard prompt that channel landed
 // between the model's native medium and high (21,202 / 28,302 chars) and never reached native max
 // (48,594), while the native ladder itself ran 5,130 -> 48,594 from low to max. The whole GPT-5.6
-// family shares the field name, so all three are native now.
+// family shares the field name, but luna/terra keep xhigh emulated until verified.
 describe("kiro native reasoning effort — the GPT-5.6 family", () => {
-  function wireBody(modelId: string): Record<string, unknown> {
+  function wireBody(modelId: string, effort = "max"): Record<string, unknown> {
     const parsed = {
       modelId,
       stream: true,
-      options: { reasoning: "max", maxOutputTokens: 1000 },
+      options: { reasoning: effort, maxOutputTokens: 1000 },
       context: { messages: [{ role: "user", content: "solve" }] },
     } as unknown as Parameters<typeof buildKiroPayload>[0];
     return buildKiroPayload(parsed, undefined, "disabled", "ide").payload;
@@ -267,13 +268,35 @@ describe("kiro native reasoning effort — the GPT-5.6 family", () => {
 
   test("luna and terra send the native reasoning field instead of thinking tags", () => {
     for (const modelId of ["gpt-5.6-luna", "gpt-5.6-terra"]) {
-      const body = wireBody(modelId);
-      expect(body.additionalModelRequestFields).toEqual({ reasoning: { effort: "max" } });
-      // Native effort replaces the emulated thinking-tag prompt entirely.
+      for (const effort of ["low", "medium", "high", "max"]) {
+        const body = wireBody(modelId, effort);
+        expect(body.additionalModelRequestFields).toEqual({ reasoning: { effort } });
+        // Native effort replaces the emulated thinking-tag prompt entirely.
+        const current = (body.conversationState as {
+          currentMessage: { userInputMessage: { content: string } };
+        }).currentMessage.userInputMessage.content;
+        expect(current).toBe("solve");
+      }
+    }
+  });
+
+  test("luna and terra keep unverified xhigh on the emulated path", () => {
+    for (const modelId of ["gpt-5.6-luna", "gpt-5.6-terra"]) {
+      const body = wireBody(modelId, "xhigh");
+      expect(body.additionalModelRequestFields).toBeUndefined();
       const current = (body.conversationState as {
         currentMessage: { userInputMessage: { content: string } };
       }).currentMessage.userInputMessage.content;
-      expect(current).toBe("solve");
+      expect(current).toContain("<thinking_mode>enabled</thinking_mode>");
+      expect(current).toContain("<max_thinking_length>900</max_thinking_length>");
+      expect(kiroNativeEffortField(modelId, "future-effort")).toBeUndefined();
     }
+  });
+
+  test("existing Sol and Opus native xhigh fields stay unchanged", () => {
+    expect(wireBody("gpt-5.6-sol", "xhigh").additionalModelRequestFields)
+      .toEqual({ reasoning: { effort: "xhigh" } });
+    expect(wireBody("claude-opus-5", "xhigh").additionalModelRequestFields)
+      .toEqual({ output_config: { effort: "xhigh" } });
   });
 });

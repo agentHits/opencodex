@@ -44,6 +44,11 @@ on the matching `assistantResponseMessage.reasoningContent` to preserve model re
 turns; dropping it makes every turn restart without the previous turn's reasoning. Verified on
 kiro-cli 2.14.1 and 2.16.0, all three models.
 
+Native effort admission is narrower than model eligibility: luna and terra send only
+`low`, `medium`, `high`, and `max` on the native field. Their `xhigh` requests retain the
+previous emulated thinking tags because that native rung is unverified. A future shared
+effort rung does not expand this allowlist. Sol and Opus keep their existing native ladder.
+
 The two members of `reasoningContent` are not interchangeable. The wire validates the shape of the
 member rather than its content, and the signature is not base64 — its alphabet contains `.` and
 `~` — so a blob replayed as `redactedContent` is rejected with `REQUEST_BODY_INVALID`

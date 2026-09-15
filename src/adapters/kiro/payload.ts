@@ -456,7 +456,12 @@ export function buildKiroPayload(
     if (!KIRO_NATIVE_EFFORTS.includes(effort)) {
       throw new Error(`Kiro ${normalizeKiroModelId(parsed.modelId)} does not support reasoning effort ${JSON.stringify(effort)}`);
     }
-    payload.additionalModelRequestFields = { [effortField]: { effort } };
+    // Model eligibility still owns unsupported-effort validation above; wire eligibility
+    // is narrower for luna/terra, whose unverified rungs retain the thinking-tag path.
+    const verifiedEffortField = kiroNativeEffortField(parsed.modelId, effort);
+    if (verifiedEffortField) {
+      payload.additionalModelRequestFields = { [verifiedEffortField]: { effort } };
+    }
   }
   if (profileArn) payload.profileArn = profileArn;
   return { payload, nameMap, conversationId, completionMode };
