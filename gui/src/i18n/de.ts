@@ -2946,6 +2946,7 @@ export const de: Record<TKey, string> = {
   "genericPool.visualUsageAria": "Beispielnutzung des aktiven Kontos, Prozent",
   "genericPool.visualStay": "Die nächste Anfrage bleibt auf dem aktiven Konto.",
   "genericPool.visualSwitch": "Die nächste Anfrage wechselt zum nächsten angemeldeten Konto.",
+  "genericPool.visualResetFirst": "Verbraucht zuerst das Konto, dessen 7-Tage-Wochenkontingent am frühesten zurückgesetzt wird. Anfragen bleiben auf dem aktiven Konto bis zur Erschöpfung (100% oder 429), danach wird auf den nächsten frühesten Reset gewechselt.",
   "genericPool.visualQuota": "Quota behält das aktive Konto, bis ein 5-Stunden- oder Wochenfenster 100% erreicht oder ein 429 kommt. Die Schwelle wechselt nicht früher.",
   "genericPool.visualFillFirst": "Fill-first würde das aktive Konto bis {threshold}% behalten und dann das nächste öffnen.",
   "genericPool.visualRoundRobin": "Round-robin würde neue ungebundene Anfragen über bereite Konten verteilen.",

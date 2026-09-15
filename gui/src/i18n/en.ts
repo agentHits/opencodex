@@ -2071,6 +2071,7 @@ export const en = {
   "genericPool.visualUsageAria": "Example usage on the active account, percent",
   "genericPool.visualStay": "The next request stays on the active account.",
   "genericPool.visualSwitch": "The next request moves to the next logged-in account.",
+  "genericPool.visualResetFirst": "Consumes the account whose 7-day weekly allowance resets earliest. Requests stay on the active account until exhausted (100% or 429), then switch to the next soonest reset.",
   "genericPool.visualQuota": "Quota keeps the active account until a 5-hour or weekly window hits 100%, or until a 429. The threshold does not switch earlier.",
   "genericPool.visualFillFirst": "Fill-first would stay on the active account until usage reaches {threshold}%, then open the next one.",
   "genericPool.visualRoundRobin": "Round-robin would spread new unbound requests across ready accounts.",

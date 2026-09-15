@@ -133,6 +133,55 @@ export function isAccountQuotaExhausted(
 }
 
 /**
+ * Earliest future reset timestamp (in ms) for the relevant quota window, or null if unknown.
+ * Prefers weekly reset when multiple windows exist so expiring allowance is consumed first.
+ */
+export function accountResetTimestamp(
+  provider: string,
+  accountId: string,
+  requestedModelId?: string | null,
+  now = Date.now(),
+): number | null {
+  const quota = getCachedProviderAccountQuota(provider, accountId);
+  if (!quota) return null;
+  const family = classifyModelFamilyForQuota(provider, requestedModelId);
+  const windows = (quota.customWindows ?? []).filter(w => !family || windowMatchesFamily(w.label, family));
+  const weekly = windows.find(w => /week/i.test(w.label));
+  const rawReset = weekly?.resetAt ?? quota.weeklyResetAt ?? windows[0]?.resetAt ?? quota.fiveHourResetAt;
+  if (typeof rawReset !== "number" || !Number.isFinite(rawReset)) return null;
+  const ms = rawReset < 1e11 ? rawReset * 1000 : rawReset;
+  return ms > now ? ms : null;
+}
+
+/**
+ * Rank candidates by soonest reset timestamp first among healthy accounts.
+ * Accounts whose quota will reset earliest get priority so allowances do not expire unused.
+ */
+export function rankAccountsByResetFirst(
+  provider: string,
+  ring: readonly string[],
+  requestedModelId?: string | null,
+  now = Date.now(),
+): string[] {
+  if (ring.length < 2) return [...ring];
+  const ranked = rankAccountsByHeadroom(provider, ring, requestedModelId);
+  const healthy = ranked.filter(id => !isAccountQuotaExhausted(provider, id, requestedModelId));
+  if (healthy.length < 2) return ranked;
+
+  const withReset = healthy.map((id, index) => ({
+    id,
+    resetAt: accountResetTimestamp(provider, id, requestedModelId, now) ?? Number.POSITIVE_INFINITY,
+    headroom: headroomOf(provider, id, requestedModelId) ?? 0,
+    index,
+  }));
+
+  withReset.sort((a, b) => (a.resetAt - b.resetAt) || (b.headroom - a.headroom) || (a.index - b.index));
+  const sortedHealthy = withReset.map(r => r.id);
+  const exhausted = ranked.filter(id => isAccountQuotaExhausted(provider, id, requestedModelId));
+  return [...sortedHealthy, ...exhausted];
+}
+
+/**
  * Order candidates best-first.
  *
  * Returns the input untouched when no candidate has quota evidence, which keeps every

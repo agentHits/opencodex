@@ -24,6 +24,7 @@ const STRATEGY_HINT_KEYS = {
 export interface AccountPoolStrategyControlsProps {
   strategy: AccountPoolStrategy;
   codex?: boolean;
+  allowResetFirst?: boolean;
   stickyDraft: string;
   disabled?: boolean;
   strategySelectId?: string;
@@ -45,6 +46,7 @@ export interface AccountPoolStrategyControlsProps {
 export default function AccountPoolStrategyControls({
   strategy,
   codex = false,
+  allowResetFirst = false,
   stickyDraft,
   disabled = false,
   strategySelectId = "account-pool-strategy",
@@ -54,7 +56,7 @@ export default function AccountPoolStrategyControls({
   onStickyCommit,
 }: AccountPoolStrategyControlsProps) {
   const t = useT();
-  const strategyOptions = ACCOUNT_POOL_STRATEGIES.filter(value => codex || value !== "reset-first").map((value) => ({
+  const strategyOptions = ACCOUNT_POOL_STRATEGIES.filter(value => codex || allowResetFirst || value !== "reset-first").map((value) => ({
     value,
     label: t(STRATEGY_LABEL_KEYS[value]),
   }));

@@ -2932,6 +2932,7 @@ export const zhTW: Record<TKey, string> = {
   "genericPool.visualUsageAria": "目前帳號用量範例，百分比",
   "genericPool.visualStay": "下一個請求仍留在目前帳號。",
   "genericPool.visualSwitch": "下一個請求會轉到下一個已登入帳號。",
+  "genericPool.visualResetFirst": "優先使用 7 天週配額最先重設的帳號。請求會一直留在目前活躍帳號，直到用盡（100% 或 429），然後再切換到下一個最近重設的帳號。",
   "genericPool.visualQuota": "配額會讓目前帳號用到 5 小時或週期視窗達到 100%，或直到出現 429。閾值不會更早切換。",
   "genericPool.visualFillFirst": "優先填滿會讓目前帳號用到 {threshold}%，然後再打開下一個。",
   "genericPool.visualRoundRobin": "輪詢會把新的未綁定請求分散到可用帳號。",

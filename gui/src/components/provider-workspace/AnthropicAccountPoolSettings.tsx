@@ -216,9 +216,11 @@ export default function AnthropicAccountPoolSettings({
         </button>
       </div>
 
-      <div role="alert" className="card-sub anthropic-pool-card__notice">
-        {t(isAnthropic ? "anthropicPool.experimentalWarning" : "genericPool.notice")}
-      </div>
+      {isAnthropic && (
+        <div role="alert" className="card-sub anthropic-pool-card__notice">
+          {t("anthropicPool.experimentalWarning")}
+        </div>
+      )}
 
       {accountCount < 2 && (
         <div className="card-sub" style={{ marginTop: 8 }}>
@@ -228,6 +230,7 @@ export default function AnthropicAccountPoolSettings({
 
       {enabled && state && (
         <>
+          {(isAnthropic || strategy === "fill-first") && (
           <label className="field anthropic-pool-card__field">
             <span className="field-label">{t(isAnthropic ? "anthropicPool.threshold" : "genericPool.threshold")}</span>
             <input
@@ -262,9 +265,11 @@ export default function AnthropicAccountPoolSettings({
               {t(isAnthropic ? "anthropicPool.thresholdHelp" : "genericPool.thresholdHelp")}
             </div>
           </label>
+          )}
 
           <AccountPoolStrategyControls
             strategy={strategy}
+            allowResetFirst={!isAnthropic}
             stickyDraft={stickyDraft}
             disabled={saving}
             strategySelectId={controlId(provider, "strategy")}

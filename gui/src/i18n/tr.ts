@@ -2969,6 +2969,7 @@ export const tr: Record<TKey, string> = {
   "genericPool.visualUsageAria": "Etkin hesabın örnek kullanımı, yüzde",
   "genericPool.visualStay": "Sonraki istek etkin hesapta kalır.",
   "genericPool.visualSwitch": "Sonraki istek oturum açmış sonraki hesaba geçer.",
+  "genericPool.visualResetFirst": "7 günlük haftalık kotası en erken sıfırlanacak hesabı öncelikli olarak kullanır. İstekler tükenene kadar (100% veya 429) etkin hesapta kalır, ardından en yakın sıfırlama zamanına sahip sonraki hesaba geçer.",
   "genericPool.visualQuota": "Kota, 5 saatlik veya haftalık pencere %100 olana veya 429 gelene kadar etkin hesabı tutar. Eşik daha erken geçmez.",
   "genericPool.visualFillFirst": "Fill-first, kullanım %{threshold} olana kadar etkin hesabı tutar, sonra sonrakini açar.",
   "genericPool.visualRoundRobin": "Round-robin, yeni bağlanmamış istekleri hazır hesaplara dağıtır.",

@@ -7,6 +7,7 @@ import {
   hasHeadroomEvidence,
   isAccountQuotaExhausted,
   rankAccountsByHeadroom,
+  rankAccountsByResetFirst,
 } from "../../src/oauth/account-quota-rank";
 import {
   clearGenericFailoverHealth,
@@ -113,5 +114,82 @@ describe("Antigravity family-scoped cooldown", () => {
     const cfg = config();
     expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", ids[0]!, null, Date.now(), "claude-sonnet-4-5")).toBe(ids[1]);
     expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "gemini-3.8-flash")).toBeNull();
+  });
+});
+
+describe("Antigravity reset-first weekly prioritization", () => {
+  test("prefers account whose weekly allowance resets earliest, even with less headroom", () => {
+    const now = Date.now();
+    // Account A: resets in 2 days, 1% headroom left (almost spent, but will reset soon)
+    setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 45, resetAt: now + 2 * 3600_000 },
+        { label: "Gem (Weekly)", percent: 99, resetAt: now + 2 * 86400_000 },
+      ],
+    });
+    // Account B: resets in 7 days, 95% headroom left (fresh weekly window)
+    setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 0, resetAt: now + 5 * 3600_000 },
+        { label: "Gem (Weekly)", percent: 5, resetAt: now + 7 * 86400_000 },
+      ],
+    });
+
+    // Headroom rank prefers B (more headroom)
+    expect(rankAccountsByHeadroom("google-antigravity", ["a", "b"], "gemini-3.8-flash")[0]).toBe("b");
+    // Reset-first rank prefers A (earlier reset, spend before it expires!)
+    expect(rankAccountsByResetFirst("google-antigravity", ["b", "a"], "gemini-3.8-flash", now)[0]).toBe("a");
+  });
+
+  test("preferredInitialAccount selects soonest reset and sticks until failure", async () => {
+    const now = Date.now();
+    for (const accountId of ["acct-soon", "acct-later"]) {
+      await saveCredential("google-antigravity", {
+        access: "access-" + accountId,
+        refresh: "refresh-" + accountId,
+        expires: now + 3_600_000,
+        accountId,
+      } as never, { addAccount: true });
+    }
+    const ids = getAccountSet("google-antigravity")?.accounts.map(a => a.id) ?? [];
+    expect(ids.length).toBe(2);
+
+    setCachedProviderAccountQuotaForTests("google-antigravity", ids[0]!, {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 20 },
+        { label: "Gem (Weekly)", percent: 80, resetAt: now + 2 * 86400_000 },
+      ],
+    });
+    setCachedProviderAccountQuotaForTests("google-antigravity", ids[1]!, {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 0 },
+        { label: "Gem (Weekly)", percent: 10, resetAt: now + 7 * 86400_000 },
+      ],
+    });
+
+    const cfg = {
+      providers: {
+        "google-antigravity": {
+          ...PROVIDER,
+          oauthAccountFailover: { enabled: true, strategy: "reset-first" },
+        },
+      },
+      oauthAccountFailover: { enabled: true },
+    } as unknown as OcxConfig;
+
+    // If later account is currently active, initial preference routes to soonest reset
+    await setActiveAccount("google-antigravity", ids[1]!);
+    expect(preferredInitialAccount(cfg, "google-antigravity", now, "gemini-3.8-flash")).toBe(ids[0]);
+
+    // Once soonest account is active, it stays (sticky)
+    await setActiveAccount("google-antigravity", ids[0]!);
+    expect(preferredInitialAccount(cfg, "google-antigravity", now, "gemini-3.8-flash")).toBeNull();
+
+    // When it 429s, it rotates to next available
+    expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", ids[0]!, null, now, "gemini-3.8-flash")).toBe(ids[1]);
   });
 });

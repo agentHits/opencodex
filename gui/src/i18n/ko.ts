@@ -2968,6 +2968,7 @@ export const ko: Record<TKey, string> = {
   "genericPool.visualUsageAria": "활성 계정 사용량 예시, 퍼센트",
   "genericPool.visualStay": "다음 요청은 활성 계정에 남습니다.",
   "genericPool.visualSwitch": "다음 요청은 로그인한 다음 계정으로 넘어갑니다.",
+  "genericPool.visualResetFirst": "7일 주간 할당량이 가장 빨리 재설정되는 계정을 먼저 사용합니다. 요청은 소진(100% 또는 429)될 때까지 활성 계정에 유지된 후 다음으로 재설정이 빠른 계정으로 전환됩니다.",
   "genericPool.visualQuota": "할당량은 5시간 또는 주간 창이 100%가 되거나 429가 올 때까지 활성 계정을 유지합니다. 임계값은 더 일찍 바꾸지 않습니다.",
   "genericPool.visualFillFirst": "필 퍼스트는 사용량이 {threshold}%에 이를 때까지 활성 계정을 유지한 뒤 다음 계정을 엽니다.",
   "genericPool.visualRoundRobin": "라운드로빈은 새 미바인딩 요청을 준비된 계정에 나눕니다.",

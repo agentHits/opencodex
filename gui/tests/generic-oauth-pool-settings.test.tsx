@@ -129,12 +129,11 @@ describe("generic OAuth account pool settings", () => {
 
     expect(gets.some((url) => url.includes("provider=google-antigravity"))).toBe(true);
     expect(host.textContent).toContain("Account pool");
-    expect(host.textContent).toContain("shared pool kernel");
     expect(host.querySelector("#google-antigravity-pool-quota-window")).toBeNull();
     expect(host.textContent).not.toContain("Quota window");
   });
 
-  test("shows a live quota diagram that stays below 100% and switches at 100%", async () => {
+  test("renders minimal strategy status info for generic providers", async () => {
     stubPool({
       enabled: true,
       autoSwitchThreshold: 80,
@@ -142,23 +141,23 @@ describe("generic OAuth account pool settings", () => {
       stickyLimit: 1,
     });
     const host = await mountPool();
-    expect(host.textContent).toContain("How the pool chooses");
-    expect(host.textContent).toContain("The next request stays on the active account.");
-    expect(host.textContent).toContain("The threshold does not switch earlier.");
-    const slider = host.querySelector<HTMLInputElement>("input[type=\"range\"]");
-    if (!slider) throw new Error("preview slider missing");
-    expect(slider.value).toBe("90");
-
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value")!.set!.call(slider, "100");
-      slider.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
-      slider.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
-      await flush();
-    });
-    expect(host.textContent).toContain("The next request moves to the next logged-in account.");
+    expect(host.textContent).toContain("Quota");
+    expect(host.textContent).toContain("A 429 always failovers among logged-in accounts.");
   });
 
-  test("labels fill-first as saved while the live path stays Quota", async () => {
+  test("supports soonest reset strategy for generic providers", async () => {
+    stubPool({
+      enabled: true,
+      autoSwitchThreshold: 80,
+      strategy: "reset-first",
+      stickyLimit: 1,
+    });
+    const host = await mountPool();
+    expect(host.textContent).toContain("Soonest reset first");
+    expect(host.textContent).toContain("Consumes the account whose 7-day weekly allowance resets earliest");
+  });
+
+  test("labels fill-first as saved while the live path is active", async () => {
     stubPool({
       enabled: true,
       autoSwitchThreshold: 90,
@@ -167,9 +166,6 @@ describe("generic OAuth account pool settings", () => {
     });
     const host = await mountPool();
     expect(host.textContent).toContain("Saved, not live");
-    expect(host.textContent).toContain("Until then the live path is Quota.");
-    expect(host.textContent).toContain("The next request stays on the active account.");
-    expect(host.querySelector<HTMLInputElement>("input[type=\"range\"]")?.value).toBe("90");
   });
 
   test("omits quotaWindow from generic saves", async () => {

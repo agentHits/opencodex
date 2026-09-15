@@ -2967,6 +2967,7 @@ export const zh: Record<TKey, string> = {
   "genericPool.visualUsageAria": "当前账号用量示例，百分比",
   "genericPool.visualStay": "下一个请求仍留在当前账号。",
   "genericPool.visualSwitch": "下一个请求会转到下一个已登录账号。",
+  "genericPool.visualResetFirst": "优先使用 7 天周配额最先重置的账号。请求会一直留在当前活跃账号，直到用尽（100% 或 429），然后再切换到下一个最近重置的账号。",
   "genericPool.visualQuota": "配额会让当前账号用到 5 小时或周期窗口达到 100%，或直到出现 429。阈值不会更早切换。",
   "genericPool.visualFillFirst": "优先填满会让当前账号用到 {threshold}%，然后再打开下一个。",
   "genericPool.visualRoundRobin": "轮询会把新的未绑定请求分散到可用账号。",
