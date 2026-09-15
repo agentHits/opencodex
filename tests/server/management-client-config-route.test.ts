@@ -162,6 +162,41 @@ function toExportModel(row: ModelRow): ExportModel {
 }
 
 
+describe("native Anthropic image input reaches client documents", () => {
+  for (const client of ["aside", "pi", "gajae"] as const) {
+    test.each(["anthropic", "anthropic-apikey"])(`${client} advertises image input for %s`, async (provider) => {
+      const config = {
+        port: 10100,
+        hostname: "127.0.0.1",
+        defaultProvider: provider,
+        providers: {
+          [provider]: {
+            adapter: "anthropic",
+            baseUrl: "https://api.anthropic.com",
+            authMode: provider === "anthropic" ? "oauth" : "key",
+            liveModels: false,
+          },
+        },
+      } as unknown as OcxConfig;
+
+      const models = await loadExportModels(config);
+      const document = buildClientConfig(client, {
+        baseUrl: "http://127.0.0.1:10100/v1",
+        config,
+        models,
+      }) as PiGeneratedConfig;
+      const rows = document.providers[OPENCODE_PROVIDER_ID]!.models
+        .filter(model => model.id.startsWith(`${provider}/claude-`));
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect({ id: row.id, input: row.input }).toEqual({
+          id: row.id, input: ["text", "image"],
+        });
+      }
+    });
+  }
+});
+
 describe("native Anthropic effort ladder reaches the Aside document", () => {
   /**
    * The end-to-end guard for the defect: native Anthropic rows used to reach Aside with no
