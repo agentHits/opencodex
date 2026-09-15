@@ -432,7 +432,7 @@ Pool mode needs stable public names and a store that survives concurrent refresh
   not yet readable counts as held until it ages past the stale window, because its owner creates
   the file and writes its metadata as two steps, and a holder deletes the lock only while the
   path still resolves to the file it created. If descriptor identity is unavailable or unusable,
-  release leaves the path for stale-lock recovery. The stat/unlink pair is not an atomic
+  release leaves the path for stale-lock recovery. Path-probe errors preserve the callback outcome; confirmed-owner unlink errors other than `ENOENT` still propagate. The stat/unlink pair is not an atomic
   compare-and-delete, so this check alone does not eliminate concurrent replacement races.
 
 ## Sidecars, management, and UI

@@ -691,6 +691,52 @@ describe("codex-account-store CRUD", () => {
     }
   });
 
+  for (const code of ["EACCES", "EIO"]) {
+    for (const callbackFails of [false, true]) {
+      test(`refresh release preserves the callback outcome after ${code} path probe failure (${callbackFails})`, async () => {
+        const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
+        const lockKey = `path-probe-${code}-${callbackFails}`;
+        const lockPath = join(TEST_DIR, `codex-refresh-${createHash("sha256").update(lockKey).digest("hex").slice(0, 32)}.lock`);
+        const original = fs.statSync;
+        const callbackError = new Error("refresh failed");
+        let released = false;
+        const probe = spyOn(fs, "statSync").mockImplementation((...args: Parameters<typeof fs.statSync>) => {
+          if (released && args[0] === lockPath) throw Object.assign(new Error("path probe unavailable"), { code });
+          return original(...args);
+        });
+        try {
+          const pending = withCodexRefreshFileLock(lockKey, new AbortController().signal, async () => {
+            released = true;
+            if (callbackFails) throw callbackError;
+            return "refreshed";
+          });
+          if (callbackFails) await expect(pending).rejects.toBe(callbackError);
+          else expect(await pending).toBe("refreshed");
+          expect(existsSync(lockPath)).toBe(true);
+        } finally { probe.mockRestore(); }
+      });
+    }
+  }
+
+  test.each(["ENOENT", "EACCES"])("refresh release preserves confirmed-owner unlink handling for %s", async (code) => {
+    const { withCodexRefreshFileLock } = await import("../../src/codex/account-store");
+    const lockKey = `unlink-${code}`;
+    const lockPath = join(TEST_DIR, `codex-refresh-${createHash("sha256").update(lockKey).digest("hex").slice(0, 32)}.lock`);
+    const original = fs.unlinkSync;
+    const unlinkError = Object.assign(new Error("unlink failed"), { code });
+    let attempts = 0;
+    const probe = spyOn(fs, "unlinkSync").mockImplementation((path) => {
+      if (path === lockPath) { attempts++; throw unlinkError; }
+      return original(path);
+    });
+    try {
+      const pending = withCodexRefreshFileLock(lockKey, new AbortController().signal, async () => "refreshed");
+      if (code === "ENOENT") expect(await pending).toBe("refreshed");
+      else await expect(pending).rejects.toBe(unlinkError);
+      expect(attempts).toBe(1);
+    } finally { probe.mockRestore(); }
+  });
+
   test("same refresh grant joins a live flight", async () => {
     const {
       getCodexAccountCredential,

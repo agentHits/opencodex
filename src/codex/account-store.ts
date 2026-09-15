@@ -711,13 +711,17 @@ export async function withCodexRefreshFileLock<T>(lockKey: string, signal: Abort
       }
       closeSync(fd);
     }
+    let current: { dev: bigint; ino: bigint } | null = null;
     try {
-      const current = statSync(path, { bigint: true });
-      // An unreadable or unusable identity never authorizes removing the current path.
-      // Leave it for stale-lock recovery instead of deleting a possible replacement owner.
-      if (owned && current.dev === owned.dev && current.ino === owned.ino) unlinkSync(path);
-    } catch (err) {
-      if (errCode(err) !== "ENOENT") throw err;
+      const info = statSync(path, { bigint: true });
+      if (info.dev >= 0n && info.ino > 0n) current = { dev: info.dev, ino: info.ino };
+    } catch {
+      // Unknown path identity leaves the lock for stale recovery without masking fn().
+    }
+    if (owned && current && current.dev === owned.dev && current.ino === owned.ino) {
+      try { unlinkSync(path); } catch (err) {
+        if (errCode(err) !== "ENOENT") throw err;
+      }
     }
   }
 }
