@@ -500,6 +500,7 @@ async function fetchAccountQuota(
         // Exhaustion state rides the SAME commit guard as the quota row: a probe from a
         // superseded config generation must not publish either half.
         if (provider === "kiro") commitKiroAccountUsageState(key, kiroSnapshot);
+        persistAccountQuotaCache();
         sweepExpiredOnWrite(entry.ts);
       }
       return entry;
