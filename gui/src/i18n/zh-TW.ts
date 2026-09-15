@@ -2911,4 +2911,5 @@ export const zhTW: Record<TKey, string> = {
   "pws.removeAccountTooltip": "移除帳號",
   "pws.statsClaudeAvailable": "Claude 可用",
   "pws.statsGeminiAvailable": "Gemini 可用",
+  "pws.statsAvailable": "可用",
 };

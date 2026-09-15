@@ -2913,4 +2913,5 @@ export const fr: Record<TKey, string> = {
   "pws.removeAccountTooltip": "Supprimer le compte",
   "pws.statsClaudeAvailable": "Disponibles pour Claude",
   "pws.statsGeminiAvailable": "Disponibles pour Gemini",
+  "pws.statsAvailable": "Disponibles",
 };

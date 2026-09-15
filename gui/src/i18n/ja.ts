@@ -2946,4 +2946,5 @@ export const ja: Record<TKey, string> = {
   "pws.removeAccountTooltip": "アカウントを削除",
   "pws.statsClaudeAvailable": "Claude利用可能",
   "pws.statsGeminiAvailable": "Gemini利用可能",
+  "pws.statsAvailable": "利用可能",
 };

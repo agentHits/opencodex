@@ -98,6 +98,7 @@ git push origin agentHits/dev
 | `upstream/dev` | официальный код | база | да |
 | `agentHits/dev` | локальный прокси | — | нет, не PR |
 | `agentHits/antigravity` | GUI accounts + Cockpit Tools | да, база GUI `904db7036` | [PR #4560](https://github.com/lidge-jun/opencodex/pull/4560) |
+| `agentHits/dev` accounts copy | Квоты на вкладке аккаунтов: Claude/Gemini только у Antigravity | да, на `agentHits/dev` | нет |
 | `agentHits/antigravity+cockpitTools` | старый алиас GUI-SHA | да | нет |
 | `fix/cca-gemini-structured-output` | Gemini CCA structured output | да, влито `11e343e5f` | ready [PR #4670](https://github.com/lidge-jun/opencodex/pull/4670) / [issue #4669](https://github.com/lidge-jun/opencodex/issues/4669) |
 
