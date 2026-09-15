@@ -609,3 +609,54 @@ Translated Chat request construction uses the [inline-image budget](streaming-he
 The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
 
 Provider-scoped approval reviewer settings are projected by the [catalog owner](../catalog.md#provider-scoped-approval-reviewer); this surface retains its existing routing, transport and account-selection behavior. Translated audio/file admission follows the [final-adapter input contract](../adapters/registry.md#untranslated-input-media); native raw passthrough remains separate.
+
+## Core module ownership
+
+`src/server/responses/core.ts` is the public ingress and compatibility-export surface.
+The parent `src/server/responses.ts` facade retains its existing imports. Per-request execution
+is composed from the following owners in `src/server/responses/`; none is a generated artifact.
+
+| Owner | Responsibility |
+| --- | --- |
+| `request-prepare.ts` | Body parsing, combo handoff, final route, encrypted-task recovery and initial admission. |
+| `request-transport.ts` | Live credential selection, dispatch bindings, adapter replacement and same-target request identity. |
+| `request-sidecar-auth.ts` | Sidecar credential resolution and vision preprocessing. |
+| `response-effects.ts` | Completion notification, replay publication and live request-tool aliases. |
+| `request-send-budget.ts` | Request-wide send accounting, remaining allowance and the pending recovery permit. |
+| `passthrough-execution.ts` | Native host-lease transfer and the enclosing dispatch/delivery `finally`. |
+| `passthrough-dispatch.ts` | Native request preparation, upstream sends and pre-commit recovery. |
+| `passthrough-delivery.ts` | Native HTTP/SSE/JSON delivery, rewrite/inspection and terminal accounting. |
+| `sidecar-execution.ts` | Image/video versus web-search execution and their shared rotation hook. |
+| `completion-policy.ts`, `run-turn-execution.ts` | Empty-completion eligibility and adapter-owned event turns. |
+| `adapter-dispatch.ts` | Translated initial dispatch, bounded recovery and the shared continuation retry counter. |
+| `adapter-continuation.ts`, `adapter-delivery.ts` | Continuation event sources and final streaming/buffered bridging. |
+
+Reusable helpers live in `core-auth.ts`, `core-codex-account.ts`, `core-combo.ts`,
+`core-combo-failure.ts`, `core-errors.ts`, `core-lifetime.ts`, `core-normalize.ts`,
+`core-opaque-recovery.ts` and `core-replay.ts`. `core-options.ts` owns the public option types
+and small composition contracts. Existing public helper names are re-exported by `core.ts`.
+Adapter construction remains with the existing registry; `fetch-helpers.ts` remains a leaf.
+
+Mutable values are not copied across phases. A phase exposes only the values consumed by later
+phases, with getters/setters over the original local bindings where a retry or callback can
+change them. Consumers receive typed `Pick` views. In particular, adapter replacement, credential
+snapshots, request-tool aliases, cancellation, pending permits and continuation retry counts
+remain live. Owner names are distinct from local decision variables: `admissionState` retains the
+lease while a block-local `admission` holds only the acquisition result.
+
+`handleResponses` creates or inherits the same logical-request send holder. The budget owner
+reads that holder rather than minting a per-phase allowance. Combo recursion is injected through
+`ResponsesDispatchers`: a child re-enters the public handler without a reverse runtime import
+from the combo implementation into `core.ts`. `core-lifetime.ts` owns the shared run-turn response
+marker and translator-budget finalization, so the combo and delivery paths observe one identity.
+
+The outer admission `finally` remains in `core.ts`. Native execution explicitly transfers its
+pending lease to `passthrough-execution.ts`; both owners await response construction before
+cleanup. Stream body ownership, cancellation and post-commit behavior stay in the delivery owners.
+This decomposition changes ownership boundaries, not credential-selection or retry policy.
+
+`tests/responses/responses-core-modules.test.ts` covers the owner inventory, the 1,999-line ceiling,
+acyclic dependencies, recursive dispatch, lease-transfer wiring, capture-name hygiene and live
+send-holder/permit behavior. Cross-owner source assertions read the actual implementations via
+`tests/helpers/responses-core-source.ts`; focused passthrough and subagent assertions read their
+specific delivery/preparation owner. Existing runtime Lab-boundary tests still start at `core.ts`.

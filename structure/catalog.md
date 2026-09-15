@@ -1,5 +1,8 @@
 # Model Catalog
 
+Catalog discovery remains separate from the Responses final-route
+[core module ownership](transports/responses.md#core-module-ownership). This surface retains its existing behavior.
+
 The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
 
