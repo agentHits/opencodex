@@ -2952,6 +2952,7 @@ export const en = {
   "pws.freeHeadroom": "{percent}% free",
   "pws.limitExhaustedBadge": "Limit exhausted",
   "pws.refreshAccountQuota": "Refresh this account's quota",
+  "pws.switchedToAccount": "Switched to {account}",
   "pws.switchToAccount": "Switch to this account",
   "pws.accountSelect": "Select",
   "prov.editAliasShort": "Alias",

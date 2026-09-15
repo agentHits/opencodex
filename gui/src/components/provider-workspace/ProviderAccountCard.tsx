@@ -129,6 +129,7 @@ export default function ProviderAccountCard({
             >
               <span className={`pwi-auth-dot ${active ? "pwi-auth-dot--ok pwi-auth-dot--active-pulse" : "pwi-auth-dot--off"}`} aria-hidden="true" />
               <span className="pwi-dense-title">{primaryTitle}</span>
+              {active && <span className="pwi-badge-active-pill" style={{ marginLeft: "6px" }}>✓ {t("prov.accountActive")}</span>}
               <span className="pwi-dense-click-target-fill" aria-hidden="true" />
             </button>
             <button
@@ -284,6 +285,7 @@ export default function ProviderAccountCard({
             <div className="pwi-card-title-block">
               <div className="pwi-card-title-line">
                 <span className="pwi-card-title">{primaryTitle}</span>
+                {active && <span className="pwi-badge-active-pill">✓ {t("prov.accountActive")}</span>}
                 {switching && <span className="badge badge-muted">{t("pws.accountSwitching")}</span>}
               </div>
               <span className="pwi-card-sub">{secondarySub}</span>
@@ -387,4 +389,3 @@ export default function ProviderAccountCard({
     </div>
   );
 }
-

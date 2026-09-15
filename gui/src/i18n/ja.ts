@@ -2910,6 +2910,7 @@ export const ja: Record<TKey, string> = {
   "pws.freeHeadroom": "{percent}% 空き",
   "pws.limitExhaustedBadge": "制限到達",
   "pws.refreshAccountQuota": "このアカウントのクォータを更新",
+  "pws.switchedToAccount": "{account} に切り替えました",
   "pws.switchToAccount": "このアカウントに切り替え",
   "pws.accountSelect": "選択",
   "prov.editAliasShort": "エイリアス",

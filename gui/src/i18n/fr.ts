@@ -2877,6 +2877,7 @@ export const fr: Record<TKey, string> = {
   "pws.freeHeadroom": "{percent}% libre",
   "pws.limitExhaustedBadge": "Limite épuisée",
   "pws.refreshAccountQuota": "Actualiser le quota de ce compte",
+  "pws.switchedToAccount": "Basculé vers {account}",
   "pws.switchToAccount": "Basculer vers ce compte",
   "pws.accountSelect": "Sélectionner",
   "prov.editAliasShort": "Alias",

@@ -812,9 +812,9 @@
 }
 
 .pwi-account-card--active {
-  border-color: color-mix(in srgb, var(--green) 50%, var(--border));
-  background: linear-gradient(180deg, var(--green-soft) 0%, var(--surface) 100%);
-  box-shadow: 0 0 0 1px var(--green-soft);
+  border-color: var(--green, #4ecb9d) !important;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--green, #4ecb9d) 12%, var(--surface, #262626)) 0%, var(--surface, #262626) 100%);
+  box-shadow: 0 0 0 1px var(--green, #4ecb9d), 0 4px 20px rgba(78, 203, 157, 0.15);
 }
 
 .pwi-account-card--exhausted {
@@ -1494,6 +1494,45 @@
   border: 1px solid color-mix(in srgb, var(--green, #4ecb9d) 24%, var(--border, #3d3d3d));
   padding: 3px 10px;
   border-radius: var(--radius-sm, 8px);
+}
+.pwi-pool-active-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--green, #4ecb9d) 16%, var(--surface, #1e1e1e));
+  border: 1px solid color-mix(in srgb, var(--green, #4ecb9d) 38%, transparent);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--green, #4ecb9d);
+}
+.pwi-pool-dot-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green, #4ecb9d);
+  box-shadow: 0 0 6px var(--green, #4ecb9d);
+  animation: pwi-pulse 2s infinite ease-in-out;
+}
+@keyframes pwi-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.6; }
+}
+.pwi-badge-active-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--green, #4ecb9d);
+  color: #121212;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  box-shadow: 0 0 8px rgba(78, 203, 157, 0.4);
+  flex-shrink: 0;
 }
 .pwi-pool-label {
   font-size: 11.5px;

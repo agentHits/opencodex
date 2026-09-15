@@ -2875,6 +2875,7 @@ export const zhTW: Record<TKey, string> = {
   "pws.freeHeadroom": "剩餘 {percent}%",
   "pws.limitExhaustedBadge": "額度耗盡",
   "pws.refreshAccountQuota": "重新整理此帳號額度",
+  "pws.switchedToAccount": "已切換至 {account}",
   "pws.switchToAccount": "切換至此帳號",
   "pws.accountSelect": "選擇",
   "prov.editAliasShort": "別名",

@@ -2912,6 +2912,7 @@ export const tr: Record<TKey, string> = {
   "pws.freeHeadroom": "%{percent} boş",
   "pws.limitExhaustedBadge": "Limit tükendi",
   "pws.refreshAccountQuota": "Bu hesabın kotasını yenile",
+  "pws.switchedToAccount": "{account} hesabına geçildi",
   "pws.switchToAccount": "Bu hesaba geç",
   "pws.accountSelect": "Seç",
   "prov.editAliasShort": "Takma ad",

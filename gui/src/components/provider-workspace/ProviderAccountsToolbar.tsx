@@ -70,6 +70,13 @@ export default function ProviderAccountsToolbar({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
 
+  const activeItem = analyzedList.find(a => a.account.active);
+  const activeAccountTitle = activeItem ? (
+    titleMode === "login" ? activeItem.emailLogin
+    : titleMode === "masked" ? (activeItem.maskedLogin || activeItem.emailLogin)
+    : (activeItem.account.alias?.trim() || activeItem.emailLogin)
+  ) : null;
+
   const hasSearch = searchQuery.trim().length > 0;
 
   useEffect(() => {
@@ -642,6 +649,12 @@ export default function ProviderAccountsToolbar({
           {poolSupported && (
             <div className="pwi-pool-integrated-cluster">
               <span className="pwi-pool-label">⚡ {t("genericPool.title")}</span>
+              {activeAccountTitle && (
+                <span className="pwi-pool-active-chip" title={t("prov.accountActive")}>
+                  <span className="pwi-pool-dot-live" />
+                  {activeAccountTitle}
+                </span>
+              )}
               {onTogglePoolEnabled && (
                 <button
                   type="button"

@@ -2912,6 +2912,7 @@ export const ru: Record<TKey, string> = {
   "pws.freeHeadroom": "{percent}% свободно",
   "pws.limitExhaustedBadge": "Лимит исчерпан",
   "pws.refreshAccountQuota": "Обновить квоту этого аккаунта",
+  "pws.switchedToAccount": "Переключено на {account}",
   "pws.switchToAccount": "Выбрать этот аккаунт",
   "pws.accountSelect": "Выбрать",
   "prov.editAliasShort": "Псевдоним",

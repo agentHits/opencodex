@@ -2910,6 +2910,7 @@ export const zh: Record<TKey, string> = {
   "pws.freeHeadroom": "剩余 {percent}%",
   "pws.limitExhaustedBadge": "额度耗尽",
   "pws.refreshAccountQuota": "刷新该账号额度",
+  "pws.switchedToAccount": "已切换至 {account}",
   "pws.switchToAccount": "切换到此账号",
   "pws.accountSelect": "选择",
   "prov.editAliasShort": "别名",
