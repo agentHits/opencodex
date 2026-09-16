@@ -221,7 +221,17 @@ export async function shouldRetryCodexPoolAccountQuota(
   // A post-send WebSocket gateway status must not become a second account's send; the
   // body carries no quota evidence either, but the marker is the contract, not the prose.
   if (isNonReplayableResponse(response)) return false;
-  if (response.status === 402 || response.status === 429) return true;
+  if (response.status === 402 || response.status === 429) {
+    // Status alone used to authorize the move, which is right for a limit the ACCOUNT owns and
+    // wrong for one it merely belongs to. An organization- or project-scoped exhaustion refuses
+    // every credential inside that organization, so the second account meets the same counter
+    // and the only thing the rotation buys is a second cold prompt prefix (#4546). Positive
+    // evidence is required to withhold it: the helper fails closed, so an unreadable or
+    // ambiguous body keeps the broad #584 behaviour unchanged, and `rate_limit_exceeded`,
+    // `slow_down` and plan-level exhaustion still rotate exactly as before.
+    const { codexScopedExhaustionCode } = await import("../../codex/quota-rejection");
+    return await codexScopedExhaustionCode(response, { signal }) === undefined;
+  }
   if (response.status < 500 || response.status >= 600) return false;
   try {
     // Reject malformed UTF-8 instead of matching quota words around replacement characters.
