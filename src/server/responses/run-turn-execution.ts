@@ -19,7 +19,8 @@ import type { AttemptRecoveryKind } from "../../usage/log";
 import { providerFetch } from "./fetch-helpers";
 import { normalizeLogConversationId } from "../request-log-conversation";
 import type { AdapterEvent, OcxProviderContinuationState } from "../../types";
-import { adapterFailureFromMessage } from "../../lib/errors";
+import { adapterFailureFromMessage, SEND_BUDGET_EXHAUSTED_CODE } from "../../lib/errors";
+import { SendBudgetExhaustedError } from "../../lib/upstream-retry";
 import {
   GENERIC_OAUTH_MAX_FAILOVERS_PER_REQUEST,
   isGenericOAuthFailoverEnabled,
@@ -178,10 +179,22 @@ export async function executeResponsesRunTurn(
               retryable: true,
               message: err.message,
             }
-          : {
-              type: "error",
-              message: err instanceof Error ? err.message : String(err),
-            });
+          : err instanceof SendBudgetExhaustedError
+            // A structured terminal, not a bare message. The turn is already committed to an
+            // SSE response by the time most of these arrive, so the only way to carry "this
+            // proxy refused" to the client is on the event itself -- an unstructured message
+            // is inferred back to 502, which the Codex client retries.
+            ? {
+                type: "error",
+                status: 429,
+                errorType: "rate_limit_error",
+                code: SEND_BUDGET_EXHAUSTED_CODE,
+                message: err.message,
+              }
+            : {
+                type: "error",
+                message: err instanceof Error ? err.message : String(err),
+              });
       } finally {
         // Cursor assigns a stable conversation id inside runTurn on the first headerless
         // turn; backfill so Logs can filter/total that opening request (#330 / #522).
@@ -195,6 +208,11 @@ export async function executeResponsesRunTurn(
     const rotateRunTurnAdapterOnPreflight429 = async (
       error: Extract<AdapterEvent, { type: "error" }>,
     ): Promise<boolean> => {
+      // Our own refusal wears a 429 now, and rotating on it would record a cooldown against an
+      // account that never rate-limited anything -- a fake quota signal that outlives the
+      // request and misroutes later ones. The passthrough path has never had this problem
+      // because it answers before any rotation arm is reached.
+      if (error.code === SEND_BUDGET_EXHAUSTED_CODE) return false;
       const status = error.status ?? adapterFailureFromMessage(error.message).httpStatus;
       if (
         status !== 429

@@ -88,6 +88,7 @@ export function createAdapterContinuations(
     | "noteTransientSends"
     | "reserveCredentialHop"
     | "pendingHopPermit"
+    | "sendBudgetExhausted"
   >,
   adapterExchange: Pick<
     AdapterExchange,
@@ -116,6 +117,7 @@ export function createAdapterContinuations(
     remainingTransientSendBudget,
     noteTransientSends,
     reserveCredentialHop,
+    sendBudgetExhausted,
   } = sendBudgetState;
 
 
@@ -263,6 +265,11 @@ export function createAdapterContinuations(
         response.status === 429
         && rateLimitPolicy !== null
         && adapterExchange.rateLimitRetries < rateLimitPolicy.attempts
+        // The main recovery loop and the passthrough ladder both consult the shared remainder
+        // here; this loop did not, so a request whose budget was already spent could still
+        // same-key replay on a live stream. Checked BEFORE the wait below cancels the body, so
+        // a refusal keeps the real upstream 429 -- status, Retry-After, quota evidence -- intact.
+        && !sendBudgetExhausted()
       ) {
         adapterExchange.rateLimitRetries += 1;
         // Release unread body + heartbeat-fed wait via the shared same-target helper.

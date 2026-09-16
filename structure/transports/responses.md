@@ -750,3 +750,33 @@ describing it afterwards, and the restart.
 
 The default policy still sets no token ceiling on any scope, so an unconfigured install accounts
 and reports without refusing. The operator configuration path for those limits is not wired yet.
+
+## What a spent budget tells the client
+
+A refusal this proxy made is reported as HTTP 429 with the code `request_send_budget_exhausted`,
+on every dispatch path. The three paths used to disagree: passthrough answered 429 and declined
+to blame the provider, the adapter paths fell through `describeUpstreamConnectFailure` and
+answered 502 "Provider unreachable", and runTurn pushed an unstructured message that was inferred
+back to 502 under HTTP 200.
+
+The status is the load-bearing half. The Codex client retries 5xx and does not retry a direct
+429, so reporting a local refusal as 502 makes the caller send the whole turn again — the
+amplification the budget exists to stop. Encoding it as a quota code instead would stop the
+client for the wrong stated reason, and the retryable streaming rate-limit codes would restart
+the stream, so neither is available.
+
+The distinct code is what an operator reads afterwards. `classifyError` keeps it by matching the
+supplied type rather than the status, so an upstream 429 still classifies as
+`rate_limit_exceeded` and only this proxy's own refusal carries the other code. Once a response
+is committed the refusal travels as a structured terminal event — status, `errorType` and
+`code` on the event itself — because an unstructured message is inferred back to 502.
+
+A local 429 must not look like a provider one to our own routing. `rotateRunTurnAdapterOnPreflight429`
+returns early on the code, before it reads the status, so a refusal cannot rotate a credential or
+write a cooldown against an account that rate-limited nothing; that fake signal would outlive the
+request and misroute later ones. The terminal-guard continuation loop now consults
+`sendBudgetExhausted()` before it cancels the upstream body, matching the main recovery loop, so
+a spent request keeps the real 429 instead of replaying on a live stream.
+
+This is the proxy's own accounting only. Classifying an upstream 429 as org or project spend
+exhaustion is a separate contract with a separate owner.
