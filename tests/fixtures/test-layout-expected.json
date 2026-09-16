@@ -619,6 +619,7 @@
   "key-login-preserves-model-costs.test.ts": "oauth",
   "keyring-smoke.test.ts": "ci-workflows",
   "kimi-oauth-identity.test.ts": "providers",
+  "kimi-responses-adjacency.test.ts": "providers",
   "kiro-account-quota.test.ts": "providers/kiro",
   "kiro-adapter.test.ts": "providers/kiro",
   "kiro-auth-context-continuation.test.ts": "providers/kiro",

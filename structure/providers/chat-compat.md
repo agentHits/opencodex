@@ -131,6 +131,14 @@ dropped. This preserves #1292's single-call adjacency repair without splitting a
 batch away from its preceding plaintext reasoning (#1477). Tolerant providers never enter this pass,
 and duplicate, missing, or backwards call/result pairs are left for the upstream to reject rather than guessed.
 
+That pass is gated by `requiresAdjacentResponsesToolResults`, not by provider name. Kimi's Code Plan
+Responses endpoint enforces the same strict shape and rejects a hook-split pair with HTTP 400 (#4726),
+so `kimi` and `kimi-code` carry the flag as well. The flag is inert while those presets use the Chat
+wire and takes effect when a row is configured onto `openai-responses`, which is the configuration the
+report exercised. No upstream specification documents the requirement; the evidence is the observed
+400 and DeepSeek's identical failure shape, which is why this stays a per-provider capability rather
+than a wire-wide default — upstream Codex leaves an intervening developer message where it is.
+
 > Decision record: [ADR-0052](../decisions/ADR-0052-reasoning-and-tool-result-compatibility.md)
 
 ## OpenRouter provider routing
