@@ -268,10 +268,17 @@ describe("combo target input admission", () => {
     modelMaxOutputTokens: { m: 32_000 },
   };
 
-  const withMaxOutput = (inputTokens: number, maxOutputTokens: number | undefined = 64_000): OcxParsedRequest => ({
+  const withMaxOutput = (inputTokens: number, maxOutputTokens = 64_000): OcxParsedRequest => ({
     ...request([userText(asciiTokens(inputTokens))]),
     modelId: "m",
-    options: maxOutputTokens === undefined ? {} : { maxOutputTokens },
+    options: { maxOutputTokens },
+  });
+  // A separate builder, because passing `undefined` to the one above would silently take its
+  // default and the row below would assert the opposite of what it claims to cover.
+  const withoutMaxOutput = (inputTokens: number): OcxParsedRequest => ({
+    ...request([userText(asciiTokens(inputTokens))]),
+    modelId: "m",
+    options: {},
   });
 
   test("skips a target that cannot hold the turn plus its own output ceiling", () => {
@@ -310,7 +317,7 @@ describe("combo target input admission", () => {
   });
 
   test("no declared output allowance keeps the loose direct contract", () => {
-    const result = checkComboTargetInputAdmission(withMaxOutput(150_000, undefined), capped, "custom", "m");
+    const result = checkComboTargetInputAdmission(withoutMaxOutput(150_000), capped, "custom", "m");
     expect(result.admitted).toBe(true); // still inside the existing 2.5x pathological gate
     expect(result.requiredOutputHeadroom).toBeUndefined();
   });
