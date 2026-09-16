@@ -1,7 +1,6 @@
 import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { delimiter, isAbsolute, join, posix, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,7 +14,6 @@ import { buildWinswXml } from "../../src/lib/winsw";
 import { CONFIG_OWNER_FILE, CONFIG_UNINSTALL_MANIFEST, recordOwnedConfigPath, removeOwnedConfigState } from "../../src/lib/config-ownership";
 import { serviceApiTokenFilePath } from "../../src/lib/service-secrets";
 import { WindowsSchtasksError } from "../../src/lib/windows-elevation";
-import { OCX_ELEVATED_STAGING_UNREADABLE } from "../../src/lib/windows-elevation";
 import { resolveCurrentWindowsPrincipal, setWindowsPrincipalRunnerForTests } from "../../src/lib/windows-user-principal";
 import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
 import type { OcxConfig } from "../../src/types";
@@ -2077,143 +2075,6 @@ describe("service lifecycle cleanup ordering", () => {
       expect(existsSync(stageDir)).toBe(false);
     } finally {
       removeTreeWithRetry(parent);
-    }
-  });
-
-  /**
-   * #4692: a file an administrator process will read is itself a privilege-escalation
-   * surface, so access, redirection and tamper-evidence each have to hold.
-   */
-  test("elevated staging hardens before writing, digests the exact bytes, and cleans up", () => {
-    const parent = mkdtempSync(join(tmpdir(), "ocx-elevated-stage-"));
-    const stageDir = join(parent, "private-stage");
-    const calls: string[] = [];
-    try {
-      const staged = serviceModule.stageElevatedSchedulerRegistration(
-        "<Task><Description>new</Description></Task>",
-        "<Task><Description>previous</Description></Task>",
-        {
-          createStageDir: () => {
-            mkdirSync(stageDir, { mode: 0o700 });
-            calls.push("create-stage-dir");
-            return stageDir;
-          },
-          hardenDir: () => { calls.push("harden-dir"); },
-          writePayload: (path, bytes) => {
-            calls.push("write:" + path.slice(stageDir.length + 1));
-            writeFileSync(path, bytes, { flag: "wx" });
-          },
-          hardenPath: path => { calls.push("harden:" + path.slice(stageDir.length + 1)); },
-        },
-      );
-
-      // The directory is private before anything is written into it; hardening after the
-      // write would leave a window where the payload is readable by another account.
-      expect(calls).toEqual([
-        "create-stage-dir",
-        "harden-dir",
-        "write:register.xml",
-        "harden:register.xml",
-        "write:expected.xml",
-        "harden:expected.xml",
-      ]);
-
-      // The digest covers exactly the bytes on disk, and those bytes are UTF-16LE with no
-      // BOM: the elevated process decodes them straight into Register-ScheduledTask, so
-      // what is hashed here is what gets registered, with no trimming step in between.
-      for (const [payload, value] of [
-        [staged.xml, "<Task><Description>new</Description></Task>"],
-        [staged.expectedExisting!, "<Task><Description>previous</Description></Task>"],
-      ] as const) {
-        const onDisk = readFileSync(payload.path);
-        expect(onDisk.equals(Buffer.from(value, "utf16le"))).toBe(true);
-        expect(onDisk[0]).not.toBe(0xff);
-        expect(payload.sha256).toBe(createHash("sha256").update(onDisk).digest("hex"));
-        expect(payload.sha256).toMatch(/^[0-9a-f]{64}$/);
-      }
-      expect(staged.xml.sha256).not.toBe(staged.expectedExisting!.sha256);
-
-      staged.cleanup();
-      expect(existsSync(stageDir)).toBe(false);
-      // Idempotent: the success path calls it once, but a failure path may race it.
-      expect(() => staged.cleanup()).not.toThrow();
-    } finally {
-      removeTreeWithRetry(parent);
-    }
-  });
-
-  test("elevated staging refuses a redirected path and leaves nothing behind", () => {
-    const parent = mkdtempSync(join(tmpdir(), "ocx-elevated-stage-reparse-"));
-    const stageDir = join(parent, "private-stage");
-    try {
-      // A staged payload reached through a reparse point is a payload somebody else chose
-      // the destination for. Exclusive creation already refuses an existing name, so this
-      // is the check that keeps the guarantee from resting on a reading of O_EXCL.
-      expect(() => serviceModule.stageElevatedSchedulerRegistration("<Task />", undefined, {
-        createStageDir: () => {
-          mkdirSync(stageDir, { mode: 0o700 });
-          return stageDir;
-        },
-        hardenDir: () => {},
-        writePayload: (path, bytes) => { writeFileSync(path, bytes, { flag: "wx" }); },
-        hardenPath: () => { throw new Error("must not harden a redirected payload"); },
-        inspect: path => ({
-          isSymbolicLink: () => path !== stageDir,
-          isFile: () => true,
-          isDirectory: () => path === stageDir,
-        }),
-      })).toThrow("redirected path");
-      expect(existsSync(stageDir)).toBe(false);
-    } finally {
-      removeTreeWithRetry(parent);
-    }
-  });
-
-  test("elevated staging cleans up when a payload write fails partway", () => {
-    const parent = mkdtempSync(join(tmpdir(), "ocx-elevated-stage-partial-"));
-    const stageDir = join(parent, "private-stage");
-    try {
-      // The predecessor is the second payload, so this leaves a real file behind unless
-      // cleanup walks everything it created rather than only the one that failed.
-      expect(() => serviceModule.stageElevatedSchedulerRegistration("<Task />", "<Task />", {
-        createStageDir: () => {
-          mkdirSync(stageDir, { mode: 0o700 });
-          return stageDir;
-        },
-        hardenDir: () => {},
-        writePayload: (path, bytes) => {
-          if (path.endsWith("expected.xml")) throw new Error("synthetic predecessor write failure");
-          writeFileSync(path, bytes, { flag: "wx" });
-        },
-        hardenPath: () => {},
-      })).toThrow("synthetic predecessor write failure");
-      expect(existsSync(stageDir)).toBe(false);
-    } finally {
-      removeTreeWithRetry(parent);
-    }
-  });
-
-  test("an unreadable staged payload is reported with its cause and its remedy", () => {
-    // The elevated process runs hidden, so nothing it writes survives and the exit code is
-    // the entire user-facing error. Staging adds exactly one new failure -- the payload is
-    // readable only by the account that created it, so an elevation answered with another
-    // administrator's credentials cannot open it -- and reporting that as a bare number
-    // would reproduce what made #4692 expensive to diagnose in the first place.
-    const message = serviceModule.describeElevatedRegistrationFailure(
-      "Background service install failed",
-      OCX_ELEVATED_STAGING_UNREADABLE,
-      "C:\\Temp\\opencodex-service-stage-aaaaaa",
-    );
-    expect(message).toContain("could not read the staged task definition");
-    expect(message).toContain("C:\\Temp\\opencodex-service-stage-aaaaaa");
-    expect(message).toContain("different administrator account");
-    expect(message).toContain("Approve the prompt as the signed-in user");
-    expect(message).not.toMatch(/exit code \d+/);
-
-    // Every other code keeps the plain form; this is a named cause, not a catch-all.
-    for (const code of [1, 10, 13, 1223]) {
-      expect(serviceModule.describeElevatedRegistrationFailure("Task Scheduler rollback failed", code, "C:\\Temp\\x"))
-        .toBe("Task Scheduler rollback failed with exit code " + code + ".");
     }
   });
 

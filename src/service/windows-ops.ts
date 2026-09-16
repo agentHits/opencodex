@@ -235,7 +235,7 @@ export function stageElevatedSchedulerRegistration(
         forgetEphemeralSecretPath(file);
       } catch (error) {
         if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") forgetEphemeralSecretPath(file);
-        else failure ??= error;
+        else if (failure === undefined) failure = error;
       }
     }
     try {
