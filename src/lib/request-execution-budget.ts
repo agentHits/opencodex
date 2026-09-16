@@ -56,6 +56,7 @@ export type BudgetDenial =
   | "final-recovery-spent"
   | "alternate-target-exhausted"
   | "target-transition-exhausted"
+  | "spend-exhausted"
   | "not-replay-safe";
 
 export interface DispatchIntent {
@@ -94,11 +95,44 @@ export interface SingleUseDispatchPermit {
    * once an external send reporter already settled it.
    */
   release(): void;
+  /**
+   * Take over an externally counted booking, because the layer holding this permit is the one
+   * that physically sends.
+   *
+   * `countedExternally` promises that a retry helper will name this send through
+   * `onSendsConsumed`. An adapter that owns its own dispatch ladder -- Kiro's reset loop,
+   * Cursor's transport loop -- reserves per physical send instead, so no reporter ever arrives
+   * and the pending booking would sit there until it silently swallowed an unrelated later
+   * report. Confirming through this method settles the permit AND closes the booking, so the
+   * send stays charged exactly once (#4709). Returns false once the permit is settled, which is
+   * what keeps one permit from admitting two sends.
+   */
+  assumeCharge(): boolean;
 }
 
 export type DispatchDecision =
   | { allowed: true; permit: SingleUseDispatchPermit }
   | { allowed: false; reason: BudgetDenial };
+
+/**
+ * Notified when this request's physical-send count moves.
+ *
+ * `spent` is the only number here that counts SENDS rather than intentions: a reservation
+ * increments it, a refund decrements it, and an externally reported send settles against a
+ * booking that was already counted. Anything that books one entry per increment therefore
+ * books exactly one entry per physical send -- which is what lets the durable spend ledger
+ * have a production caller without every dispatch site in the tree remembering to call it.
+ *
+ * `charge` may refuse, and a refusal denies the dispatch. That is deliberate: the ledger is
+ * the only bound here that survives a restart, so a limit it enforces has to be able to stop a
+ * send rather than merely describe one.
+ */
+export interface RequestSendObserver {
+  /** Book one physical send. False refuses the dispatch before the budget charges it. */
+  charge(): boolean;
+  /** Give back a booking whose send never happened. */
+  refund(): void;
+}
 
 /**
  * Carried on HandleResponsesOptions so a combo child, a rebuild and an alternate-account leg
@@ -137,6 +171,7 @@ let logicalRequestSeq = 0;
 export function createRequestExecutionBudget(
   policy: RequestExecutionBudgetPolicy = CODEX_TEXT_GUARDED_BUDGET_POLICY,
   logicalRequestId?: string,
+  observer?: RequestSendObserver,
 ): RequestExecutionBudget {
   let spent = 0;
   // Reservations whose physical send is reported by a retry helper rather than by the permit.
@@ -160,7 +195,12 @@ export function createRequestExecutionBudget(
       }
       const settled = Math.min(delta, pendingExternalSends);
       pendingExternalSends -= settled;
-      spent += delta - settled;
+      const charged = delta - settled;
+      spent += charged;
+      // These sends have already left. The ledger records them even past a ceiling it would
+      // have refused, because refusing after the fact only hides spend that was really
+      // incurred -- the refusal has to happen at the reservation below, or not at all.
+      for (let index = 0; index < charged; index += 1) observer?.charge();
     },
     logicalRequestId: logicalRequestId ?? `lr-${Date.now().toString(36)}-${(logicalRequestSeq += 1).toString(36)}`,
     policyVersion: REQUEST_BUDGET_POLICY_VERSION,
@@ -200,6 +240,11 @@ export function createRequestExecutionBudget(
         }
       }
 
+      // Consulted last, because it is the only bound here that WRITES. A ledger entry booked
+      // for a dispatch a cheaper check above would have refused is spend this request never
+      // makes, and it would hold those tokens against the scope until retention expired.
+      if (observer && !observer.charge()) return { allowed: false, reason: "spend-exhausted" };
+
       // THE RESERVATION IS THE CHARGE. Deciding here and charging in `use()` left a window in
       // which two legs read the same remainder, both received a permit, and both dispatched:
       // one remaining send admitted two physical sends, which is the per-request multiplication
@@ -222,6 +267,17 @@ export function createRequestExecutionBudget(
             settled = "used";
             return true;
           },
+          assumeCharge(): boolean {
+            if (settled !== "open") return false;
+            settled = "used";
+            // The booking this reservation made for an external reporter is now owned by the
+            // caller. Leaving it pending is not harmless: the next `used` report of this request
+            // would settle against it and one real send would go uncharged.
+            if (intent.countedExternally === true && pendingExternalSends > 0) {
+              pendingExternalSends -= 1;
+            }
+            return true;
+          },
           release(): void {
             if (settled !== "open") return;
             settled = "released";
@@ -232,6 +288,7 @@ export function createRequestExecutionBudget(
               pendingExternalSends -= 1;
             }
             spent -= 1;
+            observer?.refund();
             if (drawsReserve) reserveSpent = false;
             if (isAlternateTarget) alternateTargetSends -= 1;
             if (changesTarget) targetTransitions -= 1;
