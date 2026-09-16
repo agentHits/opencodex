@@ -156,7 +156,21 @@ export default function ProviderAccountsToolbar({
   const withLimitsClaudeCount = analyzedList.filter(a => Boolean(a.claude5h || a.claudeWeekly) && !a.claudeExhausted).length;
   const geminiExhaustedCount = analyzedList.filter(a => a.geminiExhausted).length;
   const claudeExhaustedCount = analyzedList.filter(a => a.claudeExhausted).length;
-  const fullyExhaustedCount = analyzedList.filter(a => a.fullyExhausted).length;
+
+  // Detailed 5h and Weekly counts for Claude & Gemini
+  const claude5hAvailable = analyzedList.filter(a => (a.claude5h?.percent ?? 0) < 99.5 && !a.account.needsReauth).length;
+  const claude5hExhausted = analyzedList.filter(a => (a.claude5h?.percent ?? 0) >= 99.5).length;
+  const claudeWeeklyAvailable = analyzedList.filter(a => (a.claudeWeekly?.percent ?? 0) < 99.5 && !a.account.needsReauth).length;
+  const claudeWeeklyExhausted = analyzedList.filter(a => (a.claudeWeekly?.percent ?? 0) >= 99.5).length;
+
+  const gemini5hAvailable = analyzedList.filter(a => (a.gemini5h?.percent ?? 0) < 99.5 && !a.account.needsReauth).length;
+  const gemini5hExhausted = analyzedList.filter(a => (a.gemini5h?.percent ?? 0) >= 99.5).length;
+  const geminiWeeklyAvailable = analyzedList.filter(a => (a.geminiWeekly?.percent ?? 0) < 99.5 && !a.account.needsReauth).length;
+  const geminiWeeklyExhausted = analyzedList.filter(a => (a.geminiWeekly?.percent ?? 0) >= 99.5).length;
+
+  const fullyExhaustedCount = analyzedList.filter(a => a.fullyExhausted || (!a.hasAnyLimitsLeft && !a.account.needsReauth)).length;
+  const needsReauthCount = analyzedList.filter(a => Boolean(a.account.needsReauth) || a.account.health?.status === "reauth_required").length;
+  const readyCount = analyzedList.filter(a => a.hasAnyLimitsLeft && !a.account.needsReauth).length;
 
   let activeFilterLabel: string;
   let activeFilterIcon: string;
@@ -205,110 +219,166 @@ export default function ProviderAccountsToolbar({
     <div className="pwi-accounts-controls-wrapper">
       {/* 1. Summary Stats Hub */}
       <div className="pwi-accounts-stats-card">
-        <div className="pwi-stats-top-row">
-        <div className="pwi-stats-items-row">
-          <div className="pwi-stat-unit">
-            <span className="pwi-stat-lbl">{t("pws.statsTotal")}</span>
-            <div className="pwi-stat-val-line">
-              <span className="pwi-stat-num">{totalCount}</span>
+        {/* 1a. Account Availability Hub (3-Column Grid) */}
+        <div className="pwi-tokens-section">
+          <div className="pwi-tokens-header-bar">
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <span className="pwi-stat-lbl">{t("pws.availableAccounts")}:</span>
+              <strong style={{ fontSize: "14px", fontWeight: 700 }}>{totalCount}</strong>
               <span className="pwi-stat-subtag">{t("pws.statsInPool")}</span>
+              <span className="pwi-stat-tag-green">✓ {readyCount} {t("pws.statsInService")}</span>
+              {needsReauthCount > 0 && (
+                <span className="pwi-stat-tag-warn">⚠️ {needsReauthCount} {t("pws.reauthNeededShort")}</span>
+              )}
             </div>
-          </div>
 
-          <div className="pwi-stat-sep" />
-
-          {showModelFamilies ? (
-            <>
-              <div className="pwi-stat-unit">
-                <span className="pwi-stat-lbl">{t("pws.statsClaudeAvailable")}</span>
-                <div className="pwi-stat-val-line">
-                  <span className="pwi-stat-num pwi-text-orange">{withLimitsClaudeCount}</span>
-                  <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
-                </div>
+            {onRefreshAll && (
+              <div className="pwi-global-refresh-box">
+                {quotaRefreshResultText && (
+                  <span className={quotaRefreshResultOk ? "pws-status-ok" : "pws-status-warn"}>
+                    {quotaRefreshResultText}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm pwi-btn-refresh-all"
+                  disabled={refreshingAll}
+                  onClick={onRefreshAll}
+                >
+                  <IconRefresh width={13} height={13} className={refreshingAll ? "pwi-spin-inline" : ""} aria-hidden="true" />
+                  {" "}
+                  {refreshingAll ? t("codexAuth.refreshingQuota") : t("pws.refreshAllQuotas")}
+                </button>
               </div>
-
-              <div className="pwi-stat-sep" />
-
-              <div className="pwi-stat-unit">
-                <span className="pwi-stat-lbl">{t("pws.statsGeminiAvailable")}</span>
-                <div className="pwi-stat-val-line">
-                  <span className="pwi-stat-num pwi-text-blue">{withLimitsGeminiCount}</span>
-                  <span className="pwi-stat-tag-blue">✓ {t("pws.statsReady")}</span>
-                </div>
-              </div>
-
-              <div className="pwi-stat-sep" />
-
-              <div className="pwi-stat-unit">
-                <span className="pwi-stat-lbl">{t("pws.statsClaudeExhausted")}</span>
-                <div className="pwi-stat-val-line">
-                  <span className="pwi-stat-num pwi-text-orange">{claudeExhaustedCount}</span>
-                  <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
-                </div>
-              </div>
-
-              <div className="pwi-stat-sep" />
-
-              <div className="pwi-stat-unit">
-                <span className="pwi-stat-lbl">{t("pws.statsGeminiExhausted")}</span>
-                <div className="pwi-stat-val-line">
-                  <span className="pwi-stat-num pwi-text-blue">{geminiExhaustedCount}</span>
-                  <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
-                </div>
-              </div>
-
-              <div className="pwi-stat-sep" />
-
-              <div className="pwi-stat-unit">
-                <span className="pwi-stat-lbl">{t("pws.statsFullyExhausted")}</span>
-                <div className="pwi-stat-val-line">
-                  <span className="pwi-stat-num pwi-text-warn">{fullyExhaustedCount}</span>
-                  <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="pwi-stat-unit">
-                <span className="pwi-stat-lbl">{t("pws.statsAvailable")}</span>
-                <div className="pwi-stat-val-line">
-                  <span className="pwi-stat-num pwi-text-orange">{withLimitsCount}</span>
-                  <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
-                </div>
-              </div>
-
-              <div className="pwi-stat-sep" />
-
-              <div className="pwi-stat-unit">
-                <span className="pwi-stat-lbl">{t("pws.statsExhausted")}</span>
-                <div className="pwi-stat-val-line">
-                  <span className="pwi-stat-num pwi-text-warn">{fullyExhaustedCount}</span>
-                  <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {onRefreshAll && (
-          <div className="pwi-global-refresh-box">
-            {quotaRefreshResultText && (
-              <span className={quotaRefreshResultOk ? "pws-status-ok" : "pws-status-warn"}>
-                {quotaRefreshResultText}
-              </span>
             )}
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm pwi-btn-refresh-all"
-              disabled={refreshingAll}
-              onClick={onRefreshAll}
-            >
-              <IconRefresh width={14} height={14} className={refreshingAll ? "pwi-spin-inline" : ""} aria-hidden="true" />
-              {" "}
-              {refreshingAll ? t("codexAuth.refreshingQuota") : t("pws.refreshAllQuotas")}
-            </button>
           </div>
-        )}
+
+          <div className={showModelFamilies ? "pwi-tokens-grid" : "pwi-tokens-grid pwi-tokens-grid--dual"}>
+            {showModelFamilies ? (
+              <>
+                {/* Column 1: Claude availability */}
+                <div className="pwi-tokens-card pwi-tokens-card--claude">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--orange">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.tokensColClaude")}</span>
+                    <span className="pwi-stat-subtag" style={{ marginLeft: "auto" }}>
+                      {claudeWeeklyAvailable} / {totalCount}
+                    </span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel5h")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{claude5hAvailable} {t("pws.statsAvailShort")}</span>
+                      {claude5hExhausted > 0 ? (
+                        <span className="pwi-stat-tag-warn">{claude5hExhausted} {t("pws.statsExhaustShort")}</span>
+                      ) : (
+                        <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
+                      )}
+                    </div>
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel7d")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{claudeWeeklyAvailable} {t("pws.statsAvailShort")}</span>
+                      {claudeWeeklyExhausted > 0 ? (
+                        <span className="pwi-stat-tag-warn">{claudeWeeklyExhausted} {t("pws.statsExhaustShort")}</span>
+                      ) : (
+                        <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Column 2: Gemini availability */}
+                <div className="pwi-tokens-card pwi-tokens-card--gemini">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--blue">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.tokensColGemini")}</span>
+                    <span className="pwi-stat-subtag" style={{ marginLeft: "auto" }}>
+                      {geminiWeeklyAvailable} / {totalCount}
+                    </span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel5h")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-blue">{gemini5hAvailable} {t("pws.statsAvailShort")}</span>
+                      {gemini5hExhausted > 0 ? (
+                        <span className="pwi-stat-tag-warn">{gemini5hExhausted} {t("pws.statsExhaustShort")}</span>
+                      ) : (
+                        <span className="pwi-stat-tag-blue">✓ {t("pws.statsReady")}</span>
+                      )}
+                    </div>
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel7d")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-blue">{geminiWeeklyAvailable} {t("pws.statsAvailShort")}</span>
+                      {geminiWeeklyExhausted > 0 ? (
+                        <span className="pwi-stat-tag-warn">{geminiWeeklyExhausted} {t("pws.statsExhaustShort")}</span>
+                      ) : (
+                        <span className="pwi-stat-tag-blue">✓ {t("pws.statsReady")}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Column 3: Pool Status */}
+                <div className="pwi-tokens-card pwi-tokens-card--total">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--green">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.statsPoolSummary")}</span>
+                    <span className="pwi-stat-subtag" style={{ marginLeft: "auto" }}>
+                      {readyCount} / {totalCount}
+                    </span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label" style={{ width: "auto" }}>{t("pws.statsFullyExhausted")}:</span>
+                      <span className={`pwi-tokens-metric-value ${fullyExhaustedCount > 0 ? "pwi-text-warn" : "pwi-text-green"}`}>
+                        {fullyExhaustedCount}
+                      </span>
+                      <span className={fullyExhaustedCount > 0 ? "pwi-stat-tag-warn" : "pwi-stat-tag-green"}>
+                        {fullyExhaustedCount > 0 ? t("pws.statsAwaitingReset") : "0 " + t("pws.statsExhaustShort")}
+                      </span>
+                    </div>
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label" style={{ width: "auto" }}>{t("pws.statsReauthStatus")}:</span>
+                      <span className={`pwi-tokens-metric-value ${needsReauthCount > 0 ? "pwi-text-warn" : "pwi-text-green"}`}>
+                        {needsReauthCount}
+                      </span>
+                      <span className={needsReauthCount > 0 ? "pwi-stat-tag-warn" : "pwi-stat-tag-green"}>
+                        {needsReauthCount > 0 ? t("pws.reauthNeededShort") : "0"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="pwi-tokens-card pwi-tokens-card--claude">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--orange">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.statsAvailable")}</span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{withLimitsCount} {t("pws.statsAvailShort")}</span>
+                      <span className="pwi-stat-tag-orange">✓ {t("pws.statsReady")}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pwi-tokens-card pwi-tokens-card--total">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--green">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.statsFullyExhausted")}</span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-value pwi-text-warn">{fullyExhaustedCount}</span>
+                      <span className="pwi-stat-tag-warn">{t("pws.statsAwaitingReset")}</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
         {/* 1b. Remaining Tokens 3-Column Grid */}
