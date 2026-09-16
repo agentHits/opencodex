@@ -46,6 +46,7 @@ import { isThreadSpawnRequest, supportedLadderFor } from "../effort-policy";
 import {
   clientCancelledResponse,
   comboUnavailable,
+  targetIncompatibleResponse,
   unreadableEncryptedAgentTaskResponse,
 } from "./core-errors";
 import {
@@ -53,7 +54,12 @@ import {
   createChildPassthroughCallbackGate,
   consumeComboFailure,
 } from "./core-combo-failure";
-import { linkRequestSessionLane, sessionLaneIdFromRequest } from "../request-log-conversation";
+import {
+  linkRequestSessionLane,
+  reasoningReplayConversationIdFromResponsesRequest,
+  sessionIdHeaderFromRequest,
+  sessionLaneIdFromRequest,
+} from "../request-log-conversation";
 import type { CodexAuthContext } from "../../codex/auth-context";
 import type { ResponsesTerminalStatus } from "../../bridge";
 import { beginRequestAttempt, sealRequestAttemptIdentity, finishRequestAttempt } from "../request-log";
@@ -67,6 +73,7 @@ import {
 } from "../relay";
 import { preflightComboStreamResponse } from "./combo-stream-preflight";
 import { streamingContextOverflowResponse, jsonContextOverflowResponse } from "./context-overflow";
+import { mandatoryResponsesReasoningReplayUnavailable } from "./core-replay";
 
 /**
  * Sends one combo target may run on its own before the ladder moves on. A target is a whole
@@ -233,6 +240,29 @@ export async function executeComboResponses(
       : undefined,
     recoveredPlaintext: false,
   };
+  const reasoningReplayConversationId = reasoningReplayConversationIdFromResponsesRequest({
+    clientThreadId: inboundClientThreadId,
+    threadIdHeader: req.headers.get("thread-id"),
+    sessionIdHeader: sessionIdHeaderFromRequest(req.headers),
+  });
+  const reasoningReplayEligible = (target: (typeof combo.targets)[number]): boolean => {
+    try {
+      const route = routeConcreteModel(config, `${target.provider}/${target.model}`);
+      const unavailable = mandatoryResponsesReasoningReplayUnavailable({
+        body,
+        clientThreadId: reasoningReplayConversationId,
+        providerName: route.providerName,
+        provider: route.provider,
+        adapterName: route.provider.adapter,
+        modelId: route.modelId,
+      });
+      return !unavailable;
+    } catch {
+      // Routing failures are not evidence of replay incompatibility. Keep the target eligible so
+      // the existing selection and dispatch path preserves its original routing failure surface.
+      return true;
+    }
+  };
   const adoptFailedChildLog = (childLog: RequestLogContext): void => {
     // Attempts remain the complete physical history; the logical row mirrors the most recent
     // failed target so an exhausted combo still has useful top-level reasoning diagnostics.
@@ -264,6 +294,18 @@ export async function executeComboResponses(
   let comboPayloadReadable = false;
   const payloadEligible = (target: (typeof combo.targets)[number]): boolean =>
     comboPayloadReadable || !unreadableEncryptedAgentTask || canDecryptUnreadableAgentTask(target);
+  const targetEligible = (target: (typeof combo.targets)[number]): boolean =>
+    payloadEligible(target) && reasoningReplayEligible(target);
+  const onlyReplayIncompatibleTargetsRemain = (excluded: Iterable<string> = []): boolean => {
+    const excludedKeys = new Set(excluded);
+    const remaining = combo.targets.filter(target => {
+      const provider = config.providers[target.provider];
+      return provider?.disabled !== true
+        && !excludedKeys.has(targetKey(target))
+        && payloadEligible(target);
+    });
+    return remaining.length > 0 && remaining.every(target => !reasoningReplayEligible(target));
+  };
   let encryptedTaskRecoveryAttempted = false;
   let recoveryFailureReason: AgentTaskRecoveryFailureReason | undefined;
   let storedPool401ReplayDispatched = false;
@@ -328,7 +370,7 @@ export async function executeComboResponses(
     abortSignal: options.abortSignal,
   });
   let pick = await pickWithWait({
-    eligible: payloadEligible,
+    eligible: targetEligible,
     now: initialNow,
   });
 
@@ -353,6 +395,7 @@ export async function executeComboResponses(
   }
 
   if (!pick) {
+    if (onlyReplayIncompatibleTargetsRemain()) return targetIncompatibleResponse();
     return options.abortSignal?.aborted
       ? clientCancelledResponse()
       : comboUnavailable(comboId);
@@ -503,7 +546,7 @@ export async function executeComboResponses(
       const deferCodexResetDerivedCooldown = combo.strategy === "failover"
         && combo.targets.slice(pick.targetIndex + 1).some(target =>
           target.provider === currentTargetProvider
-          && payloadEligible(target)
+          && targetEligible(target)
           && !isComboTargetInCooldown(comboId, target),
         );
       response = await requestDispatchers.handleResponses(childRequest, config, childLog, {
@@ -697,7 +740,7 @@ export async function executeComboResponses(
       cooldownScope: comboFailureCooldownScope(failure.response.status, failure.classificationText, {
         code: failure.upstreamCode,
       }),
-      eligible: payloadEligible,
+      eligible: targetEligible,
       status: failure.response.status,
       code: failure.upstreamCode,
       message: failure.classificationText,
@@ -707,12 +750,16 @@ export async function executeComboResponses(
     } else {
       pick = await pickWithWait({
         exclude: pick.attempted,
-        eligible: payloadEligible,
+        eligible: targetEligible,
         now: failureNow,
       });
     }
     if (!pick) {
       if (options.abortSignal?.aborted) return clientCancelledResponse();
+      if (onlyReplayIncompatibleTargetsRemain(attemptedTargets)) {
+        adoptFailedChildLog(childLog);
+        return targetIncompatibleResponse();
+      }
       if (unreadableEncryptedAgentTask && !comboPayloadReadable) {
         const recoveredTarget = await pickWithWait({
           exclude: attemptedTargets,

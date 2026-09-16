@@ -635,6 +635,14 @@ previous attempt while retaining the active attempt object shared by streaming/c
 Bounded failure-body observation retains reported usage and releases cloned readers on abort.
 Identity and consumer aggregation follow the [account attribution contract](../gui-and-management-api.md#upstream-key-account-attribution).
 
+## Combo reasoning replay target eligibility
+
+When a serving-route change leaves a tool-bearing history whose reasoning has neither plaintext nor
+usable opaque content, a target that requires plaintext reasoning replay is ineligible. Failover
+continues to the next target; exhausting the eligible targets returns `400 target_incompatible`.
+Opaque reasoning minted by another provider or account is never forwarded, and plaintext is never
+fabricated.
+
 ## Combo streaming commit boundary
 
 An HTTP 200 does not by itself commit a streaming combo child. The combo parent runs the child's
