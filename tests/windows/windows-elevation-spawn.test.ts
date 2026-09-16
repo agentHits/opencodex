@@ -6,6 +6,7 @@ import {
   OCX_ELEVATED_PROTOCOL_FAILED,
   OCX_ELEVATED_RUN_FAILED_ROLLBACK_FAILED,
   OCX_ELEVATED_RUN_FAILED_ROLLED_BACK,
+  OCX_ELEVATED_STAGING_UNREADABLE,
   OCX_ELEVATED_SUCCESS,
   OCX_ELEVATED_UAC_CANCELLED,
   WindowsElevationError,
@@ -223,6 +224,15 @@ describe("runWindowsElevated spawn contract", () => {
     expect(elevatedScript).toContain("[IO.File]::ReadAllBytes($path)");
     expect(elevatedScript).toContain("$sha.ComputeHash($bytes)");
     expect(elevatedScript).toContain("Task Scheduler staged payload failed its integrity check.");
+    // #4692 follow-up: the one failure this staging design introduces has to be readable.
+    // A hidden elevated process has nowhere to print, so an unreadable payload rides its
+    // own exit code instead of collapsing into a generic non-zero status.
+    expect(elevatedScript).toContain("catch [System.UnauthorizedAccessException] { exit " + OCX_ELEVATED_STAGING_UNREADABLE + " }");
+    expect(elevatedScript).toContain("catch [System.Security.SecurityException] { exit " + OCX_ELEVATED_STAGING_UNREADABLE + " }");
+    // It is not part of the create-and-run transaction's alphabet, and cannot be mistaken
+    // for UAC denial.
+    expect(OCX_ELEVATED_PROTOCOL_CODES).not.toContain(OCX_ELEVATED_STAGING_UNREADABLE);
+    expect(OCX_ELEVATED_STAGING_UNREADABLE).not.toBe(OCX_ELEVATED_UAC_CANCELLED);
     expect(elevatedScript.indexOf("-cne $expectedHash"))
       .toBeLessThan(elevatedScript.indexOf("[Text.Encoding]::Unicode.GetString($bytes)"));
     // No payload rides the command line any more, in either encoding layer.

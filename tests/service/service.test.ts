@@ -15,6 +15,7 @@ import { buildWinswXml } from "../../src/lib/winsw";
 import { CONFIG_OWNER_FILE, CONFIG_UNINSTALL_MANIFEST, recordOwnedConfigPath, removeOwnedConfigState } from "../../src/lib/config-ownership";
 import { serviceApiTokenFilePath } from "../../src/lib/service-secrets";
 import { WindowsSchtasksError } from "../../src/lib/windows-elevation";
+import { OCX_ELEVATED_STAGING_UNREADABLE } from "../../src/lib/windows-elevation";
 import { resolveCurrentWindowsPrincipal, setWindowsPrincipalRunnerForTests } from "../../src/lib/windows-user-principal";
 import { setAsyncIcaclsRunnerForTests, setIcaclsRunnerForTests } from "../../src/lib/windows-secret-acl";
 import type { OcxConfig } from "../../src/types";
@@ -2189,6 +2190,30 @@ describe("service lifecycle cleanup ordering", () => {
       expect(existsSync(stageDir)).toBe(false);
     } finally {
       removeTreeWithRetry(parent);
+    }
+  });
+
+  test("an unreadable staged payload is reported with its cause and its remedy", () => {
+    // The elevated process runs hidden, so nothing it writes survives and the exit code is
+    // the entire user-facing error. Staging adds exactly one new failure -- the payload is
+    // readable only by the account that created it, so an elevation answered with another
+    // administrator's credentials cannot open it -- and reporting that as a bare number
+    // would reproduce what made #4692 expensive to diagnose in the first place.
+    const message = serviceModule.describeElevatedRegistrationFailure(
+      "Background service install failed",
+      OCX_ELEVATED_STAGING_UNREADABLE,
+      "C:\\Temp\\opencodex-service-stage-aaaaaa",
+    );
+    expect(message).toContain("could not read the staged task definition");
+    expect(message).toContain("C:\\Temp\\opencodex-service-stage-aaaaaa");
+    expect(message).toContain("different administrator account");
+    expect(message).toContain("Approve the prompt as the signed-in user");
+    expect(message).not.toMatch(/exit code \d+/);
+
+    // Every other code keeps the plain form; this is a named cause, not a catch-all.
+    for (const code of [1, 10, 13, 1223]) {
+      expect(serviceModule.describeElevatedRegistrationFailure("Task Scheduler rollback failed", code, "C:\\Temp\\x"))
+        .toBe("Task Scheduler rollback failed with exit code " + code + ".");
     }
   });
 

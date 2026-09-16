@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmdirSync, unlinkSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getConfigDir } from "../config";
-import { runWindowsElevatedScheduledTaskRegistration, WindowsSchtasksError, type StagedWindowsTaskXml } from "../lib/windows-elevation";
+import { OCX_ELEVATED_STAGING_UNREADABLE, runWindowsElevatedScheduledTaskRegistration, WindowsSchtasksError, type StagedWindowsTaskXml } from "../lib/windows-elevation";
 import { defaultWinswEntry, installWinswService, statusWinswRaw, uninstallWinswService, WINSW_SERVICE_ID, type WinswStatus } from "../lib/winsw";
 import { forgetEphemeralSecretDir, forgetEphemeralSecretPath, hardenSecretDir } from "../lib/windows-secret-acl";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
@@ -289,6 +289,31 @@ export function stageElevatedSchedulerRegistration(
 }
 
 /**
+ * Turn an elevated registration exit code into something an operator can act on.
+ *
+ * The elevated process runs hidden, so nothing it writes survives; only the exit code
+ * crosses back. That makes an unexplained code the whole user-facing error, which is
+ * exactly what made the ENAMETOOLONG in #4692 expensive to diagnose. Staging introduces
+ * one new failure of its own — the payload is readable only by the account that created
+ * it, so an elevation answered with a different administrator's credentials cannot open
+ * it — and that one gets named along with its remedy rather than surfacing as a number.
+ */
+export function describeElevatedRegistrationFailure(
+  failureLabel: string,
+  exitCode: number,
+  stageDir: string,
+): string {
+  if (exitCode === OCX_ELEVATED_STAGING_UNREADABLE) {
+    return `${failureLabel}: the elevated process could not read the staged task definition in `
+      + `${stageDir}. That directory is readable only by the account that staged it, so this `
+      + "happens when the UAC prompt was answered with a different administrator account. "
+      + "Approve the prompt as the signed-in user, or run the command again from a session "
+      + "already elevated as that user.";
+  }
+  return `${failureLabel} with exit code ${exitCode}.`;
+}
+
+/**
  * Stage, elevate, and clean up — on every exit, including UAC cancellation and a
  * synchronous spawn failure.
  *
@@ -312,7 +337,9 @@ async function runStagedElevatedSchedulerRegistration(
       replace,
       staged.expectedExisting,
     );
-    if (exitCode !== 0) failure = new Error(`${failureLabel} with exit code ${exitCode}.`);
+    if (exitCode !== 0) {
+      failure = new Error(describeElevatedRegistrationFailure(failureLabel, exitCode, dirname(staged.xml.path)));
+    }
   } catch (error) {
     failure = error;
   }

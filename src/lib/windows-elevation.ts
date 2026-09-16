@@ -250,6 +250,21 @@ export const OCX_ELEVATED_PROTOCOL_FAILED = 13;
 /** Windows ERROR_CANCELLED — reserved for UAC denial; never emitted by the elevated script. */
 export const OCX_ELEVATED_UAC_CANCELLED = 1223;
 
+/**
+ * The elevated process could not read a staged payload (#4692).
+ *
+ * `hardenSecretPath` grants the staging account and strips inheritance, so a split-token
+ * elevation of the same user reads the file and an elevation answered with a DIFFERENT
+ * administrator's credentials does not. The elevated side cannot explain that itself: it
+ * runs hidden, so its stderr goes nowhere and only the exit code survives the boundary.
+ * Without a code of its own the operator would be told "exit code 1" for a cause that
+ * names its own remedy — the same undiagnosable failure this change set exists to remove.
+ *
+ * Deliberately outside OCX_ELEVATED_PROTOCOL_CODES: that list is the create-and-run
+ * transaction's alphabet, and this code belongs to the registration path.
+ */
+export const OCX_ELEVATED_STAGING_UNREADABLE = 14;
+
 export const OCX_ELEVATED_PROTOCOL_CODES = [
   OCX_ELEVATED_SUCCESS,
   OCX_ELEVATED_CREATE_FAILED,
@@ -667,7 +682,11 @@ export interface StagedWindowsTaskXml {
  * exists to close.
  */
 const READ_STAGED_TASK_XML = "function Read-OcxStagedTaskXml([string]$path, [string]$expectedHash) {"
-  + " $bytes = [IO.File]::ReadAllBytes($path);"
+  // An unreadable payload is a diagnosable condition, not a generic throw: a hidden
+  // elevated process has nowhere to print, so the cause has to ride the exit code.
+  + " try { $bytes = [IO.File]::ReadAllBytes($path) }"
+  + " catch [System.UnauthorizedAccessException] { exit " + OCX_ELEVATED_STAGING_UNREADABLE + " }"
+  + " catch [System.Security.SecurityException] { exit " + OCX_ELEVATED_STAGING_UNREADABLE + " };"
   + " $sha = [Security.Cryptography.SHA256]::Create();"
   + " try { $actual = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() };"
   + " if ($actual -cne $expectedHash) { throw 'Task Scheduler staged payload failed its integrity check.' };"
