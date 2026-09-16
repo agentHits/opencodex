@@ -990,6 +990,7 @@
     "omp-path-contract.test.ts": "clients",
     "omp-yaml-source-inline-comments.test.ts": "clients",
     "openai-api-virtual-models.test.ts": "adapters/openai",
+    "openai-chat-bounded-tool-names.test.ts": "adapters/openai",
     "openai-chat-dangling-toolcalls.test.ts": "adapters/openai",
     "openai-chat-eof.test.ts": "adapters/openai",
     "openai-chat-hardening.test.ts": "adapters/openai",
