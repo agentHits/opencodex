@@ -167,8 +167,11 @@
     }
   },
   "explicit": {
+    "key-attribution.test.ts": "usage",
     "responses-core-modules.test.ts": "responses",
     "responses-spend-ledger-wiring.test.ts": "responses",
+    "responses-send-budget-errors.test.ts": "responses",
+    "responses-4546-incident-regression.test.ts": "responses",
     "chat-responses-control-integration.test.ts": "responses",
     "coding-agent-tool-result-images.test.ts": "adapters",
     "hub-usage.test.ts": "server",
