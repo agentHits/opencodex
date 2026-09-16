@@ -452,6 +452,9 @@ export async function executeComboResponses(
       childLog.requestedEffort = originalRequestedEffort;
       recordAttemptRequestedEffort(childLog);
     }
+    childLog.activeAttemptStartedAt = started;
+    childLog.attempts = logCtx.attempts ??= [];
+    childLog.attempts.push(attempt);
     let attemptRetained = false;
     const retainCancelledAttempt = (): void => {
       if (attemptRetained) return;
@@ -462,7 +465,6 @@ export async function executeComboResponses(
         childLog.accountLogLabel,
       );
       finishRequestAttempt(attempt, 499, Date.now() - started, childLog.usage);
-      (logCtx.attempts ??= []).push(attempt);
       attemptRetained = true;
     };
     const completedTarget = { provider: pick.target.provider, model: pick.target.model };
@@ -533,6 +535,7 @@ export async function executeComboResponses(
         retainCancelledAttempt();
         return clientCancelledResponse();
       }
+      finishRequestAttempt(attempt, 502, Date.now() - started, childLog.usage);
       throw error;
     }
 
@@ -554,6 +557,7 @@ export async function executeComboResponses(
           retainCancelledAttempt();
           return clientCancelledResponse();
         }
+        finishRequestAttempt(attempt, 502, Date.now() - started, childLog.usage);
         throw error;
       }
       if (preflight.kind === "failed") {
@@ -574,7 +578,6 @@ export async function executeComboResponses(
         childLog.providerAdapter ?? attempt.adapter,
         childLog.accountLogLabel,
       );
-      (logCtx.attempts ??= []).push(attempt);
       attemptRetained = true;
       noteComboSuccess(comboId, combo, pick.target, pick.writerGeneration);
       Object.assign(logCtx, childLog, {
@@ -608,6 +611,7 @@ export async function executeComboResponses(
         retainCancelledAttempt();
         return clientCancelledResponse();
       }
+      finishRequestAttempt(attempt, 502, Date.now() - started, childLog.usage);
       throw error;
     }
     if (options.abortSignal?.aborted) {
@@ -626,7 +630,6 @@ export async function executeComboResponses(
       Date.now() - started,
       failure.usage,
     );
-    (logCtx.attempts ??= []).push(attempt);
     attemptRetained = true;
     lastFailure = failure.response;
     lastFailedChildLog = childLog;

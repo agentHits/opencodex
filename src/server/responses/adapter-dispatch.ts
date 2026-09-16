@@ -11,7 +11,6 @@ import { trackStreamLifetime } from "../lifecycle";
 import {
   recordAdapterReasoning,
   recordAdapterTier,
-  noteAttemptSend,
   sealRequestAttemptIdentity,
   recordAttemptCredentialSource,
 } from "../request-log";
@@ -120,6 +119,7 @@ export async function prepareAdapterExchange(
     | "genericFailoverAccountId"
     | "genericFailovers"
     | "applyFailoverSnapshot"
+    | "noteRoutedAttemptSend"
   >,
   responseEffects: Pick<ResponsesEffects, "cancelResponseCompletion" | "notifyResponseComplete" | "refreshRequestToolAliases">,
   sendBudgetState: Pick<
@@ -278,7 +278,7 @@ export async function prepareAdapterExchange(
   let upstreamResponse: Response;
   try {
     if (transportState.activeAdapter.fetchResponse) {
-      noteAttemptSend(logCtx.activeAttempt, inputTokenEstimate);
+      transportState.noteRoutedAttemptSend(inputTokenEstimate);
       await waitForProviderRequestSlot(route.providerName, route.provider, route.modelId, upstream.signal);
       upstreamResponse = await transportState.activeAdapter.fetchResponse(builtInitialRequest, {
         abortSignal: upstream.signal,
@@ -287,6 +287,7 @@ export async function prepareAdapterExchange(
         onPhysicalSend: send => noteAdapterPhysicalSend(inputTokenEstimate, send),
         stream: parsed.stream,
         executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              pacingSlotAcquired: true,
               dispatchOverride: oauthDispatch(builtInitialRequest),
           providerName: route.providerName,
           modelId: route.modelId,
@@ -306,7 +307,7 @@ export async function prepareAdapterExchange(
         : fetchWithResetRetry;
       upstreamResponse = await fetchWithRetryPolicy(
         recovery => {
-          noteAttemptSend(logCtx.activeAttempt, inputTokenEstimate, recovery);
+          transportState.noteRoutedAttemptSend(inputTokenEstimate, recovery);
           return fetchWithHeaderTimeout(builtInitialRequest.url, applyUpstreamRecoveryInit({
             method: builtInitialRequest.method,
             headers: builtInitialRequest.headers,
@@ -425,10 +426,10 @@ export async function prepareAdapterExchange(
       logCtx.providerAdapter = transportState.activeAdapter.name;
       sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, transportState.activeAdapter.name, logCtx.accountLogLabel);
       recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, transportState.activeAdapter.name);
-      noteAttemptSend(logCtx.activeAttempt, retryEstimate, recovery);
       try {
         try {
           if (transportState.activeAdapter.fetchResponse) {
+            transportState.noteRoutedAttemptSend(retryEstimate, recovery);
             await waitForProviderRequestSlot(route.providerName, route.provider, route.modelId, upstream.signal);
             // The dispatch boundary is HERE, not before the pacing wait: that wait can reject for
             // an abort, a saturated queue, an expired slot or a removed provider, and none of
@@ -442,6 +443,7 @@ export async function prepareAdapterExchange(
               onPhysicalSend: send => noteAdapterPhysicalSend(retryEstimate, send),
               stream: parsed.stream,
               executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+                pacingSlotAcquired: true,
               dispatchOverride: oauthDispatch(retryRequest),
                 providerName: route.providerName,
                 modelId: route.modelId,
@@ -474,6 +476,7 @@ export async function prepareAdapterExchange(
                 if (refetchAllowance?.permit && !refetchAllowance.permit.use()) {
                   throw new SendBudgetExhaustedError(safeHostLabel(retryRequest.url));
                 }
+                transportState.noteRoutedAttemptSend(retryEstimate, recoveryKind ?? recovery);
                 // Same boundary on the helper path: the thunk is what reaches the wire, and it
                 // can be refused above before it does. use() past the first attempt is a no-op.
                 onDispatch?.();
