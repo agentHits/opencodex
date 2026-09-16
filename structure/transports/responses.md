@@ -178,6 +178,20 @@ explicit configured selectors before consulting bounded lane state. The existing
 reconciliation owns removal of obsolete targets and generation fencing; core imports no registration
 composition root or Lab code. Recall retains routing identity only, never account credentials.
 
+Retention is bounded on four axes: 256 lanes, 30 minutes, 1 KiB per remembered model id, and 64 KiB
+in aggregate. The model id is the only field of unbounded length — lane keys are already SHA-256
+digests — so the lane cap alone does not bound the bytes those lanes hold. The size test runs on code
+units before encoding, since a UTF-8 encoding is never smaller than its code-unit count and the bound
+must not pay the allocation it exists to prevent. Aggregate eviction drops the least recently written
+lane, which is the front of the map because every write re-inserts its own lane at the back.
+
+An unretainable model id declines the write rather than clearing the lane, matching how every other
+rejection in `rememberComboForLane` returns. Clearing would let a late completion erase a newer
+selection, and the publication path carries a config generation, not a request order, so it has no
+basis on which to decide that its own result is the newer one. The store is also swept periodically
+now: the TTL was previously evaluated only on read or on a generation change, so a lane never read
+again held its entry for the life of the process.
+
 > Decision record: [ADR-0038](../decisions/ADR-0038-responses-http-sse.md)
 
 A replayed compaction item carries an `encrypted_content` blob only its minting backend can decode,
