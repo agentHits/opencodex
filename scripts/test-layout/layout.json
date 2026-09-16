@@ -167,7 +167,11 @@
     }
   },
   "explicit": {
+    "key-attribution.test.ts": "usage",
     "responses-core-modules.test.ts": "responses",
+    "responses-spend-ledger-wiring.test.ts": "responses",
+    "responses-send-budget-errors.test.ts": "responses",
+    "responses-4546-incident-regression.test.ts": "responses",
     "chat-responses-control-integration.test.ts": "responses",
     "coding-agent-tool-result-images.test.ts": "adapters",
     "hub-usage.test.ts": "server",
@@ -1048,6 +1052,7 @@
     "privacy-mask-account.test.ts": "lib",
     "privacy-scan-meta-key.test.ts": "ci-workflows",
     "probe-lease.test.ts": "routing",
+    "probe-lease-dispatch-wiring.test.ts": "routing",
     "process-control-graceful.test.ts": "lib",
     "process-control.test.ts": "lib",
     "process-state.test.ts": "service",
@@ -1241,6 +1246,7 @@
     "server-key-failover-e2e.test.ts": "server",
     "server-kiro-completion-e2e.test.ts": "server",
     "server-kiro-oauth-401-replay.test.ts": "server",
+    "server-live-realtime-fixtures.test.ts": "server",
     "server-live.test.ts": "server",
     "server-loopback-host-gate.test.ts": "server",
     "server-management-auth.test.ts": "server",
