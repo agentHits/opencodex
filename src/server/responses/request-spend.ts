@@ -62,9 +62,9 @@ export function createRequestSpendTracker(
    * A booking is only marked dispatched once a LATER send exists, because that later send
    * proves the earlier one left. The newest booking stays open until it is settled, so a
    * reservation the budget hands back -- a rotation that found no alternate, a rebuild
-   * abandoned before the wire -- can still be released for free. The cost of that choice is
-   * bounded and stated: a hard crash between reserving and sending replays as abandoned rather
-   * than unresolved, for at most one send per request.
+   * abandoned before the wire -- can still be released for free while this process is alive.
+   * A crash resolves every surviving reservation as unresolved spend regardless of this mark,
+   * because a journal that lost its tail cannot prove a send never left.
    */
   const confirmOlderSends = (): void => {
     for (let index = 0; index < live.length - 1; index += 1) ledger().markDispatched(live[index] as string);
