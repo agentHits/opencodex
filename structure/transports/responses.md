@@ -626,6 +626,15 @@ change target order or attempt accounting; provider-400 decisions follow the [re
 
 The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
 
+## Upstream key attempt accounting
+
+Key identity is sealed at the guarded physical dispatch after queued selections are rebuilt.
+Raw adapter terminal usage is recorded before continuation, search, or image loops merge it;
+repeated parsing of one physical response does not count it twice. Key changes preserve the
+previous attempt while retaining the active attempt object shared by streaming/combo callbacks.
+Bounded failure-body observation retains reported usage and releases cloned readers on abort.
+Identity and consumer aggregation follow the [account attribution contract](../gui-and-management-api.md#upstream-key-account-attribution).
+
 ## Combo streaming commit boundary
 
 An HTTP 200 does not by itself commit a streaming combo child. The combo parent runs the child's
@@ -698,6 +707,7 @@ is composed from the following owners in `src/server/responses/`; none is a gene
 | `request-sidecar-auth.ts` | Sidecar credential resolution and vision preprocessing. |
 | `response-effects.ts` | Completion notification, replay publication and live request-tool aliases. |
 | `request-send-budget.ts` | Request-wide send accounting, remaining allowance and the pending recovery permit. |
+| `request-spend.ts` | This request's entries in the durable spend ledger: one per physical send, settled from the terminal usage. |
 | `passthrough-execution.ts` | Native host-lease transfer and the enclosing dispatch/delivery `finally`. |
 | `passthrough-dispatch.ts` | Native request preparation, upstream sends and pre-commit recovery. |
 | `passthrough-delivery.ts` | Native HTTP/SSE/JSON delivery, rewrite/inspection and terminal accounting. |
@@ -769,6 +779,76 @@ later recovery in the same request then cannot have. `tests/lib/execution-budget
 pins the settlement rule and every ladder shape against exactly that, and
 `tests/responses/responses-core-modules.test.ts` pins the adapter view's live delegation.
 
+## Durable spend reservations
+
+The request's send budget bounds how many times it may reach upstream; the spend ledger bounds
+what those sends may cost, and it is the only bound here that survives a restart. Its production
+caller is `request-spend.ts`, installed on the execution budget at genuine ingress in `core.ts`
+and parked on the log context so `addFinalRequestLog` can settle it.
+
+It books by observing the budget's own send counter rather than by being called from each
+dispatch site. That counter moves exactly once per physical send — a reservation increments it, a
+refund decrements it, and an externally reported send settles against a booking already counted —
+so one ledger entry per increment is one entry per send, and a dispatch path added later cannot
+forget to book. The previous attempt at this wiring shipped the whole reserve/dispatch/settle
+vocabulary with no caller at all (#4707), which is the failure mode this shape rules out.
+
+A booking is confirmed dispatched only once a LATER send exists, because that later send proves
+the earlier one left. The newest booking stays open, so a reservation the budget hands back
+during this process's lifetime can still be released for free.
+
+Settlement follows what the request learned. The terminal usage belongs to the last send that
+left, so that one settles with the real figure; every earlier send failed without reporting usage
+of its own and may still have been billed, so it becomes unresolved spend rather than free. A
+request that reports no usage at all leaves all of them unresolved.
+
+Replay resolves what nobody is left to settle, and resolves it as unresolved spend whatever state
+it was in. Giving an undispatched one its tokens back would assume the journal is complete up to
+the crash, and the torn-tail rule says it is not: a send can dispatch and die before its dispatch
+record lands. It would also reset a ceiling that had already fired, and an exhausted scope
+staying exhausted across a restart is the whole reason this store is on disk. Both are journaled,
+so a second restart has nothing to redo.
+`tests/responses/responses-spend-ledger-wiring.test.ts` pins the
+booking, the settlement split, the refund, a ceiling that refuses a dispatch rather than
+describing it afterwards, and the restart.
+
+The default policy still sets no token ceiling on any scope, so an unconfigured install accounts
+and reports without refusing. The operator configuration path for those limits is not wired yet.
+
+## What a spent budget tells the client
+
+A refusal this proxy made is reported as HTTP 429 with the code `request_send_budget_exhausted`,
+on every dispatch path. The three paths used to disagree: passthrough answered 429 and declined
+to blame the provider, the adapter paths fell through `describeUpstreamConnectFailure` and
+answered 502 "Provider unreachable", and runTurn pushed an unstructured message that was inferred
+back to 502 under HTTP 200.
+
+The status is the load-bearing half. The Codex client retries 5xx and does not retry a direct
+429, so reporting a local refusal as 502 makes the caller send the whole turn again — the
+amplification the budget exists to stop. Encoding it as a quota code instead would stop the
+client for the wrong stated reason, and the retryable streaming rate-limit codes would restart
+the stream, so neither is available.
+
+The distinct code is what an operator reads afterwards. `classifyError` keeps it by matching the
+supplied type rather than the status, so an upstream 429 still classifies as
+`rate_limit_exceeded` and only this proxy's own refusal carries the other code. Once a response
+is committed the refusal travels as a structured terminal event — status, `errorType` and
+`code` on the event itself — because an unstructured message is inferred back to 502.
+
+A local 429 must not look like a provider one to our own routing. `rotateRunTurnAdapterOnPreflight429`
+returns early on the code, before it reads the status, so a refusal cannot rotate a credential or
+write a cooldown against an account that rate-limited nothing; that fake signal would outlive the
+request and misroute later ones. The terminal-guard continuation loop now consults
+`sendBudgetExhausted()` before it cancels the upstream body, matching the main recovery loop, so
+a spent request keeps the real 429 instead of replaying on a live stream.
+
+This is the proxy's own accounting only. Classifying an upstream 429 as org or project spend
+exhaustion is a separate contract with a separate owner.
+Adapter-owned retries enter the same pending dispatch metadata path as initial key sends.
+The actual dispatch commits their count and recovery label once; unsent pending metadata
+is discarded on process exit and is not usage evidence. See [key attribution](../gui-and-management-api.md#upstream-key-account-attribution).
+Generic refetches record metadata inside each admitted retry callback, retaining the
+transient recovery reason when present and otherwise the outer recovery reason.
 ## Combo output headroom
 
 A combo child is admitted against two budgets, not one. `resolveInputCeiling` in

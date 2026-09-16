@@ -478,3 +478,10 @@ change target selection. `src/server/responses/core-combo.ts` applies the policy
 and preserves the original requested effort separately from effective wire telemetry.
 `src/server/chat-completions.ts` routes combos through that same child pipeline while
 retaining the current config-aware native-Chat eligibility check for non-combo routes.
+## Upstream key usage identity
+
+`src/codex/account-label.ts` owns the provider/selection digest and `src/providers/label.ts`
+stamps the configured key selected for the physical request. `src/server/request-log.ts`
+retains per-key attempt usage, and `src/usage/log.ts` validates and persists labels. The
+[account attribution contract](gui-and-management-api.md#upstream-key-account-attribution)
+defines identity, unknown records, and aggregation boundaries.

@@ -10,7 +10,6 @@ import type { AdapterRequest } from "../../adapters/base";
 import {
   recordAdapterReasoning,
   recordAdapterTier,
-  noteAttemptSend,
   sealRequestAttemptIdentity,
   recordAttemptCredentialSource,
 } from "../request-log";
@@ -78,6 +77,7 @@ export function createAdapterContinuations(
     | "genericFailoverAccountId"
     | "genericFailovers"
     | "applyFailoverSnapshot"
+    | "noteRoutedAttemptSend"
   >,
   sidecarState: Pick<ResponsesSidecarAuth, "routedCompaction">,
   sendBudgetState: Pick<
@@ -88,6 +88,7 @@ export function createAdapterContinuations(
     | "noteTransientSends"
     | "reserveCredentialHop"
     | "pendingHopPermit"
+    | "sendBudgetExhausted"
   >,
   adapterExchange: Pick<
     AdapterExchange,
@@ -116,6 +117,7 @@ export function createAdapterContinuations(
     remainingTransientSendBudget,
     noteTransientSends,
     reserveCredentialHop,
+    sendBudgetExhausted,
   } = sendBudgetState;
 
 
@@ -183,7 +185,7 @@ export function createAdapterContinuations(
       const replayKind: AttemptRecoveryKind | undefined = recoveryKind;
       try {
         if (transportState.activeAdapter.fetchResponse) {
-          noteAttemptSend(logCtx.activeAttempt, continuationEstimate, replayKind);
+          transportState.noteRoutedAttemptSend(continuationEstimate, replayKind);
           await waitForProviderRequestSlot(route.providerName, route.provider, nextParsed.modelId, upstream.signal);
           return await transportState.activeAdapter.fetchResponse(builtContinuationRequest, {
             abortSignal: upstream.signal,
@@ -192,6 +194,7 @@ export function createAdapterContinuations(
             onPhysicalSend: send => noteAdapterPhysicalSend(continuationEstimate, send),
             stream: nextParsed.stream,
             executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
+              pacingSlotAcquired: true,
               dispatchOverride: oauthDispatch(builtContinuationRequest, nextParsed),
               providerName: route.providerName,
               modelId: nextParsed.modelId,
@@ -206,7 +209,7 @@ export function createAdapterContinuations(
           : fetchWithResetRetry;
         return await fetchContinuationWithRetryPolicy(
           recovery => {
-            noteAttemptSend(logCtx.activeAttempt, continuationEstimate, recovery ?? replayKind);
+            transportState.noteRoutedAttemptSend(continuationEstimate, recovery ?? replayKind);
             return fetchWithHeaderTimeout(
               builtContinuationRequest.url,
               applyUpstreamRecoveryInit({
@@ -263,6 +266,11 @@ export function createAdapterContinuations(
         response.status === 429
         && rateLimitPolicy !== null
         && adapterExchange.rateLimitRetries < rateLimitPolicy.attempts
+        // The main recovery loop and the passthrough ladder both consult the shared remainder
+        // here; this loop did not, so a request whose budget was already spent could still
+        // same-key replay on a live stream. Checked BEFORE the wait below cancels the body, so
+        // a refusal keeps the real upstream 429 -- status, Retry-After, quota evidence -- intact.
+        && !sendBudgetExhausted()
       ) {
         adapterExchange.rateLimitRetries += 1;
         // Release unread body + heartbeat-fed wait via the shared same-target helper.
