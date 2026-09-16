@@ -1865,7 +1865,7 @@ export function getLoginStatus(provider: string, maskEmails = true): { loggedIn:
     // exposes a subscription tier today, so there is nothing truthful to put here; deriving one
     // from quota percentages is not possible, because they are normalized per account and a
     // half-consumed small seat is indistinguishable from a half-consumed large one.
-    plan: null,
+    plan: a.credential?.plan ?? a.plan ?? null,
     logLabel: oauthAccountLogLabel(a.id, baseProviderLabel(provider)),
   }));
 

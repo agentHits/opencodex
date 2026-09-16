@@ -2911,6 +2911,8 @@ export const ja: Record<TKey, string> = {
   "pws.sortLogin": "ログイン名順",
   "pws.freeHeadroom": "{percent}% 空き",
   "pws.limitExhaustedBadge": "制限到達",
+  "pws.limitWeeklyExhaustedBadge": "週次枠終了",
+  "pws.limit5hExhaustedBadge": "5時間枠終了",
   "pws.refreshAccountQuota": "このアカウントのクォータを更新",
   "pws.switchedToAccount": "{account} に切り替えました",
   "pws.switchToAccount": "このアカウントに切り替え",

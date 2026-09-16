@@ -2890,6 +2890,8 @@ export const de: Record<TKey, string> = {
   "pws.sortLogin": "Nach Login",
   "pws.freeHeadroom": "{percent}% frei",
   "pws.limitExhaustedBadge": "Limit erschöpft",
+  "pws.limitWeeklyExhaustedBadge": "Wochenlimit erreicht",
+  "pws.limit5hExhaustedBadge": "5h-Limit erreicht",
   "pws.refreshAccountQuota": "Quote dieses Kontos aktualisieren",
   "pws.switchedToAccount": "Gewechselt zu {account}",
   "pws.switchToAccount": "Zu diesem Konto wechseln",

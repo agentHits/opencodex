@@ -2953,6 +2953,8 @@ export const en = {
   "pws.sortLogin": "By login",
   "pws.freeHeadroom": "{percent}% free",
   "pws.limitExhaustedBadge": "Limit exhausted",
+  "pws.limitWeeklyExhaustedBadge": "Weekly limit reached",
+  "pws.limit5hExhaustedBadge": "5h limit reached",
   "pws.refreshAccountQuota": "Refresh this account's quota",
   "pws.switchedToAccount": "Switched to {account}",
   "pws.switchToAccount": "Switch to this account",

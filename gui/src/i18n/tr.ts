@@ -2913,6 +2913,8 @@ export const tr: Record<TKey, string> = {
   "pws.sortLogin": "Giriş adına göre",
   "pws.freeHeadroom": "%{percent} boş",
   "pws.limitExhaustedBadge": "Limit tükendi",
+  "pws.limitWeeklyExhaustedBadge": "Haftalık sınır doldu",
+  "pws.limit5hExhaustedBadge": "5s sınır doldu",
   "pws.refreshAccountQuota": "Bu hesabın kotasını yenile",
   "pws.switchedToAccount": "{account} hesabına geçildi",
   "pws.switchToAccount": "Bu hesaba geç",

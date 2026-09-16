@@ -66,6 +66,38 @@ export default function ProviderAccountCard({
   const geminiHasData = gemini5hPercent !== undefined || geminiWeeklyPercent !== undefined;
   const claudeHasData = claude5hPercent !== undefined || claudeWeeklyPercent !== undefined;
 
+  const plan = account.plan;
+  const planBadge = plan ? (
+    <span
+      className={`pwi-account-plan-badge ${
+        plan.includes("Ultra") ? "pwi-plan--ultra" : plan.includes("Pro") ? "pwi-plan--pro" : "pwi-plan--starter"
+      }`}
+      title={plan}
+    >
+      {plan.includes("Ultra") ? "👑 AI Ultra" : plan.includes("Pro") ? "⭐ AI Pro" : plan.includes("Enterprise") ? "🏢 Enterprise" : "Starter"}
+    </span>
+  ) : null;
+
+  const geminiExhaustedLabel = !geminiHasData
+    ? "—"
+    : (gemini5hPercent !== undefined && gemini5hPercent >= 99.5 && geminiWeeklyPercent !== undefined && geminiWeeklyPercent >= 99.5)
+      ? t("pws.limitExhaustedBadge")
+      : (geminiWeeklyPercent !== undefined && geminiWeeklyPercent >= 99.5)
+        ? t("pws.limitWeeklyExhaustedBadge")
+        : (gemini5hPercent !== undefined && gemini5hPercent >= 99.5)
+          ? t("pws.limit5hExhaustedBadge")
+          : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) });
+
+  const claudeExhaustedLabel = !claudeHasData
+    ? "—"
+    : (claude5hPercent !== undefined && claude5hPercent >= 99.5 && claudeWeeklyPercent !== undefined && claudeWeeklyPercent >= 99.5)
+      ? t("pws.limitExhaustedBadge")
+      : (claudeWeeklyPercent !== undefined && claudeWeeklyPercent >= 99.5)
+        ? t("pws.limitWeeklyExhaustedBadge")
+        : (claude5hPercent !== undefined && claude5hPercent >= 99.5)
+          ? t("pws.limit5hExhaustedBadge")
+          : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) });
+
   const hasCustomAlias = Boolean(
     account.alias &&
     account.alias.trim() !== "" &&
@@ -153,6 +185,7 @@ export default function ProviderAccountCard({
             >
               <span className={`pwi-auth-dot ${active ? "pwi-auth-dot--ok pwi-auth-dot--active-pulse" : "pwi-auth-dot--off"}`} aria-hidden="true" />
               <span className="pwi-dense-title">{primaryTitle}</span>
+              {planBadge}
               <span className="pwi-dense-click-target-fill" aria-hidden="true" />
             </button>
             <button
@@ -222,7 +255,7 @@ export default function ProviderAccountCard({
                   <span>{t("pws.modelGemini")}</span>
                 </span>
                 <span className={`pwi-headroom-pill-mini ${analyzed.geminiExhausted ? "warn" : geminiHasData ? "ok" : "muted"}`}>
-                  {geminiHasData ? (analyzed.geminiExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) })) : "—"}
+                  {geminiExhaustedLabel}
                 </span>
               </div>
               <div className="pwi-dense-mini-row">
@@ -255,7 +288,7 @@ export default function ProviderAccountCard({
                   <span>{t("pws.modelClaude")}</span>
                 </span>
                 <span className={`pwi-headroom-pill-mini ${analyzed.claudeExhausted ? "warn" : claudeHasData ? "ok" : "muted"}`}>
-                  {claudeHasData ? (analyzed.claudeExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) })) : "—"}
+                  {claudeExhaustedLabel}
                 </span>
               </div>
               <div className="pwi-dense-mini-row">
@@ -307,6 +340,7 @@ export default function ProviderAccountCard({
             <div className="pwi-card-title-block">
               <div className="pwi-card-title-line">
                 <span className="pwi-card-title">{primaryTitle}</span>
+                {planBadge}
                 {switching && <span className="badge badge-muted">{t("pws.accountSwitching")}</span>}
               </div>
               <span className="pwi-card-sub">{secondarySub}</span>
@@ -376,7 +410,7 @@ export default function ProviderAccountCard({
                 <span>{t("pws.modelGemini")}</span>
               </span>
               <span className={`pwi-headroom-pill ${analyzed.geminiExhausted ? "warn" : geminiHasData ? "ok" : "muted"}`}>
-                {geminiHasData ? (analyzed.geminiExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) })) : "—"}
+                {geminiExhaustedLabel}
               </span>
             </div>
             {renderSingleQuotaBar(t("pws.gemini5hLabel"), gemini5hPercent, analyzed.gemini5h?.resetAt)}
@@ -392,7 +426,7 @@ export default function ProviderAccountCard({
                 <span>{t("pws.modelClaude")}</span>
               </span>
               <span className={`pwi-headroom-pill ${analyzed.claudeExhausted ? "warn" : claudeHasData ? "ok" : "muted"}`}>
-                {claudeHasData ? (analyzed.claudeExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) })) : "—"}
+                {claudeExhaustedLabel}
               </span>
             </div>
             {renderSingleQuotaBar(t("pws.claude5hLabel"), claude5hPercent, analyzed.claude5h?.resetAt)}

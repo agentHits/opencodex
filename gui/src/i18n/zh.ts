@@ -2911,6 +2911,8 @@ export const zh: Record<TKey, string> = {
   "pws.sortLogin": "按账号名称",
   "pws.freeHeadroom": "剩余 {percent}%",
   "pws.limitExhaustedBadge": "额度耗尽",
+  "pws.limitWeeklyExhaustedBadge": "周额度用尽",
+  "pws.limit5hExhaustedBadge": "5小时额度用尽",
   "pws.refreshAccountQuota": "刷新该账号额度",
   "pws.switchedToAccount": "已切换至 {account}",
   "pws.switchToAccount": "切换到此账号",

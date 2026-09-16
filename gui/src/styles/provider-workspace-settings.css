@@ -1227,6 +1227,37 @@
   border: 1px solid var(--border-soft);
 }
 
+.pwi-account-plan-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  letter-spacing: 0.2px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.pwi-account-plan-badge.pwi-plan--pro {
+  background: color-mix(in srgb, var(--blue, #60a5fa) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--blue, #60a5fa) 35%, transparent);
+  color: #93c5fd;
+}
+
+.pwi-account-plan-badge.pwi-plan--ultra {
+  background: color-mix(in srgb, var(--amber, #f59e0b) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber, #f59e0b) 45%, transparent);
+  color: #fde047;
+}
+
+.pwi-account-plan-badge.pwi-plan--starter {
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .pwi-quota-item {
   display: flex;
   flex-direction: column;
