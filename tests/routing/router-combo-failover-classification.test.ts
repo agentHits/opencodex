@@ -274,6 +274,10 @@ describe("definite upstream context overflow", () => {
     // The combo stream preflight only synthesizes this envelope for a terminal that committed
     // no output, so the hop can never duplicate text the client already saw.
     expect(comboFailureDecision(502, failedTerminal(prose), { code: "upstream_server_error" })).toBe("hop");
+    // The shape upstream Codex actually emits: a `response.failed` whose error carries the exact
+    // `context_length_exceeded` code alongside this message. The proxy relays the nested error
+    // verbatim, so both the structured and the generic-wrapper form must reach the same verdict.
+    expect(comboFailureDecision(502, failedTerminal(prose), { code: "context_length_exceeded" })).toBe("hop");
     expect(comboFailureDecision(400, "context length exceeded", { code: "context_length_exceeded" })).toBe("hop");
     expect(comboFailureDecision(400, `Provider error 400: ${prose}`)).toBe("hop");
   });
