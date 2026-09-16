@@ -34,9 +34,13 @@ raw body.
 ## Kiro reasoning round-trip (`signature`)
 
 Kiro never returns plaintext reasoning for its **GPT-5.6 family** (`gpt-5.6-sol`, `-terra`,
-`-luna`): `reasoningContentEvent` carries a KMS-encrypted blob, never `text`. It arrives on
-`signature`, holding the `.KTR~~…` value verbatim, which is what every capture of those models
-sent. Their `additionalModelRequestFieldsSchema` (`ListAvailableModels`) accepts only
+`-luna`): `reasoningContentEvent` carries a KMS-encrypted blob rather than readable reasoning. It
+arrives on `signature`, holding the `.KTR~~…` value verbatim, which is what every capture of those
+models sent. The event's `text` field is not absent — every captured GPT-5.6 frame left a literal
+`"..."` placeholder there, which the adapter forwards as a `reasoning_raw_delta` — but it never
+carries model reasoning, so `signature` is the only field worth replaying
+(`tests/providers/kiro/kiro-reasoning-roundtrip.test.ts`).
+Their `additionalModelRequestFieldsSchema` (`ListAvailableModels`) accepts only
 `reasoning.effort` with `additionalProperties: false` — there is no display/summary opt-in, so this
 is the only reasoning these models can return, and all three select that native field
 (`KIRO_NATIVE_EFFORT_FIELDS` in `src/adapters/kiro/reasoning.ts`). Kiro's own CLI replays the blob
