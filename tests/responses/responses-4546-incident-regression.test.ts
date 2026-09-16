@@ -10,6 +10,15 @@ import {
 import { createRequestSpendTracker } from "../../src/server/responses/request-spend";
 import { createPoolBackpressureLimiter, resolveHeldAccountDispatch } from "../../src/routing/probe-lease";
 import { clearTransientProbeLeasesForTests } from "../../src/routing/probe-lease";
+import {
+  canPortConversationState,
+  collectConversationStateCarriers,
+  applyAccountChangeConversationStateScrub,
+} from "../../src/server/responses/account-change-state";
+import {
+  clearConversationStateIssuerMap,
+  rememberConversationStateIssuer,
+} from "../../src/codex/routing";
 
 /**
  * The #4546 incident, as a system rather than as five separate fixes.
@@ -151,5 +160,63 @@ describe("#4546 cost guard, end to end", () => {
     expect(settledAfter?.reserved).toBe(0);
     // The send ids are still known, so a replayed request cannot authorise another dispatch.
     expect(after.settle("lr-restart", { inputTokens: 1, outputTokens: 1 })).toBe(false);
+  });
+
+  test("an account change drops continuation state and keeps the file reference intact", () => {
+    clearConversationStateIssuerMap();
+    const bindingKey = "thread-4546-incident";
+    rememberConversationStateIssuer(bindingKey, "account-a");
+
+    // Continuation state is portable-by-dropping: one cold turn, then the new account records
+    // itself as the issuer. This half of the contract does not change.
+    const continuation: Record<string, unknown> = {
+      model: "gpt-5.4",
+      previous_response_id: "resp_account_a",
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "keep me" }] }],
+    };
+    expect(applyAccountChangeConversationStateScrub({
+      body: continuation, bindingKey, servingAccountId: "account-b",
+    })).toBe(true);
+    expect(continuation.previous_response_id).toBeUndefined();
+    expect(continuation.input).toBeDefined();
+
+    // An uploaded file is not. The classifier has always said so, and it says so whether or not
+    // the body also carries a response id -- the verdict reports the first reason it finds, so
+    // the file is what the carriers must be read for.
+    const withFile: Record<string, unknown> = {
+      model: "gpt-5.4",
+      previous_response_id: "resp_account_a",
+      input: [{ type: "message", role: "user", content: [{ type: "input_file", file_id: "file_abc123" }] }],
+    };
+    expect(collectConversationStateCarriers(withFile).fileIds).toEqual(["file_abc123"]);
+    expect(canPortConversationState(collectConversationStateCarriers(withFile)).portable).toBe(false);
+
+    // The scrub does not remove it, and must not: a file reference is content the caller
+    // attached, not continuation state the turn can do without.
+    applyAccountChangeConversationStateScrub({
+      body: withFile, bindingKey, servingAccountId: "account-b",
+    });
+    expect(collectConversationStateCarriers(withFile).fileIds).toEqual(["file_abc123"]);
+
+    // PENDING CONTRACT (#4710, owned elsewhere): once the refusal lands, this body must be
+    // declined before dispatch rather than forwarded, and the refusal wins even when a
+    // previous_response_id is present too. When that arrives, add the refusal assertion here
+    // -- the two properties below are what it has to preserve, and they are asserted now so the
+    // change cannot quietly alter them.
+    clearConversationStateIssuerMap();
+  });
+
+  test("a refusal made before dispatch spends no send and books no spend", () => {
+    const ledger = createSpendReservationLedger({ journal: memoryJournal() });
+    const tracker = createRequestSpendTracker(logContext(), "root-refused", ledger);
+    const budget = createRequestExecutionBudget(CODEX_TEXT_GUARDED_BUDGET_POLICY, "lr-refused", tracker);
+
+    // Nothing reserved, because nothing dispatched. This is the invariant every pre-dispatch
+    // refusal in the tree owes the accounting -- a budget refusal, a workflow ceiling, and the
+    // account-change file refusal #4710 is adding. A refusal counted as a send would show up as
+    // provider load that never existed, and would push a healthy account toward a cooldown.
+    expect(budget.used).toBe(0);
+    expect(ledger.snapshot("root", "root-refused")).toBeUndefined();
+    expect(tracker.refusals).toBe(0);
   });
 });
