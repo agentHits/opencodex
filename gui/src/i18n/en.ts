@@ -2993,6 +2993,23 @@ export const en = {
   "pws.statsGeminiExhausted": "Gemini exhausted",
   "pws.statsFullyExhausted": "Fully exhausted",
   "pws.statsAvailable": "Available",
+  "pws.tokensEstimateTitle": "Remaining tokens",
+  "pws.tokensColClaude": "Claude",
+  "pws.tokensColGemini": "Gemini",
+  "pws.tokensColTotal": "Total in pool",
+  "pws.tokensLabel5h": "5h",
+  "pws.tokensLabel7d": "7d",
+  "pws.tokensClaude5h": "Claude (5h)",
+  "pws.tokensClaudeWeekly": "Claude (7d)",
+  "pws.tokensGemini5h": "Gemini (5h)",
+  "pws.tokensGeminiWeekly": "Gemini (7d)",
+  "pws.tokensTotal5h": "Total (5h)",
+  "pws.tokensTotalWeekly": "Total (7d)",
+  "pws.tokensGeneric5h": "Remaining (5h)",
+  "pws.tokensGenericWeekly": "Remaining (7d)",
+  "pws.tokensCalibratedFromLogs": "Calibrated via #logs",
+  "pws.tokensEstimatedBaseline": "Baseline estimate",
+  "pws.tokensCalibratedTooltip": "Estimate is calibrated against actual token consumption from the request log (#logs)",
 } as const;
 
 export type TKey = keyof typeof en;

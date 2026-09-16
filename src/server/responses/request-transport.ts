@@ -44,7 +44,7 @@ import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve"
 import { providerFetch } from "./fetch-helpers";
 import type { ProviderFetchOptions } from "./fetch-helpers";
 import { captureConfigGeneration } from "../../lib/state-store-sweeper";
-import { recordAnthropicAccountQuotaFromHeaders, hasPassiveAccountQuota } from "../../providers/quota";
+import { recordAnthropicAccountQuotaFromHeaders, hasPassiveAccountQuota, backgroundRefreshActiveAccountQuota } from "../../providers/quota";
 import { checkOutboundBodySize, describeOutboundBodyRefusal } from "./outbound-body-guard";
 import { formatErrorResponse } from "../../bridge";
 import { bindRouteReasoningReplayScope } from "./core-replay";
@@ -495,6 +495,7 @@ export async function prepareResponsesTransport(
           // helper returns immediately unless the kernel is on AND the strategy is
           // round-robin, so quota and fill-first pools reach it without being touched.
           noteGenericPoolSelection(config, route.providerName, resolved.accountId);
+          backgroundRefreshActiveAccountQuota(route.providerName, resolved.accountId);
         }
         // Anthropic is excluded from isGenericFailoverProvider -- its own pool owns affinity and
         // a fail-closed local-cli credential rule -- so without this stamp its identity is

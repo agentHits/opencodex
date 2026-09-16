@@ -192,4 +192,48 @@ describe("Antigravity reset-first weekly prioritization", () => {
     // When it 429s, it rotates to next available
     expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", ids[0]!, null, now, "gemini-3.8-flash")).toBe(ids[1]);
   });
+
+  test("does not let a 5h reset jump ahead of an account with a weekly reset", () => {
+    const now = Date.now();
+    // Account A: only has a 5h window (fallback probe) resetting in 15 mins, but no weekly window
+    setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 35, resetAt: now + 15 * 60_000 },
+      ],
+    });
+    // Account B: has full weekly window resetting in 2 days, 80% headroom
+    setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 0, resetAt: now + 5 * 3600_000 },
+        { label: "Gem (Weekly)", percent: 20, resetAt: now + 2 * 86400_000 },
+      ],
+    });
+
+    // Account B must be preferred because A has no weekly reset evidence
+    expect(rankAccountsByResetFirst("google-antigravity", ["a", "b"], "gemini-3.8-flash", now)[0]).toBe("b");
+  });
+
+  test("treats an already-expired weekly reset as imminent instead of positive infinity", () => {
+    const now = Date.now();
+    // Account A: weekly reset was 10 minutes ago (already reset and fresh)
+    setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 0, resetAt: now + 5 * 3600_000 },
+        { label: "Gem (Weekly)", percent: 10, resetAt: now - 10 * 60_000 },
+      ],
+    });
+    // Account B: weekly reset is in 5 days
+    setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
+      updatedAt: now,
+      customWindows: [
+        { label: "Gem", percent: 0, resetAt: now + 5 * 3600_000 },
+        { label: "Gem (Weekly)", percent: 10, resetAt: now + 5 * 86400_000 },
+      ],
+    });
+
+    expect(rankAccountsByResetFirst("google-antigravity", ["b", "a"], "gemini-3.8-flash", now)[0]).toBe("a");
+  });
 });
