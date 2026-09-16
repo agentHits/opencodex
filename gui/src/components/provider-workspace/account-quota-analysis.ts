@@ -314,11 +314,11 @@ export function filterAccounts(
     // 2. Status filter
     switch (filter) {
       case "with_limits":
-        return item.hasAnyLimitsLeft;
+        return !item.account.quota || item.hasAnyLimitsLeft;
       case "with_limits_gemini":
-        return Boolean(item.gemini5h || item.geminiWeekly) && !item.geminiExhausted;
+        return !item.account.quota || (Boolean(item.gemini5h || item.geminiWeekly) && !item.geminiExhausted);
       case "with_limits_claude":
-        return Boolean(item.claude5h || item.claudeWeekly) && !item.claudeExhausted;
+        return !item.account.quota || (Boolean(item.claude5h || item.claudeWeekly) && !item.claudeExhausted);
       case "gemini_exhausted":
         return item.geminiExhausted;
       case "claude_exhausted":
