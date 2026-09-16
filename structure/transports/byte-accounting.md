@@ -41,3 +41,27 @@ Translated audio/file admission follows the [final-adapter input contract](../ad
 Canonical Responses identity sanitation and narrowly scoped pre-output combo recovery follow [request-local target compatibility](../runtime.md#request-local-target-compatibility); other adapter contracts remain unchanged.
 
 Upstream API-key usage follows the [physical-attempt account attribution contract](../gui-and-management-api.md#upstream-key-account-attribution), independently of subscription quota observations.
+
+## Terminal-continuation retention
+
+`src/server/responses/terminal-guard.ts` retains at most 1,024 text/thinking/signature/redacted
+content events and 65,536 aggregate JavaScript string code units per guarded turn. These are
+semantic-retention limits, not UTF-8 byte accounting or a process-wide memory cap. Heartbeats,
+tool-argument fragments, and events unused by continuation analysis/rebuilding pass through
+without being retained or spending that allowance.
+
+A real tool start, a limit overflow, or text exceeding 280 characters after trimming disables
+analysis for the rest of the turn and clears the retained history. Overflow never produces a
+continuation from truncated reasoning. Consumer events, terminal reasons, and usage still pass
+through unchanged except for existing cross-continuation usage aggregation. Each permitted
+continuation has fresh counters; unsupported adapters and exhausted continuation allowances
+retain no content. Anthropic behavior and the caller's OpenAI Chat opt-in gate remain scoped as
+before. `tests/server/terminal-guard.test.ts` covers inclusive limits, split whitespace, passthrough,
+reasoning replay, analysis shutdown, usage aggregation, and unsuccessful or absent terminals.
+
+If creating a continuation throws or rejects, its error event carries usage already reported by
+completed legs. Unknown usage stays absent rather than becoming a measured zero. This does not
+invent usage for an unreported failed send, retry a failed factory, or turn failure into success.
+Source-iteration exceptions still propagate to the caller. Returning the guard iterator closes
+its active source; cancellation at an assistant boundary does not start the continuation callback.
+The same focused tests cover these lifecycle paths and Unicode code-unit limit boundaries.
