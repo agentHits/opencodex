@@ -794,19 +794,21 @@ forget to book. The previous attempt at this wiring shipped the whole reserve/di
 vocabulary with no caller at all (#4707), which is the failure mode this shape rules out.
 
 A booking is confirmed dispatched only once a LATER send exists, because that later send proves
-the earlier one left. The newest booking stays open, so a reservation the budget hands back can
-still be released for free. The stated cost: a hard crash between reserving and sending replays
-as abandoned rather than unresolved, for at most one send per request.
+the earlier one left. The newest booking stays open, so a reservation the budget hands back
+during this process's lifetime can still be released for free.
 
 Settlement follows what the request learned. The terminal usage belongs to the last send that
 left, so that one settles with the real figure; every earlier send failed without reporting usage
 of its own and may still have been billed, so it becomes unresolved spend rather than free. A
 request that reports no usage at all leaves all of them unresolved.
 
-Replay resolves what nobody is left to settle: an undispatched reservation is abandoned and a
-dispatched one becomes unresolved, both journaled so a second restart has nothing to redo.
-Without it a reservation whose process died held its tokens against the scope forever, which is a
-ceiling that only tightens. `tests/responses/responses-spend-ledger-wiring.test.ts` pins the
+Replay resolves what nobody is left to settle, and resolves it as unresolved spend whatever state
+it was in. Giving an undispatched one its tokens back would assume the journal is complete up to
+the crash, and the torn-tail rule says it is not: a send can dispatch and die before its dispatch
+record lands. It would also reset a ceiling that had already fired, and an exhausted scope
+staying exhausted across a restart is the whole reason this store is on disk. Both are journaled,
+so a second restart has nothing to redo.
+`tests/responses/responses-spend-ledger-wiring.test.ts` pins the
 booking, the settlement split, the refund, a ceiling that refuses a dispatch rather than
 describing it afterwards, and the restart.
 
