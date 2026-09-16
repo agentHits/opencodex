@@ -82,11 +82,12 @@ export function createAdapterContinuations(
   sidecarState: Pick<ResponsesSidecarAuth, "routedCompaction">,
   sendBudgetState: Pick<
     ResponsesSendBudget,
-    | "adapterSendBudget"
+    | "adapterDispatchBudget"
     | "noteAdapterPhysicalSend"
     | "remainingTransientSendBudget"
     | "noteTransientSends"
     | "reserveCredentialHop"
+    | "pendingHopPermit"
   >,
   adapterExchange: Pick<
     AdapterExchange,
@@ -110,7 +111,7 @@ export function createAdapterContinuations(
   const { routedCompaction } = sidecarState;
   const { upstream, connectMs, rateLimitPolicy, stallTimeoutMs } = adapterExchange;
   const {
-    adapterSendBudget,
+    adapterDispatchBudget,
     noteAdapterPhysicalSend,
     remainingTransientSendBudget,
     noteTransientSends,
@@ -187,7 +188,7 @@ export function createAdapterContinuations(
           return await transportState.activeAdapter.fetchResponse(builtContinuationRequest, {
             abortSignal: upstream.signal,
             timeoutMs: connectMs,
-              sendBudget: adapterSendBudget,
+              sendBudget: adapterDispatchBudget,
             onPhysicalSend: send => noteAdapterPhysicalSend(continuationEstimate, send),
             stream: nextParsed.stream,
             executor: providerFetch(route.provider, options.codexWsRuntimeIdentity, {
@@ -385,9 +386,15 @@ export function createAdapterContinuations(
         // Intersection with the shared request budget. The continuation loop re-sends the
         // turn, so without this the per-request bound could be re-armed simply by reaching a
         // different loop -- which is the divergence the comment above already warns about.
+        //
+        // Who settles the reservation depends on who sends the replay (#4709). An adapter that
+        // owns its ladder reserves once per physical send and would charge this replay twice;
+        // the helper path reports it back instead, which is what `countedExternally` names.
+        const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
         const hop = reserveCredentialHop(
           "auth-recovery",
           `${route.providerName}|${route.modelId}|continuation-oauth-429`,
+          !adapterOwnsDispatch && transientRetryPolicyFor(route.provider) !== null,
         );
         const nextAccountId = hop.allowed
           ? rotateGenericOAuthAccountOn429(
@@ -417,6 +424,11 @@ export function createAdapterContinuations(
               );
               sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, transportState.activeAdapter.name, logCtx.accountLogLabel);
               recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, transportState.activeAdapter.name);
+              // The replay goes out on the next iteration. An adapter that owns its ladder
+              // reserves for that send itself, so hand this reservation down rather than let it
+              // take a second one for the same replay. A helper-routed replay needs no handoff:
+              // its reporter settles the booking made above.
+              if (adapterOwnsDispatch) sendBudgetState.pendingHopPermit = hop.permit;
               nextContinuationRecoveryKind = "oauth-account-429";
               continue;
             }

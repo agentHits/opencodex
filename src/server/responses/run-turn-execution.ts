@@ -74,7 +74,10 @@ export async function executeResponsesRunTurn(
     | "continuationStateForResponse"
     | "notifyResponseComplete"
   >,
-  sendBudgetState: Pick<ResponsesSendBudget, "adapterSendBudget" | "reserveCredentialHop">,
+  sendBudgetState: Pick<
+    ResponsesSendBudget,
+    "adapterDispatchBudget" | "reserveCredentialHop" | "pendingHopPermit"
+  >,
   completionPolicy: Pick<ResponsesCompletionPolicy, "emptyCompletionGuardEnabled">,
 ): Promise<Response> {
   const { options, logCtx, config } = requestContext;
@@ -94,7 +97,7 @@ export async function executeResponsesRunTurn(
     rememberKiroDeliveredFinalAnswer,
     responseStateOptions,
   } = requestState;
-  const { adapterSendBudget, reserveCredentialHop } = sendBudgetState;
+  const { adapterDispatchBudget, reserveCredentialHop } = sendBudgetState;
   const { emptyCompletionGuardEnabled } = completionPolicy;
   const {
     cancelResponseCompletion,
@@ -162,7 +165,7 @@ export async function executeResponsesRunTurn(
             providerFetch: runTurnProviderFetch,
             // The only way the request budget reaches a transport the adapter owns. Without it
             // a Cursor turn's inner ladder was three physical sends the cap read as one.
-            ...(adapterSendBudget ? { sendBudget: adapterSendBudget } : {}),
+            ...(adapterDispatchBudget ? { sendBudget: adapterDispatchBudget } : {}),
           },
           targetQueue.push,
         );
@@ -258,8 +261,11 @@ export async function executeResponsesRunTurn(
         });
         sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, rotatedAdapter.name, logCtx.accountLogLabel);
         recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, rotatedAdapter.name);
-        // The caller replays the turn on this rotation, so the reservation is now confirmed.
-        hop.permit?.use();
+        // The caller replays the turn on this rotation, and a runTurn adapter dispatches through
+        // its own reservation ladder -- Cursor reserves once per physical send. Confirming here
+        // would leave that ladder to charge the same replay a second time (#4709), so hand the
+        // reservation down and let the send that actually happens spend it.
+        sendBudgetState.pendingHopPermit = hop.permit;
         return true;
       } catch {
         hop.permit?.release();
@@ -270,16 +276,24 @@ export async function executeResponsesRunTurn(
       firstSource: AsyncIterable<AdapterEvent>,
     ): Promise<AsyncIterable<AdapterEvent>> => {
       let source = firstSource;
-      while (true) {
-        const preflight = await preflightAdapterEvents(source);
-        if (!preflight.error || !(await rotateRunTurnAdapterOnPreflight429(preflight.error))) {
-          return preflight.stream;
+      try {
+        while (true) {
+          const preflight = await preflightAdapterEvents(source);
+          if (!preflight.error || !(await rotateRunTurnAdapterOnPreflight429(preflight.error))) {
+            return preflight.stream;
+          }
+          const retryQueue = createAdapterEventQueue({
+            onBacklogExceeded: () => runTurnAbort.abort(),
+          });
+          void runTurnAttempt(retryQueue, "oauth-account-429");
+          source = retryQueue.stream();
         }
-        const retryQueue = createAdapterEventQueue({
-          onBacklogExceeded: () => runTurnAbort.abort(),
-        });
-        void runTurnAttempt(retryQueue, "oauth-account-429");
-        source = retryQueue.stream();
+      } finally {
+        // A handed-down hop reservation belongs to the replay this loop dispatched, and the
+        // loop only leaves after that replay's first event has arrived -- so the adapter has
+        // already reserved if it was ever going to. Dropping the reference here keeps an
+        // adapter that reserves nothing from leaving a free send for an unrelated later leg.
+        sendBudgetState.pendingHopPermit = undefined;
       }
     };
     // The empty-completion retry re-runs the turn against a fresh queue: the

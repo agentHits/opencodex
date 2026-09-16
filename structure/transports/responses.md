@@ -690,15 +690,28 @@ budget before it knows whether a rotation is even possible, because the reservat
 `reserveDispatch` spends, `permit.use()` only confirms which leg sent, and `permit.release()` is
 idempotent and a no-op once used. Every ladder therefore owes the budget an answer on every exit.
 
-Two shapes are correct and both are in the tree. Where the ladder dispatches inside its own `try`
-— `adapter-dispatch.ts`, `run-turn-execution.ts` — it confirms with `use()` immediately before the
-send and releases in its `catch`, so one catch covers a pre-dispatch throw and a throw from the
-send alike. Where the replay happens after the loop continues — `adapter-continuation.ts` — it must
-not confirm, because the send has not happened yet; it only releases. The passthrough ladder is a
-third shape: it reserves with `countedExternally: true` and hands the permit to the rebuild through
-`pendingHopPermit`, because there the retry helper reports the same physical send.
+The hop pays for a replay that some *other* layer dispatches, so which layer settles the
+reservation follows the dispatcher, not the ladder. A helper-routed replay reports the same
+physical send back through `onSendsConsumed`; that is what `countedExternally: true` names, and the
+reporter's first send settles the pending booking instead of adding a second charge. An adapter
+that owns its transport — Kiro's reset ladder, Cursor's transport ladder — reserves once per
+physical send instead, so no reporter ever arrives. Those ladders are handed
+`adapterDispatchBudget`, a live delegating view of the same budget that spends a permit passed down
+through `pendingHopPermit` on the adapter's first reservation and closes the booking through
+`permit.assumeCharge()`. Letting both charge is how one physical send became two charges, and how a
+spent allowance answered a 429 with a synthetic error instead of the rate limit it was recovering
+from (#4709).
+
+Confirmation happens at the dispatch boundary rather than at the rotation. `adapter-dispatch.ts`
+passes an `onDispatch` callback that the rebuild invokes immediately before the wire, and skips it
+when the adapter owns dispatch: settling there first would hand that adapter a dead permit, which
+it reads as an exhausted request and stops sending on. `adapter-continuation.ts` never confirms,
+because its replay is the next loop iteration. `run-turn-execution.ts` always hands the reservation
+down, because a runTurn adapter is by definition the layer that sends. The passthrough ladder keeps
+the shape it already had: reserve with `countedExternally: true` and pass the permit to the rebuild.
 
 What must not happen is a ladder that charges and then returns through a path that neither confirms
 nor releases. That is not a lost send; it is a send the request never made, spending an allowance a
 later recovery in the same request then cannot have. `tests/lib/execution-budget-permits.test.ts`
-pins both ladder shapes against exactly that.
+pins the settlement rule and every ladder shape against exactly that, and
+`tests/responses/responses-core-modules.test.ts` pins the adapter view's live delegation.

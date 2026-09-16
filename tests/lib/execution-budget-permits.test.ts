@@ -249,7 +249,12 @@ describe("generic-OAuth hop reservations are handed back when no send happens", 
       "adapter-recovery-oauth-429",
       "attemptOpaqueBlobRecovery",
     );
-    expect(block).toContain('rebuildAndRefetch("oauth-account-429", () => { hop.permit?.use(); })');
+    expect(block).toContain('rebuildAndRefetch("oauth-account-429", () => {');
+    // ...except on an adapter-owned ladder, which confirms through its own reservation. Settling
+    // here as well would close the permit before `adapterDispatchBudget` could hand it over, and
+    // an adapter whose `use()` fails reads the request as exhausted and stops sending (#4709).
+    expect(block).toContain("if (!adapterOwnsDispatch) hop.permit?.use();");
+    expect(block).toContain("sendBudgetState.pendingHopPermit = hop.permit;");
     expect(block).toMatch(/if \("failed" in result\) \{[^}]*hop\.permit\?\.release\(\)/);
     expect(block).toMatch(refundsOnThrow);
   });
@@ -264,5 +269,82 @@ describe("generic-OAuth hop reservations are handed back when no send happens", 
     // the reservation rather than confirm it.
     expect(block).not.toContain("hop.permit?.use()");
     expect(block).toMatch(refundsOnThrow);
+  });
+});
+
+/**
+ * One physical send, one charge -- whichever layer actually dispatches it (#4709).
+ *
+ * A credential hop books the replay it is about to make, and the reservation IS the charge. The
+ * layer that then sends that replay has its own accounting: the retry helper reports every
+ * physical send back through `onSendsConsumed`, while Kiro and Cursor reserve once per send
+ * against the same budget. Either one charged the hop's replay a SECOND time, so a four-send
+ * ceiling admitted two sends -- and once the allowance was gone the request answered with a
+ * synthetic error instead of the 429 the hop was recovering from.
+ *
+ * `countedExternally` already covered the reporter. `assumeCharge()` is the other half: the
+ * dispatching layer takes the booking over, so the send stays charged exactly once and no later
+ * report settles against a send that was already paid for.
+ */
+describe("a credential hop is settled by whichever layer dispatches its replay", () => {
+  test("a retry helper's report settles the booking instead of charging again", () => {
+    const budget = createRequestExecutionBudget(CODEX_TEXT_GUARDED_BUDGET_POLICY);
+    const hop = budget.reserveDispatch({
+      sendClass: "auth-recovery", targetKey: "p|m", countedExternally: true,
+    });
+    expect(hop.allowed).toBe(true);
+    expect(budget.used).toBe(1);
+
+    // The helper names the same physical send the hop already booked.
+    budget.used += 1;
+    expect(budget.used).toBe(1);
+    // A genuinely second send is charged in full.
+    budget.used += 1;
+    expect(budget.used).toBe(2);
+  });
+
+  test("an adapter that reserves for itself takes the booking over rather than adding to it", () => {
+    const budget = createRequestExecutionBudget(CODEX_TEXT_GUARDED_BUDGET_POLICY);
+    const hop = budget.reserveDispatch({
+      sendClass: "auth-recovery", targetKey: "p|m", countedExternally: true,
+    });
+    if (!hop.allowed) throw new Error("unreachable");
+    expect(budget.used).toBe(1);
+
+    // No reporter will ever name this send: the adapter's own ladder is dispatching it.
+    expect(hop.permit.assumeCharge()).toBe(true);
+    expect(budget.used).toBe(1);
+    // The booking is closed, so the next leg's report is charged in full. Leaving it open is
+    // how one real send would have gone uncounted.
+    budget.used += 1;
+    expect(budget.used).toBe(2);
+
+    // One reservation still admits exactly one send, and a settled permit cannot be refunded.
+    expect(hop.permit.assumeCharge()).toBe(false);
+    expect(hop.permit.use()).toBe(false);
+    hop.permit.release();
+    expect(budget.used).toBe(2);
+  });
+
+  test("the three adapter hop sites hand their reservation down instead of double-charging", () => {
+    const responses = (name: string): string =>
+      readFileSync(new URL("../../src/server/responses/" + name, import.meta.url), "utf8");
+    // The adapter recovery loop and the continuation loop both pick their settlement from the
+    // shape of the dispatcher, so neither promises an external report an adapter would never make.
+    for (const name of ["adapter-dispatch.ts", "adapter-continuation.ts"]) {
+      const source = responses(name);
+      expect(source).toContain("const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;");
+      expect(source).toContain("!adapterOwnsDispatch && transientRetryPolicyFor(route.provider) !== null,");
+    }
+    // runTurn has only one shape: the adapter owns the transport, so it never reports and the
+    // reservation is always handed down rather than confirmed here.
+    const runTurn = responses("run-turn-execution.ts");
+    expect(runTurn).toContain("sendBudgetState.pendingHopPermit = hop.permit;");
+    expect(runTurn).not.toContain("hop.permit?.use();");
+    // Every adapter-owned transport now reserves against the view, which is what spends the
+    // handed-down permit. Passing the bare holder is the regression this pins.
+    for (const name of ["adapter-dispatch.ts", "adapter-continuation.ts", "run-turn-execution.ts"]) {
+      expect(responses(name)).not.toContain("sendBudget: adapterSendBudget");
+    }
   });
 });

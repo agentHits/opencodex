@@ -94,6 +94,19 @@ export interface SingleUseDispatchPermit {
    * once an external send reporter already settled it.
    */
   release(): void;
+  /**
+   * Take over an externally counted booking, because the layer holding this permit is the one
+   * that physically sends.
+   *
+   * `countedExternally` promises that a retry helper will name this send through
+   * `onSendsConsumed`. An adapter that owns its own dispatch ladder -- Kiro's reset loop,
+   * Cursor's transport loop -- reserves per physical send instead, so no reporter ever arrives
+   * and the pending booking would sit there until it silently swallowed an unrelated later
+   * report. Confirming through this method settles the permit AND closes the booking, so the
+   * send stays charged exactly once (#4709). Returns false once the permit is settled, which is
+   * what keeps one permit from admitting two sends.
+   */
+  assumeCharge(): boolean;
 }
 
 export type DispatchDecision =
@@ -220,6 +233,17 @@ export function createRequestExecutionBudget(
           use(): boolean {
             if (settled !== "open") return false;
             settled = "used";
+            return true;
+          },
+          assumeCharge(): boolean {
+            if (settled !== "open") return false;
+            settled = "used";
+            // The booking this reservation made for an external reporter is now owned by the
+            // caller. Leaving it pending is not harmless: the next `used` report of this request
+            // would settle against it and one real send would go uncharged.
+            if (intent.countedExternally === true && pendingExternalSends > 0) {
+              pendingExternalSends -= 1;
+            }
             return true;
           },
           release(): void {
