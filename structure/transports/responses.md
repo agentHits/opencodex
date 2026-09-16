@@ -837,6 +837,8 @@ later recovery in the same request then cannot have. `tests/lib/execution-budget
 pins the settlement rule and every ladder shape against exactly that, and
 `tests/responses/responses-core-modules.test.ts` pins the adapter view's live delegation.
 
+Shared response-log retention and native SSE inspection pacing follow the [bounded inspection contract](byte-accounting.md#response-log-inspection); other subsystem behavior remains unchanged.
+
 A combo derives a policy scope per target, and that derivation has to happen inside the budget
 factory. Overriding the public `used` property shares only what callers read from outside:
 `remainingBaseSends`, the total check and the reserve test all consult the factory's own private
