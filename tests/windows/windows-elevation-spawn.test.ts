@@ -153,7 +153,7 @@ describe("runWindowsElevated spawn contract", () => {
 
     await expect(runWindowsElevatedScheduledTaskRegistration(
       "opencodex-proxy",
-      "<Task />",
+      { path: "C:\\Temp\\opencodex-service-stage-aaaaaa\\register.xml", sha256: "0".repeat(64) },
     )).resolves.toBe(0);
 
     const startProcessIndex = commandScript.indexOf("Start-Process");
@@ -174,7 +174,7 @@ describe("runWindowsElevated spawn contract", () => {
     expect(commandScript).not.toMatch(/-ArgumentList\s+'[^']*';\s+-Verb RunAs/);
   });
 
-  test("scheduled-task registration embeds immutable XML bytes instead of a file path", async () => {
+  test("scheduled-task registration passes staged paths and digests, never inline payloads", async () => {
     let commandScript = "";
     setWindowsElevationSpawnForTests(((
       _cmd: string,
@@ -196,7 +196,9 @@ describe("runWindowsElevated spawn contract", () => {
     }) as never);
 
     const xml = "<Task><Description>fixed-definition</Description></Task>";
-    await expect(runWindowsElevatedScheduledTaskRegistration("opencodex-proxy", xml)).resolves.toBe(0);
+    const stageDir = "C:\\Temp\\opencodex-service-stage-aaaaaa";
+    const staged = { path: stageDir + "\\register.xml", sha256: "a".repeat(64) };
+    await expect(runWindowsElevatedScheduledTaskRegistration("opencodex-proxy", staged)).resolves.toBe(0);
     const match = /-EncodedCommand ([A-Za-z0-9+/=]+)/.exec(commandScript);
     expect(match).not.toBeNull();
     const elevatedScript = Buffer.from(match![1]!, "base64").toString("utf16le");
@@ -211,21 +213,67 @@ describe("runWindowsElevated spawn contract", () => {
     expect(elevatedScript).toContain("& $registerTask -TaskName $taskName -Xml $xml -ErrorAction Stop");
     expect(elevatedScript).not.toContain("-Xml $xml -Force");
     expect(elevatedScript.match(/\bRegister-ScheduledTask\b/g)).toHaveLength(2);
-    expect(elevatedScript).toContain(Buffer.from(xml, "utf16le").toString("base64"));
+
+    // #4692: the definition now travels as a path plus a digest. A pathname on its own
+    // would be a promise about content, so the elevated side has to check it: read the
+    // bytes once, hash exactly those bytes, and refuse BEFORE decoding them. Hashing and
+    // then rereading would leave the swap window this check exists to close.
+    expect(elevatedScript).toContain(staged.path);
+    expect(elevatedScript).toContain(staged.sha256);
+    expect(elevatedScript).toContain("[IO.File]::ReadAllBytes($path)");
+    expect(elevatedScript).toContain("$sha.ComputeHash($bytes)");
+    expect(elevatedScript).toContain("Task Scheduler staged payload failed its integrity check.");
+    expect(elevatedScript.indexOf("-cne $expectedHash"))
+      .toBeLessThan(elevatedScript.indexOf("[Text.Encoding]::Unicode.GetString($bytes)"));
+    // No payload rides the command line any more, in either encoding layer.
+    expect(elevatedScript).not.toContain(Buffer.from(xml, "utf16le").toString("base64"));
+    expect(elevatedScript).not.toContain("FromBase64String");
     expect(commandScript).not.toContain("/xml");
-    expect(commandScript).not.toContain("task.xml");
+
+    // The regression itself. The old form embedded base64(utf16le) of the XML inside a
+    // script that was base64(utf16le)-encoded again — about 14.2 command-line characters
+    // per XML character, twice over for a replacement — so a ~2 KB definition pushed the
+    // spawn past the Windows command-line limit and failed with ENAMETOOLONG. What is
+    // pinned here is independence, not one lucky measurement: the same staging shape must
+    // produce the same command length no matter how large the definition behind it is.
+    const smallLength = commandScript.length;
+    const largeStaged = { path: stageDir + "\\register.xml", sha256: "b".repeat(64) };
+    await expect(runWindowsElevatedScheduledTaskRegistration("opencodex-proxy", largeStaged)).resolves.toBe(0);
+    expect(commandScript.length).toBe(smallLength);
+    expect(commandScript.length).toBeLessThan(8192);
 
     const predecessor = "<Task><Description>captured-predecessor</Description></Task>";
+    const stagedPredecessor = { path: stageDir + "\\expected.xml", sha256: "c".repeat(64) };
     await expect(
-      runWindowsElevatedScheduledTaskRegistration("opencodex-proxy", xml, true, predecessor),
+      runWindowsElevatedScheduledTaskRegistration("opencodex-proxy", staged, true, stagedPredecessor),
     ).resolves.toBe(0);
     const replaceMatch = /-EncodedCommand ([A-Za-z0-9+/=]+)/.exec(commandScript);
     expect(replaceMatch).not.toBeNull();
     const replaceScript = Buffer.from(replaceMatch![1]!, "base64").toString("utf16le");
     expect(replaceScript).toContain("& $registerTask -TaskName $taskName -Xml $xml -Force");
-    expect(replaceScript).toContain(Buffer.from(predecessor, "utf16le").toString("base64"));
+    expect(replaceScript).toContain(stagedPredecessor.path);
+    expect(replaceScript).toContain(stagedPredecessor.sha256);
+    expect(replaceScript).not.toContain(Buffer.from(predecessor, "utf16le").toString("base64"));
+    // The predecessor is verified the same way before it is used as a precondition: two
+    // call sites, both digest-checked. The helper is declared as
+    // "Read-OcxStagedTaskXml([string]$path", so the trailing space matches calls only.
+    expect(replaceScript.match(/Read-OcxStagedTaskXml /g)).toHaveLength(2);
+    expect(elevatedScript.match(/Read-OcxStagedTaskXml /g)).toHaveLength(1);
     expect(replaceScript).toContain("$currentXml = & $schtasks /query /tn $taskName /xml");
     expect(replaceScript).toContain("Task Scheduler replacement precondition changed.");
+    // A replacement used to carry TWO payloads, which is what made this the reported
+    // failure. It stays bounded now.
+    expect(commandScript.length).toBeLessThan(8192);
+  });
+
+  test("an elevated replacement still refuses without a captured predecessor", () => {
+    // The post-UAC compare-before-Force is the only thing standing between a repair and
+    // overwriting a registration somebody else changed while the prompt was open.
+    expect(() => runWindowsElevatedScheduledTaskRegistration(
+      "opencodex-proxy",
+      { path: "C:\\Temp\\opencodex-service-stage-aaaaaa\\register.xml", sha256: "a".repeat(64) },
+      true,
+    )).toThrow("requires a captured existing definition");
   });
 
   test("maps exit 1223 to cancelled", async () => {
