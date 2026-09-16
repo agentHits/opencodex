@@ -573,6 +573,14 @@ change target order or attempt accounting; provider-400 decisions follow the [re
 
 The shared Responses path follows the [bounded multipart recovery contract](../subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
 
+## Combo reasoning replay target eligibility
+
+When a serving-route change leaves a tool-bearing history whose reasoning has neither plaintext nor
+usable opaque content, a target that requires plaintext reasoning replay is ineligible. Failover
+continues to the next target; exhausting the eligible targets returns `400 target_incompatible`.
+Opaque reasoning minted by another provider or account is never forwarded, and plaintext is never
+fabricated.
+
 ## Combo streaming commit boundary
 
 An HTTP 200 does not by itself commit a streaming combo child. The combo parent runs the child's
