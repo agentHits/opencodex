@@ -226,7 +226,11 @@ The image/video loop bounds each hidden iteration before replay or fulfillment; 
 [media iteration retention](transports/inventory.md#media-iteration-retention).
 
 Live model discovery is bounded and registry-driven through `src/providers/model-discovery.ts`.
-Custom providers keep the conventional `${baseUrl}/models` request; canonical presets may select a
+Custom providers keep the conventional `${baseUrl}/models` request, normalized by
+`providerModelsUrl` the same way `openaiChatCompletionsUrl` normalizes the send path: outer
+whitespace and trailing slashes are trimmed and an already-pasted `/models` is not doubled, so a
+`baseUrl` written with or without a trailing slash yields the identical discovery URL and an
+existing path prefix is preserved. Canonical presets may select a
 trusted URL/path/query and declarative eligibility filter without persisting that policy into user
 config. A response is rejected before caching when it exceeds 4 MiB, contains more than 2,000 raw
 rows, has a malformed OpenAI list envelope, or includes an invalid model id. Tests use fixtures and
