@@ -17,6 +17,7 @@ import { readCodexCatalogPath } from "../codex/catalog";
 import type { AttemptTierOutcome, OcxProviderConfig, OcxUsage } from "../types";
 import { normalizeRouteDecisionTrace, type RouteDecisionTraceV1 } from "../routing/trace";
 import type { AdapterRequest } from "../adapters/base";
+import type { RequestSpendSettlement } from "./responses/request-spend";
 import type { AdapterTierMetadata } from "../providers/fastwire";
 import { redactSecretString, sanitizeLogMetadataString } from "../lib/redact";
 import {
@@ -138,6 +139,15 @@ export interface RequestLogContext {
   preserveResolvedModelFromRoute?: boolean;
   usage?: OcxUsage;
   usageLogInputTokens?: number;
+  /**
+   * The output ceiling this request may actually spend, for the durable spend reservation
+   * (#4707). Captured from the caller's `max_output_tokens`; absent when the caller omitted it
+   * and the adapter's own provider/model default decides, in which case only the input estimate
+   * is reserved up front and settlement corrects it.
+   */
+  spendOutputCeilingTokens?: number;
+  /** Settles this request's durable spend entries from `addFinalRequestLog`. */
+  spendTracker?: RequestSpendSettlement;
   attempts?: PersistedUsageAttempt[];
   /** Internal mutable final attempt; omitted from RequestLogEntry/JSONL. */
   activeAttempt?: PersistedUsageAttempt;
@@ -1244,6 +1254,10 @@ export function addFinalRequestLog(
     if (errorCode) logCtx.activeAttempt.errorCode = errorCode;
     else delete logCtx.activeAttempt.errorCode;
   }
+  // The one seam every request passes exactly once, whatever transport served it and however
+  // it ended. The terminal usage belongs to the last send that left; the ledger resolves every
+  // earlier send of this request as unresolved spend rather than handing its tokens back.
+  logCtx.spendTracker?.settle(logCtx.usage);
   const existing = finalizedUsage(
     logCtx.providerAdapter ?? logCtx.provider,
     logCtx.usage,

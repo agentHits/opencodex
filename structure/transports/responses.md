@@ -645,6 +645,7 @@ is composed from the following owners in `src/server/responses/`; none is a gene
 | `request-sidecar-auth.ts` | Sidecar credential resolution and vision preprocessing. |
 | `response-effects.ts` | Completion notification, replay publication and live request-tool aliases. |
 | `request-send-budget.ts` | Request-wide send accounting, remaining allowance and the pending recovery permit. |
+| `request-spend.ts` | This request's entries in the durable spend ledger: one per physical send, settled from the terminal usage. |
 | `passthrough-execution.ts` | Native host-lease transfer and the enclosing dispatch/delivery `finally`. |
 | `passthrough-dispatch.ts` | Native request preparation, upstream sends and pre-commit recovery. |
 | `passthrough-delivery.ts` | Native HTTP/SSE/JSON delivery, rewrite/inspection and terminal accounting. |
@@ -715,3 +716,37 @@ nor releases. That is not a lost send; it is a send the request never made, spen
 later recovery in the same request then cannot have. `tests/lib/execution-budget-permits.test.ts`
 pins the settlement rule and every ladder shape against exactly that, and
 `tests/responses/responses-core-modules.test.ts` pins the adapter view's live delegation.
+
+## Durable spend reservations
+
+The request's send budget bounds how many times it may reach upstream; the spend ledger bounds
+what those sends may cost, and it is the only bound here that survives a restart. Its production
+caller is `request-spend.ts`, installed on the execution budget at genuine ingress in `core.ts`
+and parked on the log context so `addFinalRequestLog` can settle it.
+
+It books by observing the budget's own send counter rather than by being called from each
+dispatch site. That counter moves exactly once per physical send — a reservation increments it, a
+refund decrements it, and an externally reported send settles against a booking already counted —
+so one ledger entry per increment is one entry per send, and a dispatch path added later cannot
+forget to book. The previous attempt at this wiring shipped the whole reserve/dispatch/settle
+vocabulary with no caller at all (#4707), which is the failure mode this shape rules out.
+
+A booking is confirmed dispatched only once a LATER send exists, because that later send proves
+the earlier one left. The newest booking stays open, so a reservation the budget hands back can
+still be released for free. The stated cost: a hard crash between reserving and sending replays
+as abandoned rather than unresolved, for at most one send per request.
+
+Settlement follows what the request learned. The terminal usage belongs to the last send that
+left, so that one settles with the real figure; every earlier send failed without reporting usage
+of its own and may still have been billed, so it becomes unresolved spend rather than free. A
+request that reports no usage at all leaves all of them unresolved.
+
+Replay resolves what nobody is left to settle: an undispatched reservation is abandoned and a
+dispatched one becomes unresolved, both journaled so a second restart has nothing to redo.
+Without it a reservation whose process died held its tokens against the scope forever, which is a
+ceiling that only tightens. `tests/responses/responses-spend-ledger-wiring.test.ts` pins the
+booking, the settlement split, the refund, a ceiling that refuses a dispatch rather than
+describing it afterwards, and the restart.
+
+The default policy still sets no token ceiling on any scope, so an unconfigured install accounts
+and reports without refusing. The operator configuration path for those limits is not wired yet.

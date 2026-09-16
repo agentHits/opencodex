@@ -56,6 +56,7 @@ export type BudgetDenial =
   | "final-recovery-spent"
   | "alternate-target-exhausted"
   | "target-transition-exhausted"
+  | "spend-exhausted"
   | "not-replay-safe";
 
 export interface DispatchIntent {
@@ -114,6 +115,26 @@ export type DispatchDecision =
   | { allowed: false; reason: BudgetDenial };
 
 /**
+ * Notified when this request's physical-send count moves.
+ *
+ * `spent` is the only number here that counts SENDS rather than intentions: a reservation
+ * increments it, a refund decrements it, and an externally reported send settles against a
+ * booking that was already counted. Anything that books one entry per increment therefore
+ * books exactly one entry per physical send -- which is what lets the durable spend ledger
+ * have a production caller without every dispatch site in the tree remembering to call it.
+ *
+ * `charge` may refuse, and a refusal denies the dispatch. That is deliberate: the ledger is
+ * the only bound here that survives a restart, so a limit it enforces has to be able to stop a
+ * send rather than merely describe one.
+ */
+export interface RequestSendObserver {
+  /** Book one physical send. False refuses the dispatch before the budget charges it. */
+  charge(): boolean;
+  /** Give back a booking whose send never happened. */
+  refund(): void;
+}
+
+/**
  * Carried on HandleResponsesOptions so a combo child, a rebuild and an alternate-account leg
  * all decrement the same holder. `used` is the existing #4605 counter and still counts every
  * model send; the reserve is what the fourth send draws on once the base allowance is gone.
@@ -150,6 +171,7 @@ let logicalRequestSeq = 0;
 export function createRequestExecutionBudget(
   policy: RequestExecutionBudgetPolicy = CODEX_TEXT_GUARDED_BUDGET_POLICY,
   logicalRequestId?: string,
+  observer?: RequestSendObserver,
 ): RequestExecutionBudget {
   let spent = 0;
   // Reservations whose physical send is reported by a retry helper rather than by the permit.
@@ -173,7 +195,12 @@ export function createRequestExecutionBudget(
       }
       const settled = Math.min(delta, pendingExternalSends);
       pendingExternalSends -= settled;
-      spent += delta - settled;
+      const charged = delta - settled;
+      spent += charged;
+      // These sends have already left. The ledger records them even past a ceiling it would
+      // have refused, because refusing after the fact only hides spend that was really
+      // incurred -- the refusal has to happen at the reservation below, or not at all.
+      for (let index = 0; index < charged; index += 1) observer?.charge();
     },
     logicalRequestId: logicalRequestId ?? `lr-${Date.now().toString(36)}-${(logicalRequestSeq += 1).toString(36)}`,
     policyVersion: REQUEST_BUDGET_POLICY_VERSION,
@@ -212,6 +239,11 @@ export function createRequestExecutionBudget(
           return { allowed: false, reason: "final-recovery-spent" };
         }
       }
+
+      // Consulted last, because it is the only bound here that WRITES. A ledger entry booked
+      // for a dispatch a cheaper check above would have refused is spend this request never
+      // makes, and it would hold those tokens against the scope until retention expired.
+      if (observer && !observer.charge()) return { allowed: false, reason: "spend-exhausted" };
 
       // THE RESERVATION IS THE CHARGE. Deciding here and charging in `use()` left a window in
       // which two legs read the same remainder, both received a permit, and both dispatched:
@@ -256,6 +288,7 @@ export function createRequestExecutionBudget(
               pendingExternalSends -= 1;
             }
             spent -= 1;
+            observer?.refund();
             if (drawsReserve) reserveSpent = false;
             if (isAlternateTarget) alternateTargetSends -= 1;
             if (changesTarget) targetTransitions -= 1;

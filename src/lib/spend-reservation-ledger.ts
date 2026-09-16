@@ -669,6 +669,25 @@ export function createSpendReservationLedger(options: {
         case "checkpoint": applyCheckpoint(record); break;
       }
     }
+    // A reservation that survived replay has no owner left. The process that made it is gone,
+    // so nothing in this one can ever settle it, and leaving it live holds its tokens against
+    // the scope forever -- a ceiling that only ever tightens, which is the opposite of the
+    // bound this store exists to keep. Deleting the entry is not the alternative: that would
+    // hand the same send id a second reservation.
+    //
+    // The distinction is the one the rest of the module already draws. An UNDISPATCHED
+    // reservation never reached the wire, so it is abandoned and its tokens come back. A
+    // DISPATCHED one may already have been billed, so it becomes unresolved spend. Both are
+    // appended, so the file agrees with memory and the next restart has nothing left to do.
+    const reconciledAt = now();
+    for (const [send, reservation] of reservations) {
+      if (!isLive(reservation.status)) continue;
+      const abandoned = reservation.status === "open";
+      applyResolve(send, abandoned ? "abandoned" : "lost", 0, reconciledAt);
+      append(abandoned
+        ? { v: 1, kind: "abandon", send, at: reconciledAt }
+        : { v: 1, kind: "lost", send, at: reconciledAt });
+    }
   }
 
   /**
