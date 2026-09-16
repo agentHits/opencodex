@@ -337,13 +337,11 @@ export default function ProviderAccountsToolbar({
                   <div className="pwi-tokens-card-metrics">
                     <div className="pwi-tokens-metric-row">
                       <span className="pwi-tokens-metric-label">{t("pws.tokensLabel5h")}:</span>
-                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.claude5h?.m ?? "0M"}</span>
-                      <span className="pwi-stat-tag-orange">{tokensEstimate.claude5h?.b ?? "~0.00B"}</span>
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.claude5h?.smart ?? "0M"}</span>
                     </div>
                     <div className="pwi-tokens-metric-row">
                       <span className="pwi-tokens-metric-label">{t("pws.tokensLabel7d")}:</span>
-                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.claudeWeekly?.m ?? "0M"}</span>
-                      <span className="pwi-stat-tag-orange">{tokensEstimate.claudeWeekly?.b ?? "~0.00B"}</span>
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.claudeWeekly?.smart ?? "0M"}</span>
                     </div>
                   </div>
                 </div>
@@ -357,13 +355,11 @@ export default function ProviderAccountsToolbar({
                   <div className="pwi-tokens-card-metrics">
                     <div className="pwi-tokens-metric-row">
                       <span className="pwi-tokens-metric-label">{t("pws.tokensLabel5h")}:</span>
-                      <span className="pwi-tokens-metric-value pwi-text-blue">{tokensEstimate.gemini5h?.m ?? "0M"}</span>
-                      <span className="pwi-stat-tag-blue">{tokensEstimate.gemini5h?.b ?? "~0.00B"}</span>
+                      <span className="pwi-tokens-metric-value pwi-text-blue">{tokensEstimate.gemini5h?.smart ?? "0M"}</span>
                     </div>
                     <div className="pwi-tokens-metric-row">
                       <span className="pwi-tokens-metric-label">{t("pws.tokensLabel7d")}:</span>
-                      <span className="pwi-tokens-metric-value pwi-text-blue">{tokensEstimate.geminiWeekly?.m ?? "0M"}</span>
-                      <span className="pwi-stat-tag-blue">{tokensEstimate.geminiWeekly?.b ?? "~0.00B"}</span>
+                      <span className="pwi-tokens-metric-value pwi-text-blue">{tokensEstimate.geminiWeekly?.smart ?? "0M"}</span>
                     </div>
                   </div>
                 </div>
@@ -377,13 +373,11 @@ export default function ProviderAccountsToolbar({
                   <div className="pwi-tokens-card-metrics">
                     <div className="pwi-tokens-metric-row">
                       <span className="pwi-tokens-metric-label">{t("pws.tokensLabel5h")}:</span>
-                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.total5h.m}</span>
-                      <span className="pwi-stat-tag-green">{tokensEstimate.total5h.b}</span>
+                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.total5h.smart}</span>
                     </div>
                     <div className="pwi-tokens-metric-row">
                       <span className="pwi-tokens-metric-label">{t("pws.tokensLabel7d")}:</span>
-                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.totalWeekly.m}</span>
-                      <span className="pwi-stat-tag-green">{tokensEstimate.totalWeekly.b}</span>
+                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.totalWeekly.smart}</span>
                     </div>
                   </div>
                 </div>
@@ -397,8 +391,7 @@ export default function ProviderAccountsToolbar({
                   </div>
                   <div className="pwi-tokens-card-metrics">
                     <div className="pwi-tokens-metric-row">
-                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.total5h.m}</span>
-                      <span className="pwi-stat-tag-orange">{tokensEstimate.total5h.b}</span>
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.total5h.smart}</span>
                     </div>
                   </div>
                 </div>
@@ -410,8 +403,7 @@ export default function ProviderAccountsToolbar({
                   </div>
                   <div className="pwi-tokens-card-metrics">
                     <div className="pwi-tokens-metric-row">
-                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.totalWeekly.m}</span>
-                      <span className="pwi-stat-tag-green">{tokensEstimate.totalWeekly.b}</span>
+                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.totalWeekly.smart}</span>
                     </div>
                   </div>
                 </div>

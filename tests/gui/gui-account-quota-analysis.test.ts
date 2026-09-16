@@ -241,9 +241,9 @@ import {
 
 describe("account-tokens-estimate", () => {
   test("formatTokenAmount formats 0, millions and billions with ~ prefixes", () => {
-    expect(formatTokenAmount(0)).toEqual({ raw: 0, m: "0M", b: "~0.00B", display: "0M (~0.00B)" });
-    expect(formatTokenAmount(240_000_000)).toEqual({ raw: 240_000_000, m: "~240M", b: "~0.24B", display: "~240M (~0.24B)" });
-    expect(formatTokenAmount(1_920_000_000)).toEqual({ raw: 1_920_000_000, m: "~1 920M", b: "~1.92B", display: "~1 920M (~1.92B)" });
+    expect(formatTokenAmount(0)).toEqual({ raw: 0, smart: "0M", m: "0M", b: "~0.00B", display: "0M" });
+    expect(formatTokenAmount(240_000_000)).toEqual({ raw: 240_000_000, smart: "~240M", m: "~240M", b: "~0.24B", display: "~240M" });
+    expect(formatTokenAmount(1_920_000_000)).toEqual({ raw: 1_920_000_000, smart: "~1.92B", m: "~1 920M", b: "~1.92B", display: "~1.92B" });
   });
 
   test("computeOAuthAccountLogLabel computes o<hex6> matching server log label", () => {

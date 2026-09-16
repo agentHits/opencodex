@@ -164,9 +164,7 @@ function parseAntigravityQuotaSummary(body: Record<string, unknown> | null): Pro
 }
 
 const ANTIGRAVITY_ACCOUNT_QUOTA_BASE = "https://daily-cloudcode-pa.googleapis.com";
-const ANTIGRAVITY_PROD_QUOTA_BASE = "https://cloudcode-pa.googleapis.com";
 const ANTIGRAVITY_QUOTA_SUMMARY_URL = `${ANTIGRAVITY_ACCOUNT_QUOTA_BASE}/v1internal:retrieveUserQuotaSummary`;
-const ANTIGRAVITY_PROD_QUOTA_SUMMARY_URL = `${ANTIGRAVITY_PROD_QUOTA_BASE}/v1internal:retrieveUserQuotaSummary`;
 const ANTIGRAVITY_QUOTA_MODELS_URL = `${ANTIGRAVITY_ACCOUNT_QUOTA_BASE}/v1internal:fetchAvailableModels`;
 const ANTIGRAVITY_QUOTA_TIMEOUT_MS = 20_000;
 
@@ -236,7 +234,7 @@ function antigravityUnavailableFailure(
 }
 
 export async function probeAntigravityUsageQuota(accessToken: string, projectId: string): Promise<AntigravityQuotaProbeResult> {
-  const fetchQuota = (url: string, baseUrl = ANTIGRAVITY_ACCOUNT_QUOTA_BASE) => providerOutboundPost("google-antigravity", { baseUrl }, url, {
+  const fetchQuota = (url: string) => providerOutboundPost("google-antigravity", { baseUrl: ANTIGRAVITY_ACCOUNT_QUOTA_BASE }, url, {
     headers: {
       Accept: "application/json", "Content-Type": "application/json",
       "User-Agent": antigravityUserAgent(), Authorization: `Bearer ${accessToken}`,
@@ -244,12 +242,9 @@ export async function probeAntigravityUsageQuota(accessToken: string, projectId:
     body: JSON.stringify({ project: projectId }), signal: AbortSignal.timeout(ANTIGRAVITY_QUOTA_TIMEOUT_MS),
   }, antigravityOutboundDependencies);
   let summaryFailure: QuotaFailureCode | undefined;
-  const isTest = Boolean(antigravityOutboundDependencies.pinnedPost || antigravityOutboundDependencies.resolveAddresses);
-  const primarySummaryUrl = isTest ? ANTIGRAVITY_QUOTA_SUMMARY_URL : ANTIGRAVITY_PROD_QUOTA_SUMMARY_URL;
-  const primaryBase = isTest ? ANTIGRAVITY_ACCOUNT_QUOTA_BASE : ANTIGRAVITY_PROD_QUOTA_BASE;
   try {
-    const response = await fetchQuota(primarySummaryUrl, primaryBase);
-    if (await providerRedirectError(response, primarySummaryUrl)) return unavailableAntigravityQuota("redirect_blocked");
+    const response = await fetchQuota(ANTIGRAVITY_QUOTA_SUMMARY_URL);
+    if (await providerRedirectError(response, ANTIGRAVITY_QUOTA_SUMMARY_URL)) return unavailableAntigravityQuota("redirect_blocked");
     if (response.status === 401 || response.status === 403) return unavailableAntigravityQuota("access_denied");
     if (response.ok) {
       const quota = parseAntigravityQuotaSummary(asRecord(await readQuotaJson(response)));
@@ -258,17 +253,6 @@ export async function probeAntigravityUsageQuota(accessToken: string, projectId:
   } catch (error) {
     // Existing behavior: summary transport/parse failure may recover through the models probe.
     summaryFailure = quotaTransportFailure(error);
-  }
-  if (!isTest) {
-    try {
-      const response = await fetchQuota(ANTIGRAVITY_QUOTA_SUMMARY_URL, ANTIGRAVITY_ACCOUNT_QUOTA_BASE);
-      if (response.ok) {
-        const quota = parseAntigravityQuotaSummary(asRecord(await readQuotaJson(response)));
-        if (quota) return { kind: "available", quota, source: "google-antigravity:retrieveUserQuotaSummary" };
-      }
-    } catch (error) {
-      summaryFailure = antigravityUnavailableFailure(summaryFailure, quotaTransportFailure(error));
-    }
   }
   try {
     const response = await fetchQuota(ANTIGRAVITY_QUOTA_MODELS_URL);

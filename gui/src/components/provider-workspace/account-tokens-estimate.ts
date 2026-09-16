@@ -16,6 +16,7 @@ export interface FormattedTokenAmount {
   b: string;
   /** Combined representation, e.g. "~240M (~0.24B)" */
   display: string;
+  smart: string;
 }
 
 export interface PoolTokensEstimate {
@@ -192,9 +193,10 @@ export function formatTokenAmount(tokens: number): FormattedTokenAmount {
   if (safeTokens === 0) {
     return {
       raw: 0,
+      smart: "0M",
       m: "0M",
       b: "~0.00B",
-      display: "0M (~0.00B)",
+      display: "0M",
     };
   }
   const inM = Math.round(safeTokens / 1_000_000);
@@ -202,15 +204,18 @@ export function formatTokenAmount(tokens: number): FormattedTokenAmount {
   const formattedM = inM.toLocaleString("en-US").replace(/,/g, " ");
   const m = "~" + formattedM + "M";
   const b = "~" + inB + "B";
+
+  const smart = safeTokens >= 1_000_000_000 ? b : safeTokens >= 1_000_000 ? m : "<1M";
+
   return {
     raw: safeTokens,
+    smart,
     m,
     b,
-    display: m + " (" + b + ")",
+    display: smart,
   };
 }
 
-/** Baseline default token capacities per account window when no logs are available. */
 export const DEFAULT_CAPACITIES = {
   antigravity: {
     gemini5h: 100_000_000,
