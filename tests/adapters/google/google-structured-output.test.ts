@@ -18,7 +18,6 @@ import type { OcxParsedRequest, OcxProviderConfig } from "../../../src/types";
 const aiStudio = { adapter: "google", baseUrl: "https://generativelanguage.googleapis.com", apiKey: "key" } as unknown as OcxProviderConfig;
 const vertex = { adapter: "google", googleMode: "vertex", baseUrl: "https://aiplatform.googleapis.com", apiKey: "key" } as unknown as OcxProviderConfig;
 const cca = { adapter: "google", googleMode: "cloud-code-assist", baseUrl: "https://cloudcode-pa.googleapis.com", apiKey: "token", project: "test-project" } as unknown as OcxProviderConfig;
-
 type CloudCodeAssistEnvelope = {
   generationConfig?: unknown;
   request?: {
