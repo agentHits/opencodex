@@ -60,6 +60,7 @@ import { bindRouteReasoningReplayScope } from "./core-replay";
 import {
   conversationStateBindingFromAuth,
   applyAccountChangeConversationStateScrub,
+  conversationCarriesUploadedFiles,
 } from "./account-change-state";
 import {
   recordAdapterReasoning,
@@ -496,6 +497,17 @@ export async function retryCodexPoolOnAlternateAccount(
   // Exact account selectors may retry the same confirmed account above, but must never resolve
   // an alternate. Quota failures and a refreshed entitlement miss remain terminal.
   if (!retryAuthCtx && (firstAuthCtx.fixedAccount || args.sameAccountOnly === true)) {
+    recordUnmovedTransientOutcome();
+    return { kind: "no-alternate" };
+  }
+  // An uploaded file is readable only by the account it was sent to, so NO alternate can serve
+  // this body. Which account would be chosen does not change that, which is why this asks before
+  // the resolution rather than after it: refusing here reserves no send, cancels no response, and
+  // leaves the caller holding the first account's rejection to return unchanged (#4710). The
+  // initial-dispatch sites answer with a 400 instead, because there is no earlier response there
+  // to fall back to. A same-account replay -- the gated-model 400 ladder above -- is unaffected,
+  // since it never leaves the issuing account.
+  if (!retryAuthCtx && conversationCarriesUploadedFiles(parsed._rawBody)) {
     recordUnmovedTransientOutcome();
     return { kind: "no-alternate" };
   }
