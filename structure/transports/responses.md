@@ -702,3 +702,30 @@ What must not happen is a ladder that charges and then returns through a path th
 nor releases. That is not a lost send; it is a send the request never made, spending an allowance a
 later recovery in the same request then cannot have. `tests/lib/execution-budget-permits.test.ts`
 pins both ladder shapes against exactly that.
+
+## Combo output headroom
+
+A combo child is admitted against two budgets, not one. `resolveInputCeiling` in
+`src/server/responses/input-admission.ts` answers "how much input may this target take", which
+`modelMaxInputTokens` can tighten below the window. The context window itself is what input and
+output actually share. When the caller declared `max_output_tokens`,
+`checkComboTargetInputAdmission` requires both `estimated input <= ceiling` and
+`estimated input + min(declared output, target output ceiling) <= window`, so the output reserve
+is counted once rather than charged twice against an already-tightened input budget.
+
+The refusal is local: HTTP 413 `input_admission_refused` before any upstream bytes are sent, which
+existing combo policy already treats as a safe hop. That ordering is the whole point. A target whose
+total window cannot hold the turn plus the caller's allowance answers 200, emits a few hundred
+tokens and stops on `finish_reason: length`, which the Anthropic surface renders as an output-token
+error naming a limit the model never approached — and by then output has committed and no later
+target may be tried.
+
+Scope is deliberately narrow. Direct and single-target requests keep the loose 2.5x
+pathological-input gate, because they have nowhere to hop. Compaction turns stay exempt. Unknown
+context and a caller that declared no output allowance both remain fail-open, so this invents no
+limits for custom providers. Canonical native slugs that the narrower pinned table does not carry
+resolve their window from the generated in-tree bundle, which is what made the gate inert on the
+route where this was first observed; explicit provider and operator caps may only narrow it.
+
+Regression coverage: `tests/server/input-admission.test.ts` and
+`tests/helpers/combo-context-headroom-cases.ts`.
