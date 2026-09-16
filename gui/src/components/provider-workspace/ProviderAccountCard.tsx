@@ -58,6 +58,12 @@ export default function ProviderAccountCard({
       ? (analyzed.maskedLogin || analyzed.emailLogin)
       : (account.alias?.trim() || analyzed.emailLogin);
 
+  const isAntigravity = Boolean(analyzed.gemini5h || analyzed.geminiWeekly || analyzed.claude5h || analyzed.claudeWeekly);
+  const gemini5hPercent = analyzed.gemini5h ? analyzed.gemini5h.percent : 0;
+  const geminiWeeklyPercent = analyzed.geminiWeekly ? analyzed.geminiWeekly.percent : 0;
+  const claude5hPercent = analyzed.claude5h ? analyzed.claude5h.percent : 0;
+  const claudeWeeklyPercent = analyzed.claudeWeekly ? analyzed.claudeWeekly.percent : 0;
+
   const hasCustomAlias = Boolean(
     account.alias &&
     account.alias.trim() !== "" &&
@@ -183,8 +189,15 @@ export default function ProviderAccountCard({
 
         {/* Compact Bar Columns: Clean Gemini/Claude headers & round % */}
         <div className="pwi-dense-bars-grid">
+          {!isAntigravity && showReauth && (
+            <div style={{ gridColumn: "span 2", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", background: "color-mix(in srgb, var(--amber) 10%, var(--surface))", borderRadius: "4px" }}>
+              <span style={{ fontSize: "11px", color: "var(--amber)", fontWeight: 600 }}>⚠️ {t("pws.healthLabel.reauthRequired")}</span>
+              {onReauth && <button type="button" className="btn btn-primary btn-sm" style={{ height: "22px", padding: "0 8px", fontSize: "11px" }} onClick={() => onReauth(account)}>{t("pws.reauthenticate")}</button>}
+            </div>
+          )}
+
           {/* Gemini */}
-          {(analyzed.gemini5h || analyzed.geminiWeekly) && (
+          {isAntigravity && (
             <div className="pwi-dense-col">
               <div className="pwi-dense-col-title">
                 <span className="pwi-brand-badge-title">
@@ -195,33 +208,29 @@ export default function ProviderAccountCard({
                   {analyzed.geminiExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) })}
                 </span>
               </div>
-              {analyzed.gemini5h && (
-                <div className="pwi-dense-mini-row">
-                  <div className="pwi-dense-mini-label">
-                    <span className="pwi-dense-window-name">{t("pws.gemini5hLabel")} ({Math.round(analyzed.gemini5h.percent)}%)</span>
-                    <span className="pwi-dense-reset-time">{analyzed.gemini5h.resetAt ? formatResetFuture(analyzed.gemini5h.resetAt, t, locale) : ""}</span>
-                  </div>
-                  <div className="pwi-dense-mini-track">
-                    <div className={`pwi-dense-mini-fill${Math.round(analyzed.gemini5h.percent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(analyzed.gemini5h.percent))}%` }} />
-                  </div>
+              <div className="pwi-dense-mini-row">
+                <div className="pwi-dense-mini-label">
+                  <span className="pwi-dense-window-name">{t("pws.gemini5hLabel")} ({Math.round(gemini5hPercent)}%)</span>
+                  <span className="pwi-dense-reset-time">{analyzed.gemini5h?.resetAt ? formatResetFuture(analyzed.gemini5h.resetAt, t, locale) : ""}</span>
                 </div>
-              )}
-              {analyzed.geminiWeekly && (
-                <div className="pwi-dense-mini-row">
-                  <div className="pwi-dense-mini-label">
-                    <span className="pwi-dense-window-name">{t("pws.geminiWeeklyLabel")} ({Math.round(analyzed.geminiWeekly.percent)}%)</span>
-                    <span className="pwi-dense-reset-time">{analyzed.geminiWeekly.resetAt ? formatResetFuture(analyzed.geminiWeekly.resetAt, t, locale) : ""}</span>
-                  </div>
-                  <div className="pwi-dense-mini-track">
-                    <div className={`pwi-dense-mini-fill${Math.round(analyzed.geminiWeekly.percent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(analyzed.geminiWeekly.percent))}%` }} />
-                  </div>
+                <div className="pwi-dense-mini-track">
+                  <div className={`pwi-dense-mini-fill${Math.round(gemini5hPercent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(gemini5hPercent))}%` }} />
                 </div>
-              )}
+              </div>
+              <div className="pwi-dense-mini-row">
+                <div className="pwi-dense-mini-label">
+                  <span className="pwi-dense-window-name">{t("pws.geminiWeeklyLabel")} ({Math.round(geminiWeeklyPercent)}%)</span>
+                  <span className="pwi-dense-reset-time">{analyzed.geminiWeekly?.resetAt ? formatResetFuture(analyzed.geminiWeekly.resetAt, t, locale) : ""}</span>
+                </div>
+                <div className="pwi-dense-mini-track">
+                  <div className={`pwi-dense-mini-fill${Math.round(geminiWeeklyPercent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(geminiWeeklyPercent))}%` }} />
+                </div>
+              </div>
             </div>
           )}
 
           {/* Claude */}
-          {(analyzed.claude5h || analyzed.claudeWeekly) && (
+          {isAntigravity && (
             <div className="pwi-dense-col">
               <div className="pwi-dense-col-title">
                 <span className="pwi-brand-badge-title">
@@ -232,28 +241,24 @@ export default function ProviderAccountCard({
                   {analyzed.claudeExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) })}
                 </span>
               </div>
-              {analyzed.claude5h && (
-                <div className="pwi-dense-mini-row">
-                  <div className="pwi-dense-mini-label">
-                    <span className="pwi-dense-window-name">{t("pws.claude5hLabel")} ({Math.round(analyzed.claude5h.percent)}%)</span>
-                    <span className="pwi-dense-reset-time">{analyzed.claude5h.resetAt ? formatResetFuture(analyzed.claude5h.resetAt, t, locale) : ""}</span>
-                  </div>
-                  <div className="pwi-dense-mini-track">
-                    <div className={`pwi-dense-mini-fill${Math.round(analyzed.claude5h.percent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(analyzed.claude5h.percent))}%` }} />
-                  </div>
+              <div className="pwi-dense-mini-row">
+                <div className="pwi-dense-mini-label">
+                  <span className="pwi-dense-window-name">{t("pws.claude5hLabel")} ({Math.round(claude5hPercent)}%)</span>
+                  <span className="pwi-dense-reset-time">{analyzed.claude5h?.resetAt ? formatResetFuture(analyzed.claude5h.resetAt, t, locale) : ""}</span>
                 </div>
-              )}
-              {analyzed.claudeWeekly && (
-                <div className="pwi-dense-mini-row">
-                  <div className="pwi-dense-mini-label">
-                    <span className="pwi-dense-window-name">{t("pws.claudeWeeklyLabel")} ({Math.round(analyzed.claudeWeekly.percent)}%)</span>
-                    <span className="pwi-dense-reset-time">{analyzed.claudeWeekly.resetAt ? formatResetFuture(analyzed.claudeWeekly.resetAt, t, locale) : ""}</span>
-                  </div>
-                  <div className="pwi-dense-mini-track">
-                    <div className={`pwi-dense-mini-fill${Math.round(analyzed.claudeWeekly.percent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(analyzed.claudeWeekly.percent))}%` }} />
-                  </div>
+                <div className="pwi-dense-mini-track">
+                  <div className={`pwi-dense-mini-fill${Math.round(claude5hPercent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(claude5hPercent))}%` }} />
                 </div>
-              )}
+              </div>
+              <div className="pwi-dense-mini-row">
+                <div className="pwi-dense-mini-label">
+                  <span className="pwi-dense-window-name">{t("pws.claudeWeeklyLabel")} ({Math.round(claudeWeeklyPercent)}%)</span>
+                  <span className="pwi-dense-reset-time">{analyzed.claudeWeekly?.resetAt ? formatResetFuture(analyzed.claudeWeekly.resetAt, t, locale) : ""}</span>
+                </div>
+                <div className="pwi-dense-mini-track">
+                  <div className={`pwi-dense-mini-fill${Math.round(claudeWeeklyPercent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(claudeWeeklyPercent))}%` }} />
+                </div>
+              </div>
             </div>
           )}
 
@@ -347,7 +352,7 @@ export default function ProviderAccountCard({
 
       {/* 2-Column Quotas for Gemini and Claude */}
       <div className="pwi-card-quotas-grid">
-        {(analyzed.gemini5h || analyzed.geminiWeekly) && (
+        {isAntigravity && (
           <div className="pwi-quota-col">
             <div className="pwi-quota-col-head">
               <span className="pwi-brand-badge-title">
@@ -358,12 +363,12 @@ export default function ProviderAccountCard({
                 {analyzed.geminiExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) })}
               </span>
             </div>
-            {analyzed.gemini5h && renderSingleQuotaBar(t("pws.gemini5hLabel"), analyzed.gemini5h.percent, analyzed.gemini5h.resetAt)}
-            {analyzed.geminiWeekly && renderSingleQuotaBar(t("pws.geminiWeeklyLabel"), analyzed.geminiWeekly.percent, analyzed.geminiWeekly.resetAt)}
+            {renderSingleQuotaBar(t("pws.gemini5hLabel"), gemini5hPercent, analyzed.gemini5h?.resetAt)}
+            {renderSingleQuotaBar(t("pws.geminiWeeklyLabel"), geminiWeeklyPercent, analyzed.geminiWeekly?.resetAt)}
           </div>
         )}
 
-        {(analyzed.claude5h || analyzed.claudeWeekly) && (
+        {isAntigravity && (
           <div className="pwi-quota-col">
             <div className="pwi-quota-col-head">
               <span className="pwi-brand-badge-title">
@@ -374,12 +379,19 @@ export default function ProviderAccountCard({
                 {analyzed.claudeExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) })}
               </span>
             </div>
-            {analyzed.claude5h && renderSingleQuotaBar(t("pws.claude5hLabel"), analyzed.claude5h.percent, analyzed.claude5h.resetAt)}
-            {analyzed.claudeWeekly && renderSingleQuotaBar(t("pws.claudeWeeklyLabel"), analyzed.claudeWeekly.percent, analyzed.claudeWeekly.resetAt)}
+            {renderSingleQuotaBar(t("pws.claude5hLabel"), claude5hPercent, analyzed.claude5h?.resetAt)}
+            {renderSingleQuotaBar(t("pws.claudeWeeklyLabel"), claudeWeeklyPercent, analyzed.claudeWeekly?.resetAt)}
           </div>
         )}
 
-        {!analyzed.gemini5h && !analyzed.geminiWeekly && !analyzed.claude5h && !analyzed.claudeWeekly && (
+        {!isAntigravity && showReauth && (
+          <div style={{ gridColumn: "span 2", padding: "12px 14px", background: "color-mix(in srgb, var(--amber) 10%, var(--surface))", border: "1px solid color-mix(in srgb, var(--amber) 30%, transparent)", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+            <span style={{ fontSize: "12px", color: "var(--amber)", fontWeight: 600 }}>⚠️ {t("pws.healthLabel.reauthRequired")}</span>
+            {onReauth && <button type="button" className="btn btn-primary btn-sm" onClick={() => onReauth(account)}>{t("pws.reauthenticate")}</button>}
+          </div>
+        )}
+
+        {!isAntigravity && !showReauth && (
           <div className="pwi-quota-col" style={{ gridColumn: "span 2" }}>
             {renderSingleQuotaBar("5-Hour", analyzed.generic5h?.percent, analyzed.generic5h?.resetAt)}
             {renderSingleQuotaBar(t("pws.windowWeeklyLabel"), analyzed.genericWeekly?.percent, analyzed.genericWeekly?.resetAt)}
