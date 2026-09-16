@@ -33,7 +33,11 @@ test("catalog readback requires a root string rather than a nested namesake", ()
 
 // Full injectCodexConfig runs in a subprocess with isolated CODEX_HOME/OPENCODEX_HOME so
 // module-level path constants bind to the temp dirs (same pattern as codex-journal.test.ts).
-function runInject(codexHome: string, ocxHome: string, configJson = "{}"): { stdout: string; status: number } {
+function runInject(
+  codexHome: string,
+  ocxHome: string,
+  configJson = "{}",
+): { stdout: string; stderr: string; status: number } {
   const script = `
     const { injectCodexConfig } = require("./src/codex/inject");
     injectCodexConfig(10100, JSON.parse(process.env.TEST_OCX_CONFIG)).then(r => {
@@ -46,7 +50,11 @@ function runInject(codexHome: string, ocxHome: string, configJson = "{}"): { std
     encoding: "utf8",
     timeout: SPAWN_BUDGET_MS - 5_000,
   });
-  return { stdout: result.stdout?.trim() ?? "", status: result.status ?? 1 };
+  return {
+    stdout: result.stdout?.trim() ?? "",
+    stderr: result.stderr?.trim() ?? "",
+    status: result.status ?? 1,
+  };
 }
 
 function runRestore(codexHome: string, ocxHome: string, asyncRestore = false): { stdout: string; status: number } {
