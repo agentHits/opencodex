@@ -58,7 +58,7 @@ export default function ProviderAccountCard({
       ? (analyzed.maskedLogin || analyzed.emailLogin)
       : (account.alias?.trim() || analyzed.emailLogin);
 
-  const isAntigravity = Boolean(analyzed.gemini5h || analyzed.geminiWeekly || analyzed.claude5h || analyzed.claudeWeekly);
+  const isAntigravity = analyzed.isAntigravity;
   const gemini5hPercent = analyzed.gemini5h?.percent;
   const geminiWeeklyPercent = analyzed.geminiWeekly?.percent;
   const claude5hPercent = analyzed.claude5h?.percent;
