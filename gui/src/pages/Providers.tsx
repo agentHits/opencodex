@@ -445,13 +445,13 @@ export default function Providers({ apiBase }: { apiBase: string }) {
    * so both must fire or the rows beside each account keep their old numbers. That read's
    * forced enrichment must settle as well as the matching provider-report epoch.
    */
-  const refreshProviderQuota = useCallback((provider: string): Promise<boolean> => {
+  const refreshProviderQuota = useCallback((provider: string, accountId?: string): Promise<boolean> => {
     const configured = config?.providers[provider];
     const mode = configured?.authMode;
     const readAccounts = configured && isAccountProvider(provider, configured)
       ? () => codexPool.load(true, { validatePending: true })
       : mode === "oauth"
-        ? () => fetchAccountSets([provider], true)
+        ? () => fetchAccountSets([provider], true, accountId)
         : mode === "forward" || mode === "local"
           ? undefined
           : () => fetchKeyPools([provider], true);

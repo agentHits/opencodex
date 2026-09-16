@@ -59,10 +59,10 @@ export default function ProviderAccountCard({
       : (account.alias?.trim() || analyzed.emailLogin);
 
   const isAntigravity = Boolean(analyzed.gemini5h || analyzed.geminiWeekly || analyzed.claude5h || analyzed.claudeWeekly);
-  const gemini5hPercent = analyzed.gemini5h ? analyzed.gemini5h.percent : 0;
-  const geminiWeeklyPercent = analyzed.geminiWeekly ? analyzed.geminiWeekly.percent : 0;
-  const claude5hPercent = analyzed.claude5h ? analyzed.claude5h.percent : 0;
-  const claudeWeeklyPercent = analyzed.claudeWeekly ? analyzed.claudeWeekly.percent : 0;
+  const gemini5hPercent = analyzed.gemini5h?.percent;
+  const geminiWeeklyPercent = analyzed.geminiWeekly?.percent;
+  const claude5hPercent = analyzed.claude5h?.percent;
+  const claudeWeeklyPercent = analyzed.claudeWeekly?.percent;
 
   const hasCustomAlias = Boolean(
     account.alias &&
@@ -89,7 +89,23 @@ export default function ProviderAccountCard({
   };
 
   const renderSingleQuotaBar = (label: string, percent: number | undefined, resetAt: number | undefined) => {
-    if (percent === undefined) return null;
+    if (percent === undefined) {
+      return (
+        <div className="pwi-quota-item" style={{ opacity: 0.45 }}>
+          <div className="pwi-quota-item-head">
+            <span className="pwi-quota-title">{label}</span>
+            <span className="pwi-quota-reset">—</span>
+          </div>
+          <div className="pwi-quota-track">
+            <div className="pwi-quota-fill" style={{ width: "0%" }} />
+          </div>
+          <div className="pwi-quota-item-foot">
+            <span className="pwi-quota-used">—</span>
+            <span className="pwi-quota-free">—</span>
+          </div>
+        </div>
+      );
+    }
     const rounded = Math.round(percent);
     const isFull = rounded >= 100 || percent >= 99.5;
     const resetText = resetAt ? formatResetFuture(resetAt, t, locale) : "";
@@ -210,20 +226,20 @@ export default function ProviderAccountCard({
               </div>
               <div className="pwi-dense-mini-row">
                 <div className="pwi-dense-mini-label">
-                  <span className="pwi-dense-window-name">{t("pws.gemini5hLabel")} ({Math.round(gemini5hPercent)}%)</span>
-                  <span className="pwi-dense-reset-time">{analyzed.gemini5h?.resetAt ? formatResetFuture(analyzed.gemini5h.resetAt, t, locale) : ""}</span>
+                  <span className="pwi-dense-window-name">{t("pws.gemini5hLabel")} {gemini5hPercent !== undefined ? `(${Math.round(gemini5hPercent)}%)` : "—"}</span>
+                  <span className="pwi-dense-reset-time">{analyzed.gemini5h?.resetAt ? formatResetFuture(analyzed.gemini5h.resetAt, t, locale) : (gemini5hPercent === undefined ? "—" : "")}</span>
                 </div>
                 <div className="pwi-dense-mini-track">
-                  <div className={`pwi-dense-mini-fill${Math.round(gemini5hPercent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(gemini5hPercent))}%` }} />
+                  <div className={`pwi-dense-mini-fill${(gemini5hPercent ?? 0) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(gemini5hPercent ?? 0))}%` }} />
                 </div>
               </div>
               <div className="pwi-dense-mini-row">
                 <div className="pwi-dense-mini-label">
-                  <span className="pwi-dense-window-name">{t("pws.geminiWeeklyLabel")} ({Math.round(geminiWeeklyPercent)}%)</span>
-                  <span className="pwi-dense-reset-time">{analyzed.geminiWeekly?.resetAt ? formatResetFuture(analyzed.geminiWeekly.resetAt, t, locale) : ""}</span>
+                  <span className="pwi-dense-window-name">{t("pws.geminiWeeklyLabel")} {geminiWeeklyPercent !== undefined ? `(${Math.round(geminiWeeklyPercent)}%)` : "—"}</span>
+                  <span className="pwi-dense-reset-time">{analyzed.geminiWeekly?.resetAt ? formatResetFuture(analyzed.geminiWeekly.resetAt, t, locale) : (geminiWeeklyPercent === undefined ? "—" : "")}</span>
                 </div>
                 <div className="pwi-dense-mini-track">
-                  <div className={`pwi-dense-mini-fill${Math.round(geminiWeeklyPercent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(geminiWeeklyPercent))}%` }} />
+                  <div className={`pwi-dense-mini-fill${(geminiWeeklyPercent ?? 0) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(geminiWeeklyPercent ?? 0))}%` }} />
                 </div>
               </div>
             </div>
@@ -243,20 +259,20 @@ export default function ProviderAccountCard({
               </div>
               <div className="pwi-dense-mini-row">
                 <div className="pwi-dense-mini-label">
-                  <span className="pwi-dense-window-name">{t("pws.claude5hLabel")} ({Math.round(claude5hPercent)}%)</span>
-                  <span className="pwi-dense-reset-time">{analyzed.claude5h?.resetAt ? formatResetFuture(analyzed.claude5h.resetAt, t, locale) : ""}</span>
+                  <span className="pwi-dense-window-name">{t("pws.claude5hLabel")} {claude5hPercent !== undefined ? `(${Math.round(claude5hPercent)}%)` : "—"}</span>
+                  <span className="pwi-dense-reset-time">{analyzed.claude5h?.resetAt ? formatResetFuture(analyzed.claude5h.resetAt, t, locale) : (claude5hPercent === undefined ? "—" : "")}</span>
                 </div>
                 <div className="pwi-dense-mini-track">
-                  <div className={`pwi-dense-mini-fill${Math.round(claude5hPercent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(claude5hPercent))}%` }} />
+                  <div className={`pwi-dense-mini-fill${(claude5hPercent ?? 0) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(claude5hPercent ?? 0))}%` }} />
                 </div>
               </div>
               <div className="pwi-dense-mini-row">
                 <div className="pwi-dense-mini-label">
-                  <span className="pwi-dense-window-name">{t("pws.claudeWeeklyLabel")} ({Math.round(claudeWeeklyPercent)}%)</span>
-                  <span className="pwi-dense-reset-time">{analyzed.claudeWeekly?.resetAt ? formatResetFuture(analyzed.claudeWeekly.resetAt, t, locale) : ""}</span>
+                  <span className="pwi-dense-window-name">{t("pws.claudeWeeklyLabel")} {claudeWeeklyPercent !== undefined ? `(${Math.round(claudeWeeklyPercent)}%)` : "—"}</span>
+                  <span className="pwi-dense-reset-time">{analyzed.claudeWeekly?.resetAt ? formatResetFuture(analyzed.claudeWeekly.resetAt, t, locale) : (claudeWeeklyPercent === undefined ? "—" : "")}</span>
                 </div>
                 <div className="pwi-dense-mini-track">
-                  <div className={`pwi-dense-mini-fill${Math.round(claudeWeeklyPercent) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(claudeWeeklyPercent))}%` }} />
+                  <div className={`pwi-dense-mini-fill${(claudeWeeklyPercent ?? 0) >= 100 ? " pwi-fill-warn" : ""}`} style={{ width: `${Math.min(100, Math.round(claudeWeeklyPercent ?? 0))}%` }} />
                 </div>
               </div>
             </div>

@@ -180,7 +180,7 @@ export function useProviderAccountPools(deps: {
     }
   }, []);
 
-  const fetchAccountSets = useCallback(async (providers: string[], refresh = false): Promise<boolean> => {
+  const fetchAccountSets = useCallback(async (providers: string[], refresh = false, targetAccountId?: string): Promise<boolean> => {
     if (!aliveRef.current || !mountedRef.current || serverRef.current !== apiBase) return false;
     const uniqueProviders = [...new Set(providers)];
     setAccountLoadStates(current => {
@@ -218,7 +218,8 @@ export function useProviderAccountPools(deps: {
           const currentQuota = () => aliveRef.current && mountedRef.current && serverRef.current === apiBase
             && quotaGenerationRef.current[key] === quotaGeneration;
           try {
-            const quotaData = await readRoster<{ activeAccountId?: string | null; accounts?: OAuthAccount[] }>(`${url}&quota=1${refresh ? "&refresh=1" : ""}`);
+            const targetQuery = targetAccountId ? `&accountId=${encodeURIComponent(targetAccountId)}` : "";
+            const quotaData = await readRoster<{ activeAccountId?: string | null; accounts?: OAuthAccount[] }>(`${url}&quota=1${refresh ? "&refresh=1" : ""}${targetQuery}`);
             if (!Array.isArray(quotaData.accounts)) throw new Error("Invalid account quota roster");
             if (!currentQuota()) return false;
             const enriched = selectionRows(quotaData.accounts, quotaData.activeAccountId);

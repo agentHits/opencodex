@@ -231,3 +231,92 @@ describe("account-quota-analysis", () => {
   });
 });
 
+
+import {
+  formatTokenAmount,
+  computeOAuthAccountLogLabel,
+  calculatePoolTokensEstimate,
+  DEFAULT_CAPACITIES,
+} from "../../gui/src/components/provider-workspace/account-tokens-estimate";
+
+describe("account-tokens-estimate", () => {
+  test("formatTokenAmount formats 0, millions and billions with ~ prefixes", () => {
+    expect(formatTokenAmount(0)).toEqual({ raw: 0, m: "0M", b: "~0.00B", display: "0M (~0.00B)" });
+    expect(formatTokenAmount(240_000_000)).toEqual({ raw: 240_000_000, m: "~240M", b: "~0.24B", display: "~240M (~0.24B)" });
+    expect(formatTokenAmount(1_920_000_000)).toEqual({ raw: 1_920_000_000, m: "~1 920M", b: "~1.92B", display: "~1 920M (~1.92B)" });
+  });
+
+  test("computeOAuthAccountLogLabel computes o<hex6> matching server log label", () => {
+    const label = computeOAuthAccountLogLabel("821e52aa9f60ac52f94f4274d11f850a", "google-antigravity");
+    expect(label).toBe("od3b8bb");
+  });
+
+  test("calculatePoolTokensEstimate uses baseline capacities when logs are empty", () => {
+    const acc1 = analyzeAccountQuota({
+      id: "acc-1", email: "user1@example.com", active: true, quotaMode: "probe",
+      quota: { updatedAt: 1, customWindows: [
+        { label: "Gem", percent: 0 },
+        { label: "Cla", percent: 0 },
+      ] },
+    });
+    const est = calculatePoolTokensEstimate([acc1], "google-antigravity", [], Date.now(), true);
+    expect(est.isCalibratedFromLogs).toBe(false);
+    expect(est.gemini5h?.raw).toBe(100_000_000);
+    expect(est.gemini5h?.m).toBe("~100M");
+    expect(est.claude5h?.raw).toBe(30_000_000);
+    expect(est.claude5h?.m).toBe("~30M");
+    expect(est.total5h.raw).toBe(130_000_000);
+    expect(est.total5h.m).toBe("~130M");
+    expect(est.total5h.b).toBe("~0.13B");
+  });
+
+  test("calculatePoolTokensEstimate calibrates empirical capacity against actual usage logs", () => {
+    const now = Date.now();
+    const acc1 = analyzeAccountQuota({
+      id: "acc-1", email: "user1@example.com", active: true, quotaMode: "probe",
+      quota: { updatedAt: now, customWindows: [
+        { label: "Gem", percent: 50 }, // 50% used
+        { label: "Cla", percent: 0 },
+      ] },
+    });
+
+    const label = computeOAuthAccountLogLabel("acc-1", "google-antigravity");
+
+    // 50M tokens consumed in logs within last 5h
+    const logs = [
+      {
+        timestamp: now - 1000,
+        model: "gemini-3.8-flash",
+        accountLogLabel: label,
+        totalTokens: 50_000_000,
+      }
+    ];
+
+    const est = calculatePoolTokensEstimate([acc1], "google-antigravity", logs, now, true);
+    expect(est.isCalibratedFromLogs).toBe(true);
+    // 50M used at 50% implies 100% capacity is 100M
+    expect(est.gemini5hCapacity).toBe(100_000_000);
+    // Remaining at 50% is 50M
+    expect(est.gemini5h?.raw).toBe(50_000_000);
+    expect(est.gemini5h?.m).toBe("~50M");
+    expect(est.gemini5h?.b).toBe("~0.05B");
+  });
+
+  test("exhausted accounts contribute 0 remaining tokens", () => {
+    const now = Date.now();
+    const acc1 = analyzeAccountQuota({
+      id: "acc-spent", email: "spent@example.com", active: true, quotaMode: "probe",
+      quota: { updatedAt: now, customWindows: [
+        { label: "Gem", percent: 100 },
+        { label: "Cla", percent: 100 },
+      ] },
+    });
+
+    const est = calculatePoolTokensEstimate([acc1], "google-antigravity", [], now, true);
+    expect(est.gemini5h?.raw).toBe(0);
+    expect(est.claude5h?.raw).toBe(0);
+    expect(est.total5h.raw).toBe(0);
+    expect(est.total5h.m).toBe("0M");
+    expect(est.total5h.b).toBe("~0.00B");
+  });
+});

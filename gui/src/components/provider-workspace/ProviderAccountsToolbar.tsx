@@ -1,3 +1,4 @@
+import { usePoolTokensEstimate } from "./account-tokens-estimate";
 /**
  * ProviderAccountsToolbar.tsx — Top statistics summary, global quota refresh,
  * unified single dropdown filter button, email/alias/masked toggle, card/compact
@@ -16,6 +17,8 @@ import type {
 } from "./account-quota-analysis";
 
 export interface ProviderAccountsToolbarProps {
+  apiBase?: string;
+  providerName?: string;
   analyzedList: AnalyzedAccountQuota[];
   showModelFamilies?: boolean;
   filter: AccountFilterKey;
@@ -40,6 +43,8 @@ export interface ProviderAccountsToolbarProps {
 }
 
 export default function ProviderAccountsToolbar({
+  apiBase = "",
+  providerName = "google-antigravity",
   analyzedList,
   showModelFamilies = false,
   filter,
@@ -63,6 +68,14 @@ export default function ProviderAccountsToolbar({
   onSelectPoolStrategy,
 }: ProviderAccountsToolbarProps) {
   const t = useT();
+  const tokensEstimate = usePoolTokensEstimate({
+    apiBase,
+    providerName,
+    analyzedList,
+    showModelFamilies,
+    refreshingAll,
+  });
+
   const [limitsMenuOpen, setLimitsMenuOpen] = useState(false);
   const limitsMenuRef = useRef<HTMLDivElement>(null);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
@@ -192,6 +205,7 @@ export default function ProviderAccountsToolbar({
     <div className="pwi-accounts-controls-wrapper">
       {/* 1. Summary Stats Hub */}
       <div className="pwi-accounts-stats-card">
+        <div className="pwi-stats-top-row">
         <div className="pwi-stats-items-row">
           <div className="pwi-stat-unit">
             <span className="pwi-stat-lbl">{t("pws.statsTotal")}</span>
@@ -295,6 +309,116 @@ export default function ProviderAccountsToolbar({
             </button>
           </div>
         )}
+        </div>
+
+        {/* 1b. Remaining Tokens 3-Column Grid */}
+        <div className="pwi-stats-divider" />
+        <div className="pwi-tokens-section">
+          <div className="pwi-tokens-header-bar">
+            <span className="pwi-stat-lbl">{t("pws.tokensEstimateTitle")}</span>
+            <a
+              href="#logs"
+              className="pwi-stat-hint-link"
+              title={t("pws.tokensCalibratedTooltip")}
+            >
+              ⚡ {t(tokensEstimate.isCalibratedFromLogs ? "pws.tokensCalibratedFromLogs" : "pws.tokensEstimatedBaseline")}
+            </a>
+          </div>
+
+          <div className={showModelFamilies ? "pwi-tokens-grid" : "pwi-tokens-grid pwi-tokens-grid--dual"}>
+            {showModelFamilies ? (
+              <>
+                {/* Column 1: Claude */}
+                <div className="pwi-tokens-card pwi-tokens-card--claude">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--orange">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.tokensColClaude")}</span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel5h")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.claude5h?.m ?? "0M"}</span>
+                      <span className="pwi-stat-tag-orange">{tokensEstimate.claude5h?.b ?? "~0.00B"}</span>
+                    </div>
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel7d")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.claudeWeekly?.m ?? "0M"}</span>
+                      <span className="pwi-stat-tag-orange">{tokensEstimate.claudeWeekly?.b ?? "~0.00B"}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Column 2: Gemini */}
+                <div className="pwi-tokens-card pwi-tokens-card--gemini">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--blue">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.tokensColGemini")}</span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel5h")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-blue">{tokensEstimate.gemini5h?.m ?? "0M"}</span>
+                      <span className="pwi-stat-tag-blue">{tokensEstimate.gemini5h?.b ?? "~0.00B"}</span>
+                    </div>
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel7d")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-blue">{tokensEstimate.geminiWeekly?.m ?? "0M"}</span>
+                      <span className="pwi-stat-tag-blue">{tokensEstimate.geminiWeekly?.b ?? "~0.00B"}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Column 3: Total */}
+                <div className="pwi-tokens-card pwi-tokens-card--total">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--green">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.tokensColTotal")}</span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel5h")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.total5h.m}</span>
+                      <span className="pwi-stat-tag-green">{tokensEstimate.total5h.b}</span>
+                    </div>
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-label">{t("pws.tokensLabel7d")}:</span>
+                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.totalWeekly.m}</span>
+                      <span className="pwi-stat-tag-green">{tokensEstimate.totalWeekly.b}</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="pwi-tokens-card pwi-tokens-card--claude">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--orange">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.tokensGeneric5h")}</span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-value pwi-text-orange">{tokensEstimate.total5h.m}</span>
+                      <span className="pwi-stat-tag-orange">{tokensEstimate.total5h.b}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pwi-tokens-card pwi-tokens-card--total">
+                  <div className="pwi-tokens-card-head">
+                    <span className="pwi-tokens-dot pwi-tokens-dot--green">●</span>
+                    <span className="pwi-tokens-card-title">{t("pws.tokensGenericWeekly")}</span>
+                  </div>
+                  <div className="pwi-tokens-card-metrics">
+                    <div className="pwi-tokens-metric-row">
+                      <span className="pwi-tokens-metric-value pwi-text-green">{tokensEstimate.totalWeekly.m}</span>
+                      <span className="pwi-stat-tag-green">{tokensEstimate.totalWeekly.b}</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* 2. Balanced 2-Row Controls Panel */}

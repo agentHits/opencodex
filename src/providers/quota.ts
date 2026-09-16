@@ -4,7 +4,7 @@ import { resolveEnvValue } from "../config";
 import { getAccountCredential, getAccountSet } from "../oauth/store";
 import { apiKeyPoolEntryId } from "./api-keys";
 import { captureConfigGeneration, sweepExpiredOnWrite } from "../lib/state-store-sweeper";
-import { ACCOUNT_QUOTA_TTL_MS, CACHE_TTL_MS } from "./quota-wire";
+import { ACCOUNT_QUOTA_TTL_MS, ACTIVE_ACCOUNT_QUOTA_TTL_MS, INACTIVE_ACCOUNT_QUOTA_TTL_MS, CACHE_TTL_MS } from "./quota-wire";
 import { replaceCachedProviderQuotas } from "./quota-routing-cache";
 import {
   commitKiroAccountUsageState,
@@ -51,6 +51,7 @@ import {
   mayCommitAccountQuotaKey,
   mayCommitProviderQuotaKey,
   normalizeAnthropicQuota,
+  persistAccountQuotaCache,
   supportsPerAccountQuota,
   type AccountQuotaCacheEntry,
   type ProviderAccountQuota,
@@ -423,11 +424,18 @@ async function fetchAccountQuota(
 ): Promise<AccountQuotaCacheEntry> {
   if (!supportsPerAccountQuota(provider)) return { ts: Date.now(), quota: null, unavailable: true };
   if (explicitAccountReader(provider)) return fetchExplicitAccountQuota(provider, accountId, forceRefresh, providerConfig);
-  if (provider === "anthropic") hydrateAccountQuotaCache();
+  hydrateAccountQuotaCache();
   const key = accountCacheKey(provider, accountId);
   const writerGeneration = captureConfigGeneration();
   const cached = accountQuotaCache.get(key);
-  if (!forceRefresh && cached && Date.now() - cached.ts < ACCOUNT_QUOTA_TTL_MS) {
+  const set = getAccountSet(provider);
+  const isActive = set?.activeAccountId === accountId;
+  const ttl = isActive ? ACTIVE_ACCOUNT_QUOTA_TTL_MS : INACTIVE_ACCOUNT_QUOTA_TTL_MS;
+  const resetPassed = !isActive && cached?.quota?.customWindows?.some(w => {
+    return typeof w.resetAt === "number" && w.resetAt <= Date.now() && w.percent > 0;
+  });
+
+  if (!forceRefresh && cached && (Date.now() - cached.ts < ttl) && !resetPassed) {
     if (provider === "google-antigravity" && cached.quotaFailure && cached.quotaFailureIsCurrent?.() !== true) return { ...cached, quotaFailure: undefined };
     return provider === "anthropic" ? { ...cached, quota: normalizeAnthropicQuota(cached.quota, Date.now()) } : cached;
   }
@@ -466,7 +474,23 @@ async function fetchAccountQuota(
           diagnosticIdentity = credential?.access === token ? antigravityQuotaDiagnosticIdentity(accountId, credential) : undefined;
           if (!diagnosticIdentity || !credential?.projectId) throw new Error("antigravity account unavailable");
           const result = await probeAntigravityUsageQuota(token, credential.projectId);
-          quota = result.kind === "available" ? result.quota : null;
+          if (result.kind === "available") {
+            quota = result.quota;
+            if (result.source === "google-antigravity:fetchAvailableModels" && cached?.quota?.customWindows) {
+              const existingWeekly = cached.quota.customWindows.filter(w => /week/i.test(w.label));
+              if (existingWeekly.length > 0) {
+                const merged = [...(quota.customWindows ?? [])];
+                for (const w of existingWeekly) {
+                  if (!merged.some(m => m.label === w.label)) {
+                    merged.push(w);
+                  }
+                }
+                quota = { ...quota, customWindows: merged };
+              }
+            }
+          } else {
+            quota = null;
+          }
           if (result.kind === "unavailable") quotaFailure = result.failure;
         } else if (provider === "anthropic") {
           quota = await fetchAnthropicUsageQuota(token);
@@ -497,6 +521,7 @@ async function fetchAccountQuota(
       };
       if (mayCommitAccountQuotaKey(key, writerGeneration)) {
         accountQuotaCache.set(key, entry);
+        persistAccountQuotaCache();
         // Exhaustion state rides the SAME commit guard as the quota row: a probe from a
         // superseded config generation must not publish either half.
         if (provider === "kiro") commitKiroAccountUsageState(key, kiroSnapshot);
@@ -526,6 +551,19 @@ async function fetchAccountQuota(
 }
 
 /**
+ * Non-blocking priority background probe for the active account after serving a turn.
+ * Debounced at 30s so high-frequency prompt turns do not hammer the quota API.
+ */
+export function backgroundRefreshActiveAccountQuota(provider: string, accountId: string): void {
+  if (!supportsPerAccountQuota(provider)) return;
+  const key = accountCacheKey(provider, accountId);
+  const cached = accountQuotaCache.get(key);
+  if (cached && Date.now() - cached.ts < 30_000) return;
+  if (accountQuotaInflight.has(key)) return;
+  void fetchAccountQuota(provider, accountId, true).catch(() => {});
+}
+
+/**
  * Per-account quota rows for a provider's logged-in accounts. Probes run in parallel; a
  * single failing account never blocks the others.
  */
@@ -533,12 +571,20 @@ export async function fetchProviderAccountQuotas(
   provider: string,
   forceRefresh = false,
   providerConfig?: OcxProviderConfig,
+  targetAccountId?: string | null,
 ): Promise<ProviderAccountQuota[]> {
   if (!supportsPerAccountQuota(provider)) return [];
   const set = getAccountSet(provider);
   if (!set) return [];
-  return mapQuotaRoster(set.accounts, async account => {
-    const entry = await fetchAccountQuota(provider, account.id, forceRefresh, providerConfig);
+  const activeId = set.activeAccountId;
+  const orderedAccounts = [...set.accounts].sort((a, b) => {
+    if (a.id === activeId) return -1;
+    if (b.id === activeId) return 1;
+    return 0;
+  });
+  return mapQuotaRoster(orderedAccounts, async account => {
+    const shouldForce = forceRefresh && (!targetAccountId || account.id === targetAccountId);
+    const entry = await fetchAccountQuota(provider, account.id, shouldForce, providerConfig);
     const result: ProviderAccountQuota = {
       accountId: account.id,
       quota: provider === "anthropic" ? normalizeAnthropicQuota(entry.quota, Date.now()) : entry.quota,

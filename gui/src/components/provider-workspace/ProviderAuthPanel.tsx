@@ -1,3 +1,4 @@
+/* oxlint-disable react/react-compiler */
 /**
  * ProviderAuthPanel — OAuth accounts, API-key pool, and forward-auth
  * embedding for the workspace Settings tab (WP091). Consumes WP040+WP060
@@ -287,13 +288,13 @@ export default function ProviderAuthPanel({
     const filtered = filterAccounts(analyzedAccounts, accountFilter, accountSearch);
     return sortAccounts(filtered, accountSort, accountFilter);
   }, [analyzedAccounts, accountFilter, accountSearch, accountSort]);
-  const refreshQuota = async () => {
+  const refreshQuota = async (accountId?: string) => {
     if (!onRefreshQuota || refreshingQuota) return;
     const generation = ++quotaRefreshGeneration.current;
     // Cleared on click so a previous "refreshed" cannot sit under a later failure.
     setQuotaRefreshState({ identity: connectionIdentity, refreshing: true, result: null });
     try {
-      const ok = await onRefreshQuota(item.name);
+      const ok = await onRefreshQuota(item.name, accountId);
       if (quotaRefreshGeneration.current === generation) setQuotaRefreshState({ identity: connectionIdentity, refreshing: false,
         result: { ok, text: t(ok ? "pws.quotaCheckCompleted" : "codexAuth.quotaRefreshFailed") } });
     } catch {
@@ -507,6 +508,8 @@ export default function ProviderAuthPanel({
             {accounts.length > 0 && (
               <>
                 <ProviderAccountsToolbar
+                  apiBase={apiBase}
+                  providerName={item.name}
                   analyzedList={analyzedAccounts}
                   showModelFamilies={showModelFamilies}
                   filter={accountFilter}
@@ -544,7 +547,7 @@ export default function ProviderAuthPanel({
                         onSwitch={acc => void authHandlers.onSwitchAccount(item.name, acc)}
                         onRefreshSingle={canRefreshQuota ? acc => {
                           setRefreshingAccountId(acc.id);
-                          void refreshQuota().finally(() => setRefreshingAccountId(null));
+                          void refreshQuota(acc.id).finally(() => setRefreshingAccountId(null));
                         } : undefined}
                         onEditAlias={acc => void authHandlers.onEditAlias(item.name, "oauth", acc.id, acc.alias)}
                         onRemove={acc => setAccountToRemove(acc)}

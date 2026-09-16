@@ -147,10 +147,14 @@ export function accountResetTimestamp(
   const family = classifyModelFamilyForQuota(provider, requestedModelId);
   const windows = (quota.customWindows ?? []).filter(w => !family || windowMatchesFamily(w.label, family));
   const weekly = windows.find(w => /week/i.test(w.label));
-  const rawReset = weekly?.resetAt ?? quota.weeklyResetAt ?? windows[0]?.resetAt ?? quota.fiveHourResetAt;
+  let rawReset = weekly?.resetAt ?? quota.weeklyResetAt;
+  if (rawReset === undefined && !weekly && quota.weeklyResetAt === undefined && provider !== "google-antigravity" && provider !== "anthropic") {
+    const fiveHour = windows.find(w => /5h|five/i.test(w.label)) ?? windows[0];
+    rawReset = fiveHour?.resetAt ?? quota.fiveHourResetAt;
+  }
   if (typeof rawReset !== "number" || !Number.isFinite(rawReset)) return null;
   const ms = rawReset < 1e11 ? rawReset * 1000 : rawReset;
-  return ms > now ? ms : null;
+  return ms;
 }
 
 /**
@@ -168,14 +172,23 @@ export function rankAccountsByResetFirst(
   const healthy = ranked.filter(id => !isAccountQuotaExhausted(provider, id, requestedModelId));
   if (healthy.length < 2) return ranked;
 
-  const withReset = healthy.map((id, index) => ({
-    id,
-    resetAt: accountResetTimestamp(provider, id, requestedModelId, now) ?? Number.POSITIVE_INFINITY,
-    headroom: headroomOf(provider, id, requestedModelId) ?? 0,
-    index,
-  }));
+  const withReset = healthy.map((id, index) => {
+    const rawTs = accountResetTimestamp(provider, id, requestedModelId, now);
+    const resetAt = rawTs !== null ? Math.max(rawTs, now) : Number.POSITIVE_INFINITY;
+    return {
+      id,
+      resetAt,
+      headroom: headroomOf(provider, id, requestedModelId) ?? 0,
+      index,
+    };
+  });
 
-  withReset.sort((a, b) => (a.resetAt - b.resetAt) || (b.headroom - a.headroom) || (a.index - b.index));
+  withReset.sort((a, b) => {
+    if (a.resetAt !== b.resetAt) {
+      return a.resetAt - b.resetAt;
+    }
+    return (b.headroom - a.headroom) || (a.index - b.index);
+  });
   const sortedHealthy = withReset.map(r => r.id);
   const exhausted = ranked.filter(id => isAccountQuotaExhausted(provider, id, requestedModelId));
   return [...sortedHealthy, ...exhausted];

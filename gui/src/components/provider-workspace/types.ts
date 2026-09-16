@@ -58,6 +58,7 @@ export type OAuthAccountRow = AccountQuotaReading & {
   email?: string;
   rawEmail?: string;
   maskedEmail?: string;
+  logLabel?: string;
   active: boolean;
   needsReauth?: boolean;
   health?: { status: OAuthAccountHealthStatus; reason?: string; until?: string };
@@ -100,7 +101,7 @@ export interface ProviderAuthHandlers {
    * Optional: the Codex account pool owns its own refresh control, and a caller that
    * cannot force a read simply renders no button rather than one that does nothing.
    */
-  onRefreshQuota?: (provider: string) => Promise<boolean>;
+  onRefreshQuota?: (provider: string, accountId?: string) => Promise<boolean>;
 }
 
 export type ProviderUpdatePatch = {
