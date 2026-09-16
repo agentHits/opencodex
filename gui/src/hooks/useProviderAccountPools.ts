@@ -291,12 +291,12 @@ export function useProviderAccountPools(deps: {
       try {
         if (kind === "oauth") {
           const data = await readRoster<{ activeAccountId?: string | null; accounts?: OAuthAccount[] }>(
-            `${apiBase}/api/oauth/accounts?provider=${encodeURIComponent(provider)}`, signal);
+            `${apiBase}/api/oauth/accounts?provider=${encodeURIComponent(provider)}&quota=1`, signal);
           if (!Array.isArray(data.accounts) || !currentRequest()) return false;
           const rows = selectionRows(data.accounts, data.activeAccountId);
           setAccountSets(current => currentRequest() ? { ...current, [provider]: {
             activeAccountId: data.activeAccountId === undefined ? rows.find(row => row.active)?.id ?? null : data.activeAccountId,
-            accounts: mergeRosterRows(rows, current[provider]?.accounts ?? []),
+            accounts: mergeQuotaRows(rows, current[provider]?.accounts ?? [], true),
           } } : current);
           setAccountLoadStates(current => currentRequest() ? { ...current, [provider]: "ready" } : current);
         } else {
