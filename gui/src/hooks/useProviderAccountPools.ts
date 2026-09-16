@@ -198,56 +198,20 @@ export function useProviderAccountPools(deps: {
       const currentRoster = () => currentRequest() && rosterGenerationRef.current[key] === rosterGeneration;
       const url = `${apiBase}/api/oauth/accounts?provider=${encodeURIComponent(provider)}`;
       try {
-        // Cheap local read first so account switch / reauth / remove controls appear
-        // even when Anthropic's usage endpoint is slow or timing out.
-        const data = await readRoster<{ activeAccountId?: string | null; accounts?: OAuthAccount[] }>(url);
-        if (!Array.isArray(data.accounts)) throw new Error("Invalid account roster");
+        const targetQuery = targetAccountId ? `&accountId=${encodeURIComponent(targetAccountId)}` : "";
+        const quotaData = await readRoster<{ activeAccountId?: string | null; accounts?: OAuthAccount[] }>(`${url}&quota=1${refresh ? "&refresh=1" : ""}${targetQuery}`);
+        if (!Array.isArray(quotaData.accounts)) throw new Error("Invalid account quota roster");
         if (!currentRequest()) return false;
-        const rows = selectionRows(data.accounts, data.activeAccountId);
-        setAccountSets(current => currentRoster() ? { ...current, [provider]: {
-          activeAccountId: data.activeAccountId ?? null,
-          accounts: mergeQuotaRows(rows, current[provider]?.accounts ?? [], false),
-        } } : current);
+        const enriched = selectionRows(quotaData.accounts, quotaData.activeAccountId);
+        setAccountSets(current => currentRoster() ? {
+          ...current,
+          [provider]: {
+            activeAccountId: quotaData.activeAccountId ?? null,
+            accounts: mergeQuotaRows(enriched, current[provider]?.accounts ?? [], true),
+          },
+        } : current);
         setAccountLoadStates(current => currentRoster() ? { ...current, [provider]: "ready" } : current);
-        if (!rows.some(supportsQuotaRead)) return true;
-
-        const enrich = async (): Promise<boolean> => {
-          // Manual selection invalidates roster reads, not a per-ID quota probe already sent.
-          const quotaGeneration = (quotaGenerationRef.current[key] ?? 0) + 1;
-          quotaGenerationRef.current[key] = quotaGeneration;
-          const currentQuota = () => aliveRef.current && mountedRef.current && serverRef.current === apiBase
-            && quotaGenerationRef.current[key] === quotaGeneration;
-          try {
-            const targetQuery = targetAccountId ? `&accountId=${encodeURIComponent(targetAccountId)}` : "";
-            const quotaData = await readRoster<{ activeAccountId?: string | null; accounts?: OAuthAccount[] }>(`${url}&quota=1${refresh ? "&refresh=1" : ""}${targetQuery}`);
-            if (!Array.isArray(quotaData.accounts)) throw new Error("Invalid account quota roster");
-            if (!currentQuota()) return false;
-            const enriched = selectionRows(quotaData.accounts, quotaData.activeAccountId);
-            setAccountSets(current => !currentQuota() ? current : !currentRoster() ? {
-              ...current, [provider]: { ...current[provider], accounts: mergeLateQuotaRows(current[provider]?.accounts ?? [], enriched) },
-            } : {
-              ...current,
-              [provider]: {
-                activeAccountId: quotaData.activeAccountId === undefined ? data.activeAccountId ?? null : quotaData.activeAccountId,
-                accounts: mergeQuotaRows(enriched, current[provider]?.accounts ?? [], true),
-              },
-            });
-            return !enriched.some(row => row.quotaUnavailable === true);
-          } catch {
-            if (!currentQuota()) return false;
-            // Keep existing quota bars instead of blanking them on transient errors
-            setAccountSets(current => currentQuota() && current[provider] ? {
-              ...current, [provider]: {
-                ...current[provider],
-                accounts: current[provider].accounts.map(a => a.quota ? a : { ...a, quotaUnavailable: true }),
-              },
-            } : current);
-            return false;
-          }
-        };
-        if (refresh) return await enrich();
-        void enrich();
-        return true;
+        return !enriched.some(row => row.quotaUnavailable === true);
       } catch {
         if (!currentRoster()) return false;
         setAccountLoadStates(current => currentRoster() ? { ...current, [provider]: "error" } : current);

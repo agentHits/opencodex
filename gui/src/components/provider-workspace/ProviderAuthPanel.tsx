@@ -303,19 +303,6 @@ export default function ProviderAuthPanel({
     }
   };
 
-  const autoProbedKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    const key = `${item.name}:${accounts.map(a => a.id).join(",")}`;
-    if (autoProbedKeyRef.current === key) return;
-    if (isOauth && accounts.length > 0 && accounts.some(a => !a.quota && a.quotaMode !== "unsupported") && onRefreshQuota) {
-      autoProbedKeyRef.current = key;
-      const timer = setTimeout(() => {
-        void onRefreshQuota(item.name);
-      }, 50);
-      return () => { clearTimeout(timer); };
-    }
-  }, [item.name, isOauth, accounts, onRefreshQuota]);
-
   if (surface === "codex-accounts") {
     return (
       <section className="pwi-section pwi-auth-section" aria-label={t("pws.availableAccounts")}>
