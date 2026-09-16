@@ -63,6 +63,8 @@ export default function ProviderAccountCard({
   const geminiWeeklyPercent = analyzed.geminiWeekly?.percent;
   const claude5hPercent = analyzed.claude5h?.percent;
   const claudeWeeklyPercent = analyzed.claudeWeekly?.percent;
+  const geminiHasData = gemini5hPercent !== undefined || geminiWeeklyPercent !== undefined;
+  const claudeHasData = claude5hPercent !== undefined || claudeWeeklyPercent !== undefined;
 
   const hasCustomAlias = Boolean(
     account.alias &&
@@ -151,7 +153,6 @@ export default function ProviderAccountCard({
             >
               <span className={`pwi-auth-dot ${active ? "pwi-auth-dot--ok pwi-auth-dot--active-pulse" : "pwi-auth-dot--off"}`} aria-hidden="true" />
               <span className="pwi-dense-title">{primaryTitle}</span>
-              {active && <span className="pwi-badge-active-pill" style={{ marginLeft: "6px" }}>✓ {t("prov.accountActive")}</span>}
               <span className="pwi-dense-click-target-fill" aria-hidden="true" />
             </button>
             <button
@@ -205,7 +206,7 @@ export default function ProviderAccountCard({
 
         {/* Compact Bar Columns: Clean Gemini/Claude headers & round % */}
         <div className="pwi-dense-bars-grid">
-          {!isAntigravity && showReauth && (
+          {showReauth && (
             <div style={{ gridColumn: "span 2", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", background: "color-mix(in srgb, var(--amber) 10%, var(--surface))", borderRadius: "4px" }}>
               <span style={{ fontSize: "11px", color: "var(--amber)", fontWeight: 600 }}>⚠️ {t("pws.healthLabel.reauthRequired")}</span>
               {onReauth && <button type="button" className="btn btn-primary btn-sm" style={{ height: "22px", padding: "0 8px", fontSize: "11px" }} onClick={() => onReauth(account)}>{t("pws.reauthenticate")}</button>}
@@ -220,8 +221,8 @@ export default function ProviderAccountCard({
                   <span className="pwi-brand-dot blue">●</span>
                   <span>{t("pws.modelGemini")}</span>
                 </span>
-                <span className={`pwi-headroom-pill-mini ${analyzed.geminiExhausted ? "warn" : "ok"}`}>
-                  {analyzed.geminiExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) })}
+                <span className={`pwi-headroom-pill-mini ${analyzed.geminiExhausted ? "warn" : geminiHasData ? "ok" : "muted"}`}>
+                  {geminiHasData ? (analyzed.geminiExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) })) : "—"}
                 </span>
               </div>
               <div className="pwi-dense-mini-row">
@@ -253,8 +254,8 @@ export default function ProviderAccountCard({
                   <span className="pwi-brand-dot orange">●</span>
                   <span>{t("pws.modelClaude")}</span>
                 </span>
-                <span className={`pwi-headroom-pill-mini ${analyzed.claudeExhausted ? "warn" : "ok"}`}>
-                  {analyzed.claudeExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) })}
+                <span className={`pwi-headroom-pill-mini ${analyzed.claudeExhausted ? "warn" : claudeHasData ? "ok" : "muted"}`}>
+                  {claudeHasData ? (analyzed.claudeExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) })) : "—"}
                 </span>
               </div>
               <div className="pwi-dense-mini-row">
@@ -306,7 +307,6 @@ export default function ProviderAccountCard({
             <div className="pwi-card-title-block">
               <div className="pwi-card-title-line">
                 <span className="pwi-card-title">{primaryTitle}</span>
-                {active && <span className="pwi-badge-active-pill">✓ {t("prov.accountActive")}</span>}
                 {switching && <span className="badge badge-muted">{t("pws.accountSwitching")}</span>}
               </div>
               <span className="pwi-card-sub">{secondarySub}</span>
@@ -375,8 +375,8 @@ export default function ProviderAccountCard({
                 <span className="pwi-brand-dot blue">●</span>
                 <span>{t("pws.modelGemini")}</span>
               </span>
-              <span className={`pwi-headroom-pill ${analyzed.geminiExhausted ? "warn" : "ok"}`}>
-                {analyzed.geminiExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) })}
+              <span className={`pwi-headroom-pill ${analyzed.geminiExhausted ? "warn" : geminiHasData ? "ok" : "muted"}`}>
+                {geminiHasData ? (analyzed.geminiExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.geminiUsedMax) })) : "—"}
               </span>
             </div>
             {renderSingleQuotaBar(t("pws.gemini5hLabel"), gemini5hPercent, analyzed.gemini5h?.resetAt)}
@@ -391,8 +391,8 @@ export default function ProviderAccountCard({
                 <span className="pwi-brand-dot orange">●</span>
                 <span>{t("pws.modelClaude")}</span>
               </span>
-              <span className={`pwi-headroom-pill ${analyzed.claudeExhausted ? "warn" : "ok"}`}>
-                {analyzed.claudeExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) })}
+              <span className={`pwi-headroom-pill ${analyzed.claudeExhausted ? "warn" : claudeHasData ? "ok" : "muted"}`}>
+                {claudeHasData ? (analyzed.claudeExhausted ? t("pws.limitExhaustedBadge") : t("pws.freeHeadroom", { percent: Math.max(0, 100 - analyzed.claudeUsedMax) })) : "—"}
               </span>
             </div>
             {renderSingleQuotaBar(t("pws.claude5hLabel"), claude5hPercent, analyzed.claude5h?.resetAt)}
@@ -400,7 +400,7 @@ export default function ProviderAccountCard({
           </div>
         )}
 
-        {!isAntigravity && showReauth && (
+        {showReauth && (
           <div style={{ gridColumn: "span 2", padding: "12px 14px", background: "color-mix(in srgb, var(--amber) 10%, var(--surface))", border: "1px solid color-mix(in srgb, var(--amber) 30%, transparent)", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
             <span style={{ fontSize: "12px", color: "var(--amber)", fontWeight: 600 }}>⚠️ {t("pws.healthLabel.reauthRequired")}</span>
             {onReauth && <button type="button" className="btn btn-primary btn-sm" onClick={() => onReauth(account)}>{t("pws.reauthenticate")}</button>}

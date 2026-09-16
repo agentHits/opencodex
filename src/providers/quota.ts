@@ -1,7 +1,7 @@
 
 import { listCodexAuthAccountsSnapshot } from "../codex/auth-api";
 import { resolveEnvValue } from "../config";
-import { getAccountCredential, getAccountSet } from "../oauth/store";
+import { getAccountCredential, getAccountSet, markAccountNeedsReauth } from "../oauth/store";
 import { apiKeyPoolEntryId } from "./api-keys";
 import { captureConfigGeneration, sweepExpiredOnWrite } from "../lib/state-store-sweeper";
 import { ACCOUNT_QUOTA_TTL_MS, ACTIVE_ACCOUNT_QUOTA_TTL_MS, INACTIVE_ACCOUNT_QUOTA_TTL_MS, CACHE_TTL_MS } from "./quota-wire";
@@ -528,8 +528,13 @@ async function fetchAccountQuota(
         sweepExpiredOnWrite(entry.ts);
       }
       return entry;
-    } catch {
-      if (provider === "google-antigravity") quotaFailure = "account_unavailable";
+    } catch (err) {
+      if (provider === "google-antigravity") {
+        quotaFailure = "account_unavailable";
+        if (err instanceof Error && (err.message.includes("400") || err.message.includes("invalid_grant"))) {
+          void markAccountNeedsReauth(provider, accountId, true).catch(() => {});
+        }
+      }
       const entry: AccountQuotaCacheEntry = {
         ts: Date.now(),
         quota: provider === "anthropic"
