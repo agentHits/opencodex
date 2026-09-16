@@ -321,6 +321,10 @@ describe("combo target input admission", () => {
     // from the picker and still dispatchable when an operator names it in a combo target.
     expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.3-codex-spark")).toBe(128_000);
     expect(resolveOutputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.3-codex-spark")).toBe(32_000);
+    // The native Codex catalog is consulted first, and it is keyed "openai-codex" — which is NOT
+    // the routing provider id, because that one is the string "openai". `gpt-5-codex-mini` exists
+    // only in the native catalog, so resolving it proves the right key is being read.
+    expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5-codex-mini")).toBe(272_000);
     // A slug the override table does know keeps its own pinned window.
     expect(resolveInputCeiling(CANONICAL_NATIVE, "openai", "gpt-5.6-sol")).toBe(272_000);
     // An operator cap may only narrow the generated value, never widen it.

@@ -189,6 +189,13 @@ function resolveContextLimits(
 }
 
 /**
+ * Generated-catalog keys, not routing provider names. `OPENAI_CODEX_PROVIDER_ID` is the string
+ * `"openai"` -- the canonical Codex forward route -- so using it to index the generated bundle
+ * would silently skip the native Codex rows and read the public API rows instead.
+ */
+const NATIVE_METADATA_CATALOGS = ["openai-codex", "openai"] as const;
+
+/**
  * Static in-tree metadata for a canonical native slug the narrower override and pinned-native
  * tables do not carry. Falling through to null made input admission completely blind for
  * exactly those models, which is how a 128k target accepted a turn it could not finish.
@@ -204,8 +211,11 @@ function generatedNativeWindow(
   configured: number | null,
   nativeContextCap: NativeContextLimitsInput | undefined,
 ): number | null {
-  const generated = positive(getModelMetadata(OPENAI_CODEX_PROVIDER_ID, modelId)?.contextWindow)
-    ?? positive(getModelMetadata("openai", modelId)?.contextWindow);
+  let generated: number | null = null;
+  for (const catalog of NATIVE_METADATA_CATALOGS) {
+    generated = positive(getModelMetadata(catalog, modelId)?.contextWindow);
+    if (generated !== null) break;
+  }
   if (generated === null) return null;
   const cap = typeof nativeContextCap === "number"
     ? positive(nativeContextCap)
