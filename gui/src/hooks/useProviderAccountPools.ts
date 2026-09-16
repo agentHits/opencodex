@@ -1,3 +1,4 @@
+import { startVisibilityPoll } from "../visibility-poll";
 import { parseQuotaFailureCode } from "../../../src/providers/quota-types";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import type { AccountLoadState, AccountQuotaReading } from "../components/provider-workspace/types";
@@ -116,6 +117,10 @@ export function useProviderAccountPools(deps: {
     fetchConfig, fetchOauth, fetchProviderQuotas, codexActiveNeedsReauth,
   } = deps;
   const [accountSets, setAccountSets] = useState<Record<string, { activeAccountId: string | null; accounts: OAuthAccount[] }>>({});
+  const accountSetsRef = useRef(accountSets);
+  useEffect(() => {
+    accountSetsRef.current = accountSets;
+  }, [accountSets]);
   const [accountLoadStates, setAccountLoadStates] = useState<Record<string, AccountLoadState>>({});
   const [switchingAccount, setSwitchingAccount] = useState<{ provider: string; accountId: string } | null>(null);
   const [openAccounts, setOpenAccounts] = useState<Record<string, boolean>>({});
@@ -484,6 +489,22 @@ export function useProviderAccountPools(deps: {
     accountSetsKeyRef.current = key;
     void Promise.resolve().then(() => { void fetchAccountSets(oauthCardProviders); });
   }, [apiBase, fetchAccountSets, oauthCardProviders]);
+
+  useEffect(() => {
+    if (oauthCardProviders.length === 0) return;
+    return startVisibilityPoll(() => {
+      for (const provider of oauthCardProviders) {
+        const activeId = accountSetsRef.current[provider]?.activeAccountId;
+        if (activeId) {
+          // Force refresh ONLY for the active/selected account; inactive accounts read from cache (10m TTL)
+          void fetchAccountSets([provider], true, activeId);
+        } else {
+          void fetchAccountSets([provider], false);
+        }
+      }
+    }, 30_000);
+  }, [fetchAccountSets, oauthCardProviders]);
+
 
   const keyCardProviders = useMemo(
     () => config ? Object.entries(config.providers).filter(([, p]) => p.hasApiKey && p.authMode !== "oauth" && p.authMode !== "forward").map(([n]) => n) : [],

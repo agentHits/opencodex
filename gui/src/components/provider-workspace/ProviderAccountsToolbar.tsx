@@ -42,6 +42,8 @@ export interface ProviderAccountsToolbarProps {
   onSelectPoolStrategy?: (strategy: AccountPoolStrategy) => void;
 }
 
+export type StatsDisplayStyle = "hybrid" | "split";
+
 export default function ProviderAccountsToolbar({
   apiBase = "",
   providerName = "google-antigravity",
@@ -68,6 +70,24 @@ export default function ProviderAccountsToolbar({
   onSelectPoolStrategy,
 }: ProviderAccountsToolbarProps) {
   const t = useT();
+  const [statsStyle, setStatsStyle] = useState<StatsDisplayStyle>(() => {
+    try {
+      const saved = localStorage.getItem("ocx_pws_stats_style");
+      return saved === "split" ? "split" : "hybrid";
+    } catch {
+      return "hybrid";
+    }
+  });
+
+  const handleStatsStyleChange = (style: StatsDisplayStyle) => {
+    setStatsStyle(style);
+    try {
+      localStorage.setItem("ocx_pws_stats_style", style);
+    } catch {
+      // best-effort
+    }
+  };
+
   const tokensEstimate = usePoolTokensEstimate({
     apiBase,
     providerName,
@@ -908,6 +928,29 @@ export default function ProviderAccountsToolbar({
                 onClick={() => onViewModeChange("compact")}
               >
                 ≡ {t("pws.viewCompact")}
+              </button>
+            </div>
+          </div>
+
+          {/* Stats Mode: Option A (Hybrid) vs Option B (Split) */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span className="pwi-filter-caption" style={{ fontSize: "11.5px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.5px", whiteSpace: "nowrap" }}>{t("pws.statsStyleLabel")}:</span>
+            <div className="pwi-segmented">
+              <button
+                type="button"
+                className={`pwi-seg-opt${statsStyle === "hybrid" ? " active" : ""}`}
+                onClick={() => handleStatsStyleChange("hybrid")}
+                title={t("pws.statsStyleHybrid")}
+              >
+                ⚡ {t("pws.statsStyleHybrid")}
+              </button>
+              <button
+                type="button"
+                className={`pwi-seg-opt${statsStyle === "split" ? " active" : ""}`}
+                onClick={() => handleStatsStyleChange("split")}
+                title={t("pws.statsStyleSplit")}
+              >
+                ⊞ {t("pws.statsStyleSplit")}
               </button>
             </div>
           </div>
