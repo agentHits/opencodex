@@ -8,7 +8,7 @@ Catalog HTTP acquisition follows the [proxy-routing contract](catalog.md#remote-
 OAuth refresh coordination follows the [refresh-lock identity contract](catalog.md#accounts-namespaces-and-pool-rotation): a fresh unreadable lock remains held, and release requires matching descriptor identity. A failed path-identity probe preserves the refresh callback outcome. Cooperating lock metadata changes serialize through the existing SQLite mutation transaction; release keeps the descriptor open through identity comparison and any unlink, then closes it. Failed metadata writes remove only a matching owned path after successful coordination; unknown identity, failed probes or unavailable coordination retain the path for stale recovery. Async refresh work holds no metadata transaction.
 
 The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
-is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged. Cursor's localized native-shell names follow the [routing-commentary guard contract](providers/cursor.md#cursor-native-exec).
 
 Chat request serialization owns the destination-scoped
 [OpenCode Go instruction ordering](providers/chat-compat.md#opencode-go-chronological-instructions);
@@ -433,6 +433,12 @@ OpenCode catalog discovery in `src/cli/opencode.ts` uses the local admin credent
 The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture. Vision dispatch consumes those declarations together with registry/vendor metadata before any image-bearing upstream send.
 
 ## Capability-aware image admission
+
+The `anthropic` OAuth and `anthropic-apikey` presets in `src/providers/registry/entries-core.ts`
+declare `modelInputModalities: ["text", "image"]` per model for the nine Claude seeds in
+`src/providers/registry/model-seeds.ts`. Existing enrichment fills missing entries while preserving
+explicit operator overrides; unknown models receive no new declaration. Client eligibility filters
+and Anthropic image wire handling remain unchanged.
 
 `src/vision/plan.ts` prevents raw image bytes from reaching any target whose effective capability is positively known to exclude image input. Evidence from the resolved runtime provider and explicit operator declarations takes precedence, followed by backend-specific/registry/vendor metadata. A proven text-only target is preprocessed through the configured Vision Sidecar; a positively image-capable target receives the image directly. Genuinely unknown custom models retain the existing compatibility path rather than being guessed text-only.
 
