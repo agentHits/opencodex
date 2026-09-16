@@ -3,6 +3,7 @@ import {
   applyAccountChangeConversationStateScrub,
   canPortConversationState,
   collectConversationStateCarriers,
+  accountChangeFileReferenceRefusal,
 } from "../../src/server/responses/account-change-state";
 import {
   clearConversationStateIssuerMap,
@@ -37,6 +38,84 @@ function turnBody(text = "keep this user turn") {
     input: [userMessage(text), reasoningBlob()],
   };
 }
+
+/**
+ * An uploaded file is content the caller attached, not continuation state (#4710).
+ *
+ * The classifier has always called `file_id` account-bound and the scrubber has always removed
+ * only `previous_response_id` and `conversation`, so a body whose only account-bound state was
+ * a file reference reported nothing scrubbed and went to the new account unchanged. Deleting
+ * the reference instead would answer a different question than the one that was asked, with no
+ * way for the caller to tell, so the move is refused before dispatch.
+ */
+function fileOnlyBody() {
+  return {
+    model: "gpt-5.4",
+    input: [
+      { type: "message", role: "user", content: [{ type: "input_file", file_id: "file_abc123" }] },
+    ],
+  };
+}
+
+describe("an account change refuses uploaded-file references instead of dropping them", () => {
+  afterEach(() => { clearConversationStateIssuerMap(); });
+
+  test("a file-only body is refused when the serving account is not the issuer", () => {
+    rememberConversationStateIssuer(BINDING_KEY, "account-a");
+    const body = fileOnlyBody();
+    // The gap this closes: the scrub reports nothing to do, which used to mean "carry on".
+    expect(applyAccountChangeConversationStateScrub({
+      body, bindingKey: BINDING_KEY, servingAccountId: "account-b",
+    })).toBe(false);
+
+    const refusal = accountChangeFileReferenceRefusal({
+      body, bindingKey: BINDING_KEY, servingAccountId: "account-b",
+    });
+    expect(refusal?.status).toBe(400);
+    // The reference is left byte-for-byte intact: refusing is the contract, not scrubbing.
+    expect(collectConversationStateCarriers(body).fileIds).toEqual(["file_abc123"]);
+  });
+
+  test("the same body is served without complaint by its own issuer", () => {
+    rememberConversationStateIssuer(BINDING_KEY, "account-a");
+    expect(accountChangeFileReferenceRefusal({
+      body: fileOnlyBody(), bindingKey: BINDING_KEY, servingAccountId: "account-a",
+    })).toBeUndefined();
+  });
+
+  test("an in-request move is refused on the prior account alone, with no remembered issuer", () => {
+    expect(accountChangeFileReferenceRefusal({
+      body: fileOnlyBody(),
+      bindingKey: BINDING_KEY,
+      servingAccountId: "account-b",
+      priorAccountId: "account-a",
+    })?.status).toBe(400);
+  });
+
+  test("a file reference behind a previous_response_id is still found", () => {
+    rememberConversationStateIssuer(BINDING_KEY, "account-a");
+    const body = { ...turnBody(), input: [...fileOnlyBody().input] } as Record<string, unknown>;
+    body.previous_response_id = "resp_account_a";
+    // The portability verdict reports only the FIRST reason it finds, so a body carrying both
+    // would have reported the response id and let the file through the scrub untouched.
+    expect(canPortConversationState(collectConversationStateCarriers(body)))
+      .toMatchObject({ portable: false, reason: "previous-response-id" });
+    expect(accountChangeFileReferenceRefusal({
+      body, bindingKey: BINDING_KEY, servingAccountId: "account-b",
+    })?.status).toBe(400);
+  });
+
+  test("a body with no file reference keeps the existing scrub-and-continue contract", () => {
+    rememberConversationStateIssuer(BINDING_KEY, "account-a");
+    const body = turnBody() as Record<string, unknown>;
+    expect(accountChangeFileReferenceRefusal({
+      body, bindingKey: BINDING_KEY, servingAccountId: "account-b",
+    })).toBeUndefined();
+    expect(applyAccountChangeConversationStateScrub({
+      body, bindingKey: BINDING_KEY, servingAccountId: "account-b",
+    })).toBe(true);
+  });
+});
 
 function compactTurnBody(text = "keep this compact user turn") {
   return {
@@ -151,4 +230,3 @@ describe("Codex pool account-change conversation-state scrub", () => {
     expect(collectConversationStateCarriers(turnBody()).encryptedReasoning).toBe(true);
   });
 });
-

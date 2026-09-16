@@ -17,6 +17,7 @@ import {
 } from "../../codex/routing";
 import type { OcxParsedRequest } from "../../types";
 import type { RequestLogContext } from "../request-log";
+import { formatErrorResponse } from "../../bridge/errors";
 
 export type ConversationStateScrubReason = "account-change";
 
@@ -230,4 +231,45 @@ export function applyAccountChangeConversationStateScrub(
     logCtx.conversationStateScrub = "account-change";
   }
   return true;
+}
+
+/**
+ * Refuse an account change that would carry an uploaded-file reference to an account that
+ * cannot read it (#4710).
+ *
+ * The classifier has always called `file_id` account-bound, and the scrubber has always removed
+ * only `previous_response_id` and `conversation`. A body whose ONLY account-bound state was an
+ * uploaded file therefore reported nothing scrubbed and was replayed unchanged against the new
+ * account, which is the one case the safety fix was supposed to cover.
+ *
+ * Deleting the references is not the fix. A file reference is not continuation state the model
+ * can do without: it is content the caller attached, and silently dropping it answers a
+ * different question than the one that was asked, with no way for the caller to tell. Pinning
+ * the request to the issuing account is not available either — every call site resolves and
+ * materialises its credential before reaching here, and the retry sites are reached precisely
+ * because the issuing account just refused the request.
+ *
+ * So the move is refused, before dispatch, and the caller is told exactly what to do about it.
+ * A 400 rather than a 409: re-uploading is required, and a retryable status would invite the
+ * same request back unchanged.
+ */
+export function accountChangeFileReferenceRefusal(
+  args: Pick<ApplyAccountChangeConversationStateScrubArgs, "body" | "bindingKey" | "servingAccountId" | "priorAccountId">,
+): Response | undefined {
+  const { body, bindingKey, servingAccountId, priorAccountId } = args;
+  if (!servingAccountId || !bindingKey) return undefined;
+  const issuer = peekConversationStateIssuer(bindingKey);
+  const accountChanged = (issuer != null && issuer !== servingAccountId)
+    || (priorAccountId != null && priorAccountId !== servingAccountId);
+  if (!accountChanged) return undefined;
+  // Checked against the carriers directly rather than through the portability verdict: that
+  // verdict reports the FIRST reason it finds, so a body carrying both a previous response id
+  // and a file reference reports only the former and the file would slip through the scrub.
+  if (collectConversationStateCarriers(body).fileIds.length === 0) return undefined;
+  return formatErrorResponse(
+    400,
+    "invalid_request_error",
+    "Uploaded file references are bound to the account that created them, and this request "
+      + "moved to a different account. Re-upload the files and send the request again.",
+  );
 }

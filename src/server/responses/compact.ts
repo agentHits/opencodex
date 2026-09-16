@@ -71,6 +71,7 @@ import {
 import {
   applyAccountChangeConversationStateScrub,
   conversationStateBindingFromAuth,
+  accountChangeFileReferenceRefusal,
   rememberServingConversationStateIssuer,
 } from "./account-change-state";
 import {
@@ -789,6 +790,14 @@ export async function handleResponsesCompact(
     {
       const binding = conversationStateBindingFromAuth(authCtx, codexPoolAffinityKey(req.headers));
       if (binding) {
+        // Refused rather than scrubbed: an uploaded file is content the caller attached, not
+        // continuation state the turn can do without.
+        const refusal = accountChangeFileReferenceRefusal({
+          body: raw,
+          bindingKey: binding.bindingKey,
+          servingAccountId: binding.accountId,
+        });
+        if (refusal) return refusal;
         applyAccountChangeConversationStateScrub({
           body: raw,
           bindingKey: binding.bindingKey,
