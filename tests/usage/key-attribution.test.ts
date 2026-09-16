@@ -4,6 +4,8 @@ import {
   recordKeyAttemptFailure, recordKeyAttemptUsage, applyResponseLogMetadata,
   inspectResponseLogSsePayload, type RequestLogContext, type RequestLogEntry,
 } from "../../src/server/request-log";
+import { readFileSync } from "node:fs";
+import { repoPath } from "../helpers/repo-root";
 import { normalizeUsageEntryForTest } from "../../src/usage/log";
 
 describe("key attempt accounting", () => {
@@ -22,6 +24,28 @@ describe("key attempt accounting", () => {
     addFinalRequestLog("stream-key-switch", Date.now(), parent, 200, undefined, row => rows.push(row));
     expect(rows[0].attempts?.map(attempt => attempt.usage?.inputTokens)).toEqual([100, 200]);
     expect(rows[0].usage).toMatchObject({ inputTokens: 300, outputTokens: 30 });
+  });
+
+  test("a reader takes the attempts or the request total, never both", () => {
+    // The row above deliberately carries BOTH the per-attempt records (100 + 200) and the
+    // request total (300). A consumer that added them would report 600 input tokens for 300
+    // that were actually spent, and the same arithmetic is what would corrupt a client's own
+    // accounting if hidden attempts were folded into the response it sees.
+    const summary = readFileSync(repoPath("src/usage/summary.ts"), "utf8");
+    const attributions = summary.slice(
+      summary.indexOf("function usageAttributions("),
+      summary.indexOf("function projectedComboUsage("),
+    );
+    // The entry-level row is the fallback for a request written before attempts existed, and it
+    // is reachable only when there are none.
+    expect(attributions).toContain("if (!entry.attempts?.length) {");
+    // Everything after that early return maps the attempts; there is no branch that emits the
+    // entry row alongside them.
+    const fallback = attributions.indexOf("if (!entry.attempts?.length) {");
+    const perAttempt = attributions.indexOf("return entry.attempts.map(attempt =>", fallback);
+    expect(fallback).toBeGreaterThan(-1);
+    expect(perAttempt).toBeGreaterThan(fallback);
+    expect(attributions.match(/return \[\{/g) ?? []).toHaveLength(1);
   });
   test("adding reported usage cannot upgrade an earlier estimate to a measurement", () => {
     const active = beginRequestAttempt(1, "test", "model", "openai-chat");
