@@ -406,7 +406,7 @@ by the gate and resets everything, so ticks wait for review completion. When the
 the script @-mentions the maintainers (`@lidge-jun`, `@Ingwannu`) right in the PR thread: one full request per head SHA plus a short bump at most every 72 h while the block persists (tracked in `state.json`, never spam). Mentions notify, so this is the fastest legitimate way to get eyes.
 Note: `intake: hygiene-blocked` is triage automation output, not a request target — it clears
 itself when hygiene passes, so never ask maintainers to remove it; ask for the
-`maintainer-sponsored` review instead. Add new PR branches to `branches.conf` with their test files. When triaging a scary-looking branch, read its commit list first: a huge raw diff on a one-commit branch is usually just a stale base, not foreign code.
+`maintainer-sponsored` review instead. Add new PR branches to `branches.conf` with their test files. Overlapping runs are serialized by an atomic lockdir (`/tmp/pr-autopilot.lock`); merged PRs graduate automatically (removed from tracking, ledger notes the merge). When triaging a scary-looking branch, read its commit list first: a huge raw diff on a one-commit branch is usually just a stale base, not foreign code.
 
 ## Review guidelines
 
