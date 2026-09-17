@@ -398,9 +398,10 @@ Tracked PR branches are also kept fresh automatically: `~/.codex/pr-autopilot/re
 tracked branch that falls 8 or more commits behind `upstream/dev` (gate tolerates 10),
 runs `typecheck` plus the branch's focused tests, pushes with `--force-with-lease`, and
 restores only previously-set readiness ticks after the gate settles — it never ticks a new
-box and never pushes red code. Ticks are restored only after all checks (including
-CodeRabbit/Codex reviews) reach terminal states on the new head; ticking during an
-in-flight review gets disproved by the gate and resets everything. When the
+box and never pushes red code. No blind sleeps: the script polls `gh pr checks` every 30 s
+until CodeRabbit/Codex reviews reach terminal states, then polls the PR body until restored
+ticks stay put across consecutive reads. Ticking during an in-flight review gets disproved
+by the gate and resets everything, so ticks wait for review completion. When the
 `intake: hygiene-blocked` label is present (human `maintainer-sponsored` review required),
 the script posts one sponsorship request per head SHA (tracked in `state.json`, never spam).
 Note: `intake: hygiene-blocked` is triage automation output, not a request target — it clears
