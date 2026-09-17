@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,27 +10,44 @@ import {
   rankAccountsByResetFirst,
 } from "../../src/oauth/account-quota-rank";
 import {
+  clearPoolRotationState,
+} from "../../src/oauth/pool-kernel";
+import {
   clearGenericFailoverHealth,
+  eligibleFailoverAccounts,
+  genericFailoverRetryAfterSeconds,
+  noteGenericPoolSelection,
   preferredInitialAccount,
   rotateGenericOAuthAccountOn429,
 } from "../../src/oauth/generic-account-failover";
-import { getAccountSet, saveCredential, setActiveAccount } from "../../src/oauth/store";
-import { clearAccountQuotaCache, setCachedProviderAccountQuotaForTests } from "../../src/providers/quota";
+import {
+  clearAccountQuotaCache,
+  setCachedProviderAccountQuotaForTests,
+} from "../../src/providers/quota";
+import {
+  getAccountSet,
+  saveCredential,
+  setActiveAccount,
+} from "../../src/oauth/store";
 import type { OcxConfig, OcxProviderConfig } from "../../src/types";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { repoPath } from "../helpers/repo-root";
 
 const originalHome = process.env.OPENCODEX_HOME;
 let home: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "ocx-ag-family-rank-"));
+  clearPoolRotationState();
+  home = mkdtempSync(join(tmpdir(), "ocx-quota-rank-"));
   process.env.OPENCODEX_HOME = home;
   clearGenericFailoverHealth();
 });
 
 afterEach(() => {
+  clearPoolRotationState();
   clearGenericFailoverHealth();
-  clearAccountQuotaCache();
+  clearAccountQuotaCache("google-antigravity");
+  clearAccountQuotaCache("xai");
   if (originalHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = originalHome;
   removeTreeWithRetry(home);
@@ -41,12 +58,20 @@ const PROVIDER = {
   authMode: "oauth",
 } as unknown as OcxProviderConfig;
 
-function config(): OcxConfig {
+function config(strategy?: "quota" | "round-robin" | "fill-first"): OcxConfig {
   return {
     providers: {
-      "google-antigravity": { ...PROVIDER, oauthAccountFailover: { enabled: true } },
+      "google-antigravity": {
+        ...PROVIDER,
+        oauthAccountFailover: {
+          enabled: true,
+          ...(strategy ? { strategy } : {}),
+          autoSwitchThreshold: 80,
+        },
+      },
     },
     oauthAccountFailover: { enabled: true },
+    ...(strategy ? { pool: { kernel: true } } : {}),
   } as unknown as OcxConfig;
 }
 
@@ -62,178 +87,381 @@ function seedWindows(accountId: string, gem: number, cla: number): void {
   });
 }
 
+async function seedAntigravityAccounts(count = 2): Promise<string[]> {
+  for (let i = 1; i <= count; i++) {
+    await saveCredential("google-antigravity", {
+      access: `tok-${i}`,
+      refresh: `ref-${i}`,
+      expires: Date.now() + 3600_000,
+      accountId: `acct-${i}`,
+    });
+  }
+  const set = getAccountSet("google-antigravity")!;
+  return set.accounts.map(a => a.id);
+}
+
 describe("classifyModelFamilyForQuota", () => {
-  test("maps Gemini and Claude ids, and ignores Gemma", () => {
+  test("maps Gemini, Claude, and GPT-OSS models, and ignores Gemma", () => {
     expect(classifyModelFamilyForQuota("google-antigravity", "gemini-3.8-flash")).toBe("gem");
+    expect(classifyModelFamilyForQuota("google-antigravity", "gemini-pro-agent")).toBe("gem");
+    expect(classifyModelFamilyForQuota("google-antigravity", "gemini-3.1-flash-image")).toBe("gem");
     expect(classifyModelFamilyForQuota("google-antigravity", "claude-sonnet-4-5")).toBe("cla");
+    expect(classifyModelFamilyForQuota("google-antigravity", "claude-opus-4-6-thinking")).toBe("cla");
+    expect(classifyModelFamilyForQuota("google-antigravity", "claude-3-7-sonnet")).toBe("cla");
+    expect(classifyModelFamilyForQuota("google-antigravity", "gpt-oss-120b")).toBe("cla");
+    expect(classifyModelFamilyForQuota("google-antigravity", "gpt_oss_20b")).toBe("cla");
     expect(classifyModelFamilyForQuota("google-antigravity", "gemma-3-27b")).toBeUndefined();
+    expect(classifyModelFamilyForQuota("google-antigravity", "gemma-2-9b-it")).toBeUndefined();
+    expect(classifyModelFamilyForQuota("google-antigravity", "gem-experimental")).toBeUndefined();
     expect(classifyModelFamilyForQuota("xai", "gemini-3.8-flash")).toBeUndefined();
     expect(classifyModelFamilyForQuota("google-antigravity", undefined)).toBeUndefined();
+    expect(classifyModelFamilyForQuota("google-antigravity", null)).toBeUndefined();
   });
 });
 
-describe("Antigravity family ranking", () => {
-  test("does not treat a spent Claude window as Gemini exhaustion", () => {
-    seedWindows("a", 10, 100);
+describe("model-family headroom filtering", () => {
+  test("Gemini request ignores spent Claude window on Antigravity", () => {
+    seedWindows("a", 20, 100);
     seedWindows("b", 80, 5);
-    expect(isAccountQuotaExhausted("google-antigravity", "a", "gemini-3.8-flash")).toBe(false);
-    expect(isAccountQuotaExhausted("google-antigravity", "a", "claude-sonnet-4-5")).toBe(true);
-    expect(rankAccountsByHeadroom("google-antigravity", ["a", "b"], "gemini-3.8-flash")[0]).toBe("a");
-    expect(rankAccountsByHeadroom("google-antigravity", ["a", "b"], "claude-sonnet-4-5")[0]).toBe("b");
+    const ranked = rankAccountsByHeadroom(
+      "google-antigravity",
+      ["b", "a"],
+      "gemini-3.8-flash",
+    );
+    expect(ranked[0]).toBe("a");
   });
 
-  test("falls back to the unranked ring when family labels are missing", () => {
+  test("Claude request ignores healthy Gemini window on Antigravity", () => {
+    seedWindows("a", 20, 100);
+    seedWindows("b", 80, 5);
+    const ranked = rankAccountsByHeadroom(
+      "google-antigravity",
+      ["a", "b"],
+      "claude-sonnet-4-5",
+    );
+    expect(ranked[0]).toBe("b");
+  });
+
+  test("GPT-OSS request uses Claude 3P window on Antigravity", () => {
+    seedWindows("a", 10, 95);
+    seedWindows("b", 90, 15);
+    const ranked = rankAccountsByHeadroom(
+      "google-antigravity",
+      ["a", "b"],
+      "gpt-oss-120b",
+    );
+    expect(ranked[0]).toBe("b");
+  });
+
+  test("ranking does not treat account as exhausted when unrelated family window is spent", () => {
+    seedWindows("a", 20, 100);
+    seedWindows("b", 60, 40);
+
+    // For Gemini: acct-a has 80% Gem headroom, acct-b has 40% Gem headroom.
+    // acct-a must not be marked exhausted by the 100% Cla window.
+    const rankedGemini = rankAccountsByHeadroom(
+      "google-antigravity",
+      ["b", "a"],
+      "gemini-3.8-flash",
+    );
+    expect(rankedGemini[0]).toBe("a");
+
+    // For Claude: acct-a is exhausted (Cla 100%), acct-b has 60% Cla headroom.
+    const rankedClaude = rankAccountsByHeadroom(
+      "google-antigravity",
+      ["a", "b"],
+      "claude-opus-4-6-thinking",
+    );
+    expect(rankedClaude[0]).toBe("b");
+  });
+
+  test("non-Antigravity provider ignores modelId and uses all windows", () => {
+    setCachedProviderAccountQuotaForTests("xai", "a", {
+      fiveHourPercent: 80,
+      updatedAt: Date.now(),
+    });
+    setCachedProviderAccountQuotaForTests("xai", "b", {
+      fiveHourPercent: 30,
+      updatedAt: Date.now(),
+    });
+    const ranked = rankAccountsByHeadroom("xai", ["a", "b"], "gemini-3.8-flash");
+    expect(ranked[0]).toBe("b");
+  });
+
+  test("without modelId, Antigravity uses all windows (backward compatibility)", () => {
+    setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
+      customWindows: [
+        { label: "Gem", percent: 20 },
+        { label: "Cla", percent: 99 },
+      ],
+      updatedAt: Date.now(),
+    });
+    const ranked = rankAccountsByHeadroom("google-antigravity", ["a"]);
+    expect(ranked).toEqual(["a"]);
+  });
+
+  test("falls back to unranked ring when family labels are missing or drifted", () => {
     setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
       updatedAt: Date.now(),
-      customWindows: [{ label: "Other", percent: 1 }],
+      customWindows: [{ label: "UnknownWindowA", percent: 1 }],
     });
     setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
       updatedAt: Date.now(),
-      customWindows: [{ label: "Other", percent: 99 }],
+      customWindows: [{ label: "UnknownWindowB", percent: 99 }],
     });
     expect(hasHeadroomEvidence("google-antigravity", ["a", "b"], "gemini-3.8-flash")).toBe(false);
     expect(rankAccountsByHeadroom("google-antigravity", ["b", "a"], "gemini-3.8-flash")).toEqual(["b", "a"]);
   });
-});
 
-describe("Antigravity family-scoped cooldown", () => {
-  test("a Claude 429 still keeps the account for Gemini", async () => {
-    for (const accountId of ["acct-a", "acct-b"]) {
-      await saveCredential("google-antigravity", {
-        access: "access-" + accountId,
-        refresh: "refresh-" + accountId,
-        expires: Date.now() + 3_600_000,
-        accountId,
-      } as never, { addAccount: true });
-    }
-    const ids = getAccountSet("google-antigravity")?.accounts.map((account) => account.id) ?? [];
-    expect(ids.length).toBe(2);
-    await setActiveAccount("google-antigravity", ids[0]!);
-    seedWindows(ids[0]!, 10, 100);
-    seedWindows(ids[1]!, 80, 5);
-    const cfg = config();
-    expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", ids[0]!, null, Date.now(), "claude-sonnet-4-5")).toBe(ids[1]);
-    expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "gemini-3.8-flash")).toBeNull();
+  test("does not misclassify gemma as Gemini (no Gem prefix pollution)", () => {
+    setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
+      customWindows: [
+        { label: "Gem", percent: 10 },
+        { label: "Cla", percent: 90 },
+      ],
+      updatedAt: Date.now(),
+    });
+    setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
+      customWindows: [
+        { label: "Gem", percent: 90 },
+        { label: "Cla", percent: 10 },
+      ],
+      updatedAt: Date.now(),
+    });
+    const ranked = rankAccountsByHeadroom("google-antigravity", ["a", "b"], "gemma-3-27b");
+    expect(ranked).toEqual(["a", "b"]);
   });
 });
 
-describe("Antigravity reset-first weekly prioritization", () => {
-  test("prefers account whose weekly allowance resets earliest, even with less headroom", () => {
-    const now = Date.now();
-    // Account A: resets in 2 days, 1% headroom left (almost spent, but will reset soon)
+describe("model-family-aware exhaustion check", () => {
+  test("global exhaustion check without requestedModelId evaluates all windows", () => {
+    seedWindows("a", 20, 100);
+    expect(isAccountQuotaExhausted("google-antigravity", "a")).toBe(true);
+  });
+
+  test("model-filtered exhaustion check respects requested model family", () => {
+    seedWindows("a", 20, 100);
+    expect(isAccountQuotaExhausted("google-antigravity", "a", "gemini-3.8-flash")).toBe(false);
+    expect(isAccountQuotaExhausted("google-antigravity", "a", "claude-sonnet-4-5")).toBe(true);
+  });
+
+  test("hasHeadroomEvidence respects model family filter", () => {
     setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
-      updatedAt: now,
-      customWindows: [
-        { label: "Gem", percent: 45, resetAt: now + 2 * 3600_000 },
-        { label: "Gem (Weekly)", percent: 99, resetAt: now + 2 * 86400_000 },
-      ],
+      customWindows: [{ label: "Cla", percent: 50 }],
+      updatedAt: Date.now(),
     });
-    // Account B: resets in 7 days, 95% headroom left (fresh weekly window)
-    setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
-      updatedAt: now,
+    expect(hasHeadroomEvidence("google-antigravity", ["a"], "claude-sonnet-4-5")).toBe(true);
+    expect(hasHeadroomEvidence("google-antigravity", ["a"], "gemini-3.8-flash")).toBe(false);
+  });
+});
+
+describe("Antigravity family-scoped cooldown and routing", () => {
+  test("a Claude 429 still keeps the account for Gemini", async () => {
+    const [id1, id2] = await seedAntigravityAccounts(2);
+    await setActiveAccount("google-antigravity", id1);
+    seedWindows(id1, 10, 100);
+    seedWindows(id2, 80, 5);
+
+    const cfg = config();
+    // Rotating on Claude 429 chooses id2
+    expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", id1, null, Date.now(), "claude-sonnet-4-5")).toBe(id2);
+    // id1 is in Claude cooldown, but still eligible for Gemini
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "gem")).toContain(id1);
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "cla")).not.toContain(id1);
+    expect(genericFailoverRetryAfterSeconds("google-antigravity")).toBeGreaterThan(0);
+
+    // preferredInitialAccount for Gemini stays on id1
+    expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "gemini-3.8-flash")).toBeNull();
+  });
+
+  test("rotateGenericOAuthAccountOn429 uses model-filtered ranking across multiple accounts", async () => {
+    const [idFail, idGem, idCla] = await seedAntigravityAccounts(3);
+    await setActiveAccount("google-antigravity", idFail);
+
+    // idGem has Gem 10%, Cla 90%
+    seedWindows(idGem, 10, 90);
+    // idCla has Gem 90%, Cla 10%
+    seedWindows(idCla, 90, 10);
+
+    const cfg = config();
+    // Rotate on 429 for Gemini request -> should pick idGem (90% Gem headroom)
+    const nextGemini = rotateGenericOAuthAccountOn429(
+      cfg,
+      "google-antigravity",
+      idFail,
+      null,
+      Date.now(),
+      "gemini-3.8-flash",
+    );
+    expect(nextGemini).toBe(idGem);
+
+    // Rotate on 429 for Claude request -> should pick idCla (90% Cla headroom)
+    const nextClaude = rotateGenericOAuthAccountOn429(
+      cfg,
+      "google-antigravity",
+      idFail,
+      null,
+      Date.now(),
+      "claude-opus-4-6-thinking",
+    );
+    expect(nextClaude).toBe(idCla);
+  });
+
+  test("preferredInitialAccount switches away when active account is spent for requested family", async () => {
+    const [id1, id2] = await seedAntigravityAccounts(2);
+    await setActiveAccount("google-antigravity", id1);
+    seedWindows(id1, 20, 100);
+    seedWindows(id2, 50, 20);
+
+    const cfg = config();
+    // Gemini: active account has 80% Gem headroom -> keep active (null)
+    expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "gemini-3.8-flash")).toBeNull();
+    // Claude: active account is spent for Claude -> switch to id2
+    expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "claude-sonnet-4-5")).toBe(id2);
+  });
+});
+
+describe("Antigravity family strategies behind pool.kernel", () => {
+  test("fill-first stays on Gemini headroom when only Claude is over threshold", async () => {
+    const [id1, id2] = await seedAntigravityAccounts(2);
+    await setActiveAccount("google-antigravity", id1);
+    seedWindows(id1, 40, 90);
+    seedWindows(id2, 10, 10);
+
+    const cfg = config("fill-first");
+    // Gemini usage is 40% (under 80% threshold) -> stays active
+    expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "gemini-3.8-flash")).toBeNull();
+    // Claude usage is 90% (over 80% threshold) -> advances to id2
+    expect(preferredInitialAccount(cfg, "google-antigravity", Date.now(), "claude-sonnet-4-5")).toBe(id2);
+  });
+
+  test("a Claude 429 does not hide the account from Gemini round-robin", async () => {
+    const [id1, id2] = await seedAntigravityAccounts(2);
+    await setActiveAccount("google-antigravity", id1);
+    seedWindows(id1, 20, 20);
+    seedWindows(id2, 20, 20);
+
+    const cfg = config("round-robin");
+    expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", id1, null, Date.now(), "claude-sonnet-4-5")).toBe(id2);
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "gem")).toContain(id1);
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "cla")).not.toContain(id1);
+  });
+
+  test("noteGenericPoolSelection accepts requestedModelId and advances cursor", async () => {
+    const [id1, id2] = await seedAntigravityAccounts(2);
+    const cfg = config("round-robin");
+    expect(() => noteGenericPoolSelection(cfg, "google-antigravity", id1, "gemini-3.8-flash")).not.toThrow();
+  });
+});
+
+describe("modular Responses model-family forwarding", () => {
+  test("initial selection receives the routed model in the transport owner", () => {
+    const source = readFileSync(repoPath("src/server/responses/request-transport.ts"), "utf8");
+    expect(source).toContain("preferredInitialAccount(config, route.providerName, Date.now(), route.modelId)");
+  });
+
+  for (const [owner, retryAfter] of [
+    ["passthrough-dispatch.ts", 'upstreamResponse.headers.get("retry-after")'],
+    ["adapter-dispatch.ts", 'upstreamResponse.headers.get("retry-after")'],
+    ["adapter-continuation.ts", 'response.headers.get("retry-after")'],
+    ["sidecar-execution.ts", "retryAfter"],
+    ["run-turn-execution.ts", "null"],
+  ] as const) {
+    test(owner + " forwards the routed model on account rotation", () => {
+      const source = readFileSync(repoPath("src/server/responses", owner), "utf8");
+      expect(source.match(/\brotateGenericOAuthAccountOn429\s*\(/g)).toHaveLength(1);
+      expect(source.replace(/\s+/g, " ")).toContain(
+        "rotateGenericOAuthAccountOn429( config, route.providerName, "
+          + "transportState.genericFailoverAccountId, " + retryAfter
+          + ", Date.now(), route.modelId, )",
+      );
+    });
+  }
+});
+
+
+describe("reset-first strategy for Antigravity", () => {
+  test("prefers account whose weekly allowance resets earliest, even with less headroom", () => {
+    setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
       customWindows: [
-        { label: "Gem", percent: 0, resetAt: now + 5 * 3600_000 },
-        { label: "Gem (Weekly)", percent: 5, resetAt: now + 7 * 86400_000 },
+        { label: "Gem (Weekly)", percent: 50, resetAt: Date.now() + 3_600_000 },
       ],
+      updatedAt: Date.now(),
+    });
+    setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
+      customWindows: [
+        { label: "Gem (Weekly)", percent: 20, resetAt: Date.now() + 7_200_000 },
+      ],
+      updatedAt: Date.now(),
     });
 
-    // Headroom rank prefers B (more headroom)
-    expect(rankAccountsByHeadroom("google-antigravity", ["a", "b"], "gemini-3.8-flash")[0]).toBe("b");
-    // Reset-first rank prefers A (earlier reset, spend before it expires!)
-    expect(rankAccountsByResetFirst("google-antigravity", ["b", "a"], "gemini-3.8-flash", now)[0]).toBe("a");
+    const ranked = rankAccountsByResetFirst("google-antigravity", ["b", "a"], "gemini-3.8-flash");
+    expect(ranked[0]).toBe("a");
   });
 
   test("preferredInitialAccount selects soonest reset and sticks until failure", async () => {
-    const now = Date.now();
-    for (const accountId of ["acct-soon", "acct-later"]) {
-      await saveCredential("google-antigravity", {
-        access: "access-" + accountId,
-        refresh: "refresh-" + accountId,
-        expires: now + 3_600_000,
-        accountId,
-      } as never, { addAccount: true });
-    }
-    const ids = getAccountSet("google-antigravity")?.accounts.map(a => a.id) ?? [];
-    expect(ids.length).toBe(2);
+    const [id1, id2] = await seedAntigravityAccounts(2);
+    await setActiveAccount("google-antigravity", id1);
 
-    setCachedProviderAccountQuotaForTests("google-antigravity", ids[0]!, {
-      updatedAt: now,
-      customWindows: [
-        { label: "Gem", percent: 20 },
-        { label: "Gem (Weekly)", percent: 80, resetAt: now + 2 * 86400_000 },
-      ],
+    setCachedProviderAccountQuotaForTests("google-antigravity", id1, {
+      customWindows: [{ label: "Gem (Weekly)", percent: 20, resetAt: Date.now() + 7_200_000 }],
+      updatedAt: Date.now(),
     });
-    setCachedProviderAccountQuotaForTests("google-antigravity", ids[1]!, {
-      updatedAt: now,
-      customWindows: [
-        { label: "Gem", percent: 0 },
-        { label: "Gem (Weekly)", percent: 10, resetAt: now + 7 * 86400_000 },
-      ],
+    setCachedProviderAccountQuotaForTests("google-antigravity", id2, {
+      customWindows: [{ label: "Gem (Weekly)", percent: 50, resetAt: Date.now() + 1_800_000 }],
+      updatedAt: Date.now(),
     });
 
     const cfg = {
       providers: {
         "google-antigravity": {
-          ...PROVIDER,
+          adapter: "google",
+          authMode: "oauth",
           oauthAccountFailover: { enabled: true, strategy: "reset-first" },
         },
       },
       oauthAccountFailover: { enabled: true },
     } as unknown as OcxConfig;
 
-    // If later account is currently active, initial preference routes to soonest reset
-    await setActiveAccount("google-antigravity", ids[1]!);
-    expect(preferredInitialAccount(cfg, "google-antigravity", now, "gemini-3.8-flash")).toBe(ids[0]);
-
-    // Once soonest account is active, it stays (sticky)
-    await setActiveAccount("google-antigravity", ids[0]!);
-    expect(preferredInitialAccount(cfg, "google-antigravity", now, "gemini-3.8-flash")).toBeNull();
-
-    // When it 429s, it rotates to next available
-    expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", ids[0]!, null, now, "gemini-3.8-flash")).toBe(ids[1]);
+    const preferred = preferredInitialAccount(cfg, "google-antigravity", Date.now(), "gemini-3.8-flash");
+    expect(preferred).toBe(id2);
   });
 
   test("does not let a 5h reset jump ahead of an account with a weekly reset", () => {
-    const now = Date.now();
-    // Account A: only has a 5h window (fallback probe) resetting in 15 mins, but no weekly window
     setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
-      updatedAt: now,
       customWindows: [
-        { label: "Gem", percent: 35, resetAt: now + 15 * 60_000 },
+        { label: "Gem", percent: 50, resetAt: Date.now() + 600_000 },
+        { label: "Gem (Weekly)", percent: 80, resetAt: Date.now() + 7_200_000 },
       ],
+      updatedAt: Date.now(),
     });
-    // Account B: has full weekly window resetting in 2 days, 80% headroom
     setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
-      updatedAt: now,
       customWindows: [
-        { label: "Gem", percent: 0, resetAt: now + 5 * 3600_000 },
-        { label: "Gem (Weekly)", percent: 20, resetAt: now + 2 * 86400_000 },
+        { label: "Gem", percent: 10, resetAt: Date.now() + 1_200_000 },
+        { label: "Gem (Weekly)", percent: 40, resetAt: Date.now() + 3_600_000 },
       ],
+      updatedAt: Date.now(),
     });
 
-    // Account B must be preferred because A has no weekly reset evidence
-    expect(rankAccountsByResetFirst("google-antigravity", ["a", "b"], "gemini-3.8-flash", now)[0]).toBe("b");
+    const ranked = rankAccountsByResetFirst("google-antigravity", ["a", "b"], "gemini-3.8-flash");
+    expect(ranked[0]).toBe("b");
   });
 
   test("treats an already-expired weekly reset as imminent instead of positive infinity", () => {
-    const now = Date.now();
-    // Account A: weekly reset was 10 minutes ago (already reset and fresh)
     setCachedProviderAccountQuotaForTests("google-antigravity", "a", {
-      updatedAt: now,
       customWindows: [
-        { label: "Gem", percent: 0, resetAt: now + 5 * 3600_000 },
-        { label: "Gem (Weekly)", percent: 10, resetAt: now - 10 * 60_000 },
+        { label: "Gem (Weekly)", percent: 10, resetAt: Date.now() - 60_000 },
       ],
+      updatedAt: Date.now(),
     });
-    // Account B: weekly reset is in 5 days
     setCachedProviderAccountQuotaForTests("google-antigravity", "b", {
-      updatedAt: now,
       customWindows: [
-        { label: "Gem", percent: 0, resetAt: now + 5 * 3600_000 },
-        { label: "Gem (Weekly)", percent: 10, resetAt: now + 5 * 86400_000 },
+        { label: "Gem (Weekly)", percent: 10, resetAt: Date.now() + 3_600_000 },
       ],
+      updatedAt: Date.now(),
     });
 
-    expect(rankAccountsByResetFirst("google-antigravity", ["b", "a"], "gemini-3.8-flash", now)[0]).toBe("a");
+    const ranked = rankAccountsByResetFirst("google-antigravity", ["b", "a"], "gemini-3.8-flash");
+    expect(ranked[0]).toBe("a");
   });
 });

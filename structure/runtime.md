@@ -55,7 +55,7 @@ The prefilter is only an optimization, not final process-membership authority.
 | `src/server/audio-live.ts`, `src/server/audio-dictation.ts` | External voice/dictation orchestration using the existing bounded socket relay, server-owned credentials, cancellation and opaque call ownership. See [streaming audio](data-planes/inbound-compat.md#streaming-audio). |
 | `src/config.ts` | Persisted `~/.opencodex/config.json` surface: the facade keeps the load/save/initialize entry points and re-exports, while schema lives in `src/config/schema/` (`config-schema.ts`, `leaf-validators.ts`), defaults in `src/config/proxy-env.ts`, and replace-path persistence in `src/config/persist-unlocked.ts`. |
 | `src/config/paths.ts` | Resolves `OPENCODEX_HOME`, `config.json`, and owner-only directory hardening. |
-| `src/config/atomic-write.ts` | Shared synchronous/asynchronous temp-harden-rename writer and residual-temp failure contract. |
+| `src/config/atomic-write.ts` | Shared synchronous/asynchronous temp-harden-rename writer and residual-temp failure contract. The temp is ACL-hardened before it holds a byte and again before the rename, both `required: true`; the second call is a memo hit rather than a second icacls sequence because the writer re-asserts descriptor/path identity after the content write and re-attributes the harden through `reattributeHardenedSecretPath`. Windows takes no `chmod` on that path — it sets the read-only attribute, not the DACL, and its ChangeTime bump is what used to retire the memo. |
 | `src/config/process-state.ts` | Owns `ocx.pid`, `runtime-port.json`, cheap liveness, full command-line identity verification, and snapshot-guarded cleanup. |
 | `src/server/ports.ts` | Owns bind availability and ephemeral-port selection. Temporary probes dispose accepted peers and wait for listener close before reporting success. |
 | `src/cli/status.ts` / `src/cli/status-probes.ts` | Status snapshot assembly and the shared read-only health/stale-process probes used by status and doctor. Probe evidence keeps recorded-port choice, before/after snapshots and per-call timer cleanup together. |
@@ -354,6 +354,11 @@ provider name for that assessment, so `planPassthroughWebSearchBridge` takes it 
 readiness, then reads that runtime's effort ladder without persisting its selection. Rejected
 preferred candidates still fall back in priority order. General `ocx status` retains full runtime
 discovery and passes its resolved command into readiness, avoiding a second version probe without adding cache state.
+
+`ocx config show` stays outside that lifecycle path. `src/cli/config-command.ts` reads the validated
+config snapshot and the bounded service-token observation needed for its `_remoteHub` annotation;
+it does not import the connect command, inspect catalog readiness, acquire lifecycle locks, or run
+config/secret ACL hardening.
 
 `src/remote/protocol.ts` owns pure interval/feature negotiation. `src/remote/hub-state.ts` owns the `GET|HEAD /v1/hub-state` contract, its caps, and the parser both sides share. `src/client/hub-client.ts` owns bounded, schema-validated remote catalog consumption, hub-state reads, and key-id probes; `src/client/hub-state.ts` owns the resolution and the owner-stamped 0600 cache, and a failed read reports "unavailable" rather than degrading to the client's own local provider and login state. `src/client/hub-relay.ts` is a fixed-authority management relay with URL, header, body, redirect, and stream bounds. The public data listener remains the direct client→hub path; the loopback management ingress never serves data-plane routes.
 
