@@ -367,7 +367,7 @@ Three layers:
   personal work.
 - `agentHits/<topic>` or `feat/` / `fix/` — one task, one branch.
 
-[`AGENTHITS.md`](./AGENTHITS.md) is the required ledger. Update its branch table
+[`AGENTHITS.md`](./AGENTHITS.md) is the required ledger. It is intentionally untracked (see `.git/info/exclude`) and lives only on this machine — never commit it. Update its branch table
 in the same change that merges into `agentHits/dev`, opens or lands an upstream
 PR, or changes a feature's status. Do not leave the table stale.
 
