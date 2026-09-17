@@ -20,6 +20,8 @@ export const CACHE_TTL_MS = 5 * 60_000;
  * probing.
  */
 export const ACCOUNT_QUOTA_TTL_MS = 10 * 60_000;
+export const ACTIVE_ACCOUNT_QUOTA_TTL_MS = 60_000;
+export const INACTIVE_ACCOUNT_QUOTA_TTL_MS = 10 * 60_000;
 
 export const REQUEST_TIMEOUT_MS = 8_000;
 

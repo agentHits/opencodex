@@ -212,23 +212,10 @@ app and the CLI fell back to their built-in model list. `ocx sync` reported succ
 because that reason was special-cased into a `catalog-only` result — the downgrade is gone, so a
 refusal that survives is a real config or integrity failure again.
 
-Restore and removal now have that seam, so they no longer refuse on this one reason. The
-argument that forced the refusal still holds — stripping the provider definition while its
-threads still point at it would orphan them — but it only ever justified keeping the
-`[model_providers.opencodex]` table, not keeping the routing that aims plain `codex` at the
-proxy. Those are separable, and conflating them is what let `ocx uninstall` remove the proxy
-and leave the config pointing at it.
-
-On `history_paginated_requires_native_writer`, restore and removal take every OpenCodex root
-routing key out and retain the provider table verbatim, captured from the pre-transform bytes
-and re-appended into the same buffer so the file never passes through a state that names a
-provider it does not define — upstream fails the entire config load on a missing provider id,
-not the single thread. The history relabel is skipped rather than attempted, so paginated
-rollout bytes and thread rows stay untouched here exactly as they do on apply. The result is
-reported as `partial`, naming the retained lines and the command that removes them.
-`ocx restore --remove-codex-provider-table` is the explicit opt-in for full removal, and it
-states that conversations already tagged `opencodex` stop opening. Every other refusal reason
-keeps the hard refusal and the compensating rollback.
+Restore and removal keep the refusal. There the argument reverses: stripping the provider
+definition while its threads still point at it would orphan them, and those paths have no seam
+for keeping a compatibility table. A home that was already paginated therefore cannot yet be
+uninstalled through the product; that is tracked as open work, not as settled contract.
 
 Unattended sync, `POST /api/sync`, and every other config or ownership refusal keep the hard
 failure above.
@@ -239,34 +226,6 @@ the preflight is an early no-write guard, not an authorization token for a later
 
 `supports_websockets = true` is appended to the provider table only when `websocketsEnabled(config)`
 returns true.
-
-## Desktop compatibility switches report three things, not one
-
-`codexDesktopAuthless` and `codexClientCompaction` only mean anything through the injected
-`config.toml`, so persisting them is not applying them. `PUT /api/settings` used to persist
-and then converge the catalog, and a comment there claimed the injector rewrote the form;
-`convergeCodexCatalog` rejects any scope but `catalog` and never reaches `injectCodexConfig`,
-so the injected shape stayed as it was until a separate `ocx sync`.
-
-The route now runs the real injection after catalog convergence and after the config mutation
-lock has closed — coordinated Codex writes take the Codex write lock before the config mutation
-lock, so awaiting the injector inside that transaction would invert the order — and reports
-three separate facts per switch: the **stored** value in `config.json`, the **effective** value
-this bind and role will actually produce, and whether `config.toml` was **applied**, with the
-reason and retryability when it was not. `src/codex/desktop-switches.ts` owns that projection.
-
-Effective values come from `isEffectiveCodexDesktopAuthless` and
-`isEffectiveCodexClientCompaction` in `src/codex/loopback-target.ts` rather than a second copy
-of the predicate, because the reporting answer and the injection answer diverging is the defect
-being fixed: a non-loopback bind without the unauthenticated loopback listener drops the
-authless flag while the API read back the configured `true`.
-
-The report also states the auth-source consequence. The flag decides `requires_openai_auth` in
-the injected provider table, which is what Codex reads to decide whether to ask the user to
-sign in at all, so flipping it changes whose identity is in use and the user is told at the
-moment they change it. The pre-existing top-level `codexDesktopAuthless` and
-`codexClientCompaction` booleans keep reporting the configured value for compatibility; the
-report is additive.
 
 ## Profile and fast tier
 

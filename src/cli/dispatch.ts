@@ -24,7 +24,7 @@ import {
 } from "../codex/desired-state";
 import { syncModelsToCodex } from "../codex/sync";
 import { collectOrcaCodexHomeDiagnostic } from "../codex/home";
-import { restoreNativeCodexAsync, type CodexNativeRestoreResult } from "../codex/inject";
+import { restoreNativeCodexAsync } from "../codex/inject";
 import { stripGrokConfig } from "../grok/inject";
 import { handleRestartScopeAfterWrite, readRestartScope, type RestartScope } from "./restart-scope";
 import { normalizeUpdateChannel, runGuiUpdateWorker } from "../update/job";
@@ -106,7 +106,6 @@ const commandRunners: Record<string, CommandRunner> = {
   restore: async deps => {
     const restoreArgs = deps.args.slice(1);
     const restoreJson = takeFlag(restoreArgs, "--json");
-    const removeProviderTable = takeFlag(restoreArgs, "--remove-codex-provider-table");
     if (restoreArgs[0] === "back") {
       // Reverse switch: re-point plain `codex` at the RUNNING proxy without touching its
       // lifecycle — the counterpart of `ocx restore`. Start/stop triggers are unchanged;
@@ -146,9 +145,6 @@ const commandRunners: Record<string, CommandRunner> = {
       }
       const target = collectOrcaCodexHomeDiagnostic();
       return emitBack(true, `Plain \`codex\` now routes through opencodex in ${target.effectiveCodexHome} (undo with: ocx restore).`, 0);
-    }
-    if (removeProviderTable && !restoreJson) {
-      console.log("⚠️  Removing [model_providers.opencodex] means conversations already tagged opencodex will stop opening.");
     }
     const desired = setIntegrationEnabled("codex", false);
     if (!desired.ok) {
@@ -195,9 +191,9 @@ const commandRunners: Record<string, CommandRunner> = {
         return grokCode;
       }
     }
-    let r: CodexNativeRestoreResult | Pick<CodexNativeRestoreResult, "success" | "message">;
+    let r: { success: boolean; message: string };
     try {
-      r = await restoreNativeCodexAsync({ revalidateDesiredState: true, removeProviderTable });
+      r = await restoreNativeCodexAsync({ revalidateDesiredState: true });
     } catch (err) {
       r = { success: false, message: err instanceof Error ? err.message : String(err) };
     }
@@ -236,16 +232,7 @@ const commandRunners: Record<string, CommandRunner> = {
       code = 1;
     }
     if (r.success) {
-      const retained = "retainedCodexProviderTable" in r ? r.retainedCodexProviderTable : undefined;
-      if (retained) {
-        console.log("Codex integration is OFF and plain `codex` now runs natively.");
-        console.log("The following lines remain in $CODEX_HOME/config.toml because conversations already tagged opencodex resolve their provider only through this table:");
-        console.log(retained.lines.join("\n"));
-        console.log(`Follow-up: ${retained.followUp}`);
-        console.log("Switch back with: ocx restore back");
-      } else {
-        console.log("Codex integration is OFF and plain `codex` now runs natively. Switch back with: ocx restore back");
-      }
+      console.log("Codex integration is OFF and plain `codex` now runs natively. Switch back with: ocx restore back");
       console.log(`Note: ${OCX_NATIVE_REPLAY_RECOVERY_NOTE}`);
     } else {
       console.error("Plain `codex` was not fully restored. Inspect $CODEX_HOME/config.toml before using native Codex.");

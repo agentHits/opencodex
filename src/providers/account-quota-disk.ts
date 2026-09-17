@@ -47,6 +47,10 @@ export function readPersistedAccountQuotas(now = Date.now()): Map<string, Provid
     for (const [key, quota] of Object.entries(parsed.rows)) {
       if (!quota || typeof quota !== "object" || typeof quota.updatedAt !== "number") continue;
       if (now - quota.updatedAt > DISK_MAX_AGE_MS) continue;
+      const hasExpiredReset = quota.customWindows?.some(w => typeof w.resetAt === "number" && w.resetAt <= now)
+        || (typeof quota.fiveHourResetAt === "number" && quota.fiveHourResetAt <= now)
+        || (typeof quota.weeklyResetAt === "number" && quota.weeklyResetAt <= now);
+      if (hasExpiredReset) continue;
       rows.set(key, quota);
     }
   } catch {

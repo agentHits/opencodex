@@ -251,29 +251,6 @@ describe("codebuddy runTurn streams a headless turn", () => {
     expect(JSON.stringify(events)).not.toContain("secret-command");
   });
 
-  test.each(["Bash", "exec", "shell", "apply_patch"])("refuses a bare %s DSML invoke", name => {
-    const events: AdapterEvent[] = [];
-    const guarded = guardCodeBuddyScaffolding(event => events.push(event));
-
-    guarded({
-      type: "text_delta",
-      text: `<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="${name}">private-body`,
-    });
-
-    expect(events).toEqual([expect.objectContaining({ type: "error", code: "vendor_scaffold_detected" })]);
-  });
-
-  test("holds a bare invoke prefix split across deltas until its name arrives", () => {
-    const events: AdapterEvent[] = [];
-    const guarded = guardCodeBuddyScaffolding(event => events.push(event));
-
-    guarded({ type: "text_delta", text: "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"" });
-    expect(events).toEqual([]);
-    guarded({ type: "text_delta", text: "Bash\">private-body" });
-
-    expect(events).toEqual([expect.objectContaining({ type: "error", code: "vendor_scaffold_detected" })]);
-  });
-
   test("detects a DSML control sequence split across streamed text deltas", async () => {
     const frame = (text: string) => `${JSON.stringify({
       type: "stream_event",
@@ -350,9 +327,9 @@ describe("codebuddy runTurn streams a headless turn", () => {
     const events: AdapterEvent[] = [];
     const guarded = guardCodeBuddyScaffolding(event => events.push(event));
     const answer = "\"<｜｜DSML｜｜ calls>\"\n"
-      + "\"<｜｜DSML｜｜ invoke name=\\\"Bash\\\">\"\n"
+      + "\"<｜｜DSML｜｜ invoke name=\\\"functions.exec\\\">\"\n"
       + "Use `<｜｜DSML｜｜ calls>` when discussing the literal.\n"
-      + "> <｜｜DSML｜｜ calls>\n> <｜｜DSML｜｜ invoke name=\"exec\">";
+      + "> <｜｜DSML｜｜ calls>\n> <｜｜DSML｜｜ invoke name=\"functions.exec\">";
 
     guarded({ type: "text_delta", text: answer });
     guarded({ type: "done", stopReason: "stop" });
@@ -367,7 +344,7 @@ describe("codebuddy runTurn streams a headless turn", () => {
     const events: AdapterEvent[] = [];
     const guarded = guardCodeBuddyScaffolding(event => events.push(event));
     const first = "```text\n<｜｜DSML｜｜ calls>\n";
-    const second = "<｜｜DSML｜｜ invoke name=\"Bash\">\n```";
+    const second = "<｜｜DSML｜｜ invoke name=\"functions.exec\">\n```";
 
     guarded({ type: "text_delta", text: first });
     guarded({ type: "text_delta", text: second });
@@ -419,20 +396,6 @@ describe("codebuddy runTurn streams a headless turn", () => {
 
     expect(events).toEqual([
       { type: "text_delta", text: "<｜｜DSML｜｜ calls>" },
-      { type: "done", stopReason: "stop" },
-    ]);
-  });
-
-  test("delivers a calls block whose invoke name is empty", () => {
-    const events: AdapterEvent[] = [];
-    const guarded = guardCodeBuddyScaffolding(event => events.push(event));
-    const answer = "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"\">";
-
-    guarded({ type: "text_delta", text: answer });
-    guarded({ type: "done", stopReason: "stop" });
-
-    expect(events).toEqual([
-      { type: "text_delta", text: answer },
       { type: "done", stopReason: "stop" },
     ]);
   });

@@ -1,3 +1,5 @@
+import { baseProviderLabel } from "../providers/label";
+import { oauthAccountLogLabel } from "../codex/account-label";
 import type { KiroOAuthMetadata, OAuthController, OAuthCredentials } from "./types";
 import { initializeProviderModelSelection } from "../providers/initial-model-selection";
 import { parseCallbackInput } from "./callback-server";
@@ -1822,6 +1824,7 @@ export interface OAuthAccountSummary {
   active: boolean;
   needsReauth?: boolean;
   expiresAt?: number;
+  logLabel?: string;
   /**
    * Subscription tier, mirroring the field the OpenAI/Codex provider reports, so a consumer
    * weighting a multi-account pool by seat size needs no per-provider branching (#3777).
@@ -1862,7 +1865,8 @@ export function getLoginStatus(provider: string, maskEmails = true): { loggedIn:
     // exposes a subscription tier today, so there is nothing truthful to put here; deriving one
     // from quota percentages is not possible, because they are normalized per account and a
     // half-consumed small seat is indistinguishable from a half-consumed large one.
-    plan: null,
+    plan: a.credential?.plan ?? a.plan ?? null,
+    logLabel: oauthAccountLogLabel(a.id, baseProviderLabel(provider)),
   }));
 
   // A stored credential counts as "logged in" when it exists and is not marked for

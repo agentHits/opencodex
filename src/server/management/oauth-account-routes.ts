@@ -31,7 +31,7 @@ import { enrichProviderFromCatalog, listKeyLoginProviders } from "../../oauth/ke
 import { deriveProviderPresets } from "../../providers/derive";
 import { providerCodexAccountMode } from "../../providers/registry";
 import { routedSlug, slugEquals } from "../../providers/slug-codec";
-import { clearAccountQuotaCache, clearProviderQuotaCache, fetchProviderAccountQuotas, fetchProviderApiKeyQuotas, fetchProviderQuotaReports, providerOAuthAccountQuotaMode, providerApiKeyQuotaMode, readPassiveProviderAccountQuotas } from "../../providers/quota";
+import { clearAccountQuotaCache, clearProviderQuotaCache, fetchProviderAccountQuotas, fetchProviderApiKeyQuotas, fetchProviderQuotaReports, providerOAuthAccountQuotaMode, providerApiKeyQuotaMode, readPassiveProviderAccountQuotas, getCachedProviderAccountQuota } from "../../providers/quota";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
 import { clearThreadAccountMap } from "../../codex/routing";
 import {
@@ -310,7 +310,13 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
               needsReauth: summary.needsReauth === true,
               reauthReason: summary.needsReauth === true ? "refresh_failed" : undefined,
             });
-          return { ...summary, ...oauthAccountHealthFields(provider, summary.id, health), quotaMode };
+          const cachedQuota = getCachedProviderAccountQuota(provider, summary.id);
+          return {
+            ...summary,
+            ...(cachedQuota ? { quota: cachedQuota } : {}),
+            ...oauthAccountHealthFields(provider, summary.id, health),
+            quotaMode,
+          };
         }),
       };
     };
@@ -325,11 +331,12 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
     const passiveQuota = url.searchParams.get("quota") === "1" && quotaMode === "passive";
     if (!wantQuota && !passiveQuota) return jsonResponse(projectAccounts());
     const forceRefresh = url.searchParams.get("refresh") === "1";
+    const targetAccountId = url.searchParams.get("accountId") ?? url.searchParams.get("id");
     // Probing may refresh the active credential and mark needsReauth — project health
     // from the post-probe store so the response is not stale.
     const rows = passiveQuota
       ? readPassiveProviderAccountQuotas(provider)
-      : await fetchProviderAccountQuotas(provider, forceRefresh, quotaProvider);
+      : await fetchProviderAccountQuotas(provider, forceRefresh, quotaProvider, targetAccountId);
     const byId = new Map(rows.map(row => [row.accountId, row]));
     const projected = projectAccounts();
     return jsonResponse({

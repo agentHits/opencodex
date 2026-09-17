@@ -166,6 +166,7 @@ function parseAntigravityQuotaSummary(body: Record<string, unknown> | null): Pro
 const ANTIGRAVITY_ACCOUNT_QUOTA_BASE = "https://daily-cloudcode-pa.googleapis.com";
 const ANTIGRAVITY_QUOTA_SUMMARY_URL = `${ANTIGRAVITY_ACCOUNT_QUOTA_BASE}/v1internal:retrieveUserQuotaSummary`;
 const ANTIGRAVITY_QUOTA_MODELS_URL = `${ANTIGRAVITY_ACCOUNT_QUOTA_BASE}/v1internal:fetchAvailableModels`;
+const ANTIGRAVITY_QUOTA_TIMEOUT_MS = 20_000;
 
 /** Only these fixed accounting destinations may use transparent Fake-IP DNS. */
 export function isCanonicalAntigravityQuotaUrl(name: string, url: string): boolean {
@@ -238,7 +239,7 @@ export async function probeAntigravityUsageQuota(accessToken: string, projectId:
       Accept: "application/json", "Content-Type": "application/json",
       "User-Agent": antigravityUserAgent(), Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ project: projectId }), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    body: JSON.stringify({ project: projectId }), signal: AbortSignal.timeout(ANTIGRAVITY_QUOTA_TIMEOUT_MS),
   }, antigravityOutboundDependencies);
   let summaryFailure: QuotaFailureCode | undefined;
   try {

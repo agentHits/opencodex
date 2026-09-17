@@ -753,6 +753,27 @@ export async function executeComboResponses(
         eligible: targetEligible,
         now: failureNow,
       });
+      // A single-target combo with waitForCooldownMs has no alternate target to fail over to,
+      // but can recover if it waits for its brief cooldown. The initial attempt accumulated into
+      // pick.attempted, so the first pickWithWait excluded it. Drop exclude for one retry
+      // when bounded by comboTargetsDispatched <= 1.
+      // Termination is double-guarded:
+      // 1) comboSendScope?.reserveDispatch refuses a second failover hop via comboExecutionBudgetPolicy
+      //    (maxAlternateTargetSends: 1 for a single declared target).
+      // 2) comboTargetsDispatched <= 1 bounds it locally so the retry never loops or waits unnecessarily
+      //    even if sendBudget scope is absent.
+      if (
+        !pick
+        && combo.targets.length === 1
+        && combo.waitForCooldownMs > 0
+        && comboTargetsDispatched <= 1
+        && !options.abortSignal?.aborted
+      ) {
+        pick = await pickWithWait({
+          eligible: targetEligible,
+          now: failureNow,
+        });
+      }
     }
     if (!pick) {
       if (options.abortSignal?.aborted) return clientCancelledResponse();

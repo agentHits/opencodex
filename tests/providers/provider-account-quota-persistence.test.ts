@@ -84,4 +84,9 @@ describe("provider account quota persistence", () => {
     await settle();
     expect(existsSync(join(home, FILE))).toBe(false);
   });
+  test("a snapshot with an expired reset timestamp is discarded", async () => {
+    schedulePersistAccountQuotas(() => [[KEY, { customWindows: [{ label: "Gem", percent: 100, resetAt: Date.now() - 5000 }], updatedAt: Date.now() }]]);
+    await settle();
+    expect(readPersistedAccountQuotas().size).toBe(0);
+  });
 });

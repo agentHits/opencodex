@@ -73,6 +73,8 @@ export type OAuthCredentials = {
   kiro?: KiroOAuthMetadata;
   /** Never returned by management APIs; persisted only inside the protected auth-store boundary. */
   muse?: MuseOAuthMetadata;
+  /** Detected subscription plan/tier (e.g. "Google AI Pro", "Starter", "Google AI Ultra"). */
+  plan?: string;
 };
 
 /** One logged-in account inside a provider's account set (multiauth). */
@@ -84,6 +86,7 @@ export interface ProviderAccount {
   credential: OAuthCredentials;
   /** Terminal refresh failure (invalid_grant / reused / revoked) — re-login required. */
   needsReauth?: boolean;
+  plan?: string;
   addedAt?: number;
 }
 
