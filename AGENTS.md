@@ -394,7 +394,7 @@ maintainers (`@lidge-jun`, `@Ingwannu`) with exact-head test evidence and an
 explicit sponsorship request.
 
 Tracked PR branches are also kept fresh automatically: `~/.codex/pr-autopilot/refresh-prs.sh`
-(config `branches.conf`, launchd job `com.agenthits.pr-refresh`, every 3 h) rebases any
+(config `branches.conf`, launchd job `com.agenthits.pr-refresh`, every hour) rebases any
 tracked branch that falls 8 or more commits behind `upstream/dev` (gate tolerates 10),
 runs `typecheck` plus the branch's focused tests, pushes with `--force-with-lease`, and
 restores only previously-set readiness ticks after the gate settles — it never ticks a new
