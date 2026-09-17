@@ -352,62 +352,6 @@ The bypass is PR-only, so a direct push to `dev` remains rejected regardless of
 policy (approvals, CI requirements, security review, promotion). This file
 summarizes; it never overrides it.
 
-## Personal agentHits line
-
-This section is fork-only. It must not land in a pull request to
-`lidge-jun/opencodex`. Keep it on `agentHits/dev`.
-
-The local integration branch is `agentHits/dev`, not `agentHits`: Git cannot
-hold `agentHits` and `agentHits/antigravity` at once.
-
-Three layers:
-
-- `upstream/dev` — official code; every upstream PR targets this.
-- `agentHits/dev` — the checkout this machine runs: latest `dev` plus accepted
-  personal work.
-- `agentHits/<topic>` or `feat/` / `fix/` — one task, one branch.
-
-[`AGENTHITS.md`](./AGENTHITS.md) is the required ledger. It is intentionally untracked (see `.git/info/exclude`) and lives only on this machine — never commit it. Update its branch table
-in the same change that merges into `agentHits/dev`, opens or lands an upstream
-PR, or changes a feature's status. Do not leave the table stale.
-
-Never open an upstream PR from `agentHits/dev`. Keep an open upstream PR on its
-own topic branch (`agentHits/antigravity` is PR #4560). Sync `agentHits/dev` with
-`git merge --no-edit upstream/dev`, not rebase.
-
-### PR readiness autopilot (fork-only)
-
-When the user asks to drive a PR out of draft (or says the agent should handle
-readiness without reminders), the agent owns the full loop on the topic branch:
-inspect `gh pr view` / `gh pr checks` and the gate comments, rebase onto current
-`upstream/dev` when behind (mandatory when more than 10 commits behind `dev`),
-fix all correct Codex and CodeRabbit findings in code, run `bun run typecheck`
-plus the focused tests for the touched subsystem (`bun run test` only for the
-final PR-ready gate), and push with `--force-with-lease` after a rebase. Tick
-the four review-readiness boxes progressively and only for verified facts, never
-in advance; keep GUI screenshot requirements in the description satisfied. Use
-`gh pr ready` only after the gates actually pass, never to force them. For
-`unsponsored_surface` hygiene failures on security-boundary paths (`src/oauth/`,
-auth, workflows, release, dependencies), the agent cannot apply
-`maintainer-sponsored` itself and must post a PR comment mentioning the
-maintainers (`@lidge-jun`, `@Ingwannu`) with exact-head test evidence and an
-explicit sponsorship request.
-
-Tracked PR branches are also kept fresh automatically: `~/.codex/pr-autopilot/refresh-prs.sh`
-(config `branches.conf`, launchd job `com.agenthits.pr-refresh`, every hour) rebases any
-tracked branch that falls 8 or more commits behind `upstream/dev` (gate tolerates 10),
-runs `typecheck` plus the branch's focused tests, pushes with `--force-with-lease`, and
-restores only previously-set readiness ticks after the gate settles — it never ticks a new
-box and never pushes red code. No blind sleeps: the script polls `gh pr checks` every 30 s
-until CodeRabbit/Codex reviews reach terminal states, then polls the PR body until restored
-ticks stay put across consecutive reads. Ticking during an in-flight review gets disproved
-by the gate and resets everything, so ticks wait for review completion. When the
-`intake: hygiene-blocked` label is present (human `maintainer-sponsored` review required),
-the script @-mentions the maintainers (`@lidge-jun`, `@Ingwannu`) right in the PR thread: one full request per head SHA plus a short bump at most every 72 h while the block persists (tracked in `state.json`, never spam). Mentions notify, so this is the fastest legitimate way to get eyes.
-Note: `intake: hygiene-blocked` is triage automation output, not a request target — it clears
-itself when hygiene passes, so never ask maintainers to remove it; ask for the
-`maintainer-sponsored` review instead. Add new PR branches to `branches.conf` with their test files. Every pass also audits the PR-template Scope/Docs/Security boxes (the gate never touches those): Docs ticks only with no user-facing files in the diff, Security only with no sensitive paths, Scope is never auto-ticked but always logged with a diff summary. Overlapping runs are serialized by an atomic lockdir (`/tmp/pr-autopilot.lock`); merged PRs graduate automatically (removed from tracking, ledger notes the merge). When triaging a scary-looking branch, read its commit list first: a huge raw diff on a one-commit branch is usually just a stale base, not foreign code.
-
 ## Review guidelines
 
 These rules apply to all code reviews on this repository, including automated
