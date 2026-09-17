@@ -403,7 +403,7 @@ until CodeRabbit/Codex reviews reach terminal states, then polls the PR body unt
 ticks stay put across consecutive reads. Ticking during an in-flight review gets disproved
 by the gate and resets everything, so ticks wait for review completion. When the
 `intake: hygiene-blocked` label is present (human `maintainer-sponsored` review required),
-the script posts one sponsorship request per head SHA (tracked in `state.json`, never spam).
+the script @-mentions the maintainers (`@lidge-jun`, `@Ingwannu`) right in the PR thread: one full request per head SHA plus a short bump at most every 72 h while the block persists (tracked in `state.json`, never spam). Mentions notify, so this is the fastest legitimate way to get eyes.
 Note: `intake: hygiene-blocked` is triage automation output, not a request target — it clears
 itself when hygiene passes, so never ask maintainers to remove it; ask for the
 `maintainer-sponsored` review instead. Add new PR branches to `branches.conf` with their test files.
