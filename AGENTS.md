@@ -375,6 +375,24 @@ Never open an upstream PR from `agentHits/dev`. Keep an open upstream PR on its
 own topic branch (`agentHits/antigravity` is PR #4560). Sync `agentHits/dev` with
 `git merge --no-edit upstream/dev`, not rebase.
 
+### PR readiness autopilot (fork-only)
+
+When the user asks to drive a PR out of draft (or says the agent should handle
+readiness without reminders), the agent owns the full loop on the topic branch:
+inspect `gh pr view` / `gh pr checks` and the gate comments, rebase onto current
+`upstream/dev` when behind (mandatory when more than 10 commits behind `dev`),
+fix all correct Codex and CodeRabbit findings in code, run `bun run typecheck`
+plus the focused tests for the touched subsystem (`bun run test` only for the
+final PR-ready gate), and push with `--force-with-lease` after a rebase. Tick
+the four review-readiness boxes progressively and only for verified facts, never
+in advance; keep GUI screenshot requirements in the description satisfied. Use
+`gh pr ready` only after the gates actually pass, never to force them. For
+`unsponsored_surface` hygiene failures on security-boundary paths (`src/oauth/`,
+auth, workflows, release, dependencies), the agent cannot apply
+`maintainer-sponsored` itself and must post a PR comment mentioning the
+maintainers (`@lidge-jun`, `@Ingwannu`) with exact-head test evidence and an
+explicit sponsorship request.
+
 ## Review guidelines
 
 These rules apply to all code reviews on this repository, including automated
