@@ -79,6 +79,11 @@ export default function AccountPoolStrategyPreview({
           <div className="card-sub" style={{ margin: 0, lineHeight: 1.4 }}>
             {liveCaption}
           </div>
+          {storedOnly && (
+            <div className="card-sub" style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>
+              {t("genericPool.visualKernelGap")}
+            </div>
+          )}
           <div className="card-sub" style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>
             {t("genericPool.visual429")}
           </div>
@@ -91,11 +96,6 @@ export default function AccountPoolStrategyPreview({
     <div className="account-pool-preview">
       <div className="account-pool-preview__head">
         <span className="account-pool-preview__title">{t("genericPool.visualTitle")}</span>
-        {storedOnly && (
-          <span className="account-pool-preview__tag account-pool-preview__tag--stored">
-            {t("genericPool.visualStored")}
-          </span>
-        )}
       </div>
       <figure className="account-pool-preview__figure">
         {showTurns ? (
@@ -146,7 +146,6 @@ export default function AccountPoolStrategyPreview({
         )}
       </figure>
       <div className="card-sub">{liveCaption}</div>
-      {storedOnly && <div className="card-sub">{t("genericPool.visualKernelGap")}</div>}
       <div className="card-sub">{t("genericPool.visual429")}</div>
     </div>
   );

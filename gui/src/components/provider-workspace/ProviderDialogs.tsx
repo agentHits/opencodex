@@ -73,6 +73,7 @@ export function RemoveAccountConfirmDialog({
   const onCancelRef = useRef(onCancel);
   useEffect(() => { onCancelRef.current = onCancel; });
   useEffect(() => {
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     cancelBtnRef.current?.focus();
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !removing) {
@@ -81,10 +82,13 @@ export function RemoveAccountConfirmDialog({
       }
     };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      trigger?.focus();
+    };
   }, [removing]);
   return (
-    <div className="dialog-backdrop" onClick={onCancel}>
+    <div className="dialog-backdrop" onClick={() => { if (!removing) onCancel(); }}>
       <div className="dialog" role="alertdialog" aria-modal="true" aria-label={t("pws.removeAccountConfirmTitle")} onClick={e => e.stopPropagation()}>
         <h3>{t("pws.removeAccountConfirmTitle")}</h3>
         <p>

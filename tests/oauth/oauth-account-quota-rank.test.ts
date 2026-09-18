@@ -408,7 +408,7 @@ describe("Antigravity reset-first weekly prioritization", () => {
         refresh: "refresh-" + accountId,
         expires: now + 3_600_000,
         accountId,
-      } as never, { addAccount: true });
+      } as never);
     }
     const ids = getAccountSet("google-antigravity")?.accounts.map(a => a.id) ?? [];
     expect(ids.length).toBe(2);
@@ -434,6 +434,7 @@ describe("Antigravity reset-first weekly prioritization", () => {
         },
       },
       oauthAccountFailover: { enabled: true },
+      pool: { kernel: true },
     } as unknown as OcxConfig;
     await setActiveAccount("google-antigravity", ids[1]!);
     expect(preferredInitialAccount(cfg, "google-antigravity", now, "gemini-3.8-flash")).toBe(ids[0]);

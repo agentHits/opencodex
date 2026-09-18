@@ -2940,6 +2940,7 @@ export const ru: Record<TKey, string> = {
   "pws.limitExhaustedBadge": "Лимит исчерпан",
   "pws.refreshAccountQuota": "Обновить квоту этого аккаунта",
   "pws.switchedToAccount": "Переключено на {account}",
+  "pws.accountSwitchNotice": "⚡ Пул аккаунтов: переключено на {account}",
   "pws.switchToAccount": "Выбрать этот аккаунт",
   "pws.accountSelect": "Выбрать",
   "prov.editAliasShort": "Псевдоним",

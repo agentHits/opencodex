@@ -3,10 +3,11 @@
  * unified single dropdown filter button, email/alias/masked toggle, card/compact
  * view switch, and sorting control.
  */
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import { useT } from "../../i18n/shared";
 import { IconRefresh, IconSearch, IconX } from "../../icons";
 import type { AccountPoolStrategy } from "../../account-pool-strategy";
+import { DEFAULT_ACCOUNT_POOL_STRATEGY } from "../../account-pool-strategy";
 import type {
   AccountDisplayKey,
   AccountFilterKey,
@@ -59,7 +60,7 @@ export default function ProviderAccountsToolbar({
   poolSupported = false,
   poolEnabled = false,
   onTogglePoolEnabled,
-  poolStrategy = "reset-first",
+  poolStrategy = DEFAULT_ACCOUNT_POOL_STRATEGY,
   onSelectPoolStrategy,
 }: ProviderAccountsToolbarProps) {
   const t = useT();
@@ -69,6 +70,7 @@ export default function ProviderAccountsToolbar({
   const sortMenuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
+  const tooltipId = useId();
 
   const activeItem = analyzedList.find(a => a.account.active);
   const activeAccountTitle = activeItem ? (
@@ -78,17 +80,6 @@ export default function ProviderAccountsToolbar({
   ) : null;
 
   const hasSearch = searchQuery.trim().length > 0;
-
-  useEffect(() => {
-    if (searchInputRef.current) {
-      searchInputRef.current.style.setProperty("padding-left", "32px", "important");
-      searchInputRef.current.style.setProperty(
-        "padding-right",
-        hasSearch ? "28px" : "10px",
-        "important"
-      );
-    }
-  }, [hasSearch]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -148,7 +139,7 @@ export default function ProviderAccountsToolbar({
   let activeFilterLabel: string;
   let activeFilterIcon: string;
   let activeFilterCount: number;
-  
+
   switch (filter) {
     case "with_limits_gemini":
       activeFilterLabel = t("pws.filterWithLimitsGemini");
@@ -337,7 +328,7 @@ export default function ProviderAccountsToolbar({
                   >
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${filter === "with_limits" ? " active" : ""}`}
                       onClick={() => { onFilterChange("with_limits"); setLimitsMenuOpen(false); }}
                       style={{
@@ -356,7 +347,7 @@ export default function ProviderAccountsToolbar({
 
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${filter === "all" ? " active" : ""}`}
                       onClick={() => { onFilterChange("all"); setLimitsMenuOpen(false); }}
                       style={{
@@ -379,7 +370,7 @@ export default function ProviderAccountsToolbar({
 
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${filter === "with_limits_gemini" ? " active" : ""}`}
                       onClick={() => { onFilterChange("with_limits_gemini"); setLimitsMenuOpen(false); }}
                       style={{
@@ -398,7 +389,7 @@ export default function ProviderAccountsToolbar({
 
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${filter === "with_limits_claude" ? " active" : ""}`}
                       onClick={() => { onFilterChange("with_limits_claude"); setLimitsMenuOpen(false); }}
                       style={{
@@ -419,7 +410,7 @@ export default function ProviderAccountsToolbar({
 
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${filter === "gemini_exhausted" ? " active" : ""}`}
                       onClick={() => { onFilterChange("gemini_exhausted"); setLimitsMenuOpen(false); }}
                       style={{
@@ -438,7 +429,7 @@ export default function ProviderAccountsToolbar({
 
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${filter === "claude_exhausted" ? " active" : ""}`}
                       onClick={() => { onFilterChange("claude_exhausted"); setLimitsMenuOpen(false); }}
                       style={{
@@ -462,7 +453,7 @@ export default function ProviderAccountsToolbar({
 
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${filter === "fully_exhausted" ? " active" : ""}`}
                       onClick={() => { onFilterChange("fully_exhausted"); setLimitsMenuOpen(false); }}
                       style={{
@@ -505,7 +496,7 @@ export default function ProviderAccountsToolbar({
                   <div className="pwi-filter-dropdown-menu" >
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${sortKey === "more_headroom" ? " active" : ""}`}
                       onClick={() => { onSortChange("more_headroom"); setSortMenuOpen(false); }}
                     >
@@ -517,7 +508,7 @@ export default function ProviderAccountsToolbar({
 
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${sortKey === "less_headroom" ? " active" : ""}`}
                       onClick={() => { onSortChange("less_headroom"); setSortMenuOpen(false); }}
                     >
@@ -532,7 +523,7 @@ export default function ProviderAccountsToolbar({
                     {analyzedList.some(a => Boolean(a.generic5h || a.gemini5h || a.claude5h)) && (
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${sortKey === "reset_5h_soonest" ? " active" : ""}`}
                       onClick={() => { onSortChange("reset_5h_soonest"); setSortMenuOpen(false); }}
                     >
@@ -545,7 +536,7 @@ export default function ProviderAccountsToolbar({
 
                     <button
                       type="button"
-                      
+
                       className={`pwi-dropdown-item${sortKey === "reset_7d_soonest" ? " active" : ""}`}
                       onClick={() => { onSortChange("reset_7d_soonest"); setSortMenuOpen(false); }}
                     >
@@ -569,6 +560,7 @@ export default function ProviderAccountsToolbar({
               role="searchbox"
               inputMode="search"
               className="input input-sm pwi-search-prominent-input"
+              data-has-search={hasSearch ? "true" : "false"}
               placeholder={t("pws.searchAccountField")}
               value={searchQuery}
               onChange={e => onSearchQueryChange(e.target.value)}
@@ -685,11 +677,13 @@ export default function ProviderAccountsToolbar({
                   type="button"
                   className="pwi-pool-tooltip-btn"
                   onClick={() => setTooltipOpen(prev => !prev)}
+                  aria-expanded={tooltipOpen}
+                  aria-describedby={tooltipId}
                   aria-label={t("accountPool.strategyDesc")}
                 >
                   ?
                 </button>
-                <div className="pwi-pool-popover" role="tooltip">
+                <div className="pwi-pool-popover" role="tooltip" id={tooltipId}>
                   <strong>⚡ {t("genericPool.title")} — {t("accountPool.strategy")}:</strong>
                   <div className="pwi-pool-mode-desc">
                     <span style={{ color: "var(--green, #4ecb9d)", fontWeight: 600 }}>📅 {t("accountPool.strategyResetFirst")}:</span> {t("genericPool.visualResetFirst")}

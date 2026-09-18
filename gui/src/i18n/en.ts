@@ -2980,6 +2980,7 @@ export const en = {
   "pws.limitExhaustedBadge": "Limit exhausted",
   "pws.refreshAccountQuota": "Refresh this account's quota",
   "pws.switchedToAccount": "Switched to {account}",
+  "pws.accountSwitchNotice": "⚡ Account pool: switched to {account}",
   "pws.switchToAccount": "Switch to this account",
   "pws.accountSelect": "Select",
   "prov.editAliasShort": "Alias",

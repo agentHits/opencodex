@@ -202,10 +202,12 @@ const DEFAULT_GENERIC_AUTO_SWITCH_THRESHOLD = 80;
  * branch instead of a four-way one.
  */
 function activeGenericStrategy(config: OcxConfig, providerName: string): ActiveGenericStrategy | null {
-  const raw = config.providers?.[providerName]?.oauthAccountFailover?.strategy;
-  if (raw === "reset-first") return "reset-first";
+  // All pool strategies run behind the kernel flag; `quota` is the pre-kernel path.
+  // Letting `reset-first` bypass it would change 429 selection for pools that never
+  // opted into kernel-gated strategies.
   if (config.pool?.kernel !== true) return null;
-  return raw === "round-robin" || raw === "fill-first" ? raw : null;
+  const raw = config.providers?.[providerName]?.oauthAccountFailover?.strategy;
+  return raw === "round-robin" || raw === "fill-first" || raw === "reset-first" ? raw : null;
 }
 
 function genericStickyLimit(config: OcxConfig, providerName: string): number {
