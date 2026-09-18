@@ -79,6 +79,50 @@ export function removeOcxSection(content: string): string {
   );
 }
 
+/**
+ * Capture `[model_providers.opencodex]` verbatim so it can survive a restore that only
+ * takes routing down (#4812).
+ *
+ * This is deliberately NOT a mirror of `removeOcxSection`'s scan. That one opens a
+ * section on any line containing `OCX_SECTION_MARKER`, which is safe there only because
+ * `stripInjectedOpenaiBaseUrl` has already consumed the identical marker that annotates
+ * the root `openai_base_url`. Capture runs against the untouched file, so the same rule
+ * would collect that marker and the routing line under it — and re-appending the result
+ * would restore the exact base-url override the caller just removed.
+ *
+ * So the anchor is the provider header itself, via the shared `isOcxProviderHeaderLine`,
+ * with an immediately preceding marker line pulled in as its comment. Sharing that
+ * predicate is what keeps capture and removal from disagreeing about what our table is.
+ */
+export function extractOcxProviderTableBlock(content: string): string | null {
+  const lines = content.split("\n");
+  const collected: string[] = [];
+  let capturing = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (isOcxProviderHeaderLine(line.trim())) {
+      if (!capturing) {
+        const previous = lines[index - 1];
+        if (previous !== undefined && previous.includes(OCX_SECTION_MARKER)) collected.push(previous);
+        capturing = true;
+      }
+      collected.push(line);
+      continue;
+    }
+    if (!capturing) continue;
+    // A foreign table header closes ours, exactly as in `removeOcxSection`. A later
+    // `[model_providers.opencodex.*]` sub-table reopens capture on the next iteration,
+    // which is why the two are separate passes over the same predicate.
+    if (/^\s*\[/.test(line)) {
+      capturing = false;
+      continue;
+    }
+    collected.push(line);
+  }
+  if (collected.length === 0) return null;
+  return collected.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+}
+
 interface StripOpencodexConfigResult {
   content: string;
   managedDefaultsError: string | null;

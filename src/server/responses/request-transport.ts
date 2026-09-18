@@ -44,7 +44,7 @@ import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve"
 import { providerFetch } from "./fetch-helpers";
 import type { ProviderFetchOptions } from "./fetch-helpers";
 import { captureConfigGeneration } from "../../lib/state-store-sweeper";
-import { recordAnthropicAccountQuotaFromHeaders, hasPassiveAccountQuota, backgroundRefreshActiveAccountQuota } from "../../providers/quota";
+import { recordAnthropicAccountQuotaFromHeaders, hasPassiveAccountQuota } from "../../providers/quota";
 import { checkOutboundBodySize, describeOutboundBodyRefusal } from "./outbound-body-guard";
 import { formatErrorResponse } from "../../bridge";
 import { bindRouteReasoningReplayScope } from "./core-replay";
@@ -207,10 +207,10 @@ export async function prepareResponsesTransport(
   const applyFailoverSnapshot = async (
     snapshot: OAuthAccessSnapshot,
     retryParsed: OcxParsedRequest = parsed,
-  ): Promise<boolean> => {
-    if (route.provider.googleMode === "cloud-code-assist" && !snapshot.projectId) return false;
+  ): Promise<OAuthAccessSnapshot | null> => {
+    if (route.provider.googleMode === "cloud-code-assist" && !snapshot.projectId) return null;
     const committed = await commitResolvedOAuthSelection(snapshot);
-    if (!committed) return false;
+    if (!committed) return null;
     snapshot = committed;
     let rotatedProvider: OcxProviderConfig = { ...route.provider, apiKey: snapshot.accessToken };
     if (route.providerName === "github-copilot") {
@@ -243,7 +243,7 @@ export async function prepareResponsesTransport(
     }
     sentOAuthSnapshot = snapshot;
     replayOAuthCredentialSnapshot = { accountId: snapshot.accountId, generation: snapshot.generation };
-    return true;
+    return snapshot;
   };
   // Key sends may be rebuilt while queued. Keep metadata pending until the guarded
   // physical dispatch binds it to the selection that actually reaches the upstream.
@@ -551,7 +551,6 @@ export async function prepareResponsesTransport(
           // helper returns immediately unless the kernel is on AND the strategy is
           // round-robin, so quota and fill-first pools reach it without being touched.
           noteGenericPoolSelection(config, route.providerName, resolved.accountId, route.modelId);
-          backgroundRefreshActiveAccountQuota(route.providerName, resolved.accountId);
         }
         // Anthropic is excluded from isGenericFailoverProvider -- its own pool owns affinity and
         // a fail-closed local-cli credential rule -- so without this stamp its identity is
