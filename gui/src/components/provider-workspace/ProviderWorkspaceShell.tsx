@@ -684,5 +684,3 @@ function WorkspaceEmptyState({ onAddProvider }: { onAddProvider: (intent?: AddPr
     </div>
   );
 }
-
-
