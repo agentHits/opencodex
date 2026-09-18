@@ -3143,6 +3143,7 @@ export const ko: Record<TKey, string> = {
   "pws.limitExhaustedBadge": "한도 소진됨",
   "pws.refreshAccountQuota": "이 계정 한도 새로고침",
   "pws.switchedToAccount": "{account}(으)로 전환됨",
+  "pws.accountSwitchNotice": "⚡ 계정 풀: {account}(으)로 전환됨",
   "pws.switchToAccount": "이 계정으로 전환",
   "pws.accountSelect": "선택",
   "prov.editAliasShort": "별칭",

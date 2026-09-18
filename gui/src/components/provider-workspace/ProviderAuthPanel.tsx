@@ -34,6 +34,7 @@ import {
 } from "./account-quota-analysis";
 import { getPoolSettings, putPoolSettings } from "../../pool-settings";
 import { normalizeAccountPoolStrategy, type AccountPoolStrategy } from "../../account-pool-strategy";
+import { DEFAULT_ACCOUNT_POOL_STRATEGY } from "../../account-pool-strategy";
 import { RemoveAccountConfirmDialog } from "./ProviderDialogs";
 import { GrokCouponBadge, GrokResetCouponModal } from "./GrokResetCoupons";
 import type { CodexAccountPoolController } from "../../hooks/useCodexAccountPool";
@@ -302,6 +303,10 @@ export default function ProviderAuthPanel({
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | null>(null);
   const [genericPool, setGenericPool] = useState<{ enabled: boolean; strategy: AccountPoolStrategy } | null>(null);
   useEffect(() => {
+    // The panel is not remounted per provider: without this, a failed read (or an
+    // empty roster) leaves the previous provider's strategy on screen, and the
+    // toggle would persist it under the new provider.
+    setGenericPool(null);
     if (!isOauth || item.name === "openai" || item.name === "anthropic") return;
     // Pool settings govern rotation between accounts; with an empty roster there
     // is nothing to rotate, so skip the settings fetch until accounts arrive.
@@ -649,10 +654,10 @@ export default function ProviderAuthPanel({
                   onRefreshAll={canRefreshQuota ? () => { void refreshQuota(); } : undefined}
                   quotaRefreshResultText={quotaRefreshResult?.text}
                   quotaRefreshResultOk={quotaRefreshResult?.ok}
-                  poolSupported={isOauth && item.name !== "openai" && item.name !== "anthropic"}
-                  poolEnabled={genericPool?.enabled ?? true}
+                  poolSupported={genericPool !== null}
+                  poolEnabled={genericPool?.enabled ?? false}
                   onTogglePoolEnabled={handleTogglePoolEnabled}
-                  poolStrategy={genericPool?.strategy ?? "reset-first"}
+                  poolStrategy={genericPool?.strategy ?? DEFAULT_ACCOUNT_POOL_STRATEGY}
                   onSelectPoolStrategy={handleSelectPoolStrategy}
                 />
                 {filteredAndSortedAccounts.length > 0 ? (

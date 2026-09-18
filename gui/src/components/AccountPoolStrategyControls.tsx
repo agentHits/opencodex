@@ -31,11 +31,6 @@ export interface AccountPoolStrategyControlsProps {
   disabled?: boolean;
   strategySelectId?: string;
   stickyInputId?: string;
-  /**
-   * Hide the visual strategy label when the surrounding card title already reads
-   * "Rotation strategy". The select keeps its aria-label, so the accessible name
-   * survives while the duplicated on-screen text disappears.
-   */
   onStrategyChange(strategy: AccountPoolStrategy): void;
   onStickyDraftChange(value: string): void;
   /** Optional draft overrides React state when steppers commit in the same tick as a draft change. */
@@ -60,7 +55,9 @@ export default function AccountPoolStrategyControls({
   onStickyCommit,
 }: AccountPoolStrategyControlsProps) {
   const t = useT();
-  const strategyOptions = ACCOUNT_POOL_STRATEGIES.filter(value => codex || allowResetFirst || value !== "reset-first").map((value) => ({
+  const strategyOptions = ACCOUNT_POOL_STRATEGIES.filter(value => (
+    codex || allowResetFirst || value !== "reset-first" || strategy === value
+  )).map((value) => ({
     value,
     label: t(STRATEGY_LABEL_KEYS[value]),
   }));
@@ -89,9 +86,10 @@ export default function AccountPoolStrategyControls({
         shape put an sr-only label above a full-width select, so the screen showed an unnamed
         picker under a card title.
 
-        Both descriptions are kept deliberately. They answer different questions — the first
-        what the setting does, the second what happens to threads that are already running —
-        and collapsing them to one line silently drops the answer about account affinity.
+        The default layout keeps all three descriptions. They answer different questions — what
+        the setting does, what the selected strategy does, and what happens to threads that are
+        already running. `compact` is for surfaces that already explain affinity elsewhere, such
+        as the generic OAuth card; it keeps only the strategy-specific line.
       */}
       <div className="setting-row">
         <div className="setting-label">

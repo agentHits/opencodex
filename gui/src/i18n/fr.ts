@@ -3109,6 +3109,7 @@ export const fr: Record<TKey, string> = {
   "pws.limitExhaustedBadge": "Limite épuisée",
   "pws.refreshAccountQuota": "Actualiser le quota de ce compte",
   "pws.switchedToAccount": "Basculé vers {account}",
+  "pws.accountSwitchNotice": "⚡ Pool de comptes : basculé vers {account}",
   "pws.switchToAccount": "Basculer vers ce compte",
   "pws.accountSelect": "Sélectionner",
   "prov.editAliasShort": "Alias",

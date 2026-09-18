@@ -141,7 +141,9 @@ describe("generic OAuth account pool settings", () => {
       stickyLimit: 1,
     });
     const host = await mountPool();
-    expect(host.textContent).toContain("Quota");
+    expect(host.textContent).toContain(
+      "Quota rebinds an existing task at the usage threshold",
+    );
   });
 
   test("supports soonest reset strategy for generic providers", async () => {

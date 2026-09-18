@@ -466,6 +466,14 @@
   border-color: var(--border);
 }
 
+.pwi-filter-btn:focus-visible,
+.pwi-dropdown-item:focus-visible,
+.pwi-search-clear-btn:focus-visible,
+.pwi-seg-opt:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
 .pwi-filter-count {
   font-size: 11px;
   font-weight: 700;
@@ -697,10 +705,15 @@
   color: var(--text);
   border: 1px solid var(--border) !important;
   border-radius: var(--radius-xs);
-  padding: 0 28px 0 32px !important;
+  padding-left: 32px !important;
+  padding-right: 10px !important;
   font-size: 12.5px;
   box-sizing: border-box;
   transition: border-color var(--motion-fast), box-shadow var(--motion-fast), background var(--motion-fast);
+}
+
+.pwi-search-prominent-input[data-has-search="true"] {
+  padding-right: 28px !important;
 }
 
 .pwi-search-prominent-input::placeholder {
@@ -1072,20 +1085,25 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 12px;
-}
-
-.pwi-quota-title {
-  color: var(--text);
-  font-weight: 500;
-  font-size: 11px;
-  flex: 1 1 auto;
+  gap: 6px;
+  margin-bottom: 3px;
   min-width: 0;
 }
 
+.pwi-quota-title {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 11px;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .pwi-quota-reset {
+  font-size: 10.5px;
   color: var(--muted);
-  font-size: 10px;
   margin-left: auto;
   flex-shrink: 0;
   white-space: nowrap;
@@ -1107,32 +1125,6 @@
 
 .pwi-fill-warn {
   background: var(--amber);
-}
-
-.pwi-quota-item-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 6px;
-  margin-bottom: 3px;
-  min-width: 0;
-}
-
-.pwi-quota-title {
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-
-.pwi-quota-reset {
-  font-size: 10.5px;
-  color: var(--muted);
-  white-space: nowrap;
-  flex-shrink: 0;
-  margin-left: auto;
 }
 
 .pwi-quota-item-foot {
@@ -1283,10 +1275,6 @@
   flex: 1 1 auto;
   min-width: 20px;
   height: 100%;
-}
-
-.pwi-dense-select-btn:disabled {
-  cursor: default;
 }
 
 .pwi-dense-title {
@@ -1600,8 +1588,6 @@
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   z-index: 120;
 }
-.pwi-pool-tooltip-wrap:hover .pwi-pool-popover,
-.pwi-pool-tooltip-wrap:focus-within .pwi-pool-popover,
 .pwi-pool-tooltip-wrap.is-open .pwi-pool-popover {
   display: block;
 }

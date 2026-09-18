@@ -159,6 +159,11 @@ export function accountResetTimestamp(
 /**
  * Rank candidates by soonest reset timestamp first among healthy accounts.
  * Accounts whose quota will reset earliest get priority so allowances do not expire unused.
+ *
+ * When a passive provider has incomplete quota evidence (some ring members with no
+ * cached record), reset timestamps are unreliable: an unknown account converts to
+ * Infinity and always loses to a known near-exhausted one. Fall back to headroom
+ * order instead of inventing a reset ordering.
  */
 export function rankAccountsByResetFirst(
   provider: string,
@@ -170,6 +175,10 @@ export function rankAccountsByResetFirst(
   const ranked = rankAccountsByHeadroom(provider, ring, requestedModelId);
   const healthy = ranked.filter(id => !isAccountQuotaExhausted(provider, id, requestedModelId));
   if (healthy.length < 2) return ranked;
+  if (
+    hasPassiveAccountQuota(provider)
+    && !ring.every(id => headroomOf(provider, id, requestedModelId) !== null)
+  ) return ranked;
 
   const withReset = healthy.map((id, index) => ({
     id,

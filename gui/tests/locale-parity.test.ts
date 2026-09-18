@@ -52,7 +52,6 @@ const ZH_TW_KEEP_ENGLISH: ReadonlySet<string> = new Set([
   "api.responsesEndpoint",
   // Provider proper nouns (Taiwan keeps the English brand; "火山方舟" is Mainland usage)
   "provider.name.volcengine",
-  "pws.cockpitCardTitle",
   // A literal filename, not prose: AGENTS.md is the file Codex reads from the
   // working directory, and Taiwan renders it the same way every other locale does.
   "codexSet.layer.agents-md",
@@ -110,9 +109,6 @@ const ZH_TW_KEEP_ENGLISH: ReadonlySet<string> = new Set([
   "nav.grok",
   // Other short identifiers, commands, and product names kept in English
   "api.clientConfig.clientOpencode",
-  // Cline CLI is a product name, not untranslated interface copy.
-  "integrations.tab.cline",
-  "api.clientConfig.clientCline",
   "api.clientConfig.clientPi",
   "api.clientConfig.clientOmp",
   "api.clientConfig.clientHermes",
@@ -154,6 +150,8 @@ const ZH_TW_KEEP_ENGLISH: ReadonlySet<string> = new Set([
   // Cline product name and CLI acronym are intentionally preserved.
   "integrations.tab.cline",
   "api.clientConfig.clientCline",
+  // Cockpit Tools is a product name, not untranslated interface copy.
+  "pws.cockpitCardTitle",
   "integrations.codex.title",
   // Provider proper nouns kept in English
   "provider.name.commandCodeAuth",
@@ -188,8 +186,6 @@ const ZH_TW_KEEP_ENGLISH: ReadonlySet<string> = new Set([
   "integrations.cursor.title",
   "integrations.cursor.privateInference",
   "integrations.cursor.baseUrl",
-  "integrations.tab.cline",
-  "api.clientConfig.clientCline",
   "pws.geminiExhaustedShort",
   "pws.claudeExhaustedShort",
   "pws.modelGemini",
