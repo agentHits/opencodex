@@ -8,14 +8,7 @@ import { useT } from "../../i18n/shared";
 import { IconLock, IconRefresh, IconTrash } from "../../icons";
 import type { WorkspaceItem } from "../../provider-workspace/catalog";
 import { oauthAccountDisplayLabel, providerAuthSurface } from "../../provider-workspace/auth";
-import { displayAccountId } from "../../lib/privacy";
-import {
-  formatOAuthHealthLabel,
-  formatOAuthHealthSummary,
-  oauthHealthBadgeClass,
-  oauthHealthIsCooldown,
-  oauthHealthShowsReauth,
-} from "../../oauth-health-display";
+import { oauthHealthShowsReauth } from "../../oauth-health-display";
 import CodexAccountPool from "../CodexAccountPool";
 import AnthropicAccountPoolSettings from "./AnthropicAccountPoolSettings";
 import { LoginHint as LoginHintView } from "../login-url-block";
@@ -36,7 +29,7 @@ import { getPoolSettings, putPoolSettings } from "../../pool-settings";
 import { normalizeAccountPoolStrategy, type AccountPoolStrategy } from "../../account-pool-strategy";
 import { DEFAULT_ACCOUNT_POOL_STRATEGY } from "../../account-pool-strategy";
 import { RemoveAccountConfirmDialog } from "./ProviderDialogs";
-import { GrokCouponBadge, GrokResetCouponModal } from "./GrokResetCoupons";
+import { GrokResetCouponModal } from "./GrokResetCoupons";
 import type { CodexAccountPoolController } from "../../hooks/useCodexAccountPool";
 import { useGrokResetCoupons } from "../../hooks/useGrokResetCoupons";
 import { Switch } from "../../ui";
