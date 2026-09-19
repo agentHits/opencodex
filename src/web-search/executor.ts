@@ -130,7 +130,7 @@ export async function runWebSearch(
       // A deadline, not a clamp: an instruction past the ceiling ends the search with the
       // 429 instead of parking it at a provider that already said it would refuse.
       if (delay > RETRY_AFTER_CEILING_MS) break;
-      console.warn(`[web-search] sidecar HTTP 429 for query "${query.slice(0, 80)}" — retrying (${attempt + 2}/${SIDECAR_429_MAX_ATTEMPTS}) after ${delay}ms`);
+      console.warn(`[web-search] sidecar HTTP 429 — retrying (${attempt + 2}/${SIDECAR_429_MAX_ATTEMPTS}) after ${delay}ms`);
       await releaseResponseBodyBestEffort(res.body, linkedSignal.signal);
       await sleepWithAbort(delay, linkedSignal.signal);
       res = await sendOnce();
