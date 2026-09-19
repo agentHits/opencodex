@@ -142,8 +142,8 @@ function isWeeklyWindow(label: string): boolean {
 }
 
 export function analyzeAccountQuota(account: OAuthAccountRow, providerName = "google-antigravity"): AnalyzedAccountQuota {
-  const emailLogin = extractEmailLogin(account.email, account.alias, account.id, account.rawEmail);
-  const maskedLogin = extractMaskedLogin(account.maskedEmail, account.email, account.rawEmail, account.alias, account.id);
+  const emailLogin = extractEmailLogin(account.email, account.alias, account.id);
+  const maskedLogin = extractMaskedLogin(undefined, account.email, undefined, account.alias, account.id);
   const quota = account.quota;
 
   let gemini5h: QuotaWindowInfo | undefined;
@@ -304,7 +304,7 @@ export function filterAccounts(
     // 1. Search text filter
     if (query) {
       const matchLogin = item.emailLogin.toLowerCase().includes(query);
-      const matchMasked = item.maskedLogin.toLowerCase().includes(query) || (item.account.maskedEmail ?? "").toLowerCase().includes(query);
+      const matchMasked = item.maskedLogin.toLowerCase().includes(query);
       const matchEmail = (item.account.email ?? "").toLowerCase().includes(query);
       const matchAlias = (item.account.alias ?? "").toLowerCase().includes(query);
       const matchId = item.account.id.toLowerCase().includes(query);
