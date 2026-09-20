@@ -672,6 +672,8 @@ export default function ProviderAuthPanel({
                         onEditAlias={acc => void authHandlers.onEditAlias(item.name, "oauth", acc.id, acc.alias)}
                         onRemove={acc => setAccountToRemove(acc)}
                         onReauth={acc => void authHandlers.onReauth(item.name, acc.id)}
+                        grokCouponEntry={grokCouponsEnabled ? grokCoupons.entries[analyzed.account.id] : undefined}
+                        onGrokCouponClick={grokCouponsEnabled ? acc => setCouponAccount(acc) : undefined}
                       />
                     ))}
                   </div>

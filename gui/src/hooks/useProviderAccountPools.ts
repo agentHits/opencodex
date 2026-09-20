@@ -232,17 +232,13 @@ export function useProviderAccountPools(deps: {
               },
             });
             return !enriched.some(row => row.quotaUnavailable === true);
-          } catch {
-            if (!currentQuota()) return false;
-            // Keep existing quota bars instead of blanking them on transient errors
-            setAccountSets(current => currentQuota() && current[provider] ? {
-              ...current, [provider]: {
-                ...current[provider],
-                accounts: current[provider].accounts.map(a => a.quota ? a : { ...a, quotaUnavailable: true }),
-              },
-            } : current);
-            return false;
-          }
+            } catch {
+              if (!currentQuota()) return false;
+              setAccountSets(current => currentQuota() && current[provider] ? {
+                ...current, [provider]: { ...current[provider], accounts: unavailableQuotaRows(current[provider].accounts, rows) },
+              } : current);
+              return false;
+            }
         };
         if (refresh) return await enrich();
         void enrich();
