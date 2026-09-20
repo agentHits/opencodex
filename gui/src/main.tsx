@@ -7,6 +7,7 @@ import "./styles/usage-chart-accessibility.css";
 import "./styles/sidebar-brand.css";
 import "./styles/fast-rows-setting.css";
 import "./styles/claude-desktop-mode-picker.css";
+import "./styles/pool-followup.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
