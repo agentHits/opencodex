@@ -355,7 +355,7 @@ function assertLegacyHistoryRecord(line: string): void {
   const record = value as Record<string, unknown>;
   const payload = record.payload;
   if (Object.hasOwn(record, "ordinal") || (payload !== null && typeof payload === "object" && (payload as Record<string, unknown>).history_mode === "paginated")) {
-    throw new CodexHistoryIntegrityError("history_paginated_requires_native_writer");
+    throw new CodexHistoryIntegrityError(HISTORY_RELABEL_STANDS_DOWN);
   }
 }
 
@@ -416,7 +416,7 @@ function assertLegacyHistoryWritable(path: string, heldFd?: number): void {
 function assertLegacyHistoryStore(db: Database): void {
   const columns = db.query<{ name: string }, []>("PRAGMA table_info(threads)").all();
   if (columns.some(column => column.name === "history_mode")) {
-    throw new CodexHistoryIntegrityError("history_paginated_requires_native_writer");
+    throw new CodexHistoryIntegrityError(HISTORY_RELABEL_STANDS_DOWN);
   }
 }
 
@@ -444,7 +444,7 @@ export function preflightCodexHistoryInjection(
     db = openCodexStateForPreflight(resolvedPath);
     const columns = db.query<{ name: string }, []>("PRAGMA table_info(threads)").all();
     const paginatedColumn = columns.some(column => column.name === "history_mode");
-    if (paginatedColumn && restoreEntries.length > 0) return "history_paginated_requires_native_writer";
+    if (paginatedColumn && restoreEntries.length > 0) return HISTORY_RELABEL_STANDS_DOWN;
     for (const entry of restoreEntries) assertLegacyHistoryWritable(entry.rolloutPath);
     const rows = db.query<{ rollout_path: string; history_mode: string | null; model_provider: string }, []>(`
       SELECT rollout_path, ${paginatedColumn ? "history_mode" : "NULL AS history_mode"}, model_provider
