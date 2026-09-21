@@ -534,6 +534,8 @@ export default function Providers({ apiBase }: { apiBase: string }) {
 
   const onAntigravityImportSuccess = () => {
     setAntigravityChoicePending(null);
+    void fetchConfig();
+    void fetchAccountSets(["google-antigravity"], true);
     void fetchOauth();
     bumpModelsRefresh();
   };
