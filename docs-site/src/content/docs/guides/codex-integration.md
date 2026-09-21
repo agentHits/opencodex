@@ -35,9 +35,9 @@ Codex's built-in `openai` provider id and points that provider at opencodex:
 ```toml
 # root keys, before the first table
 model_catalog_json = "/absolute/path/to/opencodex-catalog.json"
-# Auto-injected by opencodex
+# Auto-injected by opencodex (undo: ocx restore)
 openai_base_url = "http://127.0.0.1:10100/v1"
-# Auto-injected by opencodex
+# Auto-injected by opencodex (undo: ocx restore)
 experimental_realtime_ws_base_url = "http://127.0.0.1:10100/v1"
 
 # only when fastMode is set; unset adds no [features] table
@@ -299,7 +299,7 @@ model_provider = "opencodex"
 model_catalog_json = "/absolute/path/to/opencodex-catalog.json"
 
 # appended at the end of the file
-# Auto-injected by opencodex
+# Auto-injected by opencodex (undo: ocx restore)
 [model_providers.opencodex]
 name = "OpenCodex Proxy"
 base_url = "http://your-host:10100/v1"
@@ -369,6 +369,12 @@ Replayed continuation state is retained for 24 hours and stays bounded by its ex
 disk, and entry ceilings; this does not recover history the client no longer has. HTTP clients
 must handle the error explicitly and resend their full context without `previous_response_id`.
 Retrying only the same ID cannot recover missing state.
+
+The same refusal applies when the referenced state belongs to a different client task scope,
+including when the new request appears to carry complete input. The proxy cannot prove that input
+is complete, so it does not silently remove `previous_response_id` or reveal whether matching state
+exists. Retry with the complete conversation and omit `previous_response_id`; matching scopes and
+legacy continuations where both scopes are absent or blank continue to replay normally.
 
 The same recovery signal applies to every routed destination, because only the native Responses
 passthrough can answer a turn whose history this proxy lost — it forwards `previous_response_id`
@@ -714,6 +720,22 @@ See [The parser and bridge](/reference/architecture/#the-parser) for the explici
 There is no provider-level setting that can add a missing `tool_search` declaration; ordinary
 code-mode discovery remains a separate path.
 
+### Cache-read diagnostics
+
+Set `OPENCODEX_CACHE_DEBUG=1` before starting the proxy to write one diagnostic record per
+finalized request to `<config-dir>/cache-debug.jsonl`. The switch is off by default; set it to `0`
+or remove it to disable capture. The file is owner-only (`0600`) in the hardened config directory
+and rolls after 200 lines, retaining the newest 100.
+
+Each JSONL record contains the protocol, routed provider/model, cache-counter presence and
+provenance, process-local equality tags for the account, prompt-cache key, and allowlisted session
+headers, plus ordered fingerprints for instructions, tools, and message/input blocks. Prefix
+sections retain at most 128 tags and identify only the first divergent section/index. The
+diagnostic never stores prompt or message text, tool names, raw headers, raw cache/session/account
+identifiers, or a durable tag derived from them. Its random HMAC key is created at process start,
+separate from other debug keys, and is never persisted; tags therefore compare values only within
+one proxy process.
+
 ### Catalog troubleshooting
 
 If a model is missing from Codex, or the catalog order/visibility looks wrong, check in order:
@@ -897,7 +919,9 @@ When an affected history store supports paginated records, a provider transition
 
 When returning to the root-override form, OpenCodex retains an existing `[model_providers.opencodex]` definition before committing the configuration, even if history preflight currently passes. This keeps older `opencodex` conversations resolvable if Codex migrates history after that commit or while the background worker starts. New conversations still use the selected root provider; explicit restore keeps its separate removal guards.
 
-`ocx restore` and Codex config removal still refuse on `history_paginated_requires_native_writer`. Stripping the `[model_providers.opencodex]` definition while thread rows still reference it would make those conversations unresolvable, and the restore path has no way to keep a compatibility provider table. A home that is already paginated cannot currently be uninstalled through the product; that is known open work rather than intended behaviour.
+`ocx restore`, `ocx stop` and `ocx uninstall` no longer refuse on `history_paginated_requires_native_writer`. They take every OpenCodex root routing key out and keep the `[model_providers.opencodex]` definition on disk, so conversations whose rows still name that provider keep resolving while plain `codex` stops pointing at the proxy. The result is reported as a partial restore that names the retained lines, and `ocx restore --remove-codex-provider-table` removes them too, after which those conversations stop opening.
+
+Enabling the integration in its provider-table form on a home whose `openai`-tagged conversations Codex has already paginated used to be refused outright with `history_paginated_openai_requires_native_writer`: nothing was written and the integration stayed disabled. OpenCodex now completes that transition by keeping the managed root `openai_base_url` override beside the `[model_providers.opencodex]` table. Codex merges the override onto its built-in `openai` provider, so those conversations keep reaching the proxy without being relabeled and no rollout byte or thread row is touched. Only a routing form that requires the `x-opencodex-api-key` admission header still refuses, because Codex's built-in provider cannot carry that header; its message names the two settings that resolve it — route Codex through the loopback listener so the override can be retained, or set `syncResumeHistory` to `false` to accept that those conversations resume against Codex's own OpenAI endpoint.
 
 Do not rewrite an active paginated rollout or thread row to migrate those conversations yourself. Close the affected conversation before any recovery, and report the exact error and versions without uploading private history. A backup or a successful script alone does not prove the conversation is visible again. Check the restored conversation in Codex after reopening.
 

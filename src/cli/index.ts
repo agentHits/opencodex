@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
+import { join } from "node:path";
+import { findGuiDist } from "../server/gui-static";
+import { inspectGuiBundleFreshness, staleGuiBundleLines } from "../server/gui-freshness";
 
 // Best-effort recovery for runtime execution and spawned children if launched
 // from an unlinked/deleted working directory (runs after hoisted ESM module imports).
@@ -22,6 +25,7 @@ import {
   runCodexHistoryJob,
 } from "../codex/history-job";
 import { reconcileJournal } from "../codex/journal";
+import { readOcxProviderTableBlock } from "../codex/inject/remove";
 import { inspectClientRotationRecoveryGate, readClientConnectionState } from "../client/state";
 import {
   codexAutoStartEnabled,
@@ -50,7 +54,7 @@ import {
   pendingTeardownsAreExactly,
   quarantinePendingTeardown,
 } from "../config/pending-teardown";
-import { collectStatus, hubStatusLines, remoteHubBannerLine, remoteHubStatusLines, unusedProxyWarningLines } from "./status";
+import { collectStatus, deadProxyRoutingAdviceLines, detectMissingCodexCatalogPath, hubStatusLines, missingCodexCatalogLines, remoteHubBannerLine, remoteHubStatusLines, unusedProxyWarningLines } from "./status";
 import { endpointsToProve, everyEndpointProvenDown, sharedTeardownAuthorized, type UninstallObservation } from "./uninstall-plan";
 import { takeFlag } from "./runtime-api";
 import { parseStartOptions, StartArgsError } from "./start-args";
@@ -65,6 +69,7 @@ import {
 } from "./tray-proxy";
 import { requestBoundSystemRestart } from "./system-restart-client";
 import { installCrashGuards } from "../lib/crash-guard";
+import { SpendLedgerOwnerError } from "../lib/spend-ledger-owner";
 import { redactUrlForLog } from "../lib/redact";
 import { dispatchCommand, decideBusyPreferredPort, decideStartWithLiveOwner } from "./dispatch";
 import { AuxiliaryListenerBindError, findAvailablePort, isAddrInUse, PortUnavailableError, shouldPersistSelectedPort, waitForPortAvailable } from "../server/ports";
@@ -399,8 +404,8 @@ async function handleStart(options: { block?: boolean } = {}) {
     // to bake the service (observed: a probe on 10198 left the service pinned there).
     siblingStart = true;
     console.warn(
-      `Proxy already running on port ${owner.live.port}; starting a second instance on requested port ${requestedPort}. `
-      + `The new instance takes over this home's pid/runtime records and Codex config while it runs.`,
+      `Proxy already running on port ${owner.live.port}; requested a second instance on port ${requestedPort}. `
+      + `Startup continues only for an independent OPENCODEX_HOME; one state directory has one spend-ledger writer.`,
     );
   }
 
@@ -444,6 +449,10 @@ async function handleStart(options: { block?: boolean } = {}) {
       scheduleCatalogPrewarm();
       break;
     } catch (err) {
+      if (err instanceof SpendLedgerOwnerError) {
+        console.error(`❌ ${err.message}`);
+        process.exit(1);
+      }
       if (err instanceof AuxiliaryListenerBindError || !isAddrInUse(err) || attempt >= 2) throw err;
       if (requestedPort !== undefined) {
         console.log(`⚠️  Port ${port} was taken while starting; waiting to retry the same port...`);
@@ -573,11 +582,11 @@ async function handleStart(options: { block?: boolean } = {}) {
       try {
         const { fetchAllModels } = await import("../server/management-api");
         const { desktopVisibleNativeSlugs } = await import("../codex/catalog");
-        const { resolveCodexModelEntitlements } = await import("../codex/model-entitlements");
+        const { resolveAdmittedCodexModelEntitlements } = await import("../codex/model-entitlement-admission");
         const { buildDesktopDiscoveryInputs } = await import("../claude/desktop-discovery-inputs");
         const [models, modelEntitlements] = await Promise.all([
           fetchAllModels(config),
-          resolveCodexModelEntitlements(config, { clientVersion: null }),
+          resolveAdmittedCodexModelEntitlements(config, { clientVersion: null }),
         ]);
         const inputs = buildDesktopDiscoveryInputs({
           config, models, modelEntitlements,
@@ -1551,8 +1560,26 @@ async function handleStatus() {
     console.log(installed
       ? "     Restart with 'ocx start', or refresh the installed service: 'ocx service repair'."
       : "     Restart with 'ocx start', or install the persistent service: 'ocx service install'.");
+    // Restarting is only half the choice. A user who cannot sign in to Codex at all needs the
+    // way out that does not require this proxy to come back (#5261).
+    for (const line of deadProxyRoutingAdviceLines({
+      proxyUp: false,
+      routingKind: status.json.startup.routingKind,
+    })) {
+      console.log(`     ${line}`);
+    }
   }
   console.log(`   Dashboard: ${status.json.dashboard.url}${local}`);
+  // The dashboard is a build artifact, so a checkout that moved without `bun run build:gui` keeps
+  // serving the previous bundle and every feature added since simply does not appear (#5196's
+  // usage panel was invisible this way for five days). Reported next to the dashboard URL, which
+  // is where someone looks when the page is wrong.
+  for (const line of staleGuiBundleLines(inspectGuiBundleFreshness({
+    bundlePath: findGuiDist(),
+    sourcePath: join(import.meta.dir, "..", "..", "gui", "src"),
+  }))) {
+    console.log(`     ${line}`);
+  }
   console.log(`   Config: ${status.json.paths.config}${local}`);
   console.log(`   PID file: ${status.json.paths.pid}${local}`);
   console.log(`   Runtime: ${status.json.paths.runtime}${local}`);
@@ -1571,6 +1598,24 @@ async function handleStatus() {
   console.log(`   Codex autostart: ${status.json.codexAutostart ? "enabled" : "disabled"}${local}`);
   console.log(`   Restart safety: ${startupHealthSummary(status.json.startup)}${local}`);
   console.log(`   ${formatStartupRoutingDetail(status.json.startup)}${local}`);
+  // Independent of whether the proxy is up: a catalog pointer whose file is gone stops Codex
+  // loading its config at all, and presents as the same blank wall as dead routing (#5261).
+  // Tagged `(local)` on its header like every other local-state line, so a connected client
+  // cannot read a finding about its own Codex home as something the hub reported.
+  missingCodexCatalogLines(detectMissingCodexCatalogPath())
+    .forEach((line, index) => console.log(`   ${line}${index === 0 ? local : ""}`));
+  if (status.json.startup.routingKind === "native") {
+    let retainedProviderTable = false;
+    try {
+      retainedProviderTable = readOcxProviderTableBlock() !== null;
+    } catch {
+      // The routing snapshot owns unreadable-config reporting. A later read race must not
+      // turn this diagnostic command into a teardown failure.
+    }
+    if (retainedProviderTable) {
+      console.log(`   ⚠️  Codex provider table retained${local}: [model_providers.opencodex] remains while root routing is native. Remove with 'ocx restore --remove-codex-provider-table'; tagged conversations will stop opening.`);
+    }
+  }
   console.log(`   Service: ${status.json.service.summary}${local}`);
   console.log(`   ${status.json.codexShim.summary}${local}`);
   console.log(`   Codex runtime: ${status.json.codexRuntime.path}${local}`);

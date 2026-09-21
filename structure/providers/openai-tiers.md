@@ -387,8 +387,11 @@ has headroom, auth resolution validates the caller bearer's own gated-model rost
 request-owned credential before stored-Pool selection. The credential never enters Pool persistence,
 affinity, entitlement cache, or health state, and this decision never reads the physical main credential.
 If the caller lacks the requested model, a stored-account model detour may serve the request without
-clearing the healthy shared main pin. A paused or quota-drained main skips this exception and follows the
-ordinary Pool promotion path.
+clearing the healthy shared main pin. With quota-strategy cache affinity, the same detour preserves an
+ordinary added-account binding and shared selection beyond the proactive-switch threshold until genuine
+exhaustion; pause, cooldown, reauthentication, quota refusal, and failover evidence still retire shared
+state normally. A paused or quota-drained main skips the request-owned credential exception and follows
+the ordinary Pool promotion path.
 
 > Decision record: [ADR-0086](../decisions/ADR-0086-public-provider-contract.md)
 
@@ -599,8 +602,7 @@ Listener startup diagnostics follow [the runtime lifecycle contract](../runtime.
 `src/codex/routing/selection.ts` applies optional `codexPool.excludedPlans` to both candidate selection and existing active/affined accounts. An all-excluded pool returns no automatic candidate, including preview and configured-account fallback. Native main remains exempt and unknown plans remain eligible. Explicit account-qualified routes retain pause, credential and entitlement checks while bypassing only this automatic policy.
 
 `src/codex/auth-api/account-list.ts` projects `selectionExcludedReason: "plan_excluded"` and `selectionExcludedPlan` from the routing config, even when a newer display-only WHAM plan could not be persisted. The dashboard and account CLI show the policy reason separately from credential health; renewal clears the derived fields. The automatic next-session action and badge are omitted for excluded rows.
-## Paginated history writer boundary
-`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates refused restore/removal transitions. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. Apply retains an existing provider definition before candidate admission even when history preflight passes, so migration after artifact commit or during worker startup cannot leave earlier conversations without their provider. See the [history writer contract](../codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+Paginated and migration-capable history follows the [authoritative writer contract](../codex-home.md#paginated-history-writer-boundary); this document adds no independent writer guarantee.
 
 The [explicit model-capability contract](../config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
 

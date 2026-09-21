@@ -177,6 +177,15 @@ export const META_MUSE_REASONING_EFFORTS = ["minimal", "low", "medium", "high", 
 export const META_MUSE_REASONING_EFFORT_MAP: Record<string, string> = Object.fromEntries(
   META_MUSE_REASONING_EFFORTS.map(effort => [effort, effort]),
 );
+/*
+ * Muse Code credentials have a separate capability contract. Meta's authenticated
+ * /muse-code/models roster advertises max for both 1.3 models, and the Responses API
+ * accepts it when the request identifies the Muse client surface.
+ */
+export const META_MUSE_CODE_REASONING_EFFORTS = [...META_MUSE_REASONING_EFFORTS, "max"];
+export const META_MUSE_CODE_REASONING_EFFORT_MAP: Record<string, string> = Object.fromEntries(
+  META_MUSE_CODE_REASONING_EFFORTS.map(effort => [effort, effort]),
+);
 /** Both Muse Spark 1.3 tiers publish a 1,048,576-token window (dev.meta.ai/docs/models). */
 export const META_MUSE_CONTEXT_WINDOW = 1_048_576;
 export const META_MUSE_MODELS = ["muse-spark-1.3", "muse-spark-1.3-contributor"];
@@ -1017,3 +1026,25 @@ export const OPPER_TEXT_ONLY_MODELS = ["deepseek-v4-pro", "kimi-k3"];
 export const OPPER_MODEL_INPUT_MODALITIES: Record<string, string[]> = Object.fromEntries(
   OPPER_MODELS.map(id => [id, OPPER_TEXT_ONLY_MODELS.includes(id) ? ["text"] : ["text", "image"]]),
 );
+
+export const STEPFUN_MODELS = [
+  "step-5-preview",
+  "step-3.5-flash",
+  "step-3.7-flash",
+];
+
+export const STEPFUN_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+  "step-5-preview": 1_000_000,
+  "step-3.5-flash": 256_000,
+  "step-3.7-flash": 256_000,
+};
+
+export const STEPFUN_MODEL_INPUT_MODALITIES: Record<string, string[]> = {
+  "step-5-preview": ["text", "image"],
+  "step-3.5-flash": ["text"],
+  "step-3.7-flash": ["text", "image"],
+};
+
+export const STEPFUN_NO_VISION_MODELS = ["step-3.5-flash"];
+
+export const STEPFUN_REASONING_EFFORTS = ["low", "medium", "high"];

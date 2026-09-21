@@ -22,10 +22,12 @@ Start the proxy server (preferred port `10100`). It writes PID/runtime-port stat
 start a second live instance. When the preferred port is occupied, `start` asks the holder who it
 is and stops either way: it refuses outright when an opencodex answers there, and reports an
 unidentified holder otherwise. It never moves the listener to another port on its own, because that
-would leave the first proxy running and re-point Codex at the second. Name a different port with
-`--port`, or set `port: 0` in the config to ask the OS for one. On start it syncs each provider's
-models into Codex's catalog. On shutdown it restores native Codex — unless it was launched as a
-managed service (`OCX_SERVICE=1`).
+would leave the first proxy running and re-point Codex at the second. An explicit different
+`--port` is still refused when the live proxy shares this `OPENCODEX_HOME`, because observe-only
+and enforced spend accounting both write the same journal. Use a separate `OPENCODEX_HOME` for an
+independent sibling; `port: 0` only asks the OS for that instance's port and does not separate its
+state. On start it syncs each provider's models into Codex's catalog. On shutdown it restores
+native Codex — unless it was launched as a managed service (`OCX_SERVICE=1`).
 
 `--socks5` (default `127.0.0.1:10808`) saves `config.proxy` as a SOCKS5 URL and routes outbound
 HTTP(S) through a real SOCKS5 tunnel. `--socks5-off` clears only that saved SOCKS5 proxy; it
@@ -609,6 +611,8 @@ file is not part of the injected `env_key` contract; the launching process must 
 Install and control the Windows status tray icon. It starts at Windows login and provides one-click
 proxy controls. `start` and `stop` control the icon only; use its menu to control the proxy.
 `--no-start` applies to `install` and installs the tray without launching it immediately.
+Deprecated: the OpenCodex desktop app provides the tray on Windows, macOS, and Linux; `ocx tray`
+remains for installs without the desktop app.
 
 ## Dashboard
 

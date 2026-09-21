@@ -209,6 +209,23 @@ ocx logout <provider>
 
 Google Antigravity account and provider quota probes use fixed Google accounting endpoints, including the models fallback. They support transparent Fake-IP DNS for those destinations while retaining TLS verification, redirect rejection and private-address checks. A custom provider base URL changes model requests, not quota destinations; `NO_PROXY` continues to select the direct-route policy.
 
+### Google tool-schema loss diagnostics
+
+Google tool declarations are compiled against the selected endpoint class. When provider debug is
+on — `ocx debug provider on`, the dashboard Logs toggle, or `OCX_DEBUG=1` — schema loss during compatibility
+conversion on the omitted or `compatible` policy path emits a `[ocx:google:google-tool-schema-loss]`
+record (tail with `ocx debug provider logs -f`)
+carrying only the report version, endpoint class, a `lossy` indicator, a bounded uncertainty count,
+fixed loss categories with bounded counts, and a truncation flag. Tool and property names, paths, values, and schema text are
+never included. With an omitted or `compatible` policy, this diagnostic observes the existing
+conversion without rejecting it. Under `reject-lossy`, an initially lossy or comparison-indeterminate
+compilation is refused before dispatch; no separate loss record is emitted for the refused request. Under
+`reject-lossy`, a Vertex or Cloud Code Assist repair that would erase constraints emits a similarly
+content-free `google-tool-schema-repair` record and returns the original 400 without a changed send;
+with an omitted or `compatible` policy, the repaired request is replayed as before. Direct AI
+Studio never performs this repair. Native output schemas are outside both policy paths. See the
+[debug command reference](/reference/cli/agents/).
+
 
 After a terminal Nous refresh failure, run `ocx login nous` to reauthenticate.
 
@@ -395,7 +412,7 @@ selectors, then retry. Signing in from a machine with no existing `kiro-cli` ses
 
 ## 3. API-key catalog
 
-opencodex ships 95 built-in presets: 79 key-based, 12 OAuth, three local, and one default
+opencodex ships 96 built-in presets: 80 key-based, 12 OAuth, three local, and one default
 ChatGPT-forward preset. The dashboard's **Add provider** picker opens a key provider's dashboard,
 validates the key, and stores it; validation is provider-specific. Notable entries:
 
@@ -542,8 +559,14 @@ stays as documentation of the restriction. Upstream terms:
 
 Most use the `openai-chat` adapter with a bearer key; a few that expose only an Anthropic-compatible
 endpoint (e.g. **Xiaomi MiMo**) use the `anthropic` adapter (`x-api-key`).
-Volcengine Agent Plan uses its native Responses endpoint through `openai-responses`.
-The built-in DeepSeek preset also routes `deepseek-v4-flash` over its native Responses endpoint and
+Volcengine Coding Plan and Agent Plan use their native Responses endpoints through `openai-responses`.
+During validated Ark Coding Plan tool continuations, replaying the returned Responses `reasoning` item
+answered `400 InvalidParameter`, so the Coding Plan preset drops replayed reasoning items before
+forwarding continuation input; that is lossy, and `dropResponsesReasoningItems: false` turns it off.
+An install that already saved the Coding Plan provider on `openai-chat` keeps that wire — nothing
+rewrites a stored row — so switching is a deliberate edit: set `adapter` to `openai-responses` and
+`responsesPath` to `/responses`, or delete and re-add the preset. Explicit per-model `openai-chat`
+overrides remain available either way. The built-in DeepSeek preset also routes `deepseek-v4-flash` over its native Responses endpoint and
 keeps upstream SSE streaming enabled. If that model finishes every output item but omits the final
 Responses event, opencodex applies a five-second model-scoped grace repair; malformed or partial
 streams close as incomplete rather than being reported as successful.
@@ -669,7 +692,7 @@ voice models on the same host.
 Two things worth knowing before you pick it. **A Muse Code subscription does not apply
 here:** Meta scopes that credential to the Muse Code CLI and bills any other key
 pay-as-you-go. And the Contributor tier is cheap because Meta trains on your prompts —
-roughly 92% off input, 95% off output, and 99% off cached input — so keep confidential
+roughly 92% off input, 96% off output, and 99% off cached input — so keep confidential
 material off it. Muse Spark is also reachable through resellers, with a narrower roster:
 `command-code` carries both tiers, while `opencode-go` serves only
 `muse-spark-1.3-contributor`.
@@ -685,6 +708,12 @@ to guess at a credential store and points you at [dev.meta.ai](https://dev.meta.
 instead, where the same key is visible. A pasted key faces the same format check and the
 same live validation against the Model API as an imported one. See
 [Platform support](/reference/platform-support/) for the full per-platform picture.
+
+Both seeded `meta-muse` models expose `minimal`/`low`/`medium`/`high`/`xhigh`/`max` to
+routed clients, including Grok's effort picker. Requests use
+`User-Agent: muse-build/1.3.0 (opencodex compatibility)` so Meta accepts the Muse Code
+effort contract. An explicit provider User-Agent overrides this default and may cause
+`max` to be rejected. The `meta-model` and OpenCode Go effort ladders remain unchanged.
 
 **Read this before enabling it.** Meta scopes that credential to the Muse Code CLI, so
 using it here is an *unsupported* path. Meta does not authorize subscription coverage
@@ -971,8 +1000,11 @@ is not supported directly.
 
 Provider configuration selects the adapter; upstream transport selection is separate. Eligible
 Responses traffic can use WSS with [explicit proxy routing](/reference/proxy-formats/#json-and-sse-output).
-Invalid or unsupported WebSocket proxy settings fall back to HTTP/SSE, which uses Bun's HTTP
-proxy rules rather than the WSS-specific `ALL_PROXY` fallback.
+Invalid or unsupported WebSocket proxy settings fall back to HTTP/SSE, which uses the
+[server's configured outbound fetch](/reference/configuration/server/). A server SOCKS5 proxy from
+`config.proxy` or an inherited SOCKS5 `ALL_PROXY` uses the built-in tunnel when `NO_PROXY` does
+not exempt the target. Scheme-specific HTTP(S) proxy variables retain their separate native handling; non-SOCKS
+`ALL_PROXY` is not a native HTTP fetch route.
 
 **GitHub Copilot** is an OAuth provider (`ocx login github-copilot`) that exchanges a GitHub
 device-flow login for a short-lived Copilot API token — not a pasted API key. **GitLab Duo** remains

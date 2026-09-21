@@ -602,7 +602,11 @@ const commandRunners: Record<string, CommandRunner> = {
         const guiUrl = selectDefaultGuiUrl(config, live, deps.probeHostname);
         console.log(`Opening ${guiUrl}`);
         const { openUrl } = await import("../lib/open-url");
-        openUrl(guiUrl);
+        // Awaited so a launcher that never opened anything is said out loud (#5261). Still exit
+        // 0: the proxy is serving and the URL above is reachable, only the launch did not happen.
+        if ((await openUrl(guiUrl)).status === "failed") {
+          console.error("⚠️  No browser could be opened here; open the URL above yourself.");
+        }
         return 0;
       },
     });
@@ -769,6 +773,10 @@ const commandRunners: Record<string, CommandRunner> = {
     const { handleComboCommand } = await import("./combo");
     return await handleComboCommand(deps.args.slice(1));
   },
+  companion: async deps => {
+    const { handleCompanionCommand } = await import("./companion");
+    return await handleCompanionCommand(deps.args.slice(1));
+  },
   route: async deps => {
     if (deps.args[1] !== "combo" && deps.args[1] !== "policy") {
       console.error("Usage: ocx route <combo|policy> <subcommand>");
@@ -932,9 +940,9 @@ export type StartOwnerDecision = "refuse" | "service-stay-out" | "sibling";
  *
  * The #3106 guard exists so a bare `start` cannot shadow a healthy configured-port
  * proxy with an ephemeral-port copy. An interactive `--port X` naming a DIFFERENT
- * port than the live proxy's is an explicit sibling request, not that shadow — and
- * refusing it also broke every spawned-launcher test on a machine running a real
- * proxy, because the probe reaches the machine-global port across sandbox homes.
+ * port than the live proxy's is an explicit sibling request, not that shadow. The
+ * state-directory spend-ledger lease makes the final same-home refusal; keeping this
+ * decision allows isolated homes on one machine to remain independent.
  * The service wrapper always passes the configured port and keeps its exact
  * stay-out-of-the-way semantics: it never takes the sibling path.
  */
