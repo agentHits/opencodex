@@ -55,5 +55,11 @@ mkdirSync(binaries, { recursive: true });
 mkdirSync(resources, { recursive: true });
 const destination = join(binaries, `ocx-${triple}${target.startsWith("bun-windows-") ? ".exe" : ""}`);
 copyFileSync(executable, destination);
+if (process.platform === "darwin") {
+  // Bun linker-signed output is killed by macOS page validation (CODESIGNING
+  // "Invalid Page"); seal ad-hoc so the bundled sidecar actually launches.
+  const sign = Bun.spawnSync(["codesign", "-s", "-", "-f", destination], { stdout: "inherit", stderr: "inherit" });
+  if (sign.exitCode !== 0) process.exit(sign.exitCode);
+}
 cpSync(join(repoRoot, "gui", "dist"), resources, { recursive: true });
 console.log(`Prepared ${destination}`);
