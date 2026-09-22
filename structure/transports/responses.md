@@ -125,6 +125,16 @@ Function-call wrappers around freeform bodies are restored by
 is recoverable because the wrapper is otherwise unusable; two alternate fields are ambiguous and
 therefore remain untouched. Foreign freeform grammars never receive that compatibility rewrite.
 
+#### Schema-bound flat shell repair
+
+Completed Responses function calls have one separate schema-bound flat-shell repair. When the
+exact bare `exec_command` declaration requires a string `cmd`, a provider result containing only
+the string member `{ "input": "..." }` is rewritten to `{ "cmd": "..." }`; the call name is not
+changed. Namespaced tools, additional or conflicting members, non-string values, malformed JSON,
+partial streaming previews, and schemas that do not prove this exact contract remain byte-exact.
+
+> Decision record: [ADR-0098](../decisions/ADR-0098-schema-bound-exec-command-input-repair.md)
+
 Progressive preview for those wrappers is decoded by
 `src/responses/progressive-freeform-input.ts` in both the adapter-event bridge and routed
 function-call restoration, over the classification in `src/responses/freeform-wrapper-scan.ts`.
@@ -665,6 +675,16 @@ reconstruction. The scope comes from the final outbound body, after every remova
 translation, so a catalog that ends up empty there authorizes no client call whatever the selector
 still says. An absent catalog states no boundary, exactly as it states none for the declaration
 guard.
+
+Selection matching follows request-local identity correspondence instead of regenerating a set of
+name spellings. The outbound selector keeps its exact kind and wire name; namespace lowering
+contributes only its collision-checked `{namespace, name, kind}` aliases, and the Muse length rewrite
+composes its final wire alias over those identities. After client-facing restoration, two namespaces
+that share one basename remain distinct, as do a function and a custom tool that share one name. A
+custom call may match a function selector only when the same request records that exact
+custom-to-function conversion; malformed narrowing selectors and contradictory alias maps fail
+closed. Payload restoration still precedes sparse-terminal reconstruction, so the scope compares the
+restored call through that correspondence while preserving its item and call identifiers.
 
 The refusal is narrow and it is visible. Only the offending item is dropped, so the assistant text
 that arrived in the same turn still reaches the client rather than being discarded with it. Because
@@ -1381,8 +1401,8 @@ rate limit share. The failed-envelope path in the same function restates it too,
 arriving as `status: "failed"` is not reported as the 502 a Codex client retries four times.
 Because a re-wrap is where the in-process marker is lost, `retainReplayRefusal` and
 `carryReplayRefusal` in `src/lib/upstream-retry.ts` are what each formatter calls:
-`src/bridge/errors.ts`, `src/server/responses/passthrough-error.ts`, both Chat wrappers, and the
-deferred-logging re-wrap in `src/server/relay.ts`.
+`src/bridge/errors.ts`, `src/server/responses/passthrough-error.ts`, both Chat wrappers, the
+routed Claude Messages wrapper, and the deferred-logging re-wrap in `src/server/relay.ts`.
 
 **Dropping `Retry-After` is necessary and not sufficient.** The status stays 429 because Codex
 stops there and a 5xx invites four more sends, but the Stainless-generated clients — `openai`
@@ -1392,7 +1412,7 @@ proxy. Every surface therefore also emits `x-should-retry: false`, the one signa
 read before that table. The refusal is the only code that gets it: the WebSocket post-send
 verdicts are genuine upstream observations and keep their existing 502/504 contract. The
 acceptance evidence is a count, not a shape — `tests/server/replay-refusal-parity.test.ts` runs
-the proxy over a socket, drives all three surfaces with a client that implements the published
+the proxy over a socket, drives all four surfaces with a client that implements the published
 SDK rule, and asserts one physical upstream send per logical request, with a rate-limit control
 that shows the same client resending.
 

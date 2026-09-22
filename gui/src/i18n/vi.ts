@@ -6,6 +6,13 @@ import type { TKey } from "./en";
  * Technical terms and model identifiers intentionally remain English.
  */
 export const vi: Record<TKey, string> = {
+  "tray.updated": "Cập nhật {time} · mỗi 60 giây",
+  "tray.today": "Hôm nay",
+  "tray.input": "Đầu vào",
+  "tray.output": "Đầu ra",
+  "tray.cost": "Phí ước tính",
+  "tray.cached": "Đệm {percent}",
+
   "usage.incomplete": "Không thể đưa một số bản ghi sử dụng vào. Số lượng, ngày tháng và thứ hạng chỉ phản ánh các bản ghi có thể đọc được.",
   "models.pickerOrder.usageIncomplete": "Không thể lưu thứ tự dùng nhiều nhất vì lịch sử sử dụng không đầy đủ. Hãy chọn thứ tự khác hoặc sửa lịch sử trước.",
   "api.attribution.noRecordedUse": "Không có lượt sử dụng trong các bản ghi có thể đọc được",
@@ -318,6 +325,8 @@ export const vi: Record<TKey, string> = {
   "dash.stop": "Dừng Proxy",
   "dash.stopConfirm": "Dừng proxy và khôi phục native Codex?",
   "dash.stopFailed": "Không thể dừng proxy (HTTP {status}).",
+  "dash.stopStillRunning": "Proxy vẫn đang phản hồi nên chưa dừng.",
+  "dash.stopUnknown": "Chưa xác nhận được việc dừng. Hãy kiểm tra proxy còn chạy không trước khi thử lại.",
   "dash.maSwitchFailed": "Chuyển đổi chế độ thất bại (HTTP {status}).",
   "dash.maNetworkError": "Lỗi mạng — có phải proxy đang chạy không?",
   "dash.stopping": "Đang dừng…",
@@ -465,6 +474,7 @@ export const vi: Record<TKey, string> = {
   "prov.aliasPrompt": "Tên hiển thị (để trống để xoá)",
   "prov.aliasSaved": "Đã lưu bí danh",
   "prov.aliasSaveFailed": "Không thể lưu bí danh",
+  "prov.aliasInvalid": "Dùng tối đa 80 ký tự, không chứa ký tự điều khiển.",
   "prov.accountId": "ID",
   "prov.pasteRedirect": "Dán URL chuyển hướng hoặc mã",
   "prov.pasteRedirectHint": "Nếu trình duyệt hiển thị lỗi localhost, hãy sao chép URL đầy đủ từ thanh địa chỉ và dán nó vào đây (hoặc dán authorization code).",

@@ -4,6 +4,13 @@ import type { TKey } from "./en";
  * Japanese i18n catalog; must match the `TKey` set (compile-checked).
  */
 export const ja: Record<TKey, string> = {
+  "tray.updated": "更新 {time} · 60秒ごと",
+  "tray.today": "今日",
+  "tray.input": "入力",
+  "tray.output": "出力",
+  "tray.cost": "推定費用",
+  "tray.cached": "キャッシュ {percent}",
+
   "usage.incomplete": "一部の使用履歴を集計できませんでした。回数、日付、順位は読み取れる記録のみを反映しています。",
   "models.pickerOrder.usageIncomplete": "使用履歴が不完全なため、使用回数順を保存できません。別の順序を選ぶか、履歴を修復してください。",
   "api.attribution.noRecordedUse": "読み取れる記録に使用履歴なし",
@@ -331,6 +338,8 @@ export const ja: Record<TKey, string> = {
   "dash.stop": "プロキシを停止",
   "dash.stopConfirm": "プロキシを停止してネイティブの Codex に戻しますか?",
   "dash.stopFailed": "プロキシを停止できませんでした (HTTP {status})。",
+  "dash.stopStillRunning": "プロキシはまだ応答しています。停止していません。",
+  "dash.stopUnknown": "停止できたか確認できませんでした。再試行する前にプロキシが動作中か確認してください。",
   "dash.maSwitchFailed": "モードの切り替えに失敗しました (HTTP {status})。",
   "dash.maNetworkError": "ネットワークエラー — プロキシは起動していますか?",
   "dash.stopping": "停止中…",
@@ -2733,6 +2742,7 @@ export const ja: Record<TKey, string> = {
   "prov.aliasPrompt": "Display name (leave empty to clear)",
   "prov.aliasSaved": "Alias saved",
   "prov.aliasSaveFailed": "Could not save alias",
+  "prov.aliasInvalid": "制御文字を含めず、80文字以内で入力してください。",
   "prov.accountId": "ID",
   "models.customAdd": "Add custom model",
   "models.customAddTitle": "Add custom model — {provider}",

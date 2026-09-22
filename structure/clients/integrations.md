@@ -237,8 +237,8 @@ client. It decides from three facts, in order:
 Four properties are load-bearing:
 
 - The store is observed through the same `IntegrationIO` seam as the config file, so status and
-  mutation cannot disagree about which file an operation is about. Only a regular file counts; a
-  failed stat is not evidence of a migration.
+  mutation cannot disagree about which file an operation is about. Only proven absence permits
+  legacy writes; failed observations and non-file stores refuse apply/refresh as unestablished.
 - The ownership record, the journal row and the undo guard all follow the target rather than the
   client. A row naming the store is restorable because the guard asks whether this client still
   names that location, not whether it is the config file.
@@ -254,6 +254,14 @@ Writing the store does not relax ownership anywhere. The store keys a model rule
 match another provider's rule for the same model and replace it. A rule carrying this project's
 provider id that no record accounts for — including one the client's own migration created — is a
 conflict, and the explicit overwrite remains the only way past it.
+
+Persisted selector segments have two disjoint grammars owned by `src/integrations/merge.ts`.
+An unversioned `[field=value]` segment is permanently a one-criterion selector; commas and later
+equals signs remain part of its value, so an older ownership record keeps naming the same element.
+New multi-field selectors use the explicit `[v2:field=value,field=value]` grammar and are emitted by
+the shared formatter. A segment beginning with that reserved marker but failing the complete v2
+grammar is unreadable rather than a plain key or a v1 selector, so malformed persisted bytes cannot
+silently select a different element.
 
 A store whose schema cannot be established is reported, never merged into. That file holds the
 user's other providers and the client rewrites it on its own, so asserting a nesting we have not

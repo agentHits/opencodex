@@ -25,7 +25,7 @@
  */
 import { EXPORT_CLIENTS, ClientPathError, type BuildContribution, type ConfigFormat } from "../clients/config-export";
 import { PARSE_FAILED, loadTarget, parseConfig, type IntegrationIO } from "./config-io";
-import { AmbiguousSelectorError, readPath } from "./merge";
+import { AmbiguousSelectorError, InvalidSelectorError, readPath } from "./merge";
 import type { OwnershipRecord } from "./ownership";
 import { INTEGRATION_CLIENTS, type IntegrationClientId } from "./registry";
 
@@ -97,7 +97,7 @@ function storeTarget(
  * Uncertainty answers yes. An unreadable or unparseable config file is a state
  * the classifier is about to refuse on, and it must refuse on the file our
  * record is about rather than silently move the operation to a different one.
- * An ambiguous selector is the same kind of answer.
+ * An ambiguous or invalid selector is the same kind of answer.
  */
 function recordedBlockStillPresent(
   io: IntegrationIO,
@@ -112,7 +112,7 @@ function recordedBlockStillPresent(
   try {
     return record.fragmentPaths.some(path => readPath(parsed, path) !== undefined);
   } catch (error) {
-    if (error instanceof AmbiguousSelectorError) return true;
+    if (error instanceof AmbiguousSelectorError || error instanceof InvalidSelectorError) return true;
     throw error;
   }
 }
@@ -140,13 +140,16 @@ export function resolveIntegrationTarget(args: {
   const declared = INTEGRATION_CLIENTS[clientId].currentStore;
   if (!declared) return configFileTarget(clientId, configPath, null);
   const storePath = declared.path(args.env, args.home);
-  /*
-   * Only a regular file. A failed stat is an unreadable path, not evidence
-   * that the client migrated, and a directory there is not a provider list the
-   * client loaded — refusing over either would block an apply that would have
-   * worked.
-   */
-  if (io.statKind(storePath) !== "file") return configFileTarget(clientId, configPath, null);
+  const kind = io.statKind(storePath);
+  if (kind === "missing") return configFileTarget(clientId, configPath, null);
+  // Only proven absence permits a legacy write. Unreadable or non-file stores
+  // cannot establish what the client reads; preserve the recorded removal target.
+  if (kind !== "file") {
+    const ineffective: IneffectiveWrite = { store: storePath, why: "unestablished-schema" };
+    return record?.clientId === clientId && record.configPath === storePath
+      ? storeTarget(declared, storePath, ineffective)
+      : configFileTarget(clientId, configPath, ineffective);
+  }
   const loaded = loadTarget(io, storePath);
   const parsed = loaded.ok ? parseConfig(loaded.before, declared.format) : PARSE_FAILED;
   const established = parsed !== PARSE_FAILED && declared.establishes(parsed);

@@ -4,6 +4,13 @@ import type { TKey } from "./en";
  * Russian i18n catalog; must match the `TKey` set (compile-checked).
  */
 export const ru: Record<TKey, string> = {
+  "tray.updated": "Обновлено {time} · каждые 60с",
+  "tray.today": "Сегодня",
+  "tray.input": "Вход",
+  "tray.output": "Выход",
+  "tray.cost": "Стоимость ≈",
+  "tray.cached": "Кэш {percent}",
+
   "usage.incomplete": "Часть записей об использовании не удалось учесть. Счётчики, даты и рейтинги основаны только на читаемых записях.",
   "models.pickerOrder.usageIncomplete": "Нельзя сохранить порядок по частоте использования: история неполная. Выберите другой порядок или сначала восстановите историю.",
   "api.attribution.noRecordedUse": "В читаемых записях использование не найдено",
@@ -331,6 +338,8 @@ export const ru: Record<TKey, string> = {
   "dash.stop": "Остановить прокси",
   "dash.stopConfirm": "Остановить прокси и восстановить нативный Codex?",
   "dash.stopFailed": "Не удалось остановить прокси (HTTP {status}).",
+  "dash.stopStillRunning": "Прокси всё ещё отвечает — он не остановлен.",
+  "dash.stopUnknown": "Остановка не подтверждена. Прежде чем повторять, проверьте, работает ли прокси.",
   "dash.maSwitchFailed": "Не удалось переключить режим (HTTP {status}).",
   "dash.maNetworkError": "Ошибка сети — прокси запущен?",
   "dash.stopping": "Остановка…",
@@ -472,6 +481,7 @@ export const ru: Record<TKey, string> = {
   "prov.aliasPrompt": "Отображаемое имя (оставьте пустым для удаления)",
   "prov.aliasSaved": "Псевдоним сохранен",
   "prov.aliasSaveFailed": "Не удалось сохранить псевдоним",
+  "prov.aliasInvalid": "Не более 80 символов, без управляющих символов.",
   "prov.accountId": "ID",
   "prov.pasteRedirect": "Вставьте URL перенаправления или код",
   "prov.pasteRedirectHint": "Если браузер показывает ошибку localhost, скопируйте полный URL из его адресной строки и вставьте сюда (или вставьте код авторизации).",

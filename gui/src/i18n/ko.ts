@@ -4,6 +4,13 @@ import type { TKey } from "./en";
  * Korean i18n catalog; must match the `TKey` set (compile-checked).
  */
 export const ko: Record<TKey, string> = {
+  "tray.updated": "업데이트 {time} · 60초마다",
+  "tray.today": "오늘",
+  "tray.input": "입력",
+  "tray.output": "출력",
+  "tray.cost": "비용 · 추정",
+  "tray.cached": "캐시 {percent}",
+
   "usage.incomplete": "일부 사용량 기록을 집계하지 못했습니다. 횟수, 날짜, 순위는 읽을 수 있는 기록만 반영합니다.",
   "models.pickerOrder.usageIncomplete": "사용량 이력이 불완전해 많이 사용한 순서를 저장할 수 없습니다. 다른 순서를 선택하거나 이력을 복구하세요.",
   "api.attribution.noRecordedUse": "읽을 수 있는 기록에 사용 내역 없음",
@@ -326,6 +333,8 @@ export const ko: Record<TKey, string> = {
   "dash.stop": "프록시 중지",
   "dash.stopConfirm": "프록시를 중지하고 Codex 원본 설정을 복원할까요?",
   "dash.stopFailed": "프록시를 중지하지 못했습니다 (HTTP {status}).",
+  "dash.stopStillRunning": "프록시가 아직 응답하고 있습니다. 중지되지 않았습니다.",
+  "dash.stopUnknown": "중지 여부를 확인하지 못했습니다. 다시 시도하기 전에 프록시가 실행 중인지 확인하세요.",
   "dash.maSwitchFailed": "모드 전환에 실패했습니다 (HTTP {status}).",
   "dash.maNetworkError": "네트워크 오류 — 프록시가 실행 중인지 확인하세요.",
   "dash.stopping": "중지 중…",
@@ -470,6 +479,7 @@ export const ko: Record<TKey, string> = {
   "prov.aliasPrompt": "표시 이름 (비우면 삭제)",
   "prov.aliasSaved": "별칭이 저장되었습니다",
   "prov.aliasSaveFailed": "별칭을 저장하지 못했습니다",
+  "prov.aliasInvalid": "제어 문자 없이 80자 이내로 입력하세요.",
   "prov.accountId": "ID",
   "prov.pasteRedirect": "리다이렉트 URL 또는 코드 붙여넣기",
   "prov.pasteRedirectHint": "브라우저에 localhost 오류가 표시되면, 주소창의 전체 URL을 복사해 여기에 붙여넣으세요(또는 인증 코드 붙여넣기).",

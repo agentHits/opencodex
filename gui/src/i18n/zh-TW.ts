@@ -2,6 +2,13 @@ import type { TKey } from "./en";
 
 /** Traditional Chinese (Taiwan) UI strings — keys must match `en.ts` 1:1. */
 export const zhTW: Record<TKey, string> = {
+  "tray.updated": "更新於 {time} · 每60秒",
+  "tray.today": "今天",
+  "tray.input": "輸入",
+  "tray.output": "輸出",
+  "tray.cost": "預估費用",
+  "tray.cached": "快取 {percent}",
+
   "usage.incomplete": "部分用量記錄無法納入。次數、日期和排名僅反映可讀取的記錄。",
   "models.pickerOrder.usageIncomplete": "用量歷史不完整，無法儲存最常用排序。請選擇其他排序或先修復歷史記錄。",
   "api.attribution.noRecordedUse": "可讀取的記錄中沒有使用記錄",
@@ -221,6 +228,8 @@ export const zhTW: Record<TKey, string> = {
   "dash.stop": "停止代理",
   "dash.stopConfirm": "停止代理並恢復原生 Codex 配置？",
   "dash.stopFailed": "無法停止代理 (HTTP {status})。",
+  "dash.stopStillRunning": "代理仍在回應，未能停止。",
+  "dash.stopUnknown": "無法確認是否已停止。請先檢查代理是否仍在執行，再重試。",
   "dash.maSwitchFailed": "模式切換失敗 (HTTP {status})。",
   "dash.maNetworkError": "網路錯誤 — 代理是否正在執行？",
   "dash.stopping": "正在停止…",
@@ -358,6 +367,7 @@ export const zhTW: Record<TKey, string> = {
   "prov.aliasPrompt": "顯示名稱（留空以清除）",
   "prov.aliasSaved": "別名已儲存",
   "prov.aliasSaveFailed": "無法儲存別名",
+  "prov.aliasInvalid": "請使用最多 80 個字元，且不含控制字元。",
   "prov.accountId": "ID",
   "prov.pasteRedirect": "貼上重定向 URL 或授權碼",
   "prov.pasteRedirectHint": "如果瀏覽器顯示 localhost 錯誤，請複製位址列中的完整 URL 並貼上到此處（或貼上授權碼）。",

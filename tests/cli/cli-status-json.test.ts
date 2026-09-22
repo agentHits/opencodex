@@ -948,18 +948,9 @@ describe("status reports stale process records end to end", () => {
   test("a dead owner record surfaces in --json and in human output", async () => {
     const home = mkdtempSync(join(tmpdir(), "ocx-stale-json-"));
     try {
-      // Same hazard the fallback-port case below already guards, and for the same reason:
-      // `probeUncleanExitState` only reports a stale record when the recorded port REFUSES, and
-      // `allocateFreePort` hands back a port it has already released. This case spawns the CLI
-      // TWICE, so it was exposed for the whole gap between the two.
-      //
-      // Dispatch run 35121570658 lost the race there. The --json run saw the refusal and
-      // reported true; the human run a moment later found the port answering and correctly said
-      // nothing about a previous exit. Both reports were right. The fixture was asserting
-      // against a port it no longer owned, so it read a correct report as a lost signal.
-      //
-      // Confirm refusal around every probe and re-allocate when something takes it, so a stolen
-      // port retries the setup instead of failing an assertion it never exercised.
+      // A released port can be claimed by another test, and a real probe can
+      // time out without a refusal. Observe each CLI invocation's own verdict;
+      // another process before or after it cannot certify what it saw.
       let parsed: { proxy?: { staleProcessState?: unknown } } | undefined;
       let humanStdout: string | undefined;
       for (let attempt = 0; attempt < 5 && humanStdout === undefined; attempt++) {
@@ -976,12 +967,19 @@ describe("status reports stale process records end to end", () => {
         // treat a timed-out probe as a verdict.
         if (observed?.proxy?.staleProcessState !== true) continue;
 
-        const human = spawnSync(process.execPath, [cliPath, "status"], {
+        const human = spawnSync(process.execPath, [
+          "--preload", join(repoRoot, "tests/helpers/status-stale-observation.ts"), cliPath, "status",
+        ], {
           cwd: repoRoot,
           env: { ...process.env, OPENCODEX_HOME: home },
           encoding: "utf8",
         });
-        if (!await refusesConnection(port)) continue;
+        expect(human.status).toBe(0);
+        // The observer delegates to the real probe and returns its result unchanged.
+        // Only this process's receipt can prove the human formatter saw stale=true.
+        const receipt = human.stderr.match(/OCX_TEST_STALE_OBSERVATION=(true|false)/);
+        expect(receipt, "human status must execute the actual stale-process probe").not.toBeNull();
+        if (receipt?.[1] !== "true") continue;
         parsed = observed;
         humanStdout = human.stdout;
       }

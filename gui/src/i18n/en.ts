@@ -6,6 +6,13 @@
  * `{var}` are plain interpolations.
  */
 export const en = {
+  "tray.updated": "Updated {time} · every 60s",
+  "tray.today": "Today",
+  "tray.input": "Input",
+  "tray.output": "Output",
+  "tray.cost": "Cost · est.",
+  "tray.cached": "{percent} cached",
+
   "usage.incomplete": "Some usage records could not be included. Counts, dates, and rankings reflect readable records only.",
   "models.pickerOrder.usageIncomplete": "Cannot save most-used order because usage history is incomplete. Choose another order or repair the history first.",
   "api.attribution.noRecordedUse": "No use in readable records",
@@ -334,6 +341,8 @@ export const en = {
   "dash.stop": "Stop Proxy",
   "dash.stopConfirm": "Stop the proxy and restore native Codex?",
   "dash.stopFailed": "Failed to stop proxy (HTTP {status}).",
+  "dash.stopStillRunning": "The proxy is still answering, so it did not stop.",
+  "dash.stopUnknown": "The proxy did not confirm the stop. Check whether it is still running before trying again.",
   "dash.maSwitchFailed": "Mode switch failed (HTTP {status}).",
   "dash.maNetworkError": "Network error — is the proxy running?",
   "dash.stopping": "Stopping…",
@@ -484,6 +493,7 @@ export const en = {
   "prov.aliasPrompt": "Display name (leave empty to clear)",
   "prov.aliasSaved": "Alias saved",
   "prov.aliasSaveFailed": "Could not save alias",
+  "prov.aliasInvalid": "Use at most 80 characters, with no control characters.",
   "prov.accountId": "ID",
   "prov.pasteRedirect": "Paste redirect URL or code",
   "prov.pasteRedirectHint": "If the browser shows a localhost error, copy the full URL from its address bar and paste it here (or paste the authorization code).",

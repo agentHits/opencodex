@@ -67,7 +67,7 @@ import {
   quarantinePendingTeardown,
 } from "../config/pending-teardown";
 import { collectStatus, deadProxyRoutingAdviceLines, detectMissingCodexCatalogPath, hubStatusLines, missingCodexCatalogLines, remoteHubBannerLine, remoteHubStatusLines, unusedProxyWarningLines } from "./status";
-import { endpointsToProve, everyEndpointProvenDown, sharedTeardownAuthorized, type UninstallObservation } from "./uninstall-plan";
+import { endpointsToProve, everyEndpointProvenDownAsync, sharedTeardownAuthorized, type UninstallObservation } from "./uninstall-plan";
 import { takeFlag } from "./runtime-api";
 import { parseStartOptions, StartArgsError } from "./start-args";
 
@@ -85,14 +85,24 @@ import { SpendLedgerOwnerError } from "../lib/spend-ledger-owner";
 import { redactUrlForLog } from "../lib/redact";
 import { dispatchCommand, decideBusyPreferredPort, decideStartWithLiveOwner } from "./dispatch";
 import { AuxiliaryListenerBindError, findAvailablePort, isAddrInUse, PortUnavailableError, shouldPersistSelectedPort, waitForPortAvailable } from "../server/ports";
-import { findLiveProxy, probeHostname, probePortOwner, START_OWNERSHIP_LIVENESS, type LiveProxy } from "../server/proxy-liveness";
+import {
+  findLiveProxy,
+  probeEndpointLiveness,
+  probeHostname,
+  probePortOwner,
+  START_OWNERSHIP_LIVENESS,
+  type LiveProxy,
+} from "../server/proxy-liveness";
 import { createReadinessGate } from "../server/readiness";
 import { isApiAuthRequired } from "../server/auth-cors";
 import { runReady, type ReadyArgs } from "./ready";
+import { runResolve, type ResolveArgs } from "./resolve";
+import { summarizeStopRun, type StopOutcome, type StopRunRecord } from "./stop-report";
 import { runCli } from "./root";
 import { isProcessAlive, ProxyOwnershipRefusedError, refusalNextStep, stopProxy } from "../lib/process-control";
 import { startupDataPlaneToken } from "../lib/service-secrets";
-import { assertNotAdminToken, diagnoseService, isServiceOwnershipError, proxyStillLiveAfterStop, serviceCommand, serviceEnvironmentOwnedHere, serviceStartableFromTray, serviceStatusSummary, stopServiceIfInstalledDetailed, uninstallServiceIfInstalled, uninstallServiceDetailed } from "../service";
+import { assertNotAdminToken, diagnoseService, isServiceOwnershipError, proxyStillLiveAfterStop, serviceCommand, serviceEnvironmentOwnedHere, serviceStartableFromTray, serviceStatePaths, serviceStatusSummary, stopServiceIfInstalledDetailed, uninstallServiceIfInstalled, uninstallServiceDetailed } from "../service";
+import { acquireOwnershipMutationLease } from "../service/ownership-mutation-lease.mjs";
 import { formatStartupRoutingDetail, startupHealthSummary } from "../codex/autostart-health";
 import { injectSystemEnv, reconcileShellHook, revertSystemEnv, uninstallShellHook } from "../server/system-env";
 import { buildDesktop3pRegistry } from "../claude/desktop-3p";
@@ -101,6 +111,10 @@ import { startHistoryMigrationGuardian } from "../codex/history-migration-guardi
 import { maybeShowStarPrompt } from "./star-prompt";
 import { scheduleCatalogPrewarm } from "./catalog-prewarm";
 import { maybeShowUpdatePrompt } from "../update/notify";
+import {
+  bindAndPublishStartOwnership,
+  StartOwnershipRollbackUncertainError,
+} from "./start-ownership-publication";
 import { syncModelsToCodex } from "../codex/sync";
 import {
   HUB_GATED_SKIP_MESSAGE,
@@ -219,6 +233,13 @@ function startArgv(port?: number): string[] {
   return selfLaunchArgv(args);
 }
 
+class StartCommandExit extends Error {
+  constructor(readonly exitCode: number) {
+    super(`start command exited with code ${exitCode}`);
+    this.name = "StartCommandExit";
+  }
+}
+
 async function chooseListenPort(
   requestedPort?: number,
   options: { sibling?: boolean } = {},
@@ -291,17 +312,17 @@ async function chooseListenPort(
         // Same contract as the pre-bind owner check: the wrapper's retry loop terminates
         // on a zero exit, and the port it was asked to serve is already served.
         console.log(`Proxy already running (PID ${holder?.pid ?? "unknown"}, port ${preferred}); service wrapper staying out of the way.`);
-        process.exit(0);
+        throw new StartCommandExit(0);
       }
       if (decision === "refuse-live-proxy") {
         console.error(`⚠️  Proxy already running (PID ${holder?.pid ?? "unknown"}, port ${preferred}). Use 'ocx stop' first.`);
-        process.exit(1);
+        throw new StartCommandExit(1);
       }
       if (decision === "refuse-unidentified-holder") {
         console.error(`❌ Port ${preferred} is busy and its holder did not identify as opencodex.`);
         console.error("   Starting on another port would leave Codex pointed at a proxy you did not ask for.");
         console.error("   Stop whatever holds that port, or start on a free one with 'ocx start --port <port>'.");
-        process.exit(1);
+        throw new StartCommandExit(1);
       }
       if (preferred > 0) {
         console.log(`⚠️  Port ${preferred} is busy; starting opencodex on ${selected}.`);
@@ -316,7 +337,7 @@ async function chooseListenPort(
     if (err instanceof PortUnavailableError) {
       console.error(`❌ ${err.message}`);
       console.error("   Stop whatever holds that port, or change config.port, then retry.");
-      process.exit(1);
+      throw new StartCommandExit(1);
     }
     throw err;
   }
@@ -446,53 +467,99 @@ async function handleStart(options: { block?: boolean } = {}) {
   // live daemon holding resources while it overwrites its own binary.
   await maybeShowUpdatePrompt();
 
-  // Port selection is check-then-bind: a concurrent `ocx start`/`ensure` can win the port
-  // between the probe and Bun.serve. Soft starts may re-pick; hard-pinned `--port` retries
-  // the same port only (never hop — that was the remaining PR #152 gap).
-  let port = await chooseListenPort(requestedPort, { sibling: siblingStart });
-  const { drainAndShutdown, isRecyclingForExit, startServer } = await import("../server");
-  // One private readiness gate for this startServer invocation, captured by the
-  // listener's closure. handleStart owns it and transitions it after the
-  // post-startup sync settles. A second startServer in the same process would
-  // get its own gate and could never reset/mutate this one.
-  const readinessGate = createReadinessGate();
-  let server: ReturnType<typeof startServer>;
-  const localAttestationSecret = createLocalAttestationSecret();
-  for (let attempt = 0; ; attempt++) {
-    try {
-      server = startServer(port, { localAttestationSecret, readinessGate });
-      // Prewarm the live provider model cache as soon as the port is bound so the
-      // first GUI /v1/models (and syncModelsToCodex below) share one discovery flight
-      // instead of racing duplicate upstream /models fetches.
-      scheduleCatalogPrewarm();
-      break;
-    } catch (err) {
-      if (err instanceof SpendLedgerOwnerError) {
-        console.error(`❌ ${err.message}`);
-        process.exit(1);
-      }
-      if (err instanceof AuxiliaryListenerBindError || !isAddrInUse(err) || attempt >= 2) throw err;
-      if (requestedPort !== undefined) {
-        console.log(`⚠️  Port ${port} was taken while starting; waiting to retry the same port...`);
-        const hostname = loadConfig().hostname ?? "127.0.0.1";
-        const freed = await waitForPortAvailable(port, hostname, { timeoutMs: 3_000, intervalMs: 50 });
-        if (!freed) {
-          console.error(`❌ Port ${port} stayed busy; refusing to hop to an ephemeral port.`);
-          process.exit(1);
+  type StartServerModule = typeof import("../server");
+  type BoundStart = {
+    server: ReturnType<StartServerModule["startServer"]>;
+    serverModule: StartServerModule;
+    port: number;
+    readinessGate: ReturnType<typeof createReadinessGate>;
+    localAttestationSecret: string;
+    config: ReturnType<typeof loadConfig>;
+  };
+  let boundStart: BoundStart;
+  try {
+    boundStart = await bindAndPublishStartOwnership({
+      acquireLease: () => acquireOwnershipMutationLease(serviceStatePaths()),
+      bind: async () => {
+        // The earlier probe owned journal cleanup. This one owns the bind decision: an
+        // updater may have stopped the old runtime and acquired this lease for replacement.
+        const fencedLive = await findLiveProxy(START_OWNERSHIP_LIVENESS);
+        if (fencedLive) {
+          const decision = decideStartWithLiveOwner({
+            livePort: fencedLive.port,
+            requestedPort,
+            ocxService: process.env.OCX_SERVICE,
+          });
+          if (decision === "service-stay-out") {
+            console.log(`Proxy already running (PID ${fencedLive.pid ?? "unknown"}, port ${fencedLive.port}); service wrapper staying out of the way.`);
+            throw new StartCommandExit(0);
+          }
+          if (decision === "refuse") {
+            console.error(`⚠️  Proxy appeared before bind (PID ${fencedLive.pid ?? "unknown"}, port ${fencedLive.port}). Use 'ocx stop' first.`);
+            throw new StartCommandExit(1);
+          }
+          siblingStart = true;
         }
-        continue;
-      }
-      console.log(`⚠️  Port ${port} was taken while starting; picking another...`);
-      port = await chooseListenPort(requestedPort, { sibling: siblingStart });
-    }
-  }
-  // A single request's streaming error must never crash the daemon serving every
-  // other Codex session — capture the full stack to crash.log and stay up.
-  installCrashGuards();
-  writePid(process.pid);
 
-  const config = loadConfig();
-  writeRuntimePort({ pid: process.pid, port, hostname: config.hostname, attestationSecret: localAttestationSecret });
+        // Port selection is check-then-bind. The lease prevents every cooperating start or
+        // updater from turning that check into a different ownership decision.
+        let port = await chooseListenPort(requestedPort, { sibling: siblingStart });
+        const serverModule = await import("../server");
+        const readinessGate = createReadinessGate();
+        const localAttestationSecret = createLocalAttestationSecret();
+        const config = loadConfig();
+        let server: ReturnType<typeof serverModule.startServer>;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            server = serverModule.startServer(port, { localAttestationSecret, readinessGate });
+            break;
+          } catch (err) {
+            try { await serverModule.waitForFailedStartRollback(err); }
+            catch (rollbackError) {
+              throw new StartOwnershipRollbackUncertainError([err, rollbackError]);
+            }
+            if (err instanceof SpendLedgerOwnerError) {
+              console.error(`❌ ${err.message}`);
+              throw new StartCommandExit(1);
+            }
+            if (err instanceof AuxiliaryListenerBindError || !isAddrInUse(err) || attempt >= 2) throw err;
+            if (requestedPort !== undefined) {
+              console.log(`⚠️  Port ${port} was taken while starting; waiting to retry the same port...`);
+              const hostname = config.hostname ?? "127.0.0.1";
+              const freed = await waitForPortAvailable(port, hostname, { timeoutMs: 3_000, intervalMs: 50 });
+              if (!freed) {
+                console.error(`❌ Port ${port} stayed busy; refusing to hop to an ephemeral port.`);
+                throw new StartCommandExit(1);
+              }
+              continue;
+            }
+            console.log(`⚠️  Port ${port} was taken while starting; picking another...`);
+            port = await chooseListenPort(requestedPort, { sibling: siblingStart });
+          }
+        }
+        return { server, serverModule, port, readinessGate, localAttestationSecret, config };
+      },
+      writePid: () => writePid(process.pid),
+      writeRuntime: bound => writeRuntimePort({
+        pid: process.pid,
+        port: bound.port,
+        hostname: bound.config.hostname,
+        attestationSecret: bound.localAttestationSecret,
+      }),
+      stopBound: bound => bound.server.stop(true),
+      removeRuntime: () => removeRuntimePortIfPidIs(process.pid),
+      removePid: () => removePidIfValueIs(process.pid),
+    });
+  } catch (error) {
+    if (error instanceof StartCommandExit) { process.exitCode = error.exitCode; return; }
+    throw error;
+  }
+
+  const { server, serverModule, port, readinessGate, config } = boundStart;
+  const { drainAndShutdown, isRecyclingForExit } = serverModule;
+  // Records are visible now; background work may observe this runtime without a gap.
+  scheduleCatalogPrewarm();
+  installCrashGuards();
   // No pre-emptive snapshot here. `injectCodexConfig` journals the exact bytes it
   // is about to transform; snapshotting earlier only captured a baseline that could
   // already be stale by the time injection ran (#477).
@@ -924,6 +991,12 @@ async function restoreSharedClientStateAfterStop(): Promise<{ historyOnly: boole
 }
 
 async function handleStop() {
+  const lease = acquireOwnershipMutationLease(serviceStatePaths());
+  try { return await handleStopUnlocked(); }
+  finally { lease.release(); }
+}
+
+async function handleStopUnlocked() {
   // The receipt must name the endpoint the owner was stopping — an obligation nobody can
   // locate cannot be proven discharged. Only the runtime record knows it; a proxy started
   // with an explicit --port is not on the configured one.
@@ -955,8 +1028,7 @@ async function handleStop() {
     // An obligation that cannot name its endpoint cannot be proven discharged.
     if (!endpoint) return false;
     try {
-      const { probeProxyLiveness } = await import("../update/proxy-liveness-probe.mjs");
-      return probeProxyLiveness(endpoint.port, endpoint.hostname) === "dead";
+      return await probeEndpointLiveness(endpoint) === "dead";
     } catch {
       // A probe that could not run is not evidence of absence.
       return false;
@@ -980,6 +1052,16 @@ async function handleStop() {
   // service — the exact failure this flag prevents. A plain stop failure is different: we
   // tried, so local teardown still proceeds.
   let ownershipBlocked = false;
+  // Structured twin of the human lines below, for `ocx stop --json`: one document the
+  // desktop shell can read across the process boundary (D4). Every field is assigned
+  // where the corresponding boolean already flips — the summarizer never re-decides.
+  const record: StopRunRecord = {
+    service: "absent",
+    proxy: "unknown",
+    sharedTeardown: "skipped",
+    inheritedTeardownBlocks: false,
+    receiptClearFailed: false,
+  };
   // Deferring shared teardown to this process is an obligation, so record it on disk
   // before asking for it (#3008). A parent that dies mid-stop would otherwise leave the
   // client config routed at a proxy that is already gone, with nothing to find later.
@@ -1057,6 +1139,7 @@ async function handleStop() {
   };
   try {
     const serviceStop = stopServiceIfInstalledDetailed();
+    record.service = serviceStop;
     stoppedService = serviceStop === "stopped" || serviceStop === "stopped-respawnable";
     schedulerCanRespawn = serviceStop === "stopped-respawnable";
     // No "won't respawn" claim here: a stopped Task Scheduler can still respawn through
@@ -1077,6 +1160,7 @@ async function handleStop() {
       console.error("   Run 'ocx service status' to see the query error, repair Task Scheduler access, then retry.");
     }
   } catch (err) {
+    record.service = "error";
     if (isServiceOwnershipError(err)) {
       ownershipBlocked = true;
       stopFailed = true;
@@ -1100,8 +1184,10 @@ async function handleStop() {
       console.log(`✅ Proxy (PID ${pid}) stopped.`);
       removePid(pid);
       removeRuntimePort(pid);
+      record.proxy = "stopped";
     } catch (err) {
       stopFailed = true;
+      record.proxy = err instanceof ProxyOwnershipRefusedError ? "ownership-refused" : "stop-failed";
       console.error(`❌ Failed to stop proxy (PID ${pid}).`);
       // stopProxy throws with the reason — an ownership refusal (409) carries the
       // remediation ("run the stop from that home"). Swallowing it leaves the operator
@@ -1136,8 +1222,10 @@ async function handleStop() {
           { hostname: live.hostname ?? "127.0.0.1", port: live.port },
         );
         console.log(`✅ Proxy (PID ${live.pid}) stopped.`);
+        record.proxy = "stopped-orphan";
       } catch (err) {
         stopFailed = true;
+        record.proxy = err instanceof ProxyOwnershipRefusedError ? "ownership-refused" : "stop-failed";
         console.error(`❌ Failed to stop proxy (PID ${live.pid}).`);
         const detail = err instanceof Error ? err.message : String(err);
         if (detail) console.error(`   ${detail}`);
@@ -1155,12 +1243,14 @@ async function handleStop() {
       // under a proxy that is still serving — the exact failure the deferral exists to
       // prevent, arrived at from the other direction.
       stopFailed = true;
+      record.proxy = "unresolvable-pid";
       ownershipBlocked = true;
       console.error(`❌ A proxy is answering on port ${live.port}, but no process id could be resolved for it, so it cannot be stopped from here.`);
       console.error("   Skipping shared teardown: restoring client config while it serves would leave both pointing at each other.");
       console.error("   Stop it from the home that started it, or end the process manually, then rerun 'ocx stop'.");
-    } else if (!stoppedService) {
-      console.log("No running proxy found.");
+    } else {
+      record.proxy = "not-running";
+      if (!stoppedService) console.log("No running proxy found.");
     }
     if (!stopFailed) {
       // `readPid() === null` means the snapshotted pid file was absent, invalid, dead, or
@@ -1183,6 +1273,7 @@ async function handleStop() {
     const survivor = await proxyStillLiveAfterStop({ canRespawn: true });
     if (survivor) {
       stopFailed = true;
+      record.proxy = "respawned";
       console.error(`❌ A proxy is still listening on port ${survivor.port} after the service stop; it is being respawned.`);
       console.error("   Skipping shared teardown: restoring client config while the proxy runs leaves both pointing at each other.");
       ownershipBlocked = true;
@@ -1218,6 +1309,7 @@ async function handleStop() {
         // No file, no nonce: nothing to quarantine and nothing to remove. The home itself
         // may be hiding an obligation, so block and ask for the directory to be fixed.
         inheritedBlocks = true;
+        record.inheritedTeardownBlocks = true;
         stopFailed = true;
         console.error(`❌ ${read.detail}, so this stop cannot tell whether a shared teardown is still owed.`);
         console.error("   Skipping shared teardown. Fix access to the opencodex home, then rerun 'ocx stop'.");
@@ -1226,6 +1318,7 @@ async function handleStop() {
       if (read.state === "invalid") {
         unreadable.push(read);
         inheritedBlocks = true;
+        record.inheritedTeardownBlocks = true;
         stopFailed = true;
         console.error(`❌ A pending-teardown receipt could not be read (${read.detail}).`);
         console.error("   It names no endpoint, so this stop cannot prove the proxy it belonged to is down.");
@@ -1237,6 +1330,7 @@ async function handleStop() {
         // proxy on an explicit --port can be respawned there while this address refuses,
         // so "dead" here proves nothing and must not authorize a restore.
         inheritedBlocks = true;
+        record.inheritedTeardownBlocks = true;
         stopFailed = true;
         console.error("❌ A shared teardown from an earlier stop is outstanding, but that stop could not record the address it was stopping.");
         console.error(`   Only the configured address (${read.receipt.endpoint.hostname}:${read.receipt.endpoint.port}) was recorded, which cannot prove the right proxy is down.`);
@@ -1248,12 +1342,14 @@ async function handleStop() {
         continue;
       }
       inheritedBlocks = true;
+      record.inheritedTeardownBlocks = true;
       stopFailed = true;
       console.error(`❌ A shared teardown from an earlier stop is still outstanding, and the proxy on ${read.receipt.endpoint.hostname}:${read.receipt.endpoint.port} could not be confirmed down.`);
       console.error("   Skipping shared teardown: restoring client config under a proxy that may still be running is what the deferral exists to prevent.");
       console.error("   The obligation is preserved; retry once the proxy is confirmed stopped.");
     }
   }
+  if (nativeRestoreHandledByProxy) record.sharedTeardown = "performed-by-proxy";
   const restoreBlocked = ownershipBlocked || inheritedBlocks || nativeRestoreHandledByProxy;
   if (!restoreBlocked) {
     if (recoveredNonces.length > 0) {
@@ -1262,6 +1358,7 @@ async function handleStop() {
       console.log("↩️  Finishing a shared teardown left unfinished by an earlier stop.");
     }
     const restore = await restoreSharedClientStateAfterStop();
+    record.sharedTeardown = restore.historyDeferred ? "refused" : restore.other ? "failed" : "restored";
     if (restore.other) stopFailed = true;
     else if (restore.historyDeferred) historyDeferredNonces = teardownNonce ? [teardownNonce, ...recoveredNonces] : recoveredNonces;
     else if (restore.historyOnly) historyOnlyFailure = true;
@@ -1287,6 +1384,7 @@ async function handleStop() {
         // removal is surfaced rather than swallowed.
         if (!clearPendingTeardown(nonce)) {
           stopFailed = true;
+          record.receiptClearFailed = true;
           console.error(`❌ The shared teardown finished, but its receipt could not be removed: ${pendingTeardownPathFor(nonce)}`);
           console.error("   Remove it manually; otherwise every later stop and update will try to recover it again.");
         }
@@ -1331,18 +1429,23 @@ async function handleStop() {
       ? STOP_HISTORY_DEFERRED_EXIT_CODE
       : 1;
   }
-  return !stopFailed;
+  const summary = summarizeStopRun(record, {
+    failed: stopFailed,
+    historyOnly: historyOnlyFailure,
+    historyDeferred: historyDeferredNonces !== null,
+    exitCode: Number(process.exitCode ?? 0),
+  });
+  return { ok: !stopFailed, summary };
 }
 
 async function handleUninstall() {
   /** Definitive "nothing is answering" on the endpoint this home would serve. */
   const proxyEndpointProvenDown = async (): Promise<boolean> => {
     try {
-      const { probeProxyLiveness } = await import("../update/proxy-liveness-probe.mjs");
       // Every candidate, not just the preferred one: a stale runtime record pointing at a
       // closed port would otherwise "prove" a live proxy on the configured port is gone.
       const endpoints = endpointsToProve(readRuntimePort(), loadConfig());
-      return everyEndpointProvenDown(endpoints, e => probeProxyLiveness(e.port, e.hostname));
+      return await everyEndpointProvenDownAsync(endpoints, probeEndpointLiveness);
     } catch {
       return false;
     }
@@ -1761,6 +1864,14 @@ async function handleReady(args: ReadyArgs): Promise<number> {
   return runReady(args);
 }
 
+/**
+ * `ocx resolve` — argument parsing already happened in src/cli/root.ts (before any
+ * preflight side effect), so this handler only runs the runner and returns its exit code.
+ */
+async function handleResolve(args: ResolveArgs): Promise<number> {
+  return runResolve(args);
+}
+
 process.exit(await dispatchCommand(head, {
   args,
   command,
@@ -1781,6 +1892,7 @@ process.exit(await dispatchCommand(head, {
   },
   handleStart,
   handleStop,
+  handleResolve,
   handleEnsure,
   handleTrayProxyStart,
   handleTrayProxyRestart,

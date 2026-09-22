@@ -57,6 +57,38 @@ the bundled sidecar. The dashboard is then opened inside the app's webview.
 Use the tray's **Open dashboard** or **Open in browser** action to move between the
 embedded dashboard and your normal browser. The tray also provides update checks.
 
+## Usage in the tray
+
+On macOS and Windows, click the tray icon to open a compact usage window. The tray's
+**Show usage** action also opens it, including on Linux desktops whose tray does not
+forward click events. On Linux the dashboard opens at startup, including when the
+desktop environment does not expose a tray icon.
+
+The usage window shows Today and 30-day totals, the configured usage chart, a compact
+model list, and provider/account limits. Quota reset countdowns sit beside their bars;
+hover for the exact reset time. Existing **Menu bar & widget** settings control the
+visible sections and chart. Hidden providers are excluded from the title, totals, quotas and chart.
+The chart includes activity from the current time interval. A partial-data indicator means some
+chart data cannot be attributed reliably. Missing measurements are not presented as zero usage.
+On Windows and Linux, scroll within the usage window to reach Refresh and Dashboard at the
+end of a long account list.
+
+On macOS, this window uses native SwiftUI controls and a scrollable AppKit panel. Apple
+Liquid Glass is used on macOS 26 and later; older systems use the native popover material.
+The header and the Refresh and Dashboard buttons remain visible while scrolling long
+account lists. You can also open it with **View → Show Usage** (Command-Shift-U).
+Press Escape or click outside the panel to dismiss it.
+
+The tray menu shows today's request count and tokens, with estimated cost when enabled.
+It uses the same local-day usage as the widget. Choose **Refresh now** to update immediately;
+the app also refreshes every 60 seconds. Display preferences remain in the dashboard's
+**Menu bar & widget** section. Turning off **Today** hides the summary, and turning off
+**Cost** removes the cost from it.
+
+Unavailable or explicitly unmeasured usage is shown as `—`, not as a measured zero.
+Choosing the icon-only headline clears the previous counter. Abbreviations preserve
+whole-number zeros: ten million tokens is `10M`, not `1M`.
+
 ## Updates
 
 Choose **Check for Updates…** in the tray menu to check immediately. Release builds also
@@ -82,3 +114,5 @@ sudo apt remove opencodex
 ```
 
 For an AppImage, delete the downloaded file.
+
+If saved menu-bar settings cannot be read, partial edits are refused to preserve the file. Restore the file or explicitly reset the companion settings before editing again.

@@ -5,6 +5,13 @@ import type { TKey } from "./en";
  * German i18n catalog, generated from en.ts. Must match the `TKey` set (compile-checked).
  */
 export const de: Record<TKey, string> = {
+  "tray.updated": "Aktualisiert {time} · alle 60s",
+  "tray.today": "Heute",
+  "tray.input": "Eingabe",
+  "tray.output": "Ausgabe",
+  "tray.cost": "Kosten · gesch.",
+  "tray.cached": "{percent} Cache",
+
   "usage.incomplete": "Einige Nutzungsdatensätze konnten nicht berücksichtigt werden. Anzahlen, Datumsangaben und Ranglisten beruhen nur auf lesbaren Datensätzen.",
   "models.pickerOrder.usageIncomplete": "Die Reihenfolge nach Nutzung kann wegen unvollständiger Nutzungsdaten nicht gespeichert werden. Wählen Sie eine andere Reihenfolge oder reparieren Sie zuerst den Verlauf.",
   "api.attribution.noRecordedUse": "Keine Nutzung in lesbaren Datensätzen",
@@ -322,6 +329,8 @@ export const de: Record<TKey, string> = {
   "dash.stop": "Proxy stoppen",
   "dash.stopConfirm": "Proxy stoppen und natives Codex wiederherstellen?",
   "dash.stopFailed": "Proxy konnte nicht gestoppt werden (HTTP {status}).",
+  "dash.stopStillRunning": "Der Proxy antwortet weiterhin und wurde nicht gestoppt.",
+  "dash.stopUnknown": "Der Stopp wurde nicht bestätigt. Prüfen Sie vor einem erneuten Versuch, ob der Proxy noch läuft.",
   "dash.maSwitchFailed": "Moduswechsel fehlgeschlagen (HTTP {status}).",
   "dash.maNetworkError": "Netzwerkfehler — läuft der Proxy?",
   "dash.stopping": "Wird gestoppt…",
@@ -461,6 +470,7 @@ export const de: Record<TKey, string> = {
   "prov.aliasPrompt": "Anzeigename (leer lassen zum Entfernen)",
   "prov.aliasSaved": "Alias gespeichert",
   "prov.aliasSaveFailed": "Alias konnte nicht gespeichert werden",
+  "prov.aliasInvalid": "Höchstens 80 Zeichen, ohne Steuerzeichen.",
   "prov.accountId": "ID",
   "prov.pasteRedirect": "Redirect-URL oder Code einfügen",
   "prov.pasteRedirectHint": "Zeigt der Browser einen localhost-Fehler, kopiere die vollständige URL aus der Adressleiste und füge sie hier ein (oder den Autorisierungscode).",

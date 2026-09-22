@@ -5,6 +5,13 @@ import type { TKey } from "./en";
  * Turkish i18n catalog. Must match the `TKey` set (compile-checked).
  */
 export const tr: Record<TKey, string> = {
+  "tray.updated": "Güncellendi {time} · her 60 sn",
+  "tray.today": "Bugün",
+  "tray.input": "Girdi",
+  "tray.output": "Çıktı",
+  "tray.cost": "Tahmini ücret",
+  "tray.cached": "{percent} önbellek",
+
   "usage.incomplete": "Bazı kullanım kayıtları dahil edilemedi. Sayılar, tarihler ve sıralamalar yalnızca okunabilir kayıtlara dayanır.",
   "models.pickerOrder.usageIncomplete": "Kullanım geçmişi eksik olduğundan en çok kullanılan sıralaması kaydedilemiyor. Başka bir sıralama seçin veya önce geçmişi onarın.",
   "api.attribution.noRecordedUse": "Okunabilir kayıtlarda kullanım yok",
@@ -332,6 +339,8 @@ export const tr: Record<TKey, string> = {
   "dash.stop": "Proxy'yi Durdur",
   "dash.stopConfirm": "Proxy durdurulsun ve yerel Codex geri yüklensin mi?",
   "dash.stopFailed": "Proxy durdurulamadı (HTTP {status}).",
+  "dash.stopStillRunning": "Proxy hâlâ yanıt veriyor, yani durmadı.",
+  "dash.stopUnknown": "Durdurma doğrulanamadı. Yeniden denemeden önce proxy’nin çalışıp çalışmadığını kontrol edin.",
   "dash.maSwitchFailed": "Mod değiştirme başarısız oldu (HTTP {status}).",
   "dash.maNetworkError": "Ağ hatası — proxy çalışıyor mu?",
   "dash.stopping": "Durduruluyor…",
@@ -475,6 +484,7 @@ export const tr: Record<TKey, string> = {
   "prov.aliasPrompt": "Görüntülenen ad (temizlemek için boş bırakın)",
   "prov.aliasSaved": "Takma ad kaydedildi",
   "prov.aliasSaveFailed": "Takma ad kaydedilemedi",
+  "prov.aliasInvalid": "En fazla 80 karakter kullanın, kontrol karakteri içermemelidir.",
   "prov.accountId": "ID",
   "prov.pasteRedirect": "Yönlendirme URL'sini veya kodu yapıştırın",
   "prov.pasteRedirectHint": "Tarayıcı localhost hatası gösterirse adres çubuğundaki URL'yi kopyalayıp buraya yapıştırın.",

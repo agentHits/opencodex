@@ -11,8 +11,12 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { repoPath } from "../helpers/repo-root";
-import { parseRecordedOwnership, planUpdateRuntimeHandling } from "../../src/update/runtime-ownership.mjs";
-import { parseServiceOwnership } from "../../src/service/state";
+import {
+  inspectPackageRuntimeLiveness,
+  planStoppedRuntimeRecovery,
+  planUpdateRuntimeHandling,
+} from "../../src/update/runtime-ownership.mjs";
+import { parseInstallStateRecord, selectAuthoritativeServiceState } from "../../src/service/install-state-contract.mjs";
 
 describe("the runtime-ownership veto", () => {
   test("a desktop owner stops both the stop and the service refresh, and says so", () => {
@@ -20,8 +24,9 @@ describe("the runtime-ownership veto", () => {
       ownership: { owner: "desktop", installId: "app-install-a", consentGeneration: 3 },
       serviceInstalled: true,
     });
-    expect(plan.stopRuntime).toBe(false);
-    expect(plan.refreshService).toBe(false);
+    expect(plan.mayReplacePackage).toBe(false);
+    expect(plan.mayStopRuntime).toBe(false);
+    expect(plan.mayRestoreService).toBe(false);
     expect(plan.notice).toContain("app-install-a");
     expect(plan.notice).toContain("consent generation 3");
     expect(plan.notice).toContain("neither re-enabled nor restarted");
@@ -30,9 +35,9 @@ describe("the runtime-ownership veto", () => {
   test("a CLI owner and an unowned runtime both take the ordinary path", () => {
     for (const ownership of [null, { owner: "cli", installId: "npm-install", consentGeneration: 1 }]) {
       expect(planUpdateRuntimeHandling({ ownership, serviceInstalled: true }))
-        .toEqual({ stopRuntime: true, refreshService: true, notice: null });
+        .toEqual({ mayReplacePackage: true, mayStopRuntime: true, mayRestoreService: true, notice: null });
       expect(planUpdateRuntimeHandling({ ownership, serviceInstalled: false }))
-        .toEqual({ stopRuntime: true, refreshService: false, notice: null });
+        .toEqual({ mayReplacePackage: true, mayStopRuntime: true, mayRestoreService: false, notice: null });
     }
   });
 
@@ -41,47 +46,122 @@ describe("the runtime-ownership veto", () => {
       ownership: { owner: "something-newer", installId: "x", consentGeneration: 1 },
       serviceInstalled: true,
     });
-    expect(plan.stopRuntime).toBe(false);
+    expect(plan.mayReplacePackage).toBe(false);
+    expect(plan.mayStopRuntime).toBe(false);
   });
 });
 
-describe("the launcher's reader agrees with the authoritative one", () => {
-  const accepted = [
-    { owner: "desktop", installId: "a", consentGeneration: 0 },
-    { owner: "cli", installId: "a", consentGeneration: 12 },
-    { owner: "desktop", installId: "a", consentGeneration: 1, grantedBy: "first-launch" },
-  ];
-  const rejected = [
-    { owner: "root", installId: "a", consentGeneration: 1 },
-    { owner: "desktop", installId: "", consentGeneration: 1 },
-    { owner: "desktop", installId: "a" },
-    { owner: "desktop", installId: "a", consentGeneration: -1 },
-    { owner: "desktop", installId: "a", consentGeneration: 1.5 },
-    { owner: "desktop", installId: "a", consentGeneration: "1" },
-    "desktop",
-    null,
-  ];
+describe("stopped runtime recovery authority", () => {
+  const base = {
+    stopAttempted: true,
+    ownership: null,
+    ownershipUnknown: false,
+    sameOwner: true,
+    liveness: "dead" as const,
+    serviceInstalled: false,
+    launcherUsable: true,
+    hadRuntimeState: true,
+  };
 
-  test("both accept the same claims", () => {
-    for (const ownership of accepted) {
-      expect(parseServiceOwnership(ownership)).not.toBeNull();
-      expect(parseRecordedOwnership(JSON.stringify({ ownership }))).toEqual(ownership);
-    }
+  test("only the same readable CLI owner with dead endpoints can restart", () => {
+    expect(planStoppedRuntimeRecovery(base)).toEqual({ action: "direct", reason: "same-cli-owner" });
+    expect(planStoppedRuntimeRecovery({ ...base, serviceInstalled: true })).toEqual({
+      action: "service", reason: "same-cli-owner",
+    });
   });
 
-  test("both reject the same claims", () => {
-    for (const ownership of rejected) {
-      expect(parseServiceOwnership(ownership)).toBeNull();
-      expect(parseRecordedOwnership(JSON.stringify({ ownership }))).toBeNull();
+  test("foreign, unknown and live outcomes never revive the stopped runtime", () => {
+    expect(planStoppedRuntimeRecovery({ ...base, sameOwner: false })).toEqual({
+      action: "none", reason: "ownership-transferred",
+    });
+    expect(planStoppedRuntimeRecovery({ ...base, ownershipUnknown: true })).toEqual({
+      action: "manual", reason: "ownership-unknown",
+    });
+    for (const liveness of ["live", "unknown"] as const) {
+      expect(planStoppedRuntimeRecovery({ ...base, liveness })).toEqual({
+        action: "manual", reason: `runtime-${liveness}`,
+      });
     }
   });
+});
 
-  test("an absent, empty or unparseable record is not a claim", () => {
-    expect(parseRecordedOwnership(null)).toBeNull();
-    expect(parseRecordedOwnership("")).toBeNull();
-    expect(parseRecordedOwnership("{")).toBeNull();
-    expect(parseRecordedOwnership("[]")).toBeNull();
-    expect(parseRecordedOwnership(JSON.stringify({ version: 2 }))).toBeNull();
+describe("replacement runtime inspection", () => {
+  const capturedTarget = { hostname: "127.0.0.1", port: 10100 };
+
+  test("the fresh runtime record is read and probed before the captured stop target", () => {
+    const currentTarget = { hostname: "127.0.0.1", port: 10200 };
+    const events: string[] = [];
+    const result = inspectPackageRuntimeLiveness({
+      capturedTarget,
+      readCurrentTarget: () => { events.push("read-current"); return { kind: "target", target: currentTarget }; },
+      probe: target => {
+        events.push(`probe:${target.port}`);
+        return target === currentTarget ? "live" : "dead";
+      },
+    });
+    expect(events).toEqual(["read-current", `probe:${currentTarget.port}`, `probe:${capturedTarget.port}`]);
+    expect(result).toEqual({ current: "live", captured: "dead", overall: "live" });
+  });
+
+  test("an absent current record stays distinct from a dead captured endpoint", () => {
+    const events: string[] = [];
+    const result = inspectPackageRuntimeLiveness({
+      capturedTarget,
+      readCurrentTarget: () => { events.push("read-current"); return { kind: "absent" }; },
+      probe: target => { events.push(`probe:${target.port}`); return "dead"; },
+    });
+    expect(events).toEqual(["read-current", `probe:${capturedTarget.port}`]);
+    expect(result).toEqual({ current: "absent", captured: "dead", overall: "dead" });
+  });
+
+  test("an unreadable current record fails closed even when the captured endpoint is dead", () => {
+    const events: string[] = [];
+    const result = inspectPackageRuntimeLiveness({
+      capturedTarget,
+      readCurrentTarget: () => { events.push("read-current"); return { kind: "unknown" }; },
+      probe: target => { events.push(`probe:${target.port}`); return "dead"; },
+    });
+    expect(events).toEqual(["read-current", `probe:${capturedTarget.port}`]);
+    expect(result).toEqual({ current: "unknown", captured: "dead", overall: "unknown" });
+  });
+});
+
+describe("the Node and Bun paths share one full-record authority", () => {
+  const state = (revision: number, installId = "desktop-a") => ({
+    version: 2, codexHome: "/codex", opencodexHome: "/opencodex", backend: "scheduler",
+    revision, ownership: { owner: "desktop" as const, installId, consentGeneration: 1 },
+  });
+
+  test("a complete record is required before ownership is projected", () => {
+    expect(parseInstallStateRecord(state(1))?.ownership?.installId).toBe("desktop-a");
+    expect(parseInstallStateRecord({ ownership: state(1).ownership })).toBeNull();
+  });
+
+  test("the default-home authority wins over an older active-home mirror", () => {
+    const selected = selectAuthoritativeServiceState([
+      { path: "active", kind: "valid", state: state(4, "old-owner") },
+      { path: "default", kind: "valid", state: { ...state(5), ownership: undefined } },
+    ]);
+    expect(selected).toMatchObject({ kind: "state", revision: 5, needsRepair: true });
+    if (selected.kind === "state") expect(selected.state.ownership).toBeUndefined();
+  });
+
+  test("same-or-newer mirror disagreement is unknown rather than a vote", () => {
+    expect(selectAuthoritativeServiceState([
+      { path: "active", kind: "valid", state: state(5, "other-owner") },
+      { path: "default", kind: "valid", state: state(5) },
+    ])).toMatchObject({ kind: "unknown" });
+  });
+
+  test("an absent authority imports one valid legacy record, while unreadable authority refuses", () => {
+    expect(selectAuthoritativeServiceState([
+      { path: "active", kind: "valid", state: state(3) },
+      { path: "default", kind: "absent" },
+    ])).toMatchObject({ kind: "state", revision: 3, needsRepair: true });
+    expect(selectAuthoritativeServiceState([
+      { path: "active", kind: "valid", state: state(3) },
+      { path: "default", kind: "unreadable", reason: "EACCES" },
+    ])).toMatchObject({ kind: "unknown" });
   });
 });
 
@@ -91,19 +171,18 @@ describe("both updaters consult the shared rule", () => {
 
   test("the Bun updater gates its stop, its refresh and its restart hint", () => {
     expect(bunPath).toContain("from \"./runtime-ownership.mjs\"");
-    expect(bunPath).toContain("if (runtimePlan.stopRuntime && (serviceWasInstalled || readPid() || readRuntimePort() || pendingTeardownOutstanding()))");
-    expect(bunPath).toContain("if (runtimePlan.refreshService) {");
-    expect(bunPath).toContain("} else if (runtimePlan.stopRuntime) {");
-    expect(bunPath).toContain("if (stopAttempted && runtimePlan.refreshService && postUpdateLauncherUsable)");
+    expect(bunPath).toContain("if (runtimePlan.mayStopRuntime && (serviceWasInstalled || readPid() || readRuntimePort() || pendingTeardownOutstanding()))");
+    expect(bunPath).toContain("if (!runtimePlan.mayReplacePackage)");
+    expect(bunPath).toContain("if (postInstallPlan.mayRestoreService) {");
   });
 
   test("the npm launcher gates its stop, its refresh and its failure recovery", () => {
     expect(launcher).toContain("from \"../src/update/runtime-ownership.mjs\"");
-    expect(launcher).toContain("if (runtimePlan.stopRuntime && (serviceWasInstalled || hasRuntimeState || hasPendingTeardown))");
-    expect(launcher).toContain("if (runtimePlan.refreshService) {");
-    // Nothing was stopped, so nothing is recovered: starting a proxy here would put a
-    // second one beside the runtime the app is managing.
-    expect(launcher).toContain("if (!runtimePlan.stopRuntime) return;");
+    expect(launcher).toContain("if (stopNeeded && !runtimePlan.mayStopRuntime)");
+    expect(launcher).toContain("if (stopNeeded) {");
+    expect(launcher).toContain("if (!runtimePlan.mayReplacePackage)");
+    expect(launcher).toContain("planStoppedRuntimeRecovery({");
+    expect(launcher).toContain("if (postInstallPlan.mayRestoreService) {");
   });
 
   test("neither updater reimplements the decision", () => {
@@ -112,13 +191,33 @@ describe("both updaters consult the shared rule", () => {
       expect(source).not.toMatch(/owner\s*!==\s*"cli"/);
     }
   });
+
+  /**
+   * The launcher's own reader is what made the two lanes disagree, so its absence is the
+   * property worth pinning: no JSON.parse of the state record, no claim validation, and the
+   * contract module imported instead.
+   */
+  test("the launcher reads the record only through the shared contract", () => {
+    expect(launcher).toContain('from "../src/service/install-state-contract.mjs"');
+    expect(launcher).toContain("selectAuthoritativeServiceState(");
+    expect(launcher).toContain("serviceStateFilesFor(");
+    expect(launcher).not.toContain("parsed.ownership");
+    const reader = launcher.slice(launcher.indexOf("const readOwnership = () =>"), launcher.indexOf("const ownershipIdentity ="));
+    expect(reader).not.toContain("consentGeneration");
+    // The authoritative reader delegates to the same module rather than keeping a twin.
+    const state = readFileSync(repoPath("src", "service", "state.ts"), "utf8");
+    expect(state).toContain('from "./install-state-contract.mjs"');
+    expect(state).toContain("return parseInstallStateRecord(value)");
+    expect(state).toContain("selectAuthoritativeServiceState(");
+  });
 });
 
 describe("an unreadable record is not an unowned runtime", () => {
   test("unknown ownership vetoes both halves and points at the way back", () => {
     const plan = planUpdateRuntimeHandling({ ownership: null, ownershipUnknown: true, serviceInstalled: true });
-    expect(plan.stopRuntime).toBe(false);
-    expect(plan.refreshService).toBe(false);
+    expect(plan.mayReplacePackage).toBe(false);
+    expect(plan.mayStopRuntime).toBe(false);
+    expect(plan.mayRestoreService).toBe(false);
     expect(plan.notice).toContain("could not be determined");
     expect(plan.notice).toContain("ocx service install");
   });
@@ -148,7 +247,7 @@ describe("every updater re-reads ownership before it starts a proxy directly", (
       expect(fallbackAt).toBeGreaterThan(-1);
       const recheckAt = source.lastIndexOf("planUpdateRuntimeHandling({", fallbackAt);
       expect(recheckAt).toBeGreaterThan(-1);
-      expect(source.slice(recheckAt, fallbackAt)).toContain("nowOwned.stopRuntime");
+      expect(source.slice(recheckAt, fallbackAt)).toContain("nowOwned.mayStopRuntime");
     }
   });
 
@@ -160,14 +259,15 @@ describe("every updater re-reads ownership before it starts a proxy directly", (
   test("the dashboard worker checks before it restarts anything", () => {
     const restartAt = worker.indexOf("if (restart) {");
     const handoffAt = worker.indexOf("finishGuiUpdateRestart(", restartAt);
-    const gateAt = worker.indexOf("updateRestartVeto(", restartAt);
+    const gateAt = worker.indexOf("runUpdateRestartWithOwnershipLease(", restartAt);
     expect(gateAt).toBeGreaterThan(restartAt);
     expect(gateAt).toBeLessThan(handoffAt);
-    expect(worker.slice(gateAt, handoffAt)).toContain("if (veto)");
-    expect(worker.slice(gateAt, handoffAt)).toContain("restarted: false");
+    expect(worker.slice(gateAt)).toContain("outcome.kind === \"veto\"");
+    expect(worker.slice(gateAt)).toContain("restarted: false");
     // The veto is the shared rule, not a second opinion about ownership.
     const veto = readFileSync(repoPath("src", "update", "restart-ownership.ts"), "utf8");
     expect(veto).toContain("planUpdateRuntimeHandling({");
     expect(veto).toContain("resolveServiceOwnership");
+    expect(veto).toContain("acquireOwnershipMutationLease");
   });
 });

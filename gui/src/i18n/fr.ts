@@ -4,6 +4,13 @@ import type { TKey } from "./en";
  * French i18n catalog. Must match the `TKey` set.
  */
 export const fr: Record<TKey, string> = {
+  "tray.updated": "Mis à jour {time} · toutes les 60s",
+  "tray.today": "Aujourd’hui",
+  "tray.input": "Entrée",
+  "tray.output": "Sortie",
+  "tray.cost": "Coût estimé",
+  "tray.cached": "{percent} en cache",
+
   "usage.incomplete": "Certains enregistrements d’utilisation n’ont pas pu être inclus. Les totaux, dates et classements reposent uniquement sur les enregistrements lisibles.",
   "models.pickerOrder.usageIncomplete": "Impossible d’enregistrer l’ordre par utilisation : l’historique est incomplet. Choisissez un autre ordre ou réparez d’abord l’historique.",
   "api.attribution.noRecordedUse": "Aucune utilisation dans les enregistrements lisibles",
@@ -324,6 +331,8 @@ export const fr: Record<TKey, string> = {
   "dash.stop": "Arrêter le proxy",
   "dash.stopConfirm": "Arrêter le proxy et restaurer Codex natif ?",
   "dash.stopFailed": "Échec de l’arrêt du proxy (HTTP {status}).",
+  "dash.stopStillRunning": "Le proxy répond toujours : il ne s’est pas arrêté.",
+  "dash.stopUnknown": "L’arrêt n’a pas été confirmé. Vérifiez si le proxy tourne encore avant de réessayer.",
   "dash.maSwitchFailed": "Échec du changement de mode (HTTP {status}).",
   "dash.maNetworkError": "Erreur réseau — le proxy est-il en cours d’exécution ?",
   "dash.stopping": "Arrêt…",
@@ -471,6 +480,7 @@ export const fr: Record<TKey, string> = {
   "prov.aliasPrompt": "Nom d’affichage (laissez vide pour l’effacer)",
   "prov.aliasSaved": "Alias enregistré",
   "prov.aliasSaveFailed": "Impossible d’enregistrer l’alias",
+  "prov.aliasInvalid": "Utilisez au maximum 80 caractères, sans caractères de contrôle.",
   "prov.accountId": "ID",
   "prov.pasteRedirect": "Coller l’URL de redirection ou le code",
   "prov.pasteRedirectHint": "Si le navigateur affiche une erreur localhost, copiez l’URL complète depuis sa barre d’adresse et collez-la ici (ou collez le code d’autorisation).",
