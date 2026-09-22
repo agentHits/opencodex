@@ -228,7 +228,7 @@ async function inspectKiroThrottle(
   response: Response,
   signal?: AbortSignal,
 ): Promise<{ response: Response; transient: boolean; delayMs: number } | undefined> {
-  if (response.status !== 429) return undefined;
+  if (response.status !== 429 && response.status !== 503) return undefined;
   const body = await readBoundedResponseBody(response, { signal });
   const headers = new Headers(response.headers);
   headers.delete("content-encoding");
@@ -248,7 +248,7 @@ async function inspectKiroThrottle(
   const delayMs = retryAfter === "0" ? 0 : parseRetryAfterMs(retryAfter) ?? 2_000;
   return {
     response: rebuilt,
-    transient: failure.retryable && failure.code === "rate_limit_exceeded",
+    transient: failure.retryable && (failure.code === "rate_limit_exceeded" || failure.code === "server_is_overloaded"),
     delayMs,
   };
 }
@@ -281,7 +281,7 @@ async function fetchKiroAttempt(
 
 /**
  * Kiro owns replay-safe reset recovery, one endpoint fallback, and bounded process-wide transient
- * throttle recovery. The shared probe starts only after a 429, so healthy parallel traffic remains
+ * throttle recovery. The shared probe starts only after a 429/503, so healthy parallel traffic remains
  * parallel while a throttled account cannot burn every caller's independent retry budget (#532).
  */
 export async function fetchKiroWithRetry(request: AdapterRequest, ctx: AdapterFetchContext = {}): Promise<Response> {

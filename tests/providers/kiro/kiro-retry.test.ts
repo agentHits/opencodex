@@ -234,11 +234,11 @@ describe("kiro retry fetch", () => {
 
   test("does not replay ordinary 5xx responses", async () => {
     const mock = mockFetch([
-      new Response("temporarily unavailable", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("internal error", { status: 500, headers: { "Retry-After": "0" } }),
       new Response("ok", { status: 200 }),
     ]);
     const res = await fetchKiroWithRetry(request, { timeoutMs: 5_000 });
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(500);
     expect(mock.calls).toHaveLength(1);
   });
 
@@ -362,8 +362,30 @@ describe("kiro retry fetch", () => {
     const mock = mockFetch([new Response("ok", { status: 200 })]);
     const ac = new AbortController();
     ac.abort(new DOMException("client closed", "AbortError"));
-    await expect(fetchKiroWithRetry(request, { abortSignal: ac.signal, timeoutMs: 5_000 })).rejects.toThrow();
-    expect(mock.calls).toHaveLength(0);
+   await expect(fetchKiroWithRetry(request, { abortSignal: ac.signal, timeoutMs: 5_000 })).rejects.toThrow();
+   expect(mock.calls).toHaveLength(0);
+ });
+
+  test("retries a transient 503 overloaded response inside the adapter", async () => {
+    const mock = mockFetch([
+      new Response("server is busy, overloaded", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("ok", { status: 200 }),
+    ]);
+    const res = await fetchKiroWithRetry(request, { timeoutMs: 5_000 });
+    expect(res.status).toBe(200);
+    expect(mock.calls).toHaveLength(2);
+  });
+
+  test("normalizes final transient 503 after bounded adapter retries", async () => {
+    const mock = mockFetch([
+      new Response("server is busy", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("overloaded", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("temporarily unavailable", { status: 503, headers: { "Retry-After": "0" } }),
+    ]);
+    const res = await fetchKiroWithRetry(request, { timeoutMs: 5_000 });
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("Kiro server overloaded");
+    expect(mock.calls).toHaveLength(3);
   });
 });
 
