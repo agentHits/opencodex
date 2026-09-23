@@ -238,6 +238,10 @@ export function createCursorProtobufEventState(options: {
    */
   estimatedInputTokens?: number;
   translatorBudget?: TranslatorBudget;
+  /** Wire model id for recording checkpoint `maxTokens` into the process-local window map. */
+  wireModelId?: string;
+  /** Cursor request identity scope; normalized identically to request-builder continuity. */
+  identityScope?: string;
 } = {}): CursorProtobufEventState {
   return {
     // Cursor provides no authoritative usage frame; token counts are heuristic estimates from
@@ -267,6 +271,8 @@ export function createCursorProtobufEventState(options: {
       && options.estimatedInputTokens > 0
       ? { estimatedInputTokens: options.estimatedInputTokens }
       : {}),
+    ...(options.wireModelId?.trim() ? { wireModelId: options.wireModelId.trim() } : {}),
+    identityScope: options.identityScope?.trim() || "local",
   };
 }
 
@@ -1270,11 +1276,19 @@ export function mapCursorProtobufServerMessage(
   if (state.terminated) return [];
 
   if (serverMessage.message.case === "conversationCheckpointUpdate") {
-    const usedTokens = serverMessage.message.value.tokenDetails?.usedTokens ?? 0;
+    const tokenDetails = serverMessage.message.value.tokenDetails;
+    const usedTokens = tokenDetails?.usedTokens ?? 0;
     // `usedTokens` is the ABSOLUTE conversation context size, not a per-turn output delta. Track it
     // separately (monotonic max) and surface it as `done.usage.totalTokens`; folding it into
     // `outputTokens` (which also accumulates `tokenDelta`) double-counts in Codex. See contextTokens.
     observeContextTokens(state, usedTokens);
+    // First checkpoints often send maxTokens=0 (senpi). Only a positive ceiling
+    // replaces the id heuristic for the next turn's overflow vs 429 size prior.
+    if (state.wireModelId) {
+      recordObservedCursorContextWindow(state.wireModelId, tokenDetails?.maxTokens, {
+        identityScope: state.identityScope,
+      });
+    }
     return [];
   }
 
@@ -1331,12 +1345,12 @@ export function mapCursorProtobufServerMessage(
     case "toolCallStarted": {
       const name = mcpCursorWireName(update.value.toolCall);
       // Record the open call but defer the outward tool_call_start to completion (atomic emission).
-      return name ? recordToolCall(state, update.value.callId, name) : [];
+      return name ? recordRealToolCall(state, update.value.callId, name) : [];
     }
     case "partialToolCall": {
       const out: CursorServerMessage[] = [];
       const name = mcpCursorWireName(update.value.toolCall);
-      if (name) out.push(...recordToolCall(state, update.value.callId, name));
+      if (name) out.push(...recordRealToolCall(state, update.value.callId, name));
       if (out.some(event => event.type === "error")) return out;
       // Buffer cumulative args; do not emit a delta. Args are emitted once, normalized, at completion.
       if (state.openToolCalls.has(update.value.callId)) {
@@ -1444,8 +1458,24 @@ export function resolvedTurnUsage(state: CursorProtobufEventState): OcxUsage {
  * with corrupt/empty arguments. Emit an explicit error instead of done (fail-closed).
  * Mirrors kiro-truncation.ts behavior.
  */
+/**
+ * True when this turn holds textual fallback tool calls that only turn finalization can emit.
+ *
+ * Cursor can close a stream with a clean Connect END_STREAM and no turnEnded frame. The transport
+ * finalizes that path only for a turn it can see is unfinished, and a turn whose entire visible
+ * text was a stripped marker looks empty from the outside. Without this the deferred fallback
+ * would be dropped exactly when the marker was the turn's only content.
+ */
+export function hasBufferedTextToolCalls(state: CursorProtobufEventState): boolean {
+  return (state.bufferedTextToolCalls?.length ?? 0) > 0;
+}
+
 export function finalizeTurnEvents(state: CursorProtobufEventState): CursorServerMessage[] {
   state.terminated = true;
+  delete state.pendingTextToolCall;
+  delete state.suppressedTextToolCall;
+  const bufferedTextToolCalls = state.bufferedTextToolCalls ?? [];
+  delete state.bufferedTextToolCalls;
   if (state.openToolCalls.size > 0) {
     for (const call of bufferedTextToolCalls) state.translatorBudget?.closeCall(call.callId);
     const openCallIds = [...state.openToolCalls.keys()];
@@ -1473,5 +1503,6 @@ export function finalizeTurnEvents(state: CursorProtobufEventState): CursorServe
   // render the additive pair instead of total_tokens, so leaving inputTokens at 0 makes a 16k-context
   // first turn display as "9 used". Keep outputTokens as the per-turn delta and clamp the inferred
   // input to 0 in case Cursor reports a checkpoint smaller than the streamed output delta.
-  return [{ type: "done", usage: resolvedTurnUsage(state) }];
+  out.push({ type: "done", usage: resolvedTurnUsage(state) });
+  return out;
 }

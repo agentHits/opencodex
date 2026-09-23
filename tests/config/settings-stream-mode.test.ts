@@ -8,10 +8,13 @@
  * codexAutoStart-only PUTs keep working).
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfigPath, loadConfig, saveConfig } from "../../src/config";
+import { writeRuntimePort } from "../../src/config/process-state";
 import { handleManagementAPI, type ManagementApiDeps } from "../../src/server/management-api";
 import { invalidateStartupHealthCache } from "../../src/server/startup-health-cache";
 import { USAGE_RANGES, USAGE_SURFACES } from "../../src/usage/summary";
@@ -78,6 +81,54 @@ function getSettings(config: OcxConfig): Promise<Response | null> {
   return handleManagementAPI(req, new URL(req.url), config, {
     getCachedStartupHealth: readTestStartupHealth,
   });
+}
+
+function putDesktopSwitchInIsolatedHome(
+  codexHome: string,
+  config: OcxConfig,
+  body: Record<string, boolean>,
+): { status: number; body: Record<string, unknown> } {
+  const script = `
+    const { writeRuntimePort } = await import("./src/config/process-state");
+    const { handleManagementAPI } = await import("./src/server/management-api");
+    const { catalogConvergenceFactory } = await import("./tests/helpers/catalog-convergence");
+    const { startupHealthFixture } = await import("./tests/helpers/startup-health");
+    const config = JSON.parse(process.env.OCX_TEST_ROUTE_CONFIG);
+    const requestBody = JSON.parse(process.env.OCX_TEST_ROUTE_BODY);
+    writeRuntimePort({ pid: process.pid, port: config.port });
+    const request = new Request("http://127.0.0.1:10100/api/settings", {
+      method: "PUT",
+      // Same requirement as the in-process cases: managementRequestOrigin derives the
+      // allowed origin from the Host header, and a constructed Request carries none, so
+      // without this the handler is never reached and the response is a 403.
+      headers: { host: "127.0.0.1:10100", "content-type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    const response = await handleManagementAPI(request, new URL(request.url), config, {
+      saveConfigPreservingClaudeCode: () => {},
+      getCachedStartupHealth: async () => startupHealthFixture(),
+      createManagementConvergeCodex: catalogConvergenceFactory(() => {}),
+    });
+    console.log(JSON.stringify({ status: response.status, body: await response.json() }));
+  `;
+  const child = spawnSync(process.execPath, ["--eval", script], {
+    cwd: repoRoot(),
+    env: {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      OPENCODEX_HOME: join(TEST_DIR, "child-opencodex"),
+      OCX_TEST_ROUTE_CONFIG: JSON.stringify(config),
+      OCX_TEST_ROUTE_BODY: JSON.stringify(body),
+    },
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  if (child.status !== 0) {
+    throw new Error(`isolated settings route failed: ${child.stderr || child.stdout}`);
+  }
+  const line = child.stdout.trim().split("\n").filter(Boolean).at(-1);
+  expect(line).toBeDefined();
+  return JSON.parse(line!) as { status: number; body: Record<string, unknown> };
 }
 
 beforeEach(() => {

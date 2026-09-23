@@ -1,5 +1,5 @@
 import { create } from "@bufbuild/protobuf";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   AgentServerMessageSchema,
   ConversationStateStructureSchema,
@@ -21,6 +21,12 @@ import {
   mapCursorProtobufServerMessage,
   mapSyntheticMcpExecToToolEvents,
 } from "../../../src/adapters/cursor/protobuf-events";
+import {
+  inferCursorContextWindow,
+  resetObservedCursorContextWindowsForTests,
+} from "../../../src/adapters/cursor/discovery";
+import { MAX_PENDING_TEXT_TOOLCALL_BYTES } from "../../../src/adapters/cursor/text-toolcall";
+import { resetDebugSettingsForTests } from "../../../src/lib/debug-settings";
 import { createTranslatorBudget } from "../../../src/lib/translator-budget";
 import { observeEmptyCompletion } from "../../../src/server/responses/empty-completion-guard";
 import type { AdapterEvent } from "../../../src/types";

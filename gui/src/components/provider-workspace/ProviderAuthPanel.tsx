@@ -290,7 +290,6 @@ export default function ProviderAuthPanel({
     const filtered = filterAccounts(analyzedAccounts, accountFilter, accountSearch);
     return sortAccounts(filtered, accountSort, accountFilter);
   }, [analyzedAccounts, accountFilter, accountSearch, accountSort]);
-  const refreshQuota = async (accountId?: string) => {
   // Claude usage resets ride a separate usage read, like the Grok coupons above.
   const claudeGrantsEnabled = isOauth && item.name === "anthropic" && accounts.length > 0;
   const claudeAccountIds = useMemo(
@@ -299,6 +298,7 @@ export default function ProviderAuthPanel({
   );
   const claudeGrants = useAnthropicResetGrants({ apiBase, accountIds: claudeAccountIds, enabled: claudeGrantsEnabled });
   const [grantAccount, setGrantAccount] = useState<OAuthAccountRow | null>(null);
+  const refreshQuota = async (accountId?: string) => {
     if (!onRefreshQuota || refreshingQuota) return;
     const generation = ++quotaRefreshGeneration.current;
     // Cleared on click so a previous "refreshed" cannot sit under a later failure.
