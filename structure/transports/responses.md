@@ -271,6 +271,8 @@ narrows provider defaults, and provider-level `supportsServiceTier: false` canno
 Capability is namespaced by the selected provider and model; model-name similarity and adapter type
 alone never opt a gateway in.
 
+Anthropic Fast eligibility and downgrade recovery use the [Responses failover contract](responses-failover.md#anthropic-fast-downgrade-recovery).
+
 `POST /v1/responses/compact` handles remote compaction v1 before the generic `/v1/responses` branch
 and before the `/v1/*` guard. Unknown `/v1/*` paths return JSON 404 errors instead of falling through
 to GUI static serving.
@@ -375,7 +377,7 @@ send is reserved, the first response is never cancelled, and the caller returns 
 upstream rejection. A same-account replay such as the gated-model 400 ladder is unaffected, and a
 single-account install never reaches any of this because serving and issuing accounts cannot
 differ. Pinning a file-carrying conversation to its issuing account is routing-affinity work and is
-specified in [uploaded-file account retention](../providers/openai-tiers.md#uploaded-file-account-retention);
+specified in [uploaded-file account retention](../providers/openai-accounts.md#uploaded-file-account-retention);
 it reduces how often this refusal fires and does not replace it, because the issuing account can
 always become unable to serve.
 
@@ -1090,6 +1092,7 @@ is composed from the following owners in `src/server/responses/`; none is a gene
 | Owner | Responsibility |
 | --- | --- |
 | `request-prepare.ts` | Body parsing, combo handoff, final route, encrypted-task recovery and initial admission. |
+| `shadow-target-availability.ts` | Shadow-call target resolution for `request-prepare.ts`: an unavailable target fails once with `409 intercept_target_unavailable` instead of reaching the native source model or the default provider. |
 | `request-transport.ts` | Live credential selection, dispatch bindings, adapter replacement and same-target request identity. |
 | `request-sidecar-auth.ts` | Sidecar credential resolution and vision preprocessing. |
 | `response-effects.ts` | Completion notification, replay publication and live request-tool aliases. |
@@ -1098,7 +1101,8 @@ is composed from the following owners in `src/server/responses/`; none is a gene
 | `request-spend.ts` | This request's entries in the durable spend ledger: one per physical send, settled from the terminal usage. |
 | `passthrough-execution.ts` | Native host-lease transfer and the enclosing dispatch/delivery `finally`. |
 | `passthrough-dispatch.ts` | Native request preparation, upstream sends and pre-commit recovery. |
-| `passthrough-delivery.ts` | Native HTTP/SSE/JSON delivery, rewrite/inspection and terminal accounting. |
+| `passthrough-delivery.ts` | Native HTTP/SSE/JSON delivery, rewrite/inspection, terminal accounting, and xAI tool-envelope filtering before continuation storage. |
+| `policy-refusal.ts` | Rewrites an allowlisted non-combo HTTP 403 model refusal (`isUpstreamPolicyRefusal` in `src/lib/errors.ts`) from an xAI destination only (`isXaiResponsesDestination`: api.x.ai or the Grok CLI proxy, on either wire) to an HTTP 200 Responses `incomplete` / `content_filter` payload, JSON or SSE, for both `adapter-dispatch.ts` and `passthrough-delivery.ts`. A streamed rewrite takes the turn admission lease and releases it when the body finishes, so the refusal stays inside active-turn accounting. Combo attempts keep the original 403 so failover classifies it as a hop. |
 | `sidecar-execution.ts` | Image/video versus web-search execution and their shared rotation hook. |
 | `completion-policy.ts`, `run-turn-execution.ts` | Empty-completion eligibility and adapter-owned event turns. |
 | `adapter-dispatch.ts` | Translated initial dispatch, bounded recovery and the shared continuation retry counter. |
@@ -1134,333 +1138,24 @@ send-holder/permit behavior. Cross-owner source assertions read the actual imple
 `tests/helpers/responses-core-source.ts`; focused passthrough and subagent assertions read their
 specific delivery/preparation owner. Existing runtime Lab-boundary tests still start at `core.ts`.
 
-## Credential-hop reservations
+## Adapter-to-Responses bridge
 
-A credential rotation inside one provider's roster reserves a hop from the request's shared send
-budget before it knows whether a rotation is even possible, because the reservation is the charge:
-`reserveDispatch` spends, `permit.use()` only confirms which leg sent, and `permit.release()` is
-idempotent and a no-op once used. Every ladder therefore owes the budget an answer on every exit.
+`src/bridge.ts` is a re-export facade; the implementation lives in `src/bridge/`.
+`src/bridge/sse.ts` (`bridgeToResponsesSSE`) turns adapter events into the Responses SSE stream,
+and `src/bridge/response-json.ts` (`buildResponseJSON`) builds the non-streaming Responses body
+from the same events. `src/bridge/errors.ts` (`formatErrorResponse`) formats error responses and
+keeps only allowlisted transport verdict codes. Adapter error events take a different path:
+`src/bridge/internal.ts` carries an event's own `code` into the SSE and JSON failure, after
+mapping cyber-policy codes to HTTP 400. The same file holds the shared usage shaping; `input_tokens_details` and
+`output_tokens_details` are always emitted, with zero defaults, because strict Responses clients
+deserialize them as required fields.
 
-The hop pays for a replay that some *other* layer dispatches, so which layer settles the
-reservation follows the dispatcher, not the ladder. A helper-routed replay reports the same
-physical send back through `onSendsConsumed`; that is what `countedExternally: true` names, and the
-reporter's first send settles the pending booking instead of adding a second charge. An adapter
-that owns its transport — Kiro's reset ladder, Cursor's transport ladder, or Devin's bounded
-pre-output stated-reset replay — reserves once per physical send instead, so no reporter ever
-arrives. Those ladders are handed
-`adapterDispatchBudget`, a live delegating view of the same budget that spends a permit passed down
-through `pendingHopPermit` on the adapter's first reservation and closes the booking through
-`permit.assumeCharge()`. Letting both charge is how one physical send became two charges, and how a
-spent allowance answered a 429 with a synthetic error instead of the rate limit it was recovering
-from (#4709).
 
-`run-turn-execution.ts` passes the same physical-send and recovery-withheld observers used by the
-request-building adapter path. Devin builds one `createAdapterPhysicalSend` for the whole
-`GetChatMessage` invocation, so its initial POST and at most two same-target replays report ordinals
-1, 2, and 3. The outer runTurn attempt already records ordinal 1, and the shared observer therefore
-adds only ordinals above 1 to `sendCount`; the execution budget still reserves every ordinal. A
-replay reserves only after its server-stated wait. If admission is refused, no inference I/O occurs,
-`retry-send-budget` is recorded, and the preceding provider 429 remains the returned error.
+Active-turn admission owns workflow admission, so both remain held until a streaming body finishes or
+is cancelled.
 
-Confirmation happens at the dispatch boundary rather than at the rotation. `adapter-dispatch.ts`
-passes an `onDispatch` callback that the rebuild invokes immediately before the wire, and skips it
-when the adapter owns dispatch: settling there first would hand that adapter a dead permit, which
-it reads as an exhausted request and stops sending on. `adapter-continuation.ts` never confirms,
-because its replay is the next loop iteration. `run-turn-execution.ts` always hands the reservation
-down, because a runTurn adapter is by definition the layer that sends. The passthrough ladder keeps
-the shape it already had: reserve with `countedExternally: true` and pass the permit to the rebuild.
-
-An explicit provider `transientRetryOn5xx.attempts` value is the exact physical-send total for that
-request. Once spent, a passthrough rebuild receives no final-recovery reserve and returns the
-original upstream response. The guarded profile's shared reserve remains available only when the
-provider leaves that transient policy unconfigured; its existing hop-permit settlement is unchanged.
-
-What must not happen is a ladder that charges and then returns through a path that neither confirms
-nor releases. That is not a lost send; it is a send the request never made, spending an allowance a
-later recovery in the same request then cannot have. `tests/lib/execution-budget-permits.test.ts`
-pins the settlement rule and every ladder shape against exactly that, and
-`tests/responses/responses-core-modules.test.ts` pins the adapter view's live delegation.
-
-Shared response-log retention and native SSE inspection pacing follow the [bounded inspection contract](byte-accounting.md#response-log-inspection); other subsystem behavior remains unchanged.
-
-A combo derives a policy scope per target, and that derivation has to happen inside the budget
-factory. Overriding the public `used` property shares only what callers read from outside:
-`remainingBaseSends`, the total check and the reserve test all consult the factory's own private
-counter, which an overridden property cannot reach. Each derived scope therefore admitted
-dispatches as though the request had spent nothing, and the per-target holdback in
-`comboTargetSendBudget` — expressed against `maxTotalModelSends` — had nothing to hold back from,
-so a long failover combo could exhaust the allowance before its later declared targets were ever
-attempted. `deriveRequestExecutionBudget` binds the scope to the parent's real ledger instead.
-
-Three things travel on that shared ledger and have to travel together. The spend and the pending
-externally-counted bookings, because a pending booking is a send already counted in the total and
-waiting for its reporter, so sharing one without the other would either charge that send twice or
-never charge it. And the durable-spend observer below, because it books by watching this counter
-move: a derived scope that spent the counter without carrying the observer would move it without
-booking, and a combo child's sends would go missing from the ledger. `permit.assumeCharge()`
-closes its booking on the same shared ledger, so the adapter handoff above and the combo
-derivation agree rather than each settling against a counter the other cannot see.
-
-What stays per-scope is deliberate: the reserve, alternate-target and transition ledgers are each
-target's own recovery decision, while the physical-send total is what binds every target together.
-
-## Durable spend reservations
-
-The request's send budget bounds how many times it may reach upstream; the spend ledger bounds
-what those sends may cost, and it is the only bound here that survives a restart. Its production
-caller is `request-spend.ts`, installed on the execution budget at genuine ingress in `core.ts`
-and parked on the log context so `addFinalRequestLog` can settle it.
-
-It books by observing the budget's own send counter rather than by being called from each
-dispatch site. That counter moves exactly once per physical send — a reservation increments it, a
-refund decrements it, and an externally reported send settles against a booking already counted —
-so one ledger entry per increment is one entry per send, and a dispatch path added later cannot
-forget to book. The previous attempt at this wiring shipped the whole reserve/dispatch/settle
-vocabulary with no caller at all (#4707), which is the failure mode this shape rules out.
-
-A booking is confirmed dispatched only once a LATER send exists, because that later send proves
-the earlier one left. The newest booking stays open, so a reservation the budget hands back
-during this process's lifetime can still be released for free.
-
-Settlement follows what the request learned. The terminal usage belongs to the last send that
-left, so that one settles with the real figure; every earlier send failed without reporting usage
-of its own and may still have been billed, so it becomes unresolved spend rather than free. A
-request that reports no usage at all leaves all of them unresolved.
-
-Replay resolves what nobody is left to settle, and resolves it as unresolved spend whatever state
-it was in. Giving an undispatched one its tokens back would assume the journal is complete up to
-the crash, and the torn-tail rule says it is not: a send can dispatch and die before its dispatch
-record lands. It would also reset a ceiling that had already fired, and an exhausted scope
-staying exhausted across a restart is the whole reason this store is on disk. Both are journaled,
-so a second restart has nothing to redo.
-`tests/responses/responses-spend-ledger-wiring.test.ts` pins the
-booking, the settlement split, the refund, a ceiling that refuses a dispatch rather than
-describing it afterwards, and the restart.
-
-The default policy still sets no token ceiling on any scope, so an unconfigured install accounts
-and reports without refusing. An operator turns enforcement on with the `spend` section in
-config.json, which `src/lib/spend-reservation-ledger.ts` resolves through
-`spendPolicyFromConfig` and applies with `configureSharedSpendLedger` at startup. There is no
-default figure and there deliberately never will be: this ledger is on and journaling by
-default, so a shipped ceiling would start refusing real traffic on the first upgrade that ran
-it, against a number nobody chose. Absent, empty and all-scopes-absent sections are the same
-thing -- observe only.
-
-The shared journal has one live writer per state directory. `startServer` acquires the
-`src/lib/spend-ledger-owner.ts` SQLite lease before configuration and before any listener binds;
-`sharedSpendLedger` asserts that lease before construction because replay can append `lost`
-records, and `configureSharedSpendLedger` asserts it before changing a live singleton. This applies
-identically with and without configured ceilings: observe-only still appends, settles and compacts.
-Two servers in one process and one directory share a reference-counted lease; that process cannot
-hold two directories at once. Sequential ownership is allowed and concurrent ownership is not:
-releasing the final reference discards the singleton, so a later directory replays its own
-journal instead of inheriting figures. A ledger records the ownership it was built under and
-proves that exact identity on every accounting read and change, so a handle kept across a release
-and a reacquire of the same directory is refused rather than resuming over writes another owner
-may have made. File-backed journal and salt writers are owner-bound at construction, and a
-directory entry that is a link -- including one whose target does not exist -- is refused instead
-of followed. A separate process may use a separate directory. SQLite crash release permits the
-next owner without stale-PID or TTL reclamation.
-
-The journal survives an ordinary process restart once its writes reached the filesystem. It does
-not claim host power-loss durability: the append path does not fsync each record, so power loss can
-drop recently acknowledged filesystem writes. A torn final line remains the only replay corruption
-that may be discarded quietly.
-
-Applying a policy to a ledger that already exists reconfigures it rather than rebuilding it.
-Every figure already accounted survives, so raising, lowering or clearing a ceiling changes what
-is refused from here on and never what was spent. A rebuild would replay the journal into a
-second set of maps while the first still held this process's open reservations, and the two
-would then disagree about what is in flight.
-
-With a ceiling configured, three places can refuse and they are ordered cheapest first. HTTP
-admission refuses a root scope that is ALREADY spent, before the body is parsed, because that
-question needs no token count; the pre-dispatch check in `createResponsesSendBudget` asks the
-same question beside the existing send-count one; and the reservation itself refuses the send
-that would CROSS a ceiling, which is the only one of the three that can see the identity and
-pool scopes, since neither is known until routing picks an account. Count caps and token
-ceilings are an intersection: a request passes only when every count and every ceiling admits
-it, a count denial is decided before any reservation is booked, and a token denial before any
-count is charged, so neither leaves the other's accounting to unwind.
-
-## What a spent budget tells the client
-
-A refusal this proxy made is reported as HTTP 429 with the code `request_send_budget_exhausted`,
-on every dispatch path. The three paths used to disagree: passthrough answered 429 and declined
-to blame the provider, the adapter paths fell through `describeUpstreamConnectFailure` and
-answered 502 "Provider unreachable", and runTurn pushed an unstructured message that was inferred
-back to 502 under HTTP 200.
-
-The status is the load-bearing half. The Codex client retries 5xx and does not retry a direct
-429, so reporting a local refusal as 502 makes the caller send the whole turn again — the
-amplification the budget exists to stop. Encoding it as a quota code instead would stop the
-client for the wrong stated reason, and the retryable streaming rate-limit codes would restart
-the stream, so neither is available.
-
-The distinct code is what an operator reads afterwards. `classifyError` keeps it by matching the
-supplied type rather than the status, so an upstream 429 still classifies as
-`rate_limit_exceeded` and only this proxy's own refusal carries the other code. Once a response
-is committed the refusal travels as a structured terminal event — status, `errorType` and
-`code` on the event itself — because an unstructured message is inferred back to 502.
-
-A local 429 must not look like a provider one to our own routing. `rotateRunTurnAdapterOnPreflight429`
-returns early on the code, before it reads the status, so a refusal cannot rotate a credential or
-write a cooldown against an account that rate-limited nothing; that fake signal would outlive the
-request and misroute later ones. The terminal-guard continuation loop now consults
-`sendBudgetExhausted()` before it cancels the upstream body, matching the main recovery loop, so
-a spent request keeps the real 429 instead of replaying on a live stream.
-
-This is the proxy's own accounting only. Classifying an upstream 429 as org or project spend
-exhaustion is a separate contract with a separate owner.
-Adapter-owned retries enter the same pending dispatch metadata path as initial key sends.
-The actual dispatch commits their count and recovery label once; unsent pending metadata
-is discarded on process exit and is not usage evidence. See [key attribution](../gui-and-management-api.md#upstream-key-account-attribution).
-Generic refetches record metadata inside each admitted retry callback, retaining the
-transient recovery reason when present and otherwise the outer recovery reason.
-
-## Ambiguous connection-reset replay boundary
-
-Three failures look alike from the outside — the turn may have executed and we cannot
-prove otherwise — and they are answered differently, because the status is an instruction
-to the client and the client obeys it. Codex builds its retry policy from
-`ApiRetryConfig { retry_429: false, retry_5xx: true, max_attempts: request_max_retries() }`
-with `DEFAULT_REQUEST_MAX_RETRIES = 4`. A 5xx is therefore an invitation to send the whole
-turn up to four more times, and a 429 is where the client stops.
-
-**A pre-header fetch rejection this proxy refuses to replay is a refusal this proxy made.**
-`src/lib/upstream-retry.ts` returns a marked **429** carrying its own code,
-`upstream_reset_replay_refused`. No response headers is not evidence that the model POST
-was never processed, so the decision not to replay is ours, made before any response
-existed — the same shape as `request_send_budget_exhausted`, and it takes the same status
-for the same reason. An explicitly replay-safe operation retries instead, and a provider that
-opted into `retryOnReset` may spend the request's single replacement grant; once that grant is
-gone, or the leg has no send left, or a later attempt fails any other way, the leg settles as
-this same refusal. Nothing on that path hands the client a status that invites the whole turn
-to be sent again. See [ambiguous-resend gate](#ambiguous-resend-gate).
-
-**An upstream reset observed mid-stream or after a terminal keeps its existing behaviour.**
-The passthrough read path still settles a genuine upstream reset as a synthetic 502, and the
-Codex WebSocket transport still settles `upstream_closed_before_response` (socket closed
-after the create frame) and `upstream_no_response` (origin never produced an event) as 502
-and 504. Those describe something the upstream did after our send, they are the contract the
-public server reference already documents, and this release does not move them.
-
-This reclassification is the recorded behaviour change: before it, the pre-header refusal
-borrowed `upstream_closed_before_response` and its 502, which multiplied the duplicate send
-the refusal exists to prevent. The distinct code is what keeps the two separable afterwards —
-both are non-replayable, but only one is ours to restate.
-
-Because the refusal now carries 429, a 429 is no longer sufficient evidence of a provider
-rate limit. Every same-target replay, key rotation, account rotation and pool-quota recorder
-that keys on 429 first asks `isNonReplayableResponse`:
-`src/server/responses/adapter-dispatch.ts`, `src/server/responses/adapter-continuation.ts`,
-`src/server/responses/passthrough-dispatch.ts`, `src/server/responses/compact.ts` and
-`src/server/chat-native.ts`. Compact additionally records the transport outcome rather than
-the client-facing status, so pool health sees exactly what it saw before the correction.
-Rotating on a synthetic 429 would both re-send an inference that may already have run and
-write a cooldown against a credential that refused nothing — a false signal that outlives the
-request, which is the same hazard `rotateRunTurnAdapterOnPreflight429` already guards for the
-send budget.
-
-In `adapter-dispatch.ts` the guard at the top of the recovery loop is necessary and was not
-sufficient. The refusal can also be produced by a refetch made INSIDE an arm, and that arm
-then still holds it: the same-target loop re-enters while `rateLimitRetries` is below the
-configured attempts, and the key, Anthropic-pool and generic-OAuth rotations re-enter while a
-credential is left to try. The key-401 arm is in the same class from the other direction — its
-refetch answers 429 and it falls through into the arms below. So every arm that reassigns
-`upstreamResponse` from `rebuildAndRefetch` re-enters the loop guard rather than continuing,
-which is what makes the top-of-loop check the single exit for this verdict.
-
-**A refusal this proxy made never acquires a `Retry-After` and never becomes quota evidence.**
-Guarding the ten call sites that READ 429 as a rate limit left the sites that WRITE evidence,
-synthesize a wait, or re-classify the status on the way out. `isNonReplayableResponse` is the
-wrong question for those, because it also covers the WebSocket post-send verdicts, which are
-genuine upstream observations; the question is whether any upstream produced this status at
-all. `isReplayRefusalResponse` in `src/lib/upstream-retry.ts` answers exactly that, applied
-where the refusal is synthesized and reapplied by `src/bridge/errors.ts` when the formatter
-re-wraps it after combo failure consumption. Three writers consult it or the code:
-`src/server/responses/passthrough-delivery.ts` skips `recordCodexUpstreamOutcome`, which would
-otherwise classify the synthetic 429 as quota exhaustion and cool the account;
-`src/server/responses/passthrough-error.ts` suppresses the retryable-429 default and drops any
-inherited header, taking provenance from the caller that still holds the response and falling
-back to the code in the body — provenance is not optional there, because the bounded read
-answers with an empty string for anything not display-safe and an empty body is exactly what
-the default fires on; and `src/server/chat-native.ts` restores the code its own classifier overwrote —
-429 maps to `rate_limit_error`, which already carries a code, so the branch that copies an
-upstream code could never reach it — and suppresses the same synthetic wait.
-
-**The verdict is a property of the response, and every surface states it the same way.** The
-translated Chat wrapper in `src/server/chat-completions.ts` was the fourth writer and the one
-that had none of this: it preserved the cyber-policy code and `model_not_found`, took the
-upstream code only when `classifyError` had produced none, and then attached the retryable-429
-default. A refusal therefore left the Chat bridge as an ordinary rate limit carrying an
-instruction to send the turn again. It now reads the same two things the native surface reads —
-`isReplayRefusalResponse` on the response it still holds, and `isReplayRefusalCode` on a body
-that came through an intermediate formatter — and never the status, which a refusal and a real
-rate limit share. The failed-envelope path in the same function restates it too, so a refusal
-arriving as `status: "failed"` is not reported as the 502 a Codex client retries four times.
-Because a re-wrap is where the in-process marker is lost, `retainReplayRefusal` and
-`carryReplayRefusal` in `src/lib/upstream-retry.ts` are what each formatter calls:
-`src/bridge/errors.ts`, `src/server/responses/passthrough-error.ts`, both Chat wrappers, the
-routed Claude Messages wrapper, and the deferred-logging re-wrap in `src/server/relay.ts`.
-
-**Dropping `Retry-After` is necessary and not sufficient.** The status stays 429 because Codex
-stops there and a 5xx invites four more sends, but the Stainless-generated clients — `openai`
-and `anthropic`, Python and Node — decide from a status table that includes 429 and compute
-their own backoff when no wait is named, so a bare 429 is still resent by most callers of this
-proxy. Every surface therefore also emits `x-should-retry: false`, the one signal those clients
-read before that table. The refusal is the only code that gets it: the WebSocket post-send
-verdicts are genuine upstream observations and keep their existing 502/504 contract. The
-acceptance evidence is a count, not a shape — `tests/server/replay-refusal-parity.test.ts` runs
-the proxy over a socket, drives all four surfaces with a client that implements the published
-SDK rule, and asserts one physical upstream send per logical request, with a rate-limit control
-that shows the same client resending.
-
-The existing provider HTTP-status policy and the shared physical-send budget remain
-independent: zero refuses dispatch, invalid counts fail, and a stopped send is counted once.
-`src/bridge/errors.ts` retains only the allowlisted non-replayable transport codes,
-reapplies the in-process marker, attaches no `Retry-After`, and restates 429 for the refusal
-code alone so a combo or adapter formatter holding an upstream-shaped 502 cannot hand the
-client back a retryable status. Other upstream codes keep the existing classification;
-cyber-policy hard blocks retain precedence. The helper, formatter and public Responses count
-regressions live in `tests/lib/upstream-retry.test.ts`,
-`tests/responses/responses-send-budget-counts.test.ts` and
-`tests/codex-integration/reserve-dispatch.test.ts`. The three write-side paths are pinned
-separately: a second armed same-target attempt in
-`tests/responses/responses-send-budget-counts.test.ts`, the absent cooldown and absent
-`Retry-After` on a Codex pool account in `tests/responses/responses-account-label.test.ts`,
-the formatter in `tests/server/retry-after-429.test.ts`, and the native Chat classification in
-`tests/providers/upstream-transient-retry.test.ts`.
-
-## Combo output headroom
-
-A combo child is admitted against two budgets, not one. `resolveInputCeiling` in
-`src/server/responses/input-admission.ts` answers "how much input may this target take", which
-`modelMaxInputTokens` can tighten below the window. The context window itself is what input and
-output actually share. When the caller declared `max_output_tokens`,
-`checkComboTargetInputAdmission` requires both `estimated input <= ceiling` and
-`estimated input + min(declared output, target output ceiling) <= window`, so the output reserve
-is counted once rather than charged twice against an already-tightened input budget.
-
-The refusal is local: HTTP 413 `input_admission_refused` before any upstream bytes are sent, which
-existing combo policy already treats as a safe hop. That ordering is the whole point. A target whose
-total window cannot hold the turn plus the caller's allowance answers 200, emits a few hundred
-tokens and stops on `finish_reason: length`, which the Anthropic surface renders as an output-token
-error naming a limit the model never approached — and by then output has committed and no later
-target may be tried.
-
-Scope is deliberately narrow. Direct and single-target requests keep the loose 2.5x
-pathological-input gate, because they have nowhere to hop. Compaction turns stay exempt. Unknown
-context and a caller that declared no output allowance both remain fail-open, so this invents no
-limits for custom providers. Canonical native slugs that the narrower pinned table does not carry
-resolve their window from the generated in-tree bundle, which is what made the gate inert on the
-route where this was first observed; explicit provider and operator caps may only narrow it.
-
-Regression coverage: `tests/server/input-admission.test.ts` and
-`tests/helpers/combo-context-headroom-cases.ts`.
-
-Native steering retains fixed phase deadlines and reconciled replay output; see the [steering stability contract](../transports/streaming-health.md#steering-deadlines-and-replay-completeness).
-
-Native steering generation overrides, explicit public-API eligibility and the consent-gated wire probe follow the [shared control contract](streaming-health.md#steering-settings-public-api-and-diagnostic-probe); this owner does not change routing or execute diagnostic tools.
-
-Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](../gui-and-management-api.md#fast-selector-rows-setting).
+The shared endpoint path also preserves the cyber-policy stop when a malformed UTF-8 5xx body is
+replacement-decoded; other malformed-body usage, quota, reset evidence and classification retain the
+status-only fallback. Rebuilt failures remain non-replayable and cyber-policy failures carry neither
+`Retry-After` nor quota-reset metadata. The [Responses failover contract](responses-failover.md)
+owns the bounded recovery and replay decisions.

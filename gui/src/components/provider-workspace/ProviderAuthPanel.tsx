@@ -30,10 +30,12 @@ import {
   type AccountDisplayKey,
   type AccountViewModeKey,
 } from "./account-quota-analysis";
-import { GrokResetCouponModal } from "./GrokResetCoupons";
+import { GrokCouponBadge, GrokResetCouponModal } from "./GrokResetCoupons";
+import { AnthropicGrantBadge, AnthropicResetGrantModal } from "./AnthropicResetGrants";
 import { RemoveAccountConfirmDialog } from "./ProviderDialogs";
 import type { CodexAccountPoolController } from "../../hooks/useCodexAccountPool";
 import { useGrokResetCoupons } from "../../hooks/useGrokResetCoupons";
+import { useAnthropicResetGrants } from "../../hooks/useAnthropicResetGrants";
 import { Switch } from "../../ui";
 import type {
   AccountLoadState,
@@ -289,6 +291,14 @@ export default function ProviderAuthPanel({
     return sortAccounts(filtered, accountSort, accountFilter);
   }, [analyzedAccounts, accountFilter, accountSearch, accountSort]);
   const refreshQuota = async (accountId?: string) => {
+  // Claude usage resets ride a separate usage read, like the Grok coupons above.
+  const claudeGrantsEnabled = isOauth && item.name === "anthropic" && accounts.length > 0;
+  const claudeAccountIds = useMemo(
+    () => (claudeGrantsEnabled ? accounts.filter(account => !accountShowsReauth(account)).map(account => account.id) : []),
+    [claudeGrantsEnabled, accounts],
+  );
+  const claudeGrants = useAnthropicResetGrants({ apiBase, accountIds: claudeAccountIds, enabled: claudeGrantsEnabled });
+  const [grantAccount, setGrantAccount] = useState<OAuthAccountRow | null>(null);
     if (!onRefreshQuota || refreshingQuota) return;
     const generation = ++quotaRefreshGeneration.current;
     // Cleared on click so a previous "refreshed" cannot sit under a later failure.
@@ -523,8 +533,8 @@ export default function ProviderAuthPanel({
                 {filteredAndSortedAccounts.length > 0 ? (
                   <div className={accountViewMode === "compact" ? "compact-dense-grid" : "pwi-accounts-grid-2col"}>
                     {filteredAndSortedAccounts.map(analyzed => (
+                      <div key={analyzed.account.id} className="pwi-account-cell">
                       <ProviderAccountCard
-                        key={analyzed.account.id}
                         analyzed={analyzed}
                         viewMode={accountViewMode}
                         titleMode={accountTitleMode}
@@ -540,6 +550,21 @@ export default function ProviderAuthPanel({
                         onRemove={acc => setAccountToRemove(acc)}
                         onReauth={acc => void authHandlers.onReauth(item.name, acc.id)}
                       />
+                      {(grokCouponsEnabled || claudeGrantsEnabled) && !accountShowsReauth(analyzed.account) && (
+                        <div className="pwi-account-badges">
+                          {grokCouponsEnabled && (
+                            <GrokCouponBadge
+                              entry={grokCoupons.entries[analyzed.account.id]}
+                              t={t}
+                              onClick={() => setCouponAccount(analyzed.account)}
+                            />
+                          )}
+                          {claudeGrantsEnabled && (
+                            <AnthropicGrantBadge entry={claudeGrants.entries[analyzed.account.id]} t={t} onClick={() => setGrantAccount(analyzed.account)} />
+                          )}
+                        </div>
+                      )}
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -578,6 +603,15 @@ export default function ProviderAuthPanel({
                 entry={grokCoupons.entries[couponAccount.id]}
                 controller={grokCoupons}
                 onClose={() => setCouponAccount(null)}
+              />
+            )}
+            {grantAccount && (
+              <AnthropicResetGrantModal
+                accountId={grantAccount.id}
+                accountLabel={oauthAccountDisplayLabel(accounts, grantAccount, t)}
+                entry={claudeGrants.entries[grantAccount.id]}
+                controller={claudeGrants}
+                onClose={() => setGrantAccount(null)}
               />
             )}
             {accountLoadState === "ready" && loggedIn && accounts.length === 0 && (

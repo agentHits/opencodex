@@ -11,11 +11,16 @@ import {
   isCodexShellBridgeToolName,
   isCursorStructuredEditToolName,
   normalizeCursorWireName,
-  normalizeCursorTextToolMarkers,
   OCX_RESPONSES_TOOL_PROVIDER,
   resolveShellBridgeAliasKey,
   responsesToolNameFromCursorWire,
 } from "./tool-definitions";
+import {
+  drainCursorTextToolCalls,
+  type DrainedTextToolCall,
+  type SuppressedTextToolCallScan,
+} from "./text-toolcall";
+import { recordObservedCursorContextWindow } from "./discovery";
 import type { CursorServerMessage } from "./types";
 import type { TranslatorBudget } from "../../lib/translator-budget";
 import { CURSOR_INCOMPLETE_TOOL_CALL_MESSAGE_PREFIX } from "./cursor-errors";
@@ -177,6 +182,23 @@ export interface CursorProtobufEventState {
    */
   syntheticStructuredEditToolNames?: ReadonlySet<string>;
   translatorBudget?: TranslatorBudget;
+  /**
+   * Incomplete `[TOOL_CALL]…[ARGS]{` prefix held across `textDelta` frames so a
+   * marker split by the stream cannot leak into assistant text.
+   */
+  pendingTextToolCall?: string;
+  /** Constant-space scanner used after an incomplete textual marker exceeds its retained byte cap. */
+  suppressedTextToolCall?: SuppressedTextToolCallScan;
+  /** Budgeted textual fallback calls held until turn finalization establishes that no real frame won. */
+  bufferedTextToolCalls?: Array<DrainedTextToolCall & { callId: string }>;
+  /** True once this turn carries any real client-tool frame, including an incomplete one. */
+  sawRealClientToolCall?: boolean;
+  /** Monotonic id suffix for tool calls promoted from text markers. */
+  textToolCallSeq?: number;
+  /** Wire model id used to record checkpoint `maxTokens` for the next turn. */
+  wireModelId?: string;
+  /** Normalized Cursor identity scope that owns the observed checkpoint ceiling. */
+  identityScope: string;
 }
 
 
@@ -1049,6 +1071,10 @@ export function mapSyntheticMcpExecToToolEvents(
 ): CursorServerMessage[] {
   if (args.providerIdentifier !== OCX_RESPONSES_TOOL_PROVIDER) return [];
   if (options.state?.terminated) return [];
+  if (options.state) {
+    discardBufferedTextToolCalls(options.state);
+    options.state.sawRealClientToolCall = true;
+  }
   if (options.allowEmptyArgs !== true && !hasMcpArgBytes(args)) return [];
   const cursorWireName = mcpWireNameFromArgs(args);
   if (!cursorWireName) return [{ type: "error", message: "Cursor requested a Responses tool without a tool name" }];
@@ -1116,6 +1142,17 @@ function recordToolCall(state: CursorProtobufEventState, callId: string, cursorW
   state.translatorBudget?.openCall(callId);
   state.startedClientToolCalls++;
   return [];
+}
+
+function recordRealToolCall(state: CursorProtobufEventState, callId: string, cursorWireName: string): CursorServerMessage[] {
+  discardBufferedTextToolCalls(state);
+  state.sawRealClientToolCall = true;
+  return recordToolCall(state, callId, cursorWireName);
+}
+
+function discardBufferedTextToolCalls(state: CursorProtobufEventState): void {
+  for (const call of state.bufferedTextToolCalls ?? []) state.translatorBudget?.closeCall(call.callId);
+  delete state.bufferedTextToolCalls;
 }
 
 /**
@@ -1244,11 +1281,51 @@ export function mapCursorProtobufServerMessage(
   if (serverMessage.message.case !== "interactionUpdate") return [];
   const update = serverMessage.message.value.message;
   switch (update.case) {
-    case "textDelta":
-      // #2305: fold Cursor display aliases inside textual pseudo tool-call markers back to
-      // the advertised wire name before any client sees the text. Real frames are already
-      // normalized structurally (mcpWireNameFromArgs above).
-      return update.value.text ? [{ type: "text", text: normalizeCursorTextToolMarkers(update.value.text) }] : [];
+    case "textDelta": {
+      // Textual `[TOOL_CALL]name[ARGS]{…}` is not assistant prose. Leaving it in
+      // the text channel (even after #2305 renamed the display alias) leaks a
+      // synthetic protocol marker that later turns few-shot-mimic as inert text.
+      // Strip complete markers, buffer advertised fallbacks until finalize,
+      // and hold or suppress-scan an incomplete opener across deltas.
+      const chunk = update.value.text ?? "";
+      if (!chunk && !state.pendingTextToolCall && !state.suppressedTextToolCall) return [];
+      const drained = drainCursorTextToolCalls(
+        state.pendingTextToolCall ?? "",
+        chunk,
+        state.suppressedTextToolCall,
+      );
+      if (drained.pending) state.pendingTextToolCall = drained.pending;
+      else delete state.pendingTextToolCall;
+      if (drained.suppressed) state.suppressedTextToolCall = drained.suppressed;
+      else delete state.suppressedTextToolCall;
+      const out: CursorServerMessage[] = [];
+      if (drained.text) out.push({ type: "text", text: drained.text });
+      for (const call of drained.calls) {
+        const advertised = resolveAdvertisedClientToolName(state, call.name);
+        if (
+          state.sawRealClientToolCall
+          || !state.clientToolNames
+          || !advertised
+          || (state.bufferedTextToolCalls?.length ?? 0) >= state.maxClientToolCalls
+        ) continue;
+        const args = normalizeJsonText(call.args, advertised, state);
+        state.textToolCallSeq = (state.textToolCallSeq ?? 0) + 1;
+        const callId = `textcall_${state.textToolCallSeq}`;
+        state.translatorBudget?.openCall(callId);
+        try {
+          const reservation = state.translatorBudget?.reserveTransient(
+            Buffer.byteLength(args),
+            { kind: "tool_args", callId },
+          );
+          reservation?.commitRetained();
+          (state.bufferedTextToolCalls ??= []).push({ name: advertised, args, callId });
+        } catch (error) {
+          state.translatorBudget?.closeCall(callId);
+          throw error;
+        }
+      }
+      return out;
+    }
     case "thinkingDelta":
       return update.value.text ? [{ type: "thinking", thinking: update.value.text }] : [];
     case "toolCallStarted": {
@@ -1275,6 +1352,10 @@ export function mapCursorProtobufServerMessage(
       const out: CursorServerMessage[] = [];
       if (state.completedToolCalls.has(update.value.callId)) return [];
       const name = mcpCursorWireName(update.value.toolCall);
+      if (name) {
+        discardBufferedTextToolCalls(state);
+        state.sawRealClientToolCall = true;
+      }
       const args = mcpArgsFromToolCall(update.value.toolCall);
       const openBeforeStart = state.openToolCalls.get(update.value.callId);
       // Empty-arg completion handling:
@@ -1366,12 +1447,26 @@ export function resolvedTurnUsage(state: CursorProtobufEventState): OcxUsage {
 export function finalizeTurnEvents(state: CursorProtobufEventState): CursorServerMessage[] {
   state.terminated = true;
   if (state.openToolCalls.size > 0) {
+    for (const call of bufferedTextToolCalls) state.translatorBudget?.closeCall(call.callId);
     const openCallIds = [...state.openToolCalls.keys()];
     const openIds = openCallIds.join(", ");
     // Clear so a second turnEnded (should not happen, but defensive) doesn't re-emit.
     for (const callId of openCallIds) state.translatorBudget?.closeCall(callId);
     state.openToolCalls.clear();
     return [{ type: "error", message: `${CURSOR_INCOMPLETE_TOOL_CALL_MESSAGE_PREFIX} ${openIds}. Arguments may be truncated; the call was not committed.` }];
+  }
+  const out: CursorServerMessage[] = [];
+  if (!state.sawRealClientToolCall) {
+    for (const call of bufferedTextToolCalls) {
+      out.push(...recordToolCall(state, call.callId, call.name));
+      const open = state.openToolCalls.get(call.callId);
+      if (open) {
+        open.args = call.args;
+        out.push(...commitToolCall(state, call.callId, call.args));
+      } else state.translatorBudget?.closeCall(call.callId);
+    }
+  } else {
+    for (const call of bufferedTextToolCalls) state.translatorBudget?.closeCall(call.callId);
   }
   // Surface the absolute context size (when Cursor reported a checkpoint) as both totalTokens and
   // the estimated input side of Codex's visible `input + output` counter. Codex status lines can

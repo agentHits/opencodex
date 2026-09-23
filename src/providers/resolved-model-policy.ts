@@ -30,14 +30,14 @@ export type StaticProviderPolicyField =
   | "modelMaxOutputTokens" | "reasoningEfforts" | "modelReasoningEfforts" | "modelReasoningEffortsAuthoritative"
   | "modelDefaultReasoningEfforts" | "reasoningEffortMap" | "modelReasoningEffortMap"
   | "reasoningWireFormat" | "noVisionModels" | "noReasoningModels" | "noTemperatureModels"
-  | "noTopPModels" | "noPenaltyModels" | "noJsonSchemaModels" | "parallelToolCalls"
+  | "noTopPModels" | "noStopModels" | "noPenaltyModels" | "noJsonSchemaModels" | "parallelToolCalls"
   | "promptCacheKey" | "chatServiceTier" | "openaiChatEofTolerance" | "statelessResponses"
   | "requiresAdjacentResponsesToolResults" | "requiresPairedResponsesToolResults" | "annotateEmptyToolOutputs"
   | "fastWire" | "supportsServiceTier" | "modelSupportsServiceTier" | "supportsOpenAiWebSearchToolFields"
   | "supportsResponsesCustomTools" | "preserveResponsesReasoningContent" | "dropResponsesReasoningItems"
   | "modelSupportsReasoningSummaries"
   | "supportsVerbosity" | "modelSupportsVerbosity" | "responsesItemIdRepair" | "autoToolChoiceOnlyModels"
-  | "preserveReasoningContentModels" | "requiresReasoningPlaceholderModels" | "reasoningSplitModels"
+  | "preserveReasoningContentModels" | "requiresReasoningPlaceholderModels" | "reasoningSplitModels" | "inlineThinkTagModels"
   | "reasoningDetailsModels" | "thinkingToggleModels" | "thinkingBudgetModels" | "showThinkingSummary"
   | "escapeBuiltinToolNames" | "googleMode" | "project" | "location" | "modelCapabilities"
   | "modelAutoCompactTokenLimits" | "modelSuppressSyntheticMax" | "modelReasoningSummaryDelivery"
@@ -226,10 +226,13 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ResolvedMode
   put("modelReasoningEffortMap", modelEffortMap, modelEffortMapSource);
   for (const key of [
     "noVisionModels", "noReasoningModels", "noTemperatureModels", "noTopPModels",
+    "noStopModels",
     "noPenaltyModels", "noJsonSchemaModels", "autoToolChoiceOnlyModels",
     "preserveReasoningContentModels", "requiresReasoningPlaceholderModels",
     "reasoningSplitModels", "reasoningDetailsModels", "thinkingToggleModels", "thinkingBudgetModels",
   ] as const) putUnion(key, entry?.[key]);
+  // This parser is opt-in: an explicit list, including [], overrides registry defaults.
+  putScalar("inlineThinkTagModels", entry?.inlineThinkTagModels);
   for (const directModel of entry?.directReasoningEffortModels ?? []) {
     const staleBudget = [directModel, ...(entry?.thinkingBudgetModels ?? [])];
     const routedStaleBudget = [...(entry?.thinkingBudgetModels ?? []), directModel];
@@ -281,7 +284,7 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ResolvedMode
     return exact !== "unknown" ? exact : operatorDefault !== undefined ? "operator" : registryDefault !== undefined ? "registry" : "unknown";
   };
   const configuredAdapter = provider.modelAdapters?.[input.modelId];
-  const pin = pinnedWireAdapter(input.providerName, input.modelId);
+  const pin = pinnedWireAdapter(input.providerName, input.modelId, provider);
   const normalizedModelId = input.modelId.trim().toLowerCase();
   const registryWire = wireDefault(entry?.modelWireDefaults?.[normalizedModelId], provider, entry,
     input.inboundWire ?? "responses", resolvedAuthMode);

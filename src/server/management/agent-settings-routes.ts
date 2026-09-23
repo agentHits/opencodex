@@ -1,4 +1,5 @@
 import { persistCommittedDesktopGateway } from "../../claude/desktop-gateway-state";
+import { captureDesktopAppliedMarker, commitDesktopAppliedMarker } from "../../claude/desktop-applied-marker";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { CatalogModel } from "../../codex/catalog";
@@ -7,6 +8,7 @@ import { mergeModelPinnedEfforts, modelPinnedEffortsConfigError } from "../../co
 import { MULTI_AGENT_SURFACE_ADVISORY_VERSION, multiAgentSurfaceAdvisory, resolveMultiAgentMode } from "../../config/multi-agent-surface";
 import { captureConfigTopLevelRollback, parsedConfigRebaseDeletionKeys, projectConfigRebaseProvenance } from "../../config/rebase-provenance";
 import {
+  adoptPersistedClaudeCode,
   DEFAULT_SUBAGENT_MODELS,
   codexAutoStartEnabled,
   deleteConfigTopLevelKey,
@@ -123,12 +125,12 @@ function persistDesktopProfileField(
 ): { ok: true } | { ok: false; reason: "missing" | "invalid" | "conflict" } {
   const outcome = mutatePersistedConfig(persisted => {
     persisted.claudeCode = { ...(persisted.claudeCode ?? {}), desktopProfile };
-    return { changed: true, value: true };
+    return { changed: true, value: structuredClone(persisted.claudeCode) };
   });
   // Only mirror into memory once the durable write actually landed; an
   // `unavailable` outcome must not leave the snapshot claiming a saved profile.
   if (outcome.status === "unavailable") return { ok: false, reason: outcome.reason };
-  config.claudeCode = { ...(config.claudeCode ?? {}), desktopProfile };
+  adoptPersistedClaudeCode(config, outcome.value);
   return { ok: true };
 }
 
@@ -137,9 +139,15 @@ async function persistDesktopModeField(
   desktopMode: "first-party" | "gateway",
 ): Promise<{ ok: true } | { ok: false; reason: "missing" | "invalid" | "conflict" }> {
   const { recordClaudeDesktopMode } = await import("../../claude/desktop-first-party");
-  const outcome = mutatePersistedConfig(persisted => recordClaudeDesktopMode(persisted, desktopMode));
+  const outcome = mutatePersistedConfig(persisted => {
+    const mutation = recordClaudeDesktopMode(persisted, desktopMode);
+    return { changed: mutation.changed, value: structuredClone(persisted.claudeCode) };
+  });
   if (outcome.status === "unavailable") return { ok: false, reason: outcome.reason };
-  recordClaudeDesktopMode(config, desktopMode);
+  // First-party apply ends here — no profile-marker write follows — so without
+  // adopting, live diverges from the armed baseline and a later whole-config
+  // save reads that divergence as a pending mutation and stomps hand edits.
+  adoptPersistedClaudeCode(config, outcome.value);
   return { ok: true };
 }
 
@@ -224,18 +232,22 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
       }).kind;
       if (["not_installed", "no_owned_state", "foreign", "unsafe", "broken"].includes(afterKind)) return;
       const routed = filterCatalogVisibleModels(allModels, current).map(m => ({ provider: m.provider, id: m.id, contextWindow: m.contextWindow }));
+      const writtenProfile = current.claudeCode.desktopProfile;
+      const markerBaseline = captureDesktopAppliedMarker(writtenProfile);
       const result = (deps.writeDesktop3pConfig ?? writeDesktop3pConfig)(
         current.port ?? 10100,
         [...desktopVisibleNativeSlugs(current)],
         routed,
         current.apiKeys?.[0]?.key,
         "static",
-        current.claudeCode.desktopProfile,
+        writtenProfile,
         nativeContextLimits(current),
       );
       if (result.written && result.fingerprint) {
-        current.claudeCode = { ...current.claudeCode, desktopProfile: { ...current.claudeCode.desktopProfile, appliedFingerprint: result.fingerprint, appliedAt: new Date().toISOString() } };
-        saveConfigPreservingClaudeCode(current);
+        const marked = commitDesktopAppliedMarker(markerBaseline, result.fingerprint);
+        if (marked.status === "unavailable" || marked.value === false) {
+          console.warn("[claude-desktop] provider-change applied marker skipped");
+        }
       }
     } catch { /* best-effort */ }
   }
@@ -978,9 +990,10 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
     let body: { profile?: unknown };
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     try {
-      const { parseDesktopProfile, reconcileDesktopProfile } = await import("../../claude/desktop-profile");
+      const { parseDesktopProfile, preserveDesktopAppliedState, reconcileDesktopProfile, sameProfileContent } = await import("../../claude/desktop-profile");
       const parsed = parseDesktopProfile(body.profile);
-      const current = await buildClaudeDesktopState(config);
+      const initial = loadConfig();
+      const current = await buildClaudeDesktopState(initial);
       const availableRoutes = new Set(current.models.filter(item => item.available).map(item => item.route));
       for (const route of Object.keys(parsed.assignments)) {
         if (!current.profile.assignments[route] && !availableRoutes.has(route)) {
@@ -1001,9 +1014,39 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
           throw new Error(`현재 사용할 수 없는 모델은 기본값으로 지정할 수 없습니다: ${nextDefault}`);
         }
       }
-      const state = await buildClaudeDesktopState(config, parsed);
-      config.claudeCode = { ...(config.claudeCode ?? {}), desktopProfile: reconcileDesktopProfile(state.profile, state.models) };
-      saveConfigPreservingClaudeCode(config);
+      // Applied markers are server-owned bookkeeping. Discard client copies, then
+      // restore the trusted markers only if the desired profile stayed identical.
+      const editable = { version: 1 as const, assignments: parsed.assignments, defaults: parsed.defaults };
+      const state = await buildClaudeDesktopState(initial, editable);
+      const rebuilt = reconcileDesktopProfile(state.profile, state.models);
+      const expectedProfile = initial.claudeCode?.desktopProfile;
+      const outcome = mutatePersistedConfig<OcxConfig["claudeCode"] | null>(persisted => {
+        const latest = persisted.claudeCode?.desktopProfile;
+        if ((latest == null) !== (expectedProfile == null)
+          || (latest && expectedProfile && !sameProfileContent(latest, expectedProfile))) {
+          return { changed: false, value: null };
+        }
+        persisted.claudeCode = {
+          ...(persisted.claudeCode ?? {}),
+          desktopProfile: preserveDesktopAppliedState(latest ?? current.profile, rebuilt),
+        };
+        return { changed: true, value: structuredClone(persisted.claudeCode) };
+      });
+      if (outcome.status === "unavailable" && outcome.reason !== "conflict") {
+        return jsonResponse({ error: "Claude Desktop profile could not be saved (config " + outcome.reason + ")" }, 500);
+      }
+      if (outcome.status === "unavailable" || outcome.value === null) {
+        return jsonResponse({ error: "Claude Desktop profile changed during save" }, 409);
+      }
+      adoptPersistedClaudeCode(config, outcome.value);
+      // An unarmed live snapshot may prefer its old marker during reconciliation.
+      // Pin the field this route just committed while leaving other live leaves intact.
+      if (outcome.value?.desktopProfile) {
+        config.claudeCode = {
+          ...(config.claudeCode ?? {}),
+          desktopProfile: structuredClone(outcome.value.desktopProfile),
+        };
+      }
       const saved = await buildClaudeDesktopState(config);
       const runtimePort = Number(url.port) || config.port;
       return jsonResponse({ ok: true, ...saved, port: runtimePort });
@@ -1168,8 +1211,10 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
           ...(modeWarning ? { warning: modeWarning } : {}),
         }, 500);
       }
-      const { claudeDesktopPolicyWarning, probeClaudeDesktopPolicy } = await import("../../claude/desktop-policy");
-      const policyState = (deps.probeClaudeDesktopPolicy ?? probeClaudeDesktopPolicy)({ platform: deps.platform ?? process.platform });
+      const { claudeDesktopPolicyWarning, getCachedClaudeDesktopPolicy } = await import("../../claude/desktop-policy");
+      const policyState = deps.probeClaudeDesktopPolicy
+        ? await deps.probeClaudeDesktopPolicy({ platform: deps.platform ?? process.platform })
+        : await getCachedClaudeDesktopPolicy({ platform: deps.platform ?? process.platform });
       const policyWarning = claudeDesktopPolicyWarning(policyState);
       const warning = [modeWarning, policyWarning].filter(Boolean).join(" ");
       return jsonResponse({
@@ -1219,10 +1264,10 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
       // a stale apply the operator should refresh.
       const stale = desiredEnabled && (mode === "first-party" ? firstPartySeen.stale : observed.kind === "gateway_drifted");
       const { getDesktopHealth } = await import("../../claude/desktop-health");
-      const { claudeDesktopPolicyHealth, probeClaudeDesktopPolicy } = await import("../../claude/desktop-policy");
-      const policyState = (deps.probeClaudeDesktopPolicy ?? probeClaudeDesktopPolicy)({
-        platform: deps.platform ?? process.platform,
-      });
+      const { claudeDesktopPolicyHealth, getCachedClaudeDesktopPolicy } = await import("../../claude/desktop-policy");
+      const policyState = deps.probeClaudeDesktopPolicy
+        ? await deps.probeClaudeDesktopPolicy({ platform: deps.platform ?? process.platform })
+        : await getCachedClaudeDesktopPolicy({ platform: deps.platform ?? process.platform });
       // Managed-policy conflicts only matter for the gateway profile; first-party mode never
       // touches Desktop's own configuration.
       const policy = claudeDesktopPolicyHealth(mode === "first-party" ? "absent" : policyState);
@@ -1621,8 +1666,12 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
     const warnings: string[] = [];
     // authMode changes must reconcile the injected system env too: switching back to
     // Subscription has to remove the opencodex-owned dummy ANTHROPIC_AUTH_TOKEN
-    // (audit R1 blocker #1/#2, devlog 260720_claude_authmode_persist).
-    if (body.systemEnv !== undefined || body.authMode !== undefined) {
+    // (audit R1 blocker #1/#2, devlog 260720_claude_authmode_persist). Model slots and
+    // levers feed the same injection, so a changed or cleared slot must not linger in
+    // launchd until the next restart.
+    const systemEnvInputs = ["systemEnv", "authMode", "model", "smallFastModel", "tierModels",
+      "maxContextTokens", "alwaysEnableEffort", "autoContext", "autoCompactWindow"] as const;
+    if (systemEnvInputs.some(field => body[field] !== undefined)) {
       try {
         await applySystemEnvToggle(config, config.port);
       } catch (err) {

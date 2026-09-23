@@ -26,7 +26,7 @@ ocx claude
 | `ANTHROPIC_DEFAULT_{OPUS,SONNET,FABLE}_MODEL` | `claudeCode.tierModels.*` (선택 사항) |
 | `CLAUDE_CODE_ALWAYS_ENABLE_EFFORT` | `alwaysEnableEffort`가 켜져 있으면 `1` (조건부) |
 | `ENABLE_TOOL_SEARCH` | `claudeCode.toolSearch`가 설정된 경우 (조건부, 기본값은 꺼짐) |
-| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` / `DISABLE_COMPACT` | `maxContextTokens`가 설정된 경우 기존 컨텍스트 재정의 값 (조건부) |
+| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | `maxContextTokens`가 설정된 경우 기존 컨텍스트 재정의 값 (조건부) |
 직접 내보낸 변수가 항상 우선해요. 추가 인자는 그대로 전달돼요: `ocx claude -p "hello"`.
 
 ### Claude 라우팅이 꺼져 있을 때의 네이티브 폴백
@@ -115,6 +115,8 @@ hook을 제거해요. Claude Desktop은 별도 profile을 사용하며 shell hoo
 프록시 admission 헤더도 유효해야 해요. 그래서 `ocx claude`를
 사용할 때 "claude.ai connectors are disabled" 경고도 더 이상 나타나지 않아요.
 
+본문에서 바꾸는 것은 도구 호출 ID뿐이에요. Anthropic이 거부할 `tool_use.id`나 `tool_result.tool_use_id`(`a-zA-Z0-9_-` 밖의 문자가 있거나 64자를 넘는 ID, 예를 들어 세션 앞부분에서 라우팅 모델이 만든 ID)는 호출과 결과의 짝을 유지한 채 규칙에 맞는 ID로 바꿔요. 규칙에 맞는 ID는 그대로 보내고, 빈 ID에는 로컬에서 400을 돌려줘요.
+
 `claudeCode.nativePassthrough: false`로 끌 수 있고, `claudeCode.anthropicBaseUrl`로 다른 주소를
 지정할 수 있어요.
 
@@ -200,7 +202,7 @@ import/export는 로컬 설정만 다뤄요. 허브 프로필을 바꾸지 않�
 능력 정보(추론 강도 사다리, thinking 타입)를 실어 보냅니다 — Claude Desktop의 서드파티
 게이트웨이 모드가 추론 강도 선택 UI를 열 수 있게 하기 위해서입니다. 실제 Anthropic 모델은
 원래 id를 그대로 유지합니다. 합성된 2026 날짜는 내부 슬롯이며 출시일이 아닙니다. 구버전의
-해시 별칭과 `claude-ocx-<provider>--<model>` 별칭도 계속 해석됩니다. 컨텍스트가 1M인 모델에는
+해시 별칭과 `claude-ocx-<provider>--<model>`, `claude-ocx2-<provider>--<model>` 별칭도 계속 해석됩니다. 저장된 `claude-ocx-`는 `ocx-claude-`로, 이스케이프된 `claude-ocx2-`는 `ocx-claude2-`로 한 번 다시 고르면 실제 컨텍스트 창과 compact가 함께 적용됩니다. 컨텍스트가 1M인 모델에는
 `…[1m]` 행이 하나 더 생깁니다 — 이걸 고르면 Claude Code가 그 모델의 컨텍스트를 1M로 계산합니다
 (자동 요약 유지, 프록시가 표식을 떼고 라우팅). 선택하면 Claude Code의
 `settings.json` `model` 필드에 저장되고, 인바운드 요청에서
@@ -208,12 +210,13 @@ import/export는 로컬 설정만 다뤄요. 허브 프로필을 바꾸지 않�
 지정하거나 `/model`에 라우팅 id를 직접 입력하세요 (Claude Code는 문자열을 그대로 통과시킵니다).
 
 Claude Code 2.1.129 이상은 `GET /v1/models?limit=1000`에서 게이트웨이 모델을 찾아 기본 `/model`
-선택기의 "From gateway" 항목에 표시해요. 선택기는 `claude` 또는 `anthropic`으로 시작하는 ID만
-받으므로, opencodex는 라우팅 모델을 안정적이고 되돌릴 수 있는 별칭으로 노출해요.
+선택기에 표시해요. `description`이 없는 항목은 "From gateway"로 보이는데, opencodex는 Claude Code CLI용
+항목마다 `description`(`Routed by OpenCodex to <provider>/<model>`, 네이티브 항목은 `Routed by OpenCodex to native <model>`, Fast 항목은 끝에 ` · Fast`, 1M 항목은 기본 설명 그대로)을 보내고 Claude Code 2.1.257 이상은
+그 내용을 대신 보여줘요. Claude Code 2.1.278 선택기는 `claude` 또는 `anthropic`을 포함한 ID를 받아요. `claude-`로 시작하는 모르는 ID는 compact를 끄지 않으면 200k로 계산되므로, 라우팅 모델은 `claude`를 포함하되 `claude-`로 시작하지 않는 안정적이고 되돌릴 수 있는 별칭으로 노출해요.
 
 | 화면 | 형식 | 예시 |
 | --- | --- | --- |
-| Claude Code CLI | `claude-ocx-<provider>--<model>` (plain) 또는 `claude-ocx2-…` (escaped) | `claude-ocx-native--gpt-5.6-sol` |
+| Claude Code CLI | `ocx-claude-<provider>--<model>` (plain) 또는 `ocx-claude2-…` (escaped) | `ocx-claude-native--gpt-5.6-sol` |
 | Claude Desktop 3P | `claude-opus-4-8-<code>` (3자리 base36 해시) | `claude-opus-4-8-ncb` |
 
 프록시는 요청마다 계열을 골라요. `?ids=cli` 또는 `?ids=desktop`이 우선하고, 지정하지 않으면
@@ -234,9 +237,9 @@ OpenCodex의 Claude Desktop 프로필에서 원하는 기본 모델을 선택하
 클라이언트가 실제로 무엇을 보내는지는 **Logs → requestedModel**에서 확인하세요.
 
 **별칭 문법 규칙:** provider에는 `/`나 `--`를 넣을 수 없고 `native`와 같아도 안 돼요. `/`와 `~`가
-없는 plain model ID는 v1 접두사 `claude-ocx-…`를 유지해요. `/` 또는 `~`가 있는 model ID는 v2
-접두사 `claude-ocx2-…`로 만들고 이스케이프해요(`/` → `~s`, `~` → `~t`). 예:
-`openrouter/anthropic/claude-opus-4-8` → `claude-ocx2-openrouter--anthropic~sclaude-opus-4-8`.
+없는 plain model ID는 v1 접두사 `ocx-claude-…`를 유지해요. `/` 또는 `~`가 있는 model ID는 v2
+접두사 `ocx-claude2-…`로 만들고 이스케이프해요(`/` → `~s`, `~` → `~t`). 예:
+`openrouter/anthropic/claude-opus-4-8` → `ocx-claude2-openrouter--anthropic~sclaude-opus-4-8`.
 v1 별칭은 리터럴로 디코딩해요(예전 model ID에 들어 있던 두 글자 시퀀스 `~s` / `~t`도 그대로 보존).
 v2 별칭은 이스케이프를 펼쳐요. 읽기 쉬운 형식으로 표현할 수 없는 라우트는 해시 별칭으로 대체해요.
 모델 ID에는 `--`를 넣을 **수 있어요**(해석할 때 첫 번째 `--`만 기준으로 나눠요). `--`가 포함된
@@ -329,6 +332,7 @@ Anthropic 패스스루는 그대로 유지해요.
    있으면 짝을 이루는 `tool_result` 본문을 스텁으로 바꿔요.
 2. **텍스트 블록 전달:** `Base directory for this skill: `로 시작하는 10,000자 이상의 사용자
    텍스트 블록에서 디렉터리 basename이 차단된 이름과 일치하는지 확인해요(대소문자 구분 없음).
+   디렉터리 줄은 UTF-16 코드 단위 4,096개까지만 검사해요. 그보다 긴 줄은 끝에 줄바꿈이 없어도 그대로 보내요.
 
 `claudeCode.blockedSkills`로 설정할 수 있어요(기본값 `["claude-api"]`, `[]`이면 생략 기능을 완전히
 꺼요). 스텁은 도구 호출과 결과의 짝을 유지해요.
@@ -405,7 +409,7 @@ ChatGPT bearer는 메인 라우팅 프로바이더에는 전달하지 않아요.
 모델, detail, 이미지 바이트, 요청 문맥을 기준으로 캐시해 같은 이미지와 문맥을 매번 다시 설명하지
 않아요. 내용이 바뀔 수 있는 원격 `https:` 이미지는 캐시하지 않아요.
 
-전체 설정 키는 [설정 레퍼런스](/ko/reference/configuration/#sidecars)에서 확인할 수
+전체 설정 키는 [설정 레퍼런스](/ko/reference/configuration/server/#sidecars)에서 확인할 수
 있어요. Anthropic OAuth 웹 검색과 이미지 설명은 저장소에서 이미 사용 중인 Claude Code OAuth
 fingerprint 방식을 그대로 따르지만, 장시간 무인 작업에 쓰기 전에는 본인 계정과 실제 작업으로
 충분히 soak test하는 편이 좋아요.
@@ -441,6 +445,8 @@ Claude Code의 `/effort` 설정은 어댑터에서도 유지돼요.
 | `tool_choice` | `auto`→`auto`, `none`→`none`, `any`→`required`, 이름 지정 함수→`{type:"function",name}`, 호스팅 WebSearch/web_search→`{type:"web_search"}` |
 | `max_tokens` | `max_output_tokens` |
 | `stop_sequences` | `stop` |
+
+Claude Code 자동 모드는 항상 `stop_sequences`를 보냅니다. 라우팅된 제공자의 `noStopModels` 목록에 있는 모델이면 OpenCodex는 Chat Completions와 Responses 양쪽 와이어에서 `stop`을 빼고 보냅니다. 그래서 grok-4.7, grok-4.6 같은 xAI 추론 모델이 `400 invalid-argument`를 돌려주거나 일시적으로 쓸 수 없는 모델로 표시되지 않습니다. [`noStopModels`](/ko/reference/configuration/providers/)를 참고하세요.
 
 의도한 Anthropic 어댑터에서는 숨기지 않은 서명 블록(빈 thinking 포함)과 불투명 redacted 블록을 보존해요. `hideThinkingSummary` 정책은 유지돼요. 로컬에서 숨긴 서명 텍스트를 Claude 클라이언트에 노출하지 않으며, 이 숨김 경계를 통한 무손실 재생은 아직 보장하지 않아요. 이전 결합 봉투는 스트리밍 텍스트가 이미 전송됐다면 원래 블록 순서를 복원할 수 없어요. `claudeCode.compatibility: "enforce"`는 여전히 thinking 재생을 거절해요. 실제 Anthropic 수락이나 캐시 적중 개선을 증명한 것은 아니며 [#3719](https://github.com/lidge-jun/opencodex/issues/3719)는 열어 둬요.
 

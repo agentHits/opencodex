@@ -31,6 +31,8 @@ import {
 } from "../../src/server/management/usage-summary-cache";
 import { resetUsageAggregateCacheForTests } from "../../src/server/management/usage-aggregate-cache";
 import { catalogConvergenceFactory } from "../helpers/catalog-convergence";
+import { repoRoot } from "../helpers/repo-root";
+import { MANAGED_AGENTS_TABLE_MARKER, MANAGED_SUBAGENT_DEFAULT_MARKER } from "../../src/codex/subagent-defaults";
 import { startupHealthFixture } from "../helpers/startup-health";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -413,6 +415,174 @@ describe("PUT /api/settings", () => {
 
     const bad = await putSettings(config, { codexClientCompaction: "yes" });
     expect(bad!.status).toBe(400);
+  });
+
+  test.each([
+    {
+      field: "codexDesktopAuthless" as const,
+      expectedAuth: "requires_openai_auth = false",
+      presentsCodexAccount: false,
+      authSummary: "The Codex app will not require its own account sign-in.",
+    },
+    {
+      field: "codexClientCompaction" as const,
+      expectedAuth: "requires_openai_auth = true",
+      presentsCodexAccount: true,
+      authSummary: "The Codex app will require its own account sign-in.",
+    },
+  ])("$field rewrites the live Codex config before PUT returns", async ({
+    field,
+    expectedAuth,
+    presentsCodexAccount,
+    authSummary,
+  }) => {
+    const config = baseConfig();
+    const codexHome = join(TEST_DIR, `codex-${field}`);
+    mkdirSync(codexHome, { recursive: true });
+    const codexConfigPath = join(codexHome, "config.toml");
+    writeFileSync(codexConfigPath, 'model = "gpt-5.5"\n', "utf8");
+    const response = putDesktopSwitchInIsolatedHome(codexHome, config, { [field]: true });
+
+    expect(response.status).toBe(200);
+    const body = response.body as {
+      codexDesktopSwitches?: {
+        codexDesktopAuthless?: { stored?: boolean; effective?: boolean };
+        codexClientCompaction?: { stored?: boolean; effective?: boolean };
+        apply?: unknown;
+        authSource?: { presentsCodexAccount?: boolean; summary?: string };
+      };
+    };
+    expect(body.codexDesktopSwitches?.apply).toEqual({ applied: true });
+    expect(body.codexDesktopSwitches?.[field]).toEqual({ stored: true, effective: true });
+    expect(body.codexDesktopSwitches?.authSource?.presentsCodexAccount).toBe(presentsCodexAccount);
+    expect(body.codexDesktopSwitches?.authSource?.summary).toBe(authSummary);
+    const injected = readFileSync(codexConfigPath, "utf8");
+    expect(injected).toContain("[model_providers.opencodex]");
+    expect(injected).toContain(expectedAuth);
+  });
+
+  test.each([
+    {
+      reason: "integration_disabled" as const,
+      retryable: false,
+      configPatch: { clientIntegrations: { codex: false } },
+      live: true,
+    },
+    {
+      reason: "proxy_not_running" as const,
+      retryable: true,
+      configPatch: {},
+      live: false,
+    },
+  ])("reports an unapplied desktop switch as $reason with retryable=$retryable", async ({
+    reason,
+    retryable,
+    configPatch,
+    live,
+  }) => {
+    const config = { ...baseConfig(), ...configPatch } as OcxConfig;
+    if (live) writeRuntimePort({ pid: process.pid, port: config.port });
+    const response = await putSettings(config, { codexDesktopAuthless: true }, {
+      saveConfigPreservingClaudeCode: () => {},
+      createManagementConvergeCodex: catalogConvergenceFactory(() => {}),
+    });
+
+    expect(response!.status).toBe(200);
+    expect(await response!.json()).toMatchObject({
+      codexDesktopAuthless: true,
+      codexDesktopSwitches: {
+        codexDesktopAuthless: { stored: true, effective: true },
+        apply: { applied: false, reason, retryable },
+        authSource: { presentsCodexAccount: false },
+      },
+    });
+  });
+
+  test("reports a non-retryable injection refusal without touching the ambient Codex home", () => {
+    const codexHome = join(TEST_DIR, "codex-ambiguous-config");
+    mkdirSync(codexHome, { recursive: true });
+    // Ambiguous OpenCodex-managed sub-agent markers are a deterministic, non-retryable
+    // injection refusal. (A missing config.toml no longer is: it is bootstrapped, below.)
+    writeFileSync(join(codexHome, "config.toml"), [
+      MANAGED_AGENTS_TABLE_MARKER, "[agents]", MANAGED_SUBAGENT_DEFAULT_MARKER, "", 'default_subagent_model = "gpt-5.6-sol"', "",
+    ].join("\n"), "utf8");
+    const response = putDesktopSwitchInIsolatedHome(
+      codexHome,
+      baseConfig(),
+      { codexDesktopAuthless: true },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      codexDesktopSwitches: {
+        apply: {
+          applied: false,
+          reason: "injection_refused",
+          retryable: false,
+        },
+      },
+    });
+  });
+
+  test("applies the authless switch on a fresh Codex home without config.toml (#5422)", () => {
+    const codexHome = join(TEST_DIR, "codex-missing-config");
+    mkdirSync(codexHome, { recursive: true });
+    const response = putDesktopSwitchInIsolatedHome(
+      codexHome,
+      baseConfig(),
+      { codexDesktopAuthless: true },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ codexDesktopSwitches: { apply: { applied: true } } });
+    expect(readFileSync(join(codexHome, "config.toml"), "utf8")).toContain("opencodex");
+  });
+
+  test("a paginated Codex home still applies the switch while native history relabeling stands down", async () => {
+    const config = baseConfig();
+    const codexHome = join(TEST_DIR, "codex-paginated");
+    mkdirSync(codexHome, { recursive: true });
+    const configPath = join(codexHome, "config.toml");
+    const rolloutPath = join(codexHome, "paginated.jsonl");
+    const rollout = JSON.stringify({
+      ordinal: 0,
+      type: "session_meta",
+      payload: {
+        id: "paginated",
+        history_mode: "paginated",
+        model_provider: "opencodex",
+      },
+    }) + "\n";
+    writeFileSync(configPath, [
+      'model_provider = "opencodex"',
+      "[model_providers.opencodex]",
+      'name = "OpenCodex"',
+      'base_url = "http://127.0.0.1:10100/v1"',
+      'wire_api = "responses"',
+      "requires_openai_auth = true",
+      "",
+    ].join("\n"), "utf8");
+    writeFileSync(rolloutPath, rollout, "utf8");
+    const database = new Database(join(codexHome, "state_5.sqlite"));
+    database.run("CREATE TABLE threads (id TEXT, rollout_path TEXT, model_provider TEXT, history_mode TEXT)");
+    database.run("INSERT INTO threads VALUES ('paginated', ?, 'opencodex', 'paginated')", rolloutPath);
+    database.close();
+    const response = putDesktopSwitchInIsolatedHome(
+      codexHome,
+      config,
+      { codexDesktopAuthless: true },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      codexDesktopSwitches: { apply: { applied: true } },
+    });
+    expect(readFileSync(configPath, "utf8")).toContain("requires_openai_auth = false");
+    expect(readFileSync(rolloutPath, "utf8")).toBe(rollout);
+    const verifier = new Database(join(codexHome, "state_5.sqlite"), { readonly: true });
+    expect(verifier.query("SELECT model_provider FROM threads WHERE id = 'paginated'").get())
+      .toEqual({ model_provider: "opencodex" });
+    verifier.close();
   });
 
   test("account-picker disable does not initialize an empty namespace map", async () => {

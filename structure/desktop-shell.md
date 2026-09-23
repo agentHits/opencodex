@@ -5,9 +5,11 @@ discovers the loopback proxy, lazily retries management authentication, starts
 the bundled `ocx` sidecar only when the configured endpoint is unreachable,
 and owns the tray, autostart, single-instance, and window lifecycle behavior.
 
-`desktop/ui/` is the startup surface. Once the runtime reports healthy the shell navigates the
-webview to the proxy's loopback dashboard (`/#/usage`) rather than bundling or serving `gui/dist`
-itself. The page renders what the shell tells it and probes nothing on its own; it asks
+`desktop/ui/` is the startup surface. Once the runtime reports healthy, a visible or manually
+launched shell navigates the webview to the proxy's loopback dashboard (`/#/usage`) rather than
+bundling or serving `gui/dist` itself. A hidden login launch retains the small bundled ready surface
+until a person explicitly opens the dashboard. The page renders what the shell tells it and probes
+nothing on its own; it asks
 `startup_phases` for the state list rather than restating it, takes the current state from
 `startup_snapshot` on load because the first states finish in milliseconds, and then follows the
 `startup-phase` event. `startup_snapshot` always answers with a state; it used to be able to
@@ -26,8 +28,9 @@ declares no `remote` entry, and Tauri checks the ACL for any invoke from a non-l
 The window is created and shown before anything is registered, resolved, probed or started, and
 `desktop/src-tauri/src/startup.rs` runs the whole sequence inside it as named states —
 registering, resolving, probing, attaching or starting, waiting, then ready or failed — under one
-30-second deadline. Every call beneath that deadline is bounded by the time left rather than by its
-own timeout, so the ceiling is the ceiling. The failure state carries a retry, the
+30-second machinery deadline. Waiting for takeover consent suspends that budget; consuming the
+answer extends the shared deadline before clearing the prompt. Calls use the remaining budget.
+The failure state carries a retry, the
 child's exit code and a copyable diagnostic naming the state, the endpoint, the configuration home
 and the runtime's last output; `desktop/src-tauri/src/sidecar.rs` consumes the spawn event stream
 into that record instead of discarding it, which is what makes an immediate sidecar exit
@@ -37,6 +40,10 @@ than reconstructing either, because the early states finish faster than a listen
 The deadline is a promise that the screen stops changing, so something keeps it when the run does
 not. The sequence publishes its first state before any lookup that can fail, and a guard bound to
 that run reports a terminal state for it if the run returns without one or outlives the ceiling.
+The guard checks consent and publishes expiry under the same lock. Terminal reports also reject
+late progress and dashboard navigation, so a resumed probe cannot reopen a prompt after failure.
+State publication and its synchronous event dispatch share a reporting gate, acquired before the
+state lock and released before any await. An already accepted progress event cannot overtake failure.
 The guard is idempotent and generation-scoped: it will not overwrite a result the run reported,
 and one left over from an earlier run will not fail the retry that replaced it. It waits a short
 grace past the ceiling so the run's own failure, which names the endpoint, the home and how the
@@ -50,7 +57,8 @@ for it would be a step that never completes.
 
 The shell resolves nothing itself. Resolving runs the bundled `ocx resolve --json` and reads one
 `ocx-resolve/1` document: the configuration home, the effective port, and a liveness verdict with
-three answers rather than two. `live` means attach as a guest; `absent-proven` means every
+three answers rather than two. `live` enters the ownership and takeover-consent decision below;
+`absent-proven` means every
 recorded and configured endpoint was definitively dead, and **only that authorises starting a
 runtime**. Everything else is unknown — a non-zero exit, a timeout, output that will not parse, a
 schema this shell does not know, a missing binary — and unknown fails the state with a diagnostic
@@ -67,6 +75,18 @@ item passes back is the only one that starts hidden, and only where there is a t
 manual launch shows its window before the sequence begins, a login launch after the tray verdict.
 Registering happens once per process, so a retry re-runs only the runtime half and cannot build a
 second tray icon with its own refresh loop.
+
+A hidden login launch does not preload the full dashboard after Ready. `finish` keeps the bundled
+startup surface while the main window remains hidden; Open Dashboard, a second ordinary app launch,
+and the shell's explicit open command all pass through `startup::open_dashboard`, which performs the
+one lazy navigation before showing the window. A no-tray login launch is already visible and keeps
+the eager behavior, as does every manual launch. If a person opens during startup, the bootstrap is
+shown immediately and the open is recorded before progress is read; `finish` reads that request
+after it records Ready, so whichever side runs second navigates, and the one-shot claim keeps it to
+one navigation. A WebView that refuses the navigation script gives the claim back, so the next open
+retries instead of being suppressed for the run. Both the claim and the request reset with each run.
+
+> Decision record: [ADR-5494](decisions/ADR-5494-lightweight-background-startup.md)
 
 `desktop/src-tauri/src/exit.rs` owns what ends the process. Where there is a usable tray, closing
 the window and the platform's quit gesture both hide; only the tray's Quit asks to end, and an
@@ -155,9 +175,38 @@ comparison, all of which are defined by
 here. The shell does not read the record: resolving a claim means reading every state path and
 failing closed on an unreadable one, on a corrupt anchor and on paths that disagree, and a second
 weaker implementation of a question core already answers is the mistake this tree has made before.
-The bundled CLI answers it. Until that contract lands, `resolve` returns *unavailable*, which is
-not the same as "nobody owns it" — the question has not been put — so the shell attempts no takeover
-and records nothing, and the startup state and the diagnostic say which of the two it is.
+The bundled CLI answers ownership and takeover compatibility through `ocx resolve --json`.
+Unknown ownership never means "nobody owns it". A supported offer shows the endpoint, home
+and owner. After consent, the shell resolves again and refuses a changed answer without
+invoking stop. It passes the approved token, endpoint and PID to the CLI's opt-in guarded stop.
+That command checks the evidence and manager-to-PID binding under its ownership mutation lease
+before action; it stops the manager or approved PID, waits within a bounded deadline for PID
+exit and endpoint silence, and only then requires definitive manager inactivity. A manager
+that remains active or becomes unreadable produces terminal `manager-still-active`, not a stop
+receipt. The shell also treats `approval-changed`, unreadable output and child timeout as
+terminal before its own silence wait or claim. Only parsed `stopped` or validated exit-79
+`history-incomplete` proceeds to the refused-probe receipt and `ocx service claim`, which
+rechecks the approved subject and compatibility. Declining attaches as a guest; a failed claim
+does not pretend a stopped runtime was restored.
+
+### Desktop runtime ownership acceptance
+
+The consent surface labels the exact ownership subject it is about to record. A relaunch of the
+same desktop installation reuses consent when the recorded `owner` and app-local `installId`
+still match; the generation is deliberately not part of that comparison, because the recorded
+claim this app holds is its own consent, not a freshness token.
+Package update and service repair also preserve that grant and its generation ceiling through
+`preservedConsent`; they do not perform a new subject comparison. The write path is stricter than the relaunch
+path: a different `owner`, different `installId`, moved `consentGeneration` or unreadable ownership record is not reuse
+there — a pending approval is revalidated against the full
+subject, so a grant, a release or a re-grant that moved the generation between the prompt and
+the write cannot be claimed by the stale approval. On relaunch the same list narrows to the
+comparison itself: a different `owner` or `installId` makes the app ask again, and an
+unreadable record refuses closed rather than reading as unowned.
+Uninstall or an explicit handback releases only the live claim and keeps the generation
+ceiling, so a later grant cannot be mistaken for the old one. A runtime still attached to an
+old package-owned registration is only attachable as a guest until an ownership-aware CLI
+records protocol support; the shell must not treat that attachment as durable takeover consent.
 
 `desktop/src-tauri/src/first_run.rs` turns Start at Login on once per installation,
 before the tray is built so its checkbox reads the resulting state. A menu bar app
@@ -195,11 +244,43 @@ marker, which the GUI detects to identify the shell without using IPC.
 
 ## Release packaging and updater
 
+### Linux packaged-shell acceptance
+
+The ordinary hosted Linux lane builds both AppImage and deb bundles with updater artifacts disabled,
+extracts each payload into a disposable directory, and boots its real application executable under a
+private Xvfb, Openbox, and D-Bus session. Openbox supplies only the window-manager close protocol;
+it does not supply a tray host. `desktop/scripts/linux-packaged-e2e.ts` gives each format fresh
+`HOME`, `XDG_*`, `CODEX_HOME`, and `OPENCODEX_HOME` roots plus a loopback port held until the app
+spawn boundary, then requires a visible OpenCodex window, the bundled sidecar's matching `/healthz`
+identity, port and version. It then asks the window manager to close the only window (`wmctrl -i -c`,
+the path a close button takes) and requires the app to exit on its own with code 0 and no signal and
+the runtime to be gone; destroying the X window or a crash does not count as a drain. Its
+report records readiness time and whole app-process-tree RSS as evidence; those observations are not
+pass/fail budgets until a reviewed cross-platform baseline exists.
+
+Extraction is intentional. A GitHub-hosted runner is disposable but its package database is still a
+shared job resource, and a normal pull request does not need passwordless package installation or GUI
+elevation to prove that the packaged executable and resources boot together. The separate
+`desktop-installed-gate.yml` remains the authority for real installation, package-manager ownership,
+takeover consent, elevation cancellation/acceptance, and in-place updater behavior on explicitly
+approved disposable GUI runners. Passing the hosted lane must never be described as passing those
+privileged installation flows.
+
+AppImage and deb are built with independent `CARGO_TARGET_DIR` roots in hosted acceptance and release
+jobs, then copied into a read-only staging layout for verification and collection. Tauri patches a
+per-format updater marker into the release binary while bundling; sharing one Cargo target lets one
+format observe a binary mutated for the other. The isolated roots make the marker and every other
+bundler mutation format-local.
+
+> Decision record: [ADR-5493](decisions/ADR-5493-linux-packaged-shell-acceptance.md)
+
 Linux AppImage packaging uses `desktop/scripts/appimage-patchelf.py` to preserve
 the compiled Bun CLI when linuxdeploy sets the executable RPATH. Only the exact
-AppDir sidecar, still byte-identical to the prepared CLI, is exempt; other ELF
+AppDir sidecar under the active `CARGO_TARGET_DIR`, still byte-identical to the
+prepared target-matching CLI, is exempt; other ELF
 operations use the system patchelf. `desktop/scripts/verify-linux-sidecar.sh`
-extracts the completed AppImage, compares its CLI bytes and runs its version command
+extracts the completed AppImage (the release passes the staged isolated AppImage directory; a local
+build keeps the default Cargo target path), compares its CLI bytes and runs its version command
 on the hosted runner before any release asset is collected.
 The macOS release combines both prepared CLI architectures with `lipo` into the
 universal external binary Tauri expects, and checks that both slices are present.
@@ -224,6 +305,11 @@ The Tauri updater public key and endpoint are checked in to
 `desktop/src-tauri/tauri.conf.json`. Private updater and Apple signing credentials are
 provided only as release secrets. Windows certificate signing is not wired yet, so MSI
 users may see a SmartScreen warning.
+
+The app's own version comes from `desktop/src-tauri/tauri.conf.json` and `Cargo.toml` (mirrored
+in `Cargo.lock`), not from `package.json`, and the release workflow injects none. Those files move
+together with `package.json` through `scripts/release-version-sources.ts`, and the release refuses
+to build when they disagree with the requested version; see `ops/docs-and-release.md`.
 
 ## Widget snapshot
 
