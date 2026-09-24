@@ -194,7 +194,7 @@ Providers can expose a built-in shorthand, such as `agy` for `google-antigravity
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `adapter` | `string` | One of `openai-chat`, `openai-responses`, `anthropic`, `google`, `kiro`, `cursor`, `ollama-native`, `azure-openai` (or alias `azure`), `codebuddy`, `qoder`. |
+| `adapter` | `string` | One of `openai-chat`, `openai-responses`, `anthropic`, `claude-cli`, `google`, `kiro`, `cursor`, `ollama-native`, `azure-openai` (or alias `azure`), `codebuddy`, `qoder`. |
 | `baseUrl` | `string` | Upstream API base URL. Most built-in fixed endpoints ignore a mismatch; collision-safe key presets preserve an older same-named custom destination. |
 | `proxy?` | `string \| null` | Per-provider egress route. Omit it to inherit the global proxy decision; use `"direct"` or `null` to force direct egress; or provide an absolute `http://`, `https://`, `socks5://`, or `socks5h://` proxy URL. An empty string is rejected. |
 | `noProxy?` | `string \| string[]` | Destinations this provider reaches directly, using `NO_PROXY` host-pattern syntax. A match bypasses both this provider's own proxy and an inherited global proxy. |
@@ -1286,12 +1286,14 @@ whitespace-only strings remain unchanged, as do incomplete and mixed encrypted/u
 Encrypted and unknown content is not normalized; native encrypted tasks still require the
 separate opt-in [task recovery](/reference/configuration/agents/#encrypted-v2-task-recovery).
 
-With task recovery enabled, replayed `NEW_TASK` and `MESSAGE` items reuse a cached assignment only
-after validating the caller and matching the parent-thread scope. Replay restoration
-does not make a new recovery request or extend cache expiry. Expired or unseen
-ciphertext is not replaced. Fresh encrypted `NEW_TASK` and `MESSAGE` items use the same
-opt-in recovery path, including native-parent `send_message` delivery. Message type,
-sender, recipient, parent scope and caller credentials remain part of validation or cache identity.
+With task recovery enabled, replayed `NEW_TASK`, `MESSAGE`, `FOLLOWUP_TASK`, and `FINAL_ANSWER`
+items reuse a cached assignment only after validating the caller and matching the parent-thread
+scope. Replay restoration does not make a new recovery request or extend cache expiry. Expired or
+unseen ciphertext is not replaced. Fresh encrypted `NEW_TASK`, `MESSAGE`, `FOLLOWUP_TASK`, and
+`FINAL_ANSWER` items use the same opt-in recovery path, including native-parent `send_message`
+delivery. Message type, sender, recipient, parent scope and caller credentials remain part of
+validation or cache identity. A `FINAL_ANSWER` without a `Task name` line has no header address to
+cross-check, but its recipient still scopes the cache.
 
 When a request contains several agent messages, cached replay restoration checks each
 message independently. The cache separates message type, sender, recipient and ciphertext

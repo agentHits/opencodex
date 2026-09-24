@@ -132,6 +132,20 @@ management API. Retirement does not migrate user-selected model ids or erase usa
 
 An explicit desktop restart after injection uses the [runtime process-membership contract](runtime.md#codex-desktop-process-membership); mixed Windows path spelling does not change which installation the restart targets.
 
+One further root key is conditional rather than part of either routing form. While the web-search
+sidecar is switched off (`webSearchSidecar.enabled: false`), the injection also owns Codex's own
+`web_search` mode and writes `web_search = "disabled"` — the only value that removes the native
+hosted tool from the model's tool list, which is what an operator running an MCP search server
+instead needs. Ownership follows the routing keys: the marker-owned pair is removed again once the
+sidecar is back on. It needs one record the routing keys do not, because this is the only root value
+the injection REPLACES rather than only adds: the journal keeps the value it wrote
+(`injectedRootWebSearch`), so a line whose ownership comment a Codex app reserialize dropped is
+still recognized as ours (#1798), and the exact user-owned line it had to remove
+(`replacedRootWebSearch`), which the next pass with the sidecar back on puts back in our pair's
+place. A user-owned root line is therefore replaced only while the switch is off — two root keys of
+the same name are invalid TOML — and is not lost while it is gone. `ocx restore` replays the journal
+snapshot on top of that.
+
 `src/codex/inject.ts` writes one of two forms. The choice is not cosmetic: it decides whether Codex
 keeps its native provider id, which decides whether existing thread history still resolves.
 
@@ -234,6 +248,13 @@ either file. History Worker job targets use that same canonical-first lookup rat
 `history-provider.ts` remains the strict mutation owner and maps shared validation failures to its
 restore/no-op integrity states. `native-residue.ts` remains a read-only observer and maps the same
 result to clean, residue, or indeterminate before inspecting referenced rollout files.
+One observation reads at most 64 MiB of rollout content across the history database and backup
+manifest together. The budget resets on each observation. A file that would exceed the remaining
+budget produces `indeterminate` before its content is read; exhausting the budget never proves
+that the history is clean. Classification stops at the first indeterminate surface, while a
+residue result still allows later surfaces to report uncertainty. This bounds repeated CLI
+startup checks on large conversation histories without rewriting history or weakening the
+coordinator's existing refusal and compatibility paths.
 
 > Decision record: [ADR-0018](decisions/ADR-0018-config-injection.md)
 
