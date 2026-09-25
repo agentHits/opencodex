@@ -132,6 +132,15 @@ export function useProviderAccountPools(deps: {
   const accountRequestGenerationRef = useRef<Record<string, number>>({});
   const rosterGenerationRef = useRef<Record<string, number>>({});
   const quotaGenerationRef = useRef<Record<string, number>>({});
+  // Newest generation whose data was actually applied, per provider key. A request
+  // superseded mid-flight by a newer one reports success when fresher data already
+  // landed, so a manual quota refresh racing the visibility poll does not surface
+  // a "refresh failed" state for data that is already on screen.
+  const freshLandedRef = useRef<Record<string, number>>({});
+  const supersededByFresher = useCallback((key: string, generation: number): boolean => {
+    if (!aliveRef.current || !mountedRef.current || serverRef.current !== apiBase) return false;
+    return (freshLandedRef.current[key] ?? -1) > generation;
+  }, [aliveRef, apiBase]);
   const selectionMutationsRef = useRef(new Map<string, symbol>());
   const requestsRef = useRef(new Set<AbortController>());
   const mountedRef = useRef(true);
@@ -210,12 +219,13 @@ export function useProviderAccountPools(deps: {
         // even when Anthropic’s usage endpoint is slow or timing out.
         const data = await readRoster<{ activeAccountId?: string | null; accounts?: OAuthAccount[] }>(url);
         if (!Array.isArray(data.accounts)) throw new Error("Invalid account roster");
-        if (!currentRequest()) return false;
+        if (!currentRequest()) return supersededByFresher(key, generation);
         const rows = selectionRows(data.accounts, data.activeAccountId);
         setAccountSets(current => currentRoster() ? { ...current, [provider]: {
           activeAccountId: data.activeAccountId ?? null,
           accounts: mergeQuotaRows(rows, current[provider]?.accounts ?? [], false),
         } } : current);
+        if (currentRoster()) freshLandedRef.current[key] = generation;
         setAccountLoadStates(current => currentRoster() ? { ...current, [provider]: "ready" } : current);
         if (!rows.some(supportsQuotaRead)) return true;
 
@@ -228,7 +238,7 @@ export function useProviderAccountPools(deps: {
           try {
             const quotaData = await readRoster<{ activeAccountId?: string | null; accounts?: OAuthAccount[] }>(`${url}&quota=1${refresh ? "&refresh=1" : ""}${targetQuery}`);
             if (!Array.isArray(quotaData.accounts)) throw new Error("Invalid account quota roster");
-            if (!currentQuota()) return false;
+            if (!currentQuota()) return supersededByFresher(key, generation);
             const enriched = selectionRows(quotaData.accounts, quotaData.activeAccountId);
             setAccountSets(current => !currentQuota() ? current : !currentRoster() ? {
               ...current, [provider]: { ...current[provider], accounts: mergeLateQuotaRows(current[provider]?.accounts ?? [], enriched) },
@@ -239,9 +249,10 @@ export function useProviderAccountPools(deps: {
                 accounts: mergeQuotaRows(enriched, current[provider]?.accounts ?? [], true),
               },
             });
+            if (currentQuota()) freshLandedRef.current[key] = generation;
             return !enriched.some(row => row.quotaUnavailable === true);
           } catch {
-            if (!currentQuota()) return false;
+            if (!currentQuota()) return supersededByFresher(key, generation);
             setAccountSets(current => currentQuota() && current[provider] ? {
               ...current, [provider]: { ...current[provider], accounts: unavailableQuotaRows(current[provider].accounts, rows) },
             } : current);
@@ -252,7 +263,7 @@ export function useProviderAccountPools(deps: {
         void enrich();
         return true;
       } catch {
-        if (!currentRoster()) return false;
+        if (!currentRoster()) return supersededByFresher(key, generation);
         setAccountLoadStates(current => currentRoster() ? { ...current, [provider]: "error" } : current);
         setAccountSets(current => currentRoster() && current[provider] ? {
           ...current, [provider]: { ...current[provider], accounts: unavailableQuotaRows(current[provider].accounts) },
@@ -261,7 +272,7 @@ export function useProviderAccountPools(deps: {
       }
     }));
     return results.every(Boolean);
-  }, [aliveRef, apiBase, readRoster]);
+  }, [aliveRef, apiBase, readRoster, supersededByFresher]);
 
   const fetchKeyPools = useCallback(async (providers: string[], refresh = false): Promise<boolean> => {
     if (!aliveRef.current || !mountedRef.current || serverRef.current !== apiBase) return false;
@@ -502,22 +513,26 @@ export function useProviderAccountPools(deps: {
     notify(t("prov.aliasSaved"), true);
   };
 
-  const removeAccount = async (provider: string, account: OAuthAccount) => {
+  const removeAccount = async (provider: string, account: OAuthAccount, alreadyConfirmed = false): Promise<boolean> => {
     const label = oauthAccountDisplayLabel(accountSets[provider]?.accounts ?? [account], account, t);
-    const consented = await confirmAction({
-      message: t("prov.accountRemoveConfirm", { email: label }),
-      confirmLabel: t("common.remove"),
-      tone: "danger",
-    });
-    if (!consented) return;
+    if (!alreadyConfirmed) {
+      const consented = await confirmAction({
+        message: t("prov.accountRemoveConfirm", { email: label }),
+        confirmLabel: t("common.remove"),
+        tone: "danger",
+      });
+      if (!consented) return false;
+    }
     try {
       const res = await fetch(`${apiBase}/api/oauth/accounts?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(account.id)}`, { method: "DELETE" });
-      if (!res.ok) { notify(t("prov.accountRemoveFail", { email: label }), false); return; }
+      if (!res.ok) { notify(t("prov.accountRemoveFail", { email: label }), false); return false; }
       notify(t("prov.accountRemoved", { email: label }), true);
       await fetchAccountSets([provider]);
       await Promise.all([fetchOauth(), fetchProviderQuotas(true)]);
+      return true;
     } catch {
       notify(t("prov.accountRemoveFail", { email: label }), false);
+      return false;
     }
   };
 

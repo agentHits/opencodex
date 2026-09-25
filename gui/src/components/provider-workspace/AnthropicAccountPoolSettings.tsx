@@ -38,6 +38,8 @@ type PoolState = {
   stickyLimit: number;
   quotaWindow: AccountPoolQuotaWindow;
   supported: string[];
+  /** Saved-but-inactive marker from the API (generic kind, kernel off). */
+  inert: boolean;
 };
 
 function controlId(provider: string, suffix: string): string {
@@ -101,6 +103,7 @@ export default function AnthropicAccountPoolSettings({
             ? DEFAULT_ACCOUNT_POOL_QUOTA_WINDOW
             : normalizeAccountPoolQuotaWindow(json.quotaWindow),
           supported: json.supported,
+          inert: json.inert === true,
         });
         setDraft(String(nextThreshold));
         setStickyDraft(String(nextSticky));
@@ -132,6 +135,7 @@ export default function AnthropicAccountPoolSettings({
       stickyLimit: next.stickyLimit,
       quotaWindow: next.quotaWindow,
       supported: previousState?.supported ?? [],
+      inert: previousState?.inert ?? false,
     });
     setSaving(true);
     setError(null);
@@ -157,6 +161,7 @@ export default function AnthropicAccountPoolSettings({
         stickyLimit: savedSticky,
         quotaWindow: savedWindow,
         supported: json.supported.length > 0 ? json.supported : (previousState?.supported ?? []),
+        inert: json.inert === true,
       });
       setDraft(String(next.threshold));
       setStickyDraft(String(savedSticky));
@@ -184,6 +189,10 @@ export default function AnthropicAccountPoolSettings({
   const quotaWindow = state?.quotaWindow ?? DEFAULT_ACCOUNT_POOL_QUOTA_WINDOW;
   const showQuotaWindow = isAnthropic || (state?.supported ?? []).includes("quotaWindow");
   const quotaWindowInert = strategy === "round-robin";
+  // Generic kind with the shared pool kernel off: strategy/threshold/sticky are
+  // persisted but not consumed. The select stays on the saved value, disabled,
+  // with a "saved, not live" marker instead of live behavior.
+  const strategyInert = !isAnthropic && (state?.inert === true);
   const loading = state === null && !loadError;
   const toggleDisabled = loading || saving || loadError || (!enabled && accountCount < 2);
   const titleKey = isAnthropic ? "anthropicPool.title" : "genericPool.title";
@@ -254,7 +263,7 @@ export default function AnthropicAccountPoolSettings({
               max={100}
               step={1}
               value={draft}
-              disabled={saving}
+              disabled={saving || strategyInert}
               aria-label={t(isAnthropic ? "anthropicPool.thresholdAria" : "genericPool.thresholdAria")}
               onChange={(event) => setDraft(event.target.value)}
               onBlur={() => {
@@ -286,7 +295,7 @@ export default function AnthropicAccountPoolSettings({
             allowResetFirst={!isAnthropic}
             compact={!isAnthropic}
             stickyDraft={stickyDraft}
-            disabled={saving}
+            disabled={saving || strategyInert}
             strategySelectId={controlId(provider, "strategy")}
             stickyInputId={controlId(provider, "sticky-limit")}
             onStrategyChange={(next) => {
@@ -320,6 +329,12 @@ export default function AnthropicAccountPoolSettings({
               });
             }}
           />
+
+          {strategyInert && (
+            <div className="card-sub" style={{ marginTop: 4 }}>
+              {t("genericPool.visualStored")}
+            </div>
+          )}
 
           {isAnthropic && (
             <AccountPoolStrategyPreview

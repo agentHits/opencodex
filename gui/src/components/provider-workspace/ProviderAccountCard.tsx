@@ -17,6 +17,8 @@ import type { OAuthAccountRow } from "./types";
 import { displayAccountId } from "../../lib/privacy";
 import { GrokCouponBadge } from "./GrokResetCoupons";
 import type { GrokCouponEntry } from "../../hooks/useGrokResetCoupons";
+import { AnthropicGrantBadge } from "./AnthropicResetGrants";
+import type { AnthropicGrantEntry } from "../../hooks/useAnthropicResetGrants";
 import ProviderAccountQuota from "./ProviderAccountQuota";
 
 export interface ProviderAccountCardProps {
@@ -33,6 +35,8 @@ export interface ProviderAccountCardProps {
   onReauth?: (account: OAuthAccountRow) => void;
   grokCouponEntry?: GrokCouponEntry | undefined;
   onGrokCouponClick?: (account: OAuthAccountRow) => void;
+  grantEntry?: AnthropicGrantEntry | undefined;
+  onGrantClick?: (account: OAuthAccountRow) => void;
 }
 
 export default function ProviderAccountCard({
@@ -49,6 +53,8 @@ export default function ProviderAccountCard({
   onReauth,
   grokCouponEntry,
   onGrokCouponClick,
+  grantEntry,
+  onGrantClick,
 }: ProviderAccountCardProps) {
   const t = useT();
   const { locale } = useI18n();
@@ -220,6 +226,9 @@ export default function ProviderAccountCard({
             {!showReauth && onGrokCouponClick && (
               <GrokCouponBadge entry={grokCouponEntry} t={t} onClick={() => onGrokCouponClick(account)} />
             )}
+            {!showReauth && onGrantClick && (
+              <AnthropicGrantBadge entry={grantEntry} t={t} onClick={() => onGrantClick(account)} />
+            )}
             {onRefreshSingle && (
               <button
                 type="button"
@@ -387,6 +396,9 @@ export default function ProviderAccountCard({
           )}
           {!showReauth && onGrokCouponClick && (
             <GrokCouponBadge entry={grokCouponEntry} t={t} onClick={() => onGrokCouponClick(account)} />
+          )}
+          {!showReauth && onGrantClick && (
+            <AnthropicGrantBadge entry={grantEntry} t={t} onClick={() => onGrantClick(account)} />
           )}
           {onRefreshSingle && (
             <button

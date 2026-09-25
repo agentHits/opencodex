@@ -247,6 +247,12 @@ export default function ProviderAuthPanel({
 
   const [poolSaveError, setPoolSaveError] = useState<string | null>(null);
 
+  // Serializes pool saves per panel: a stale toggle/strategy response must not
+  // overwrite newer state, and an in-flight save from a previous provider must
+  // not land after a provider/apiBase switch.
+  const poolSaveGeneration = useRef(0);
+  useEffect(() => { poolSaveGeneration.current += 1; }, [apiBase, item.name]);
+
   useEffect(() => {
     // The panel is not remounted per provider: without this, a failed read (or an
     // empty roster) leaves the previous provider's strategy on screen, and the
@@ -268,12 +274,14 @@ export default function ProviderAuthPanel({
     if (!genericPool) return;
     const prev = genericPool;
     const nextEnabled = !prev.enabled;
+    const generation = ++poolSaveGeneration.current;
     setGenericPool({ ...prev, enabled: nextEnabled });
     setPoolSaveError(null);
     void putPoolSettings(apiBase, item.name, {
       enabled: nextEnabled,
       strategy: prev.strategy,
     }).then(saved => {
+      if (generation !== poolSaveGeneration.current) return;
       if (!saved) {
         setGenericPool(prev);
         setPoolSaveError(t("prov.updateFail"));
@@ -289,12 +297,14 @@ export default function ProviderAuthPanel({
   const handleSelectPoolStrategy = useCallback((nextStrategy: AccountPoolStrategy) => {
     if (!genericPool) return;
     const prev = genericPool;
+    const generation = ++poolSaveGeneration.current;
     setGenericPool({ ...prev, strategy: nextStrategy });
     setPoolSaveError(null);
     void putPoolSettings(apiBase, item.name, {
       enabled: prev.enabled,
       strategy: nextStrategy,
     }).then(saved => {
+      if (generation !== poolSaveGeneration.current) return;
       if (!saved) {
         setGenericPool(prev);
         setPoolSaveError(t("prov.updateFail"));
@@ -600,6 +610,8 @@ export default function ProviderAuthPanel({
                         onReauth={acc => void authHandlers.onReauth(item.name, acc.id)}
                         grokCouponEntry={grokCouponsEnabled ? grokCoupons.entries[analyzed.account.id] : undefined}
                         onGrokCouponClick={grokCouponsEnabled ? acc => setCouponAccount(acc) : undefined}
+                        grantEntry={claudeGrantsEnabled ? claudeGrants.entries[analyzed.account.id] : undefined}
+                        onGrantClick={claudeGrantsEnabled ? acc => setGrantAccount(acc) : undefined}
                       />
                     ))}
                   </div>
@@ -624,7 +636,10 @@ export default function ProviderAuthPanel({
                   if (removingAccount || !accountToRemove) return;
                   setRemovingAccount(true);
                   try {
-                    await authHandlers.onRemoveAccount(item.name, accountToRemove);
+                    // The dialog already confirmed: skip the hook's own prompt and
+                    // keep the dialog open when the removal reports failure.
+                    const removed = await authHandlers.onRemoveAccount(item.name, accountToRemove, true);
+                    if (removed === false) return;
                     setAccountToRemove(null);
                   } finally {
                     setRemovingAccount(false);

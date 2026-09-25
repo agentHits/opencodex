@@ -90,7 +90,13 @@ export interface ProviderAuthHandlers {
   onLogout: (provider: string) => void | Promise<void>;
   onReauth: (provider: string, accountId?: string) => void | Promise<void>;
   onSwitchAccount: (provider: string, account: OAuthAccountRow) => void | Promise<void>;
-  onRemoveAccount: (provider: string, account: OAuthAccountRow) => void | Promise<void>;
+  /**
+   * Remove an OAuth account. `alreadyConfirmed` skips the hook's own prompt
+   * (the panel already confirmed via dialog). Returns false when the removal
+   * was cancelled or failed so the caller can keep the dialog open; void/true
+   * both mean "done, may close" for handlers that do not report a status.
+   */
+  onRemoveAccount: (provider: string, account: OAuthAccountRow, alreadyConfirmed?: boolean) => boolean | void | Promise<boolean | void>;
   onRetryAccounts?: (provider: string) => void | Promise<void>;
   onAddApiKey: (provider: string, key: string) => Promise<boolean>;
   onSwitchApiKey: (provider: string, entry: ApiKeyRow) => void | Promise<void>;
