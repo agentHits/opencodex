@@ -3607,7 +3607,7 @@ export const fr: Record<TKey, string> = {
   "pws.tokensGenericWeekly": "Restant (7j)",
   "pws.tokensCalibratedFromLogs": "Calibré via #logs",
   "pws.tokensEstimatedBaseline": "Estimation de base",
-  "pws.tokensCalibratedTooltip": "L estimation est calibrée sur la consommation réelle de jetons issue du journal des requêtes (#logs)",
+  "pws.tokensCalibratedTooltip": "L’estimation est calibrée sur la consommation réelle de jetons issue du journal des requêtes (#logs)",
   "genericPool.title": "Pool de comptes",
   "genericPool.enabledDesc": "Les nouvelles sessions préfèrent un quota restant sous {threshold} %. Un 429 bascule toujours entre les comptes connectés.",
   "genericPool.enabledNoProactiveDesc": "Le basculement proactif selon l’usage est désactivé au seuil 0. Un 429 bascule toujours entre les comptes connectés.",
