@@ -89,6 +89,20 @@ function ConvertTo-NativeArgument([string]$Value) {
   return '"' + $Value + '"'
 }
 
+# A fresh profile may not have created the default %USERPROFILE%.codex yet, and the
+# CLI rejects a CODEX_HOME that does not exist. Only that default home is dropped so
+# children resolve it themselves; any other home is passed through unchanged.
+function Set-OcxChildEnvironment([System.Diagnostics.ProcessStartInfo]$StartInfo) {
+  $defaultHome = Normalize-HomePath (Join-Path $env:USERPROFILE ".codex")
+  $isDefaultHome = [string]::Equals($CodexHome, $defaultHome, [System.StringComparison]::OrdinalIgnoreCase)
+  if ($isDefaultHome -and -not [System.IO.Directory]::Exists($CodexHome)) {
+    $StartInfo.EnvironmentVariables.Remove("CODEX_HOME")
+  } else {
+    $StartInfo.EnvironmentVariables["CODEX_HOME"] = $CodexHome
+  }
+  $StartInfo.EnvironmentVariables["OPENCODEX_HOME"] = $OpenCodexHome
+}
+
 function Start-OcxCommand([string[]]$CommandArgs, [switch]$TrackExit) {
   try {
     $allArgs = @($CliPath) + $CommandArgs
@@ -98,8 +112,7 @@ function Start-OcxCommand([string[]]$CommandArgs, [switch]$TrackExit) {
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    $psi.EnvironmentVariables["CODEX_HOME"] = $CodexHome
-    $psi.EnvironmentVariables["OPENCODEX_HOME"] = $OpenCodexHome
+    Set-OcxChildEnvironment $psi
     if ($BunRuntimeSource) {
       $psi.EnvironmentVariables["OCX_BUN_RUNTIME_SOURCE"] = $BunRuntimeSource
       # Paired with the source so a later relaunch can tell the marker still describes
@@ -158,8 +171,7 @@ function Start-StartupHealthProbe {
     $psi.RedirectStandardError = $true
     $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
-    $psi.EnvironmentVariables["CODEX_HOME"] = $CodexHome
-    $psi.EnvironmentVariables["OPENCODEX_HOME"] = $OpenCodexHome
+    Set-OcxChildEnvironment $psi
     if ($BunRuntimeSource) {
       $psi.EnvironmentVariables["OCX_BUN_RUNTIME_SOURCE"] = $BunRuntimeSource
       $psi.EnvironmentVariables["OCX_BUN_RUNTIME_PATH"] = $BunPath
@@ -277,8 +289,7 @@ function Start-UpdateBadgeProbe {
     $psi.RedirectStandardError = $true
     $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
-    $psi.EnvironmentVariables["CODEX_HOME"] = $CodexHome
-    $psi.EnvironmentVariables["OPENCODEX_HOME"] = $OpenCodexHome
+    Set-OcxChildEnvironment $psi
     if ($BunRuntimeSource) {
       $psi.EnvironmentVariables["OCX_BUN_RUNTIME_SOURCE"] = $BunRuntimeSource
       $psi.EnvironmentVariables["OCX_BUN_RUNTIME_PATH"] = $BunPath
