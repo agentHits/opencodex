@@ -1821,8 +1821,6 @@ export const ja: Record<TKey, string> = {
   "nav.collapseSidebar": "サイドバーを折りたたむ",
   "nav.expandSidebar": "サイドバーを展開する",
   "nav.goHome": "ダッシュボードへ移動",
-  "nav.collapseSidebar": "サイドバーを折りたたむ",
-  "nav.expandSidebar": "サイドバーを展開",
   "pws.refreshAllQuotas": "すべてのクォータを更新",
   "pws.quotaRefreshDone": "クォータの確認が完了しました",
   "integrations.subtitle": "クライアントを opencodex に接続し、認証情報の管理とクライアント設定の復元を行います。",

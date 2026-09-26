@@ -1893,8 +1893,6 @@ export const ru: Record<TKey, string> = {
   "nav.collapseSidebar": "Свернуть меню",
   "nav.expandSidebar": "Развернуть меню",
   "nav.goHome": "Перейти к панели",
-  "nav.collapseSidebar": "Свернуть боковую панель",
-  "nav.expandSidebar": "Развернуть боковую панель",
   "pws.refreshAllQuotas": "Обновить все квоты",
   "pws.quotaRefreshDone": "Проверка квот завершена",
   "integrations.subtitle": "Подключайте клиенты к opencodex, управляйте учётными данными и восстанавливайте конфигурацию клиентов.",

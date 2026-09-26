@@ -1912,8 +1912,6 @@ export const tr: Record<TKey, string> = {
   "nav.collapseSidebar": "Kenar çubuğunu daralt",
   "nav.expandSidebar": "Kenar çubuğunu genişlet",
   "nav.goHome": "Panoya git",
-  "nav.collapseSidebar": "Kenar çubuğunu daralt",
-  "nav.expandSidebar": "Kenar çubuğunu genişlet",
   "pws.refreshAllQuotas": "Tüm kotaları yenile",
   "pws.quotaRefreshDone": "Kota kontrolü tamamlandı",
   "integrations.subtitle": "İstemcileri opencodex'e bağlayın, kimlik bilgilerini yönetin.",

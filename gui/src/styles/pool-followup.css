@@ -82,9 +82,3 @@
 }
 
 
-
-@media (max-width: 760px) {
-  .sidebar-collapse-toggle-btn {
-    display: none;
-  }
-}

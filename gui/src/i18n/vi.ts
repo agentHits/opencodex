@@ -1880,8 +1880,6 @@ export const vi: Record<TKey, string> = {
   "nav.collapseSidebar": "Thu gọn thanh bên",
   "nav.expandSidebar": "Mở rộng thanh bên",
   "nav.goHome": "Đi tới bảng điều khiển",
-  "nav.collapseSidebar": "Thu gọn thanh bên",
-  "nav.expandSidebar": "Mở rộng thanh bên",
   "pws.refreshAllQuotas": "Làm mới tất cả hạn mức",
   "pws.quotaRefreshDone": "Đã kiểm tra hạn mức xong",
   "integrations.subtitle": "Kết nối các client với opencodex, quản lý thông tin xác thực, và khôi phục cấu hình client.",
