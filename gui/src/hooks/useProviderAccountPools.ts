@@ -132,10 +132,11 @@ export function useProviderAccountPools(deps: {
   const accountRequestGenerationRef = useRef<Record<string, number>>({});
   const rosterGenerationRef = useRef<Record<string, number>>({});
   const quotaGenerationRef = useRef<Record<string, number>>({});
-  // Newest generation whose data was actually applied, per provider key. A request
-  // superseded mid-flight by a newer one reports success when fresher data already
-  // landed, so a manual quota refresh racing the visibility poll does not surface
-  // a "refresh failed" state for data that is already on screen.
+  // Newest generation whose QUOTA data was actually applied, per provider key. A
+  // request superseded mid-flight by a newer one reports success only when fresher
+  // quota already landed, so a manual refresh racing the visibility poll does not
+  // surface a "refresh failed" state for data that is already on screen — and a
+  // failed newer quota request still surfaces as failure.
   const freshLandedRef = useRef<Record<string, number>>({});
   const supersededByFresher = useCallback((key: string, generation: number): boolean => {
     if (!aliveRef.current || !mountedRef.current || serverRef.current !== apiBase) return false;
@@ -225,7 +226,9 @@ export function useProviderAccountPools(deps: {
           activeAccountId: data.activeAccountId ?? null,
           accounts: mergeQuotaRows(rows, current[provider]?.accounts ?? [], false),
         } } : current);
-        if (currentRoster()) freshLandedRef.current[key] = generation;
+        // NB: the cheap roster read is NOT recorded as fresh quota. A superseded
+        // manual refresh must report success only when a newer request actually
+        // landed quota, otherwise a failed newer quota request would read as success.
         setAccountLoadStates(current => currentRoster() ? { ...current, [provider]: "ready" } : current);
         if (!rows.some(supportsQuotaRead)) return true;
 

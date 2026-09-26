@@ -185,6 +185,13 @@ export default function ProviderAuthPanel({
   const [grantAccount, setGrantAccount] = useState<OAuthAccountRow | null>(null);
   const [accountToRemove, setAccountToRemove] = useState<OAuthAccountRow | null>(null);
   const [removingAccount, setRemovingAccount] = useState(false);
+  // The confirmation targets one provider's account. If the selected provider or
+  // API base changes while the dialog is open, dismiss it: confirming afterwards
+  // would remove an account the operator is no longer looking at.
+  useEffect(() => {
+    setAccountToRemove(null);
+    setRemovingAccount(false);
+  }, [item.name, apiBase]);
   const [accountFilter, setAccountFilter] = useState<AccountFilterKey>(() => {
     try {
       const saved = localStorage.getItem("ocx_account_filter");

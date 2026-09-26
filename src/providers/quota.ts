@@ -534,17 +534,20 @@ export async function fetchProviderAccountQuotas(
   forceRefresh = false,
   providerConfig?: OcxProviderConfig,
   /**
-   * When set, only this account is force-probed upstream; the rest serve from
-   * cache. Unknown ids fall back to all-account probing so a refresh never
-   * returns a partial roster.
+   * When set to a known account id, only that account is force-probed upstream
+   * and the rest serve from cache. An unknown id falls back to force-all so a
+   * stale caller can never leave every account unforced.
    */
   onlyAccountId?: string,
 ): Promise<ProviderAccountQuota[]> {
   if (!supportsPerAccountQuota(provider)) return [];
   const set = getAccountSet(provider);
   if (!set) return [];
+  const scoped = onlyAccountId && set.accounts.some(account => account.id === onlyAccountId)
+    ? onlyAccountId
+    : undefined;
   return mapQuotaRoster(set.accounts, async account => {
-    const forced = forceRefresh && (!onlyAccountId || account.id === onlyAccountId);
+    const forced = forceRefresh && (!scoped || account.id === scoped);
     const entry = await fetchAccountQuota(provider, account.id, forced, providerConfig);
     const result: ProviderAccountQuota = {
       accountId: account.id,
