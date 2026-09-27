@@ -3494,8 +3494,6 @@ export const vi: Record<TKey, string> = {
   "pws.antigravityOauthAction": "Log in via browser",
   "pws.authChoiceModalTitle": "Connect {provider}",
   "pws.authChoiceModalSubtitle": "Choose how you want to connect your account",
-  "nav.collapseSidebar": "Collapse sidebar",
-  "nav.expandSidebar": "Expand sidebar",
   "genericPool.title": "Account pool",
   "genericPool.enabledDesc": "New sessions prefer remaining quota under {threshold}%. A 429 still failovers among logged-in accounts.",
   "genericPool.enabledNoProactiveDesc": "Proactive usage-based switching is off at threshold 0. A 429 still failovers among logged-in accounts.",
