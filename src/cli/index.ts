@@ -75,6 +75,7 @@ import { parseStartOptions, StartArgsError } from "./start-args";
 import {
   discoverStableProxyForRestart,
   isProxyReplacement,
+  pollReplacementDeparture,
   runProxyRestart,
   runTrayProxyStart,
   type ProxyRestartLive,
@@ -926,9 +927,11 @@ async function handleProxyRestart(
     // The replacement wait ends RESTART_REOBSERVE_RESERVE_MS early so the confirmation
     // below still fits inside the overall deadline; the total never grows past it.
     waitForReplacement: previous => waitForProxyReplacement(previous, deadlineAt - RESTART_REOBSERVE_RESERVE_MS),
-    reobserveAfterReplacement: () => {
-      // Leftover budget only: with nothing left the window reports uncertain and the
-      // transaction fails closed instead of overrunning the deadline.
+    // Leftover budget only: with nothing left the window reports uncertain and the
+    // transaction fails closed instead of overrunning the deadline. While budget
+    // remains, a still-live old PID keeps being polled — a replacement that lands
+    // late in the reserve is still attested instead of being cut off by the wait.
+    reobserveAfterReplacement: previous => {
       const windowMs = Math.min(RESTART_REOBSERVE_WINDOW_MS, deadlineAt - Date.now());
       if (windowMs < 1_500) {
         return Promise.resolve({
@@ -936,12 +939,13 @@ async function handleProxyRestart(
           error: new Error("restart_reobserve_window_exhausted"),
         } as const);
       }
-      const reobserveAt = Date.now() + windowMs;
-      return discoverStableProxyForRestart({
-        findLive: () => findLiveProxy({ deadlineAt: reobserveAt, attempts: 2, acceptPackageTreeFenced: true }),
+      const end = Date.now() + windowMs;
+      const observe = () => discoverStableProxyForRestart({
+        findLive: () => findLiveProxy({ deadlineAt: end, attempts: 2, acceptPackageTreeFenced: true }),
         waitBetweenChecks: () => Bun.sleep(250),
-        expired: () => Date.now() >= reobserveAt,
+        expired: () => Date.now() >= end,
       });
+      return pollReplacementDeparture(observe, previous, () => Date.now() + 750 < end, () => Bun.sleep(250));
     },
   });
   if (!result.ok) reportRestartFailure(result);

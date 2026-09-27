@@ -124,10 +124,14 @@ never stopped to make room, so a stale-but-listening process can not be replaced
 proxy racing it for the port.
 Every failed start attempt is followed by a beat and a strong re-observation before the
 next attempt: a child that was just launched may still be binding, and post-health steps
-may have thrown on an already-serving proxy, so a live reading attests success and only
-confirmed absence earns a retry — a second proxy is never spawned next to a live one.
+may have thrown on an already-serving proxy. A live reading means
+no second start is spawned: a clean refusal then attests success, while a throw
+propagates as a start failure because post-health work failed on a serving process.
+Only confirmed absence earns a retry. While the previous PID is still live, the
+confirmation window keeps polling for a replacement inside the reserve instead of
+failing at once. — a second proxy is never spawned next to a live one.
 The replacement wait ends early enough that the confirmation window still fits inside the
-overall deadline; the total never grows past it.
+overall observation deadline.
 
 Port recovery after stop or update respects a failed OCX process check even when the PID was
 recorded before shutdown. A rejected live holder is left running and prevents TCP-row cleanup.

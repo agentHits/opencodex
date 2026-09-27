@@ -4,6 +4,7 @@ import { repoPath } from "../helpers/repo-root";
 import {
   discoverStableProxyForRestart,
   isProxyReplacement,
+  pollReplacementDeparture,
   runProxyRestart,
   runTrayProxyStart,
   type ProxyRestartIo,
@@ -161,21 +162,24 @@ describe("tray proxy coordinator", () => {
     expect(calls).toEqual(["start"]);
   });
 
-  test("a throwing start on a live proxy does not start again", async () => {
+  test("a throwing start on a live proxy reports the error without starting again", async () => {
     const calls: string[] = [];
     const live: ProxyRestartLive = { pid: 50, port: 10100, source: "runtime" };
     let observations = 0;
+    const thrown = new Error("post-health integration failed");
     const io: ProxyRestartIo = {
       findLive: async () => {
         observations += 1;
         return observations === 1 ? { status: "absent" } : { status: "live", live };
       },
-      startWhenStopped: async () => { calls.push("start"); throw new Error("post-health integration failed"); },
+      startWhenStopped: async () => { calls.push("start"); throw thrown; },
       requestInPlaceRestart: async () => ({ accepted: true }),
       waitForReplacement: async () => null,
       waitBetweenAttempts: async () => {},
     };
-    expect(await runProxyRestart(io)).toEqual({ ok: true, mode: "started" });
+    // One attempt only: the attested proxy must not be duplicated, but its error
+    // is real and must not convert to success.
+    expect(await runProxyRestart(io)).toEqual({ ok: false, phase: "start", error: thrown });
     expect(calls).toEqual(["start"]);
   });
 
@@ -271,6 +275,62 @@ describe("tray proxy coordinator", () => {
       waitBetweenAttempts: async () => {},
     });
     expect(result).toEqual({ ok: false, phase: "replacement" });
+  });
+
+  test("the re-observer receives the previous identity to judge replacements", async () => {
+    const previous: ProxyRestartLive = { pid: 10, port: 10100, source: "runtime" };
+    let seen: ProxyRestartLive | undefined;
+    const result = await runProxyRestart({
+      findLive: async () => ({ status: "live", live: previous }),
+      startWhenStopped: async () => { throw new Error("must not start"); },
+      requestInPlaceRestart: async () => ({ accepted: true }),
+      waitForReplacement: async () => null,
+      waitBetweenAttempts: async () => {},
+      reobserveAfterReplacement: async observed => {
+        seen = observed;
+        return { status: "absent" };
+      },
+    });
+    expect(seen).toEqual(previous);
+    expect(result).toEqual({ ok: false, phase: "start", error: new Error("must not start") });
+  });
+
+  test("pollReplacementDeparture attests a PID that changes inside the budget", async () => {
+    const previous: ProxyRestartLive = { pid: 10, port: 10100, source: "runtime" };
+    const late: ProxyRestartLive = { pid: 20, port: 10100, source: "runtime" };
+    const rounds: Array<ProxyRestartDiscovery> = [
+      { status: "live", live: previous },
+      { status: "live", live: previous },
+      { status: "live", live: late },
+    ];
+    let waits = 0;
+    const verdict = await pollReplacementDeparture(
+      async () => rounds.shift() ?? { status: "absent" },
+      previous,
+      () => true,
+      async () => { waits += 1; },
+    );
+    expect(verdict).toEqual({ status: "live", live: late });
+    expect(waits).toBe(2);
+  });
+
+  test("pollReplacementDeparture stops polling once the budget is spent", async () => {
+    const previous: ProxyRestartLive = { pid: 10, port: 10100, source: "runtime" };
+    let observations = 0;
+    let waits = 0;
+    const verdict = await pollReplacementDeparture(
+      async () => {
+        observations += 1;
+        return { status: "live", live: previous };
+      },
+      previous,
+      () => observations < 2,
+      async () => { waits += 1; },
+    );
+    expect(verdict).toEqual({ status: "live", live: previous });
+    // Two observations, one beat between them; the third round never starts.
+    expect(observations).toBe(2);
+    expect(waits).toBe(1);
   });
 
   test("re-observation uses a fresh window, not the expired discovery deadline", async () => {

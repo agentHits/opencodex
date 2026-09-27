@@ -61,7 +61,31 @@ export interface ProxyRestartIo {
    * expires, the shared observe deadline has expired too, so reusing it would answer
    * `uncertain` forever and the crash-recovery path could never run.
    */
-  reobserveAfterReplacement?: () => Promise<ProxyRestartDiscovery>;
+  reobserveAfterReplacement?: (previous: ProxyRestartLive) => Promise<ProxyRestartDiscovery>;
+}
+
+/**
+ * Poll for a departed predecessor inside a bounded confirmation window. Each round is
+ * already a strong observation (the caller supplies it); this only decides whether
+ * another round still fits: absent and valid-replacement verdicts return immediately,
+ * while the still-live old PID (or another uncertain round) keeps polling until the
+ * budget check refuses. A replacement that lands late in the window is still attested
+ * instead of being cut off by the wait that reserved the window.
+ */
+export async function pollReplacementDeparture(
+  observe: () => Promise<ProxyRestartDiscovery>,
+  previous: ProxyRestartLive,
+  shouldContinue: () => boolean,
+  wait: () => Promise<void>,
+): Promise<ProxyRestartDiscovery> {
+  for (;;) {
+    const round = await observe();
+    if (round.status === "absent") return round;
+    if (round.status === "live" && isProxyReplacement(previous, round.live)) return round;
+    if (round.status === "uncertain") return round;
+    if (!shouldContinue()) return round;
+    await wait();
+  }
 }
 
 /**
@@ -188,12 +212,16 @@ async function startRestartedProxy(
   let lastError: unknown;
   let sawError = false;
   for (let attempt = 0; attempt < RESTART_START_ATTEMPTS; attempt++) {
+    let threw: unknown;
+    let didThrow = false;
     try {
       const started = await io.startWhenStopped();
       if (started === "skipped") return { ok: true, mode: "skipped" };
       if (started) return { ok: true, mode: "started" };
       sawError = false;
     } catch (error) {
+      didThrow = true;
+      threw = error;
       sawError = true;
       lastError = error;
     }
@@ -209,9 +237,14 @@ async function startRestartedProxy(
     }
     // Runtime-attested only: a config-sourced observation is not proof a proxy serves,
     // so it keeps the start failure instead of reporting a success nobody earned.
-    if (recheck.status === "live"
+    // A throw on an attested-live proxy is different from a clean refusal: post-health
+    // work failed on a serving process, so the error propagates instead of converting
+    // to success — still without spawning again.
+    const attested = recheck.status === "live"
       && recheck.live.pid !== null
-      && recheck.live.source === "runtime") return { ok: true, mode: "started" };
+      && recheck.live.source === "runtime";
+    if (attested && didThrow) return { ok: false, phase: "start", error: threw };
+    if (attested) return { ok: true, mode: "started" };
   }
   return sawError
     ? { ok: false, phase: "start", error: lastError }
@@ -272,7 +305,8 @@ export async function runProxyRestart(io: ProxyRestartIo): Promise<ProxyRestartR
   // the bind); a replacement that landed just past the deadline still proves success;
   // the same PID or another uncertain round fails closed exactly as before. A live
   // target is never stopped to make room: the no-stop/start-fallback invariant holds.
-  const reobserve = io.reobserveAfterReplacement ?? io.findLive;
+  const reobserveHook = io.reobserveAfterReplacement;
+  const reobserve = reobserveHook ? () => reobserveHook(previous) : io.findLive;
   let again: ProxyRestartDiscovery;
   try {
     again = await reobserve();
