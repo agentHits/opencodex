@@ -193,6 +193,31 @@ describe("tray proxy coordinator", () => {
     expect(result).toEqual({ ok: false, phase: "replacement" });
   });
 
+  test("re-observation uses a fresh window, not the expired discovery deadline", async () => {
+    // Regression: the post-failure re-observation must not reuse the shared observe
+    // deadline — it expired while waiting for the replacement, so it would answer
+    // `uncertain` forever and crash recovery could never run.
+    const calls: string[] = [];
+    const previous: ProxyRestartLive = { pid: 10, port: 10100, source: "runtime" };
+    const result = await runProxyRestart({
+      findLive: async () => {
+        calls.push("findLive");
+        // Initial discovery sees the live target; every later call simulates the
+        // expired shared deadline.
+        return calls.length === 1
+          ? { status: "live", live: previous }
+          : { status: "uncertain", error: new Error("restart_discovery_deadline_expired") };
+      },
+      startWhenStopped: async () => { calls.push("start"); return true; },
+      requestInPlaceRestart: async () => ({ accepted: true }),
+      waitForReplacement: async () => null,
+      waitBetweenAttempts: async () => {},
+      reobserveAfterReplacement: async () => { calls.push("reobserve"); return { status: "absent" }; },
+    });
+    expect(result).toEqual({ ok: true, mode: "started" });
+    expect(calls).toEqual(["findLive", "reobserve", "start"]);
+  });
+
   test("a live proxy owns one in-place restart and must publish a replacement identity", async () => {
     const calls: string[] = [];
     const previous: ProxyRestartLive = { pid: 10, port: 10100, source: "runtime" };

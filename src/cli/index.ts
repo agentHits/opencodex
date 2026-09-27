@@ -914,6 +914,17 @@ async function handleProxyRestart(
     startWhenStopped,
     requestInPlaceRestart: previous => requestBoundSystemRestart(previous, deadlineAt),
     waitForReplacement: previous => waitForProxyReplacement(previous, deadlineAt),
+    // Fresh bounded window, not the shared deadline above: by the time the replacement
+    // wait expires, that deadline has expired too, so reusing it would answer `uncertain`
+    // and the crash-recovery path could never run.
+    reobserveAfterReplacement: () => {
+      const reobserveAt = Date.now() + 5_000;
+      return discoverStableProxyForRestart({
+        findLive: () => findLiveProxy({ deadlineAt: reobserveAt, attempts: 2, acceptPackageTreeFenced: true }),
+        waitBetweenChecks: () => Bun.sleep(250),
+        expired: () => Date.now() >= reobserveAt,
+      });
+    },
   });
   if (!result.ok) reportRestartFailure(result);
   process.exitCode = result.ok ? 0 : 1;

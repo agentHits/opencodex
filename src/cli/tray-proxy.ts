@@ -55,6 +55,13 @@ export interface ProxyRestartIo {
   waitForReplacement: (previous: ProxyRestartLive) => Promise<ProxyRestartLive | null>;
   /** Pause between start attempts; defaults to a short sleep. Tests pass a recorder. */
   waitBetweenAttempts?: () => Promise<void>;
+  /**
+   * Strong re-observation after a missed replacement. Defaults to `findLive`, but the
+   * production wiring passes a fresh bounded window: by the time the replacement wait
+   * expires, the shared observe deadline has expired too, so reusing it would answer
+   * `uncertain` forever and the crash-recovery path could never run.
+   */
+  reobserveAfterReplacement?: () => Promise<ProxyRestartDiscovery>;
 }
 
 /**
@@ -243,9 +250,10 @@ export async function runProxyRestart(io: ProxyRestartIo): Promise<ProxyRestartR
   // the bind); a replacement that landed just past the deadline still proves success;
   // the same PID or another uncertain round fails closed exactly as before. A live
   // target is never stopped to make room: the no-stop/start-fallback invariant holds.
+  const reobserve = io.reobserveAfterReplacement ?? io.findLive;
   let again: ProxyRestartDiscovery;
   try {
-    again = await io.findLive();
+    again = await reobserve();
   } catch (error) {
     return { ok: false, phase: "replacement", error };
   }
