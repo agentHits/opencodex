@@ -1,4 +1,5 @@
 {
+  "link-relay-bound-transport.test.ts": "clients",
   "pnpm-command-isolation.test.ts": "update",
   "project-config-warning-snapshot.test.ts": "codex-integration",
   "codex-quota-auto-refresh-generation.test.ts": "codex-integration",
@@ -314,6 +315,7 @@
   "claude-dotenv-provenance-transport.test.ts": "claude-integration",
   "claude-estimate-projection.test.ts": "claude-integration",
   "claude-first-party-union.test.ts": "claude-integration",
+  "claude-desktop-system-proxy.test.ts": "claude-integration",
   "claude-gateway-cache.test.ts": "claude-integration",
   "claude-inbound-cache-stabilize.test.ts": "claude-integration",
   "claude-inbound-debug.test.ts": "claude-integration",
@@ -470,6 +472,7 @@
   "codex-forward-access-programs-writer.test.ts": "codex-integration",
   "codex-composed-acceptance.test.ts": "codex-integration",
   "codex-config-generation.test.ts": "codex-integration",
+  "codex-config-drift-heal.test.ts": "codex-integration",
   "codex-context-owner.test.ts": "codex-integration",
   "codex-convergence-account-selectors.test.ts": "codex-integration",
   "codex-convergence-contract.test.ts": "codex-integration",
