@@ -453,3 +453,23 @@ reviewers (Codex, CodeRabbit).
   keep translated locales from contradicting the English source).
 - **Privacy:** `bun run privacy:scan` must stay green; never introduce logging
   of request bodies, API keys, or account identifiers.
+
+## PR autopilot refresh script
+
+The script is `../../../.codex/pr-autopilot/refresh-prs.sh`
+(absolute path: `/Users/agent/.codex/pr-autopilot/refresh-prs.sh`). It lives outside
+this repository and keeps tracked upstream-PR branches inside the `enforce-target`
+ancestry gate.
+
+How it works:
+
+- watches the branches listed in `~/.codex/pr-autopilot/branches.conf` against
+  `upstream/dev` and refreshes a branch once it falls 8 or more commits behind
+  (2-commit buffer under the gate limit of 10);
+- runs local verification (typecheck plus the branch tests) before ticking any
+  readiness box, and re-validates every claim itself;
+- enforces the maintainer-notify discipline (one sponsorship request per head,
+  72h bump at most) and the triage rule (judge a branch by its commit list,
+  never by raw diff size);
+- appends everything to `~/.codex/pr-autopilot/refresh.log`; `--check` runs
+  a dry-run check without changing anything.
