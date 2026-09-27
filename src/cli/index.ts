@@ -861,6 +861,16 @@ async function handleTrayProxyStart(existingIsSuccess = true): Promise<boolean> 
 
 const PROXY_RESTART_OBSERVE_MS = MEMORY_DRAIN_RESTART_MS + REPLACEMENT_READY_TIMEOUT_MS + 15_000;
 
+/**
+ * Confirmation budget carved INSIDE the observe deadline above, never added to it:
+ * the replacement wait ends this much early so the post-failure re-observation still
+ * fits. A late replacement inside the reserve still proves success through the
+ * re-observation below instead of being cut off by the wait.
+ */
+const RESTART_REOBSERVE_RESERVE_MS = 10_000;
+/** Upper bound of the post-failure confirmation window. */
+const RESTART_REOBSERVE_WINDOW_MS = 5_000;
+
 async function waitForProxyReplacement(
   previous: ProxyRestartLive,
   deadlineAt: number,
@@ -913,12 +923,20 @@ async function handleProxyRestart(
     }),
     startWhenStopped,
     requestInPlaceRestart: previous => requestBoundSystemRestart(previous, deadlineAt),
-    waitForReplacement: previous => waitForProxyReplacement(previous, deadlineAt),
-    // Fresh bounded window, not the shared deadline above: by the time the replacement
-    // wait expires, that deadline has expired too, so reusing it would answer `uncertain`
-    // and the crash-recovery path could never run.
+    // The replacement wait ends RESTART_REOBSERVE_RESERVE_MS early so the confirmation
+    // below still fits inside the overall deadline; the total never grows past it.
+    waitForReplacement: previous => waitForProxyReplacement(previous, deadlineAt - RESTART_REOBSERVE_RESERVE_MS),
     reobserveAfterReplacement: () => {
-      const reobserveAt = Date.now() + 5_000;
+      // Leftover budget only: with nothing left the window reports uncertain and the
+      // transaction fails closed instead of overrunning the deadline.
+      const windowMs = Math.min(RESTART_REOBSERVE_WINDOW_MS, deadlineAt - Date.now());
+      if (windowMs < 1_500) {
+        return Promise.resolve({
+          status: "uncertain",
+          error: new Error("restart_reobserve_window_exhausted"),
+        } as const);
+      }
+      const reobserveAt = Date.now() + windowMs;
       return discoverStableProxyForRestart({
         findLive: () => findLiveProxy({ deadlineAt: reobserveAt, attempts: 2, acceptPackageTreeFenced: true }),
         waitBetweenChecks: () => Bun.sleep(250),

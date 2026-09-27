@@ -9,6 +9,7 @@ import {
   type ProxyRestartIo,
   type ProxyRestartLive,
   type TrayProxyStartIo,
+  type ProxyRestartDiscovery,
 } from "../../src/cli/tray-proxy";
 
 function startIo(overrides: Partial<TrayProxyStartIo> = {}) {
@@ -138,6 +139,64 @@ describe("tray proxy coordinator", () => {
     };
     expect(await runProxyRestart(io)).toEqual({ ok: true, mode: "started" });
     expect(calls).toEqual(["start:1", "wait", "start:2", "wait", "start:3"]);
+  });
+
+  test("a failed start that leaves a live proxy attests success without a second start", async () => {
+    // Post-health steps may report failure on an already-serving proxy; respawning
+    // would race it for the port. The re-observation tells refusal apart from that.
+    const calls: string[] = [];
+    const live: ProxyRestartLive = { pid: 50, port: 10100, source: "runtime" };
+    let observations = 0;
+    const io: ProxyRestartIo = {
+      findLive: async () => {
+        observations += 1;
+        return observations === 1 ? { status: "absent" } : { status: "live", live };
+      },
+      startWhenStopped: async () => { calls.push("start"); return false; },
+      requestInPlaceRestart: async () => ({ accepted: true }),
+      waitForReplacement: async () => null,
+      waitBetweenAttempts: async () => {},
+    };
+    expect(await runProxyRestart(io)).toEqual({ ok: true, mode: "started" });
+    expect(calls).toEqual(["start"]);
+  });
+
+  test("a throwing start on a live proxy does not start again", async () => {
+    const calls: string[] = [];
+    const live: ProxyRestartLive = { pid: 50, port: 10100, source: "runtime" };
+    let observations = 0;
+    const io: ProxyRestartIo = {
+      findLive: async () => {
+        observations += 1;
+        return observations === 1 ? { status: "absent" } : { status: "live", live };
+      },
+      startWhenStopped: async () => { calls.push("start"); throw new Error("post-health integration failed"); },
+      requestInPlaceRestart: async () => ({ accepted: true }),
+      waitForReplacement: async () => null,
+      waitBetweenAttempts: async () => {},
+    };
+    expect(await runProxyRestart(io)).toEqual({ ok: true, mode: "started" });
+    expect(calls).toEqual(["start"]);
+  });
+
+  test("a slow child that binds during the beat is attested, not duplicated", async () => {
+    const calls: string[] = [];
+    const live: ProxyRestartLive = { pid: 60, port: 10100, source: "runtime" };
+    // Absent at discovery and after the first beat; bound by the second check.
+    const seen: Array<ProxyRestartDiscovery> = [
+      { status: "absent" },
+      { status: "absent" },
+      { status: "live", live },
+    ];
+    const io: ProxyRestartIo = {
+      findLive: async () => seen.shift() ?? { status: "absent" },
+      startWhenStopped: async () => { calls.push("start"); return false; },
+      requestInPlaceRestart: async () => ({ accepted: true }),
+      waitForReplacement: async () => null,
+      waitBetweenAttempts: async () => {},
+    };
+    expect(await runProxyRestart(io)).toEqual({ ok: true, mode: "started" });
+    expect(calls).toEqual(["start", "start"]);
   });
 
   test("a proxy that crashed mid-restart is started fresh after strong re-observation", async () => {

@@ -173,6 +173,14 @@ const RESTART_START_ATTEMPTS = 3;
 /** Discovery rounds per restart transaction; an uncertain round is a transient race. */
 const RESTART_DISCOVERY_ATTEMPTS = 3;
 
+/**
+ * Start leg with phase evidence. A bare boolean cannot tell a pre-launch refusal from
+ * a child that was launched but is not healthy yet, or from post-health steps that
+ * threw on an already-live proxy — and blindly respawning on any of those risks a
+ * second proxy racing the first for the port. So every failed attempt is followed by a
+ * beat and a strong re-observation: a live proxy attests success (no second start),
+ * and only confirmed absence earns another attempt.
+ */
 async function startRestartedProxy(
   io: ProxyRestartIo,
   waitBetweenAttempts: () => Promise<void>,
@@ -180,7 +188,6 @@ async function startRestartedProxy(
   let lastError: unknown;
   let sawError = false;
   for (let attempt = 0; attempt < RESTART_START_ATTEMPTS; attempt++) {
-    if (attempt > 0) await waitBetweenAttempts();
     try {
       const started = await io.startWhenStopped();
       if (started === "skipped") return { ok: true, mode: "skipped" };
@@ -190,6 +197,17 @@ async function startRestartedProxy(
       sawError = true;
       lastError = error;
     }
+    // Beat first: a child that was just launched may still be binding, and post-health
+    // steps may have thrown on an already-live proxy. Re-observe before deciding: live
+    // attests success (never a second start), only confirmed absence earns a retry.
+    await waitBetweenAttempts();
+    let recheck: ProxyRestartDiscovery;
+    try {
+      recheck = await io.findLive();
+    } catch {
+      continue;
+    }
+    if (recheck.status === "live") return { ok: true, mode: "started" };
   }
   return sawError
     ? { ok: false, phase: "start", error: lastError }
