@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stopProxyGracefully } from "../../src/lib/process-control";
 import { performStopTeardown } from "../../src/server/stop-teardown";
+import { markSiblingStart, resetSiblingStartForTests } from "../../src/codex/sibling-start";
 import type { CodexNativeRestoreResult } from "../../src/codex/inject";
 import { STOP_HISTORY_DEFERRED_EXIT_CODE, STOP_HISTORY_INCOMPLETE_EXIT_CODE } from "../../src/update/stop-contract.mjs";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -246,6 +247,63 @@ describe("performStopTeardown", () => {
     expect(stripped).toBe(1);
     expect(body.sharedTeardown).toBe("performed");
     expect(body.message).toContain("native Codex restored");
+  });
+
+  test("a sibling instance restores nothing and hands nothing over, with or without a receipt", async () => {
+    // Its CODEX_HOME journal and the Grok fence are the live owner's: restoring here would take
+    // Codex off a proxy that is still serving it.
+    let restored = 0;
+    let stripped = 0;
+    const io = {
+      ownsReceipt: () => true,
+      restoreNativeCodex: async () => { restored += 1; return restoreResult(true); },
+      stripGrok: () => { stripped += 1; return { ok: true, changed: true, message: "Grok config restored" }; },
+    };
+    markSiblingStart(10100);
+    try {
+      for (const url of [
+        "http://127.0.0.1:10199/api/stop",
+        `http://127.0.0.1:10199/api/stop?deferSharedTeardown=1&teardownNonce=${FOREIGN_NONCE}`,
+      ]) {
+        const body = await performStopTeardown(new URL(url), io);
+        expect(body).toMatchObject({ success: true, sharedTeardown: "not-owned" });
+        expect(body.message).toContain("Client routing stays on the proxy at port 10100");
+      }
+    } finally {
+      resetSiblingStartForTests();
+    }
+    expect(restored).toBe(0);
+    expect(stripped).toBe(0);
+  });
+
+  test("a degraded stop reports the retained provider table without turning success into deferral", async () => {
+    const retained = {
+      reason: "history_paginated_requires_native_writer" as const,
+      lines: ["# Auto-injected by opencodex", "[model_providers.opencodex]"],
+      followUp: "Run the explicit removal command only if tagged conversations may stop opening.",
+    };
+    const body = await performStopTeardown(new URL("http://127.0.0.1:10100/api/stop"), {
+      ownsReceipt: () => false,
+      restoreNativeCodex: async () => ({
+        ...restoreResult(true),
+        retainedCodexProviderTable: retained,
+        artifacts: {
+          ...restoreResult(true).artifacts,
+          config: {
+            state: "partial",
+            changed: true,
+            action: "routing-restored-provider-retained",
+            message: "routing restored",
+            retained,
+          },
+        },
+      }),
+      stripGrok: () => ({ ok: true, changed: false, message: "clean" }),
+    });
+
+    expect(body).toMatchObject({ success: true, sharedTeardown: "performed" });
+    expect(body.message).toContain("[model_providers.opencodex]");
+    expect(body.message).toContain("history_paginated_requires_native_writer");
   });
 
   test("a receipt-backed deferral touches neither config and says so", async () => {
@@ -750,6 +808,6 @@ test("the route refuses a self-unload before the manager is touched", () => {
     // `ocx stop` claims a receipt, defers the teardown, and performs it itself once the
     // proxy is proven down — so it must not be refused by the new branch.
     const source = readFileSync(repoPath("src", "server", "management-api.ts"), "utf8");
-    expect(source).toContain('const respawnRisk = holdsReceipt ? "none" : installedServiceRespawnRisk();');
+    expect(source).toContain('const respawnRisk = holdsReceipt || sibling ? "none" : installedServiceRespawnRisk();');
   });
 });

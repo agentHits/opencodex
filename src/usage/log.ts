@@ -579,6 +579,7 @@ function normalizeUsageValue(usage: OcxUsage | undefined): OcxUsage | undefined 
     ...(typeof usage.cacheReadInputTokens === "number" ? { cacheReadInputTokens: usage.cacheReadInputTokens } : {}),
     ...(typeof usage.cacheCreationInputTokens === "number" ? { cacheCreationInputTokens: usage.cacheCreationInputTokens } : {}),
     ...(typeof usage.reasoningOutputTokens === "number" ? { reasoningOutputTokens: usage.reasoningOutputTokens } : {}),
+    ...(isNonNegativeFiniteNumber(usage.providerCredits) ? { providerCredits: usage.providerCredits } : {}),
     ...(usage.estimated ? { estimated: true } : {}),
   };
 }
@@ -622,6 +623,7 @@ function normalizeAttemptUsage(raw: unknown): OcxUsage | null {
     "cacheReadInputTokens",
     "cacheCreationInputTokens",
     "reasoningOutputTokens",
+    "providerCredits",
   ] as const) {
     if (key in usage && !isNonNegativeFiniteNumber(usage[key])) return null;
   }
@@ -1659,9 +1661,10 @@ async function readUsageEntriesIncrementally(
       // would make a byte-truncated read claim rows were dropped when none were.
       entriesTruncated: entriesDropped > 0,
       entriesDropped,
-      // The digest must describe exactly the region the returned rows came from, which
-      // is the post-trim window, not the pre-trim one.
-      prefixDigest: usageRegionDigest(fd, rowsBeginAtBytes, size) ?? "",
+      // Reuse this read's verified digest only for identical bounds. Growth or trimming
+      // needs a new digest of the returned region; metadata alone never proves reuse.
+      prefixDigest: rowsBeginAtBytes === retained.rowsBeginAtBytes && size === retained.coveredThroughBytes
+        ? covered : usageRegionDigest(fd, rowsBeginAtBytes, size) ?? "",
       entryLengths: lengths,
       trailingSkippedBytes: appendedTrailingSkipped,
       rowsBeginAtBytes,

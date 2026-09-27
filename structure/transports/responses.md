@@ -11,7 +11,7 @@ Plaintext collaboration restoration treats a null namespace as absent, rejects n
 When a successful streamed native response has a missing or unrecognized non-JSON content type, the plaintext V2 path confirms a bounded Responses SSE prefix, under the server's `stallTimeoutSec` probe budget, before applying that restoration; an `application/json` body takes the bounded JSON path instead, and an unknown, stalled, or unreadable body retains the fail-closed response.
 
 ## Responses HTTP/SSE
-
+Responses request preparation stabilizes incoming `<skills_instructions>` under `skills.catalog_refresh`: `per_session` (default) reuses the first received catalog for a conversation; `per_turn` leaves the supplied catalog unchanged. Other instruction sections and user/tool content remain untouched. Requests without a reliable conversation identity bypass snapshots; shared prompt-cache cohorts are not conversation identities. Only a body with exactly one catalog block across its instructions and developer/system content takes part; two or more pass through unchanged. A known snapshot is substituted before parsing, but a new catalog is stored only when preparation reaches its success return, so a request rejected by parsing or admission pins nothing. Without a named principal, snapshots are shared by conversation id only on a server that requires no data-plane auth. Snapshots are process-local, expire after four idle hours, and use bounded LRU retention; oversized blocks bypass caching. The dashboard's `src/codex/prompt-layers.ts` and `src/codex/prompt-text-probe.ts` continue observing current files for previews and do not own session snapshots.
 `/v1/responses` is the main Codex-facing endpoint. The server parses Responses input, routes to a
 provider, lets the selected adapter speak the upstream protocol, then bridges adapter events back to
 Responses-compatible streaming output. For an opted-in key-auth provider, a hosted-search continuation stays bound to the API-key selection that served the first leg; the contract is the [hosted-search continuation binding](../providers-and-adapters.md#hosted-search-continuation-binding).
@@ -118,7 +118,7 @@ echoed bare name to its namespaced identity before authorizing anything
 echo is a guess rather than a nomination. The bridges check the declared set before consulting
 `toolNsMap`, so there a bare helper echo is refused either way. A genuine namespace-free
 declaration is untouched throughout: that is the caller declaring the tool, not a namespace being
-discarded to manufacture a bare name.
+discarded to manufacture a bare name. Meta Responses also applies [tool-selection compatibility](../providers-and-adapters.md#meta-responses-tool-selection).
 
 Function-call wrappers around freeform bodies are restored by
 `src/responses/apply-patch-envelope.ts`. The declared `input` field is authoritative. For bare
@@ -417,7 +417,7 @@ Reusable helpers live in `core-auth.ts`, `core-codex-account.ts`, `core-combo.ts
 `core-combo-failure.ts`, `core-combo-native.ts`, `core-errors.ts`, `core-lifetime.ts`, `core-normalize.ts`,
 `core-opaque-recovery.ts` and `core-replay.ts`. `core-options.ts` owns the public option types
 and small composition contracts. Existing public helper names are re-exported by `core.ts`.
-Adapter construction remains with the existing registry; `fetch-helpers.ts` remains a leaf.
+Adapter construction remains with the existing registry; `fetch-helpers.ts` remains a leaf. For Kiro OAuth with load settings, `request-transport.ts` acquires a lease on the admitted account and transfers it before a reactive replacement send; `core.ts` and `core-lifetime.ts` release it on returned-body completion, error, or cancellation, outside the inner admission `finally`.
 
 Mutable values are not copied across phases. A phase exposes only the values consumed by later
 phases, with getters/setters over the original local bindings where a retry or callback can
@@ -484,7 +484,7 @@ instead of `bridgeToResponsesSSE`, and preserves the bridge's effects:
   `onUsage` rules.
 - The body goes through `trackStreamLifetime` with the same cleanup and admission lease; the
   terminal and a client cancel call `cancelResponseCompletion` and abort the upstream once.
-- Client frames are counted with `noteRelayedEvent`.
+- Client frames are counted with `noteRelayedEvent`; wire-silence keepalives (the Chat `: opencodex heartbeat` comment, the Messages `ping`) are delivered as the converters deliver them but, like the bridge heartbeat, not counted.
 - The request log learns the bridge's `response.created` snapshot and a terminal payload with the
   bridge's usage presence rules through the client-wire log channel.
 

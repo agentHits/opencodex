@@ -71,7 +71,9 @@ describe("kiro retry fetch", () => {
       });
     }) as typeof fetch;
 
-    await expect(fetchKiroWithRetry(request, { timeoutMs: 1 })).rejects.toMatchObject({ name: "TimeoutError" });
+    const response = await fetchKiroWithRetry(request, { timeoutMs: 1 });
+    expect(response.status).toBe(504);
+    expect(await response.text()).toBe("Kiro upstream gateway timeout");
     expect(calls).toBe(1);
     expect(timeoutReasons).toHaveLength(1);
     expect((timeoutReasons[0] as Error).name).toBe("TimeoutError");
@@ -234,7 +236,7 @@ describe("kiro retry fetch", () => {
 
   test("does not replay ordinary 5xx responses", async () => {
     const mock = mockFetch([
-      new Response("internal error", { status: 500, headers: { "Retry-After": "0" } }),
+      new Response("temporarily unavailable", { status: 500, headers: { "Retry-After": "0" } }),
       new Response("ok", { status: 200 }),
     ]);
     const res = await fetchKiroWithRetry(request, { timeoutMs: 5_000 });
@@ -369,23 +371,31 @@ describe("kiro retry fetch", () => {
   test("retries a transient 503 overloaded response inside the adapter", async () => {
     const mock = mockFetch([
       new Response("server is busy, overloaded", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("server is busy, overloaded", { status: 503, headers: { "Retry-After": "0" } }),
       new Response("ok", { status: 200 }),
     ]);
     const res = await fetchKiroWithRetry(request, { timeoutMs: 5_000 });
     expect(res.status).toBe(200);
-    expect(mock.calls).toHaveLength(2);
+    // Canonical overload rotates to legacy first; the legacy overload replays to recovery.
+    expect(mock.calls).toHaveLength(3);
   });
 
   test("normalizes final transient 503 after bounded adapter retries", async () => {
     const mock = mockFetch([
       new Response("server is busy", { status: 503, headers: { "Retry-After": "0" } }),
-      new Response("overloaded", { status: 503, headers: { "Retry-After": "0" } }),
       new Response("temporarily unavailable", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("overloaded", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("server is busy", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("temporarily unavailable", { status: 503, headers: { "Retry-After": "0" } }),
+      new Response("overloaded", { status: 503, headers: { "Retry-After": "0" } }),
     ]);
     const res = await fetchKiroWithRetry(request, { timeoutMs: 5_000 });
     expect(res.status).toBe(503);
-    expect(await res.text()).toContain("Kiro server overloaded");
-    expect(mock.calls).toHaveLength(3);
+    // The final 503 normalizes to the fixed upstream text; the replay itself is pinned
+    // by the call count above.
+    expect(await res.text()).toContain("Kiro upstream service unavailable");
+    // Three throttle rounds, each rotating canonical -> legacy before replaying.
+    expect(mock.calls).toHaveLength(6);
   });
 });
 

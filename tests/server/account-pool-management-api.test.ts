@@ -703,7 +703,7 @@ describe("unified pool-settings contract (#695 wp5c)", () => {
     if (dir) removeTreeWithRetry(dir);
   });
 
-  test("reset-first round-trips through canonical and legacy Codex settings only", async () => {
+  test("reset-first round-trips through canonical and legacy Codex settings, generic pools accept it", async () => {
     const server = startServer(0);
     try {
       const write = async (provider: string, strategy: string) => fetch(new URL("/api/pool/settings", server.url), {
@@ -718,11 +718,14 @@ describe("unified pool-settings contract (#695 wp5c)", () => {
       const legacy = new Request("http://localhost/api/codex-auth/active");
       const legacyRead = await handleCodexAuthAPI(legacy, new URL(legacy.url), loadConfig());
       expect(await legacyRead!.json()).toMatchObject({ accountPoolStrategy: "reset-first" });
-      for (const provider of ["anthropic", "google-antigravity"]) {
-        const rejected = await write(provider, "reset-first");
-        expect(rejected.status).toBe(400);
-        await rejected.text();
-      }
+      // The anthropic pool keeps the shared three-name contract.
+      const rejected = await write("anthropic", "reset-first");
+      expect(rejected.status).toBe(400);
+      await rejected.text();
+      // reset-first is a generic-pool strategy, so a generic OAuth provider accepts it.
+      const generic = await write("google-antigravity", "reset-first");
+      expect(generic.status).toBe(200);
+      expect(await generic.json()).toMatchObject({ kind: "generic", strategy: "reset-first" });
       const compatibility = new Request("http://localhost/api/codex-auth/pool-strategy", {
         method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ strategy: "reset-first" }),
       });
@@ -787,8 +790,8 @@ describe("unified pool-settings contract (#695 wp5c)", () => {
         // Same key set for every kind. An unsupported field is a declared null, not an absence,
         // which is the whole difference between a consolidation and a fourth contract.
         expect(Object.keys(dto).sort()).toEqual([
-          "autoSwitchThreshold", "enabled", "enabledEffective", "kind", "provider",
-          "quotaWindow", "stickyLimit", "strategy", "supported",
+          "autoSwitchThreshold", "enabled", "enabledEffective", "kind", "maxConcurrentPerAccount",
+          "provider", "quotaWindow", "stickyLimit", "strategy", "supported",
         ]);
         expect(dto.kind).toBe(kind);
         expect(dto.supported).toEqual([...supported]);
