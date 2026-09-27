@@ -473,3 +473,9 @@ How it works:
   never by raw diff size);
 - appends everything to `~/.codex/pr-autopilot/refresh.log`; `--check` runs
   a dry-run check without changing anything.
+
+The autopilot dashboard lives at `~/.codex/pr-autopilot/dashboard/server.ts` and
+serves a read-only status UI on localhost port **10010** (Bun-native, no
+dependencies, kept alive by the `com.agenthits.pr-autopilot-dashboard`
+LaunchAgent). It renders branch states from `branches.conf`, the event history
+from `refresh.log`, and live PR states from GitHub, plus a "run now" kick.
