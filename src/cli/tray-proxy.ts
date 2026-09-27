@@ -207,7 +207,11 @@ async function startRestartedProxy(
     } catch {
       continue;
     }
-    if (recheck.status === "live") return { ok: true, mode: "started" };
+    // Runtime-attested only: a config-sourced observation is not proof a proxy serves,
+    // so it keeps the start failure instead of reporting a success nobody earned.
+    if (recheck.status === "live"
+      && recheck.live.pid !== null
+      && recheck.live.source === "runtime") return { ok: true, mode: "started" };
   }
   return sawError
     ? { ok: false, phase: "start", error: lastError }

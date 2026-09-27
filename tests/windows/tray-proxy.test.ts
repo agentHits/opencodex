@@ -199,6 +199,27 @@ describe("tray proxy coordinator", () => {
     expect(calls).toEqual(["start", "start"]);
   });
 
+  test("a config-only observation after a failed start keeps the failure", async () => {
+    // A config-sourced live row is not proof a proxy serves: it must not convert
+    // a failed start into a reported success.
+    const calls: string[] = [];
+    let observations = 0;
+    const io: ProxyRestartIo = {
+      findLive: async () => {
+        observations += 1;
+        return observations === 1
+          ? { status: "absent" }
+          : { status: "live", live: { pid: null, port: 10100, source: "config" } };
+      },
+      startWhenStopped: async () => { calls.push("start"); return false; },
+      requestInPlaceRestart: async () => ({ accepted: true }),
+      waitForReplacement: async () => null,
+      waitBetweenAttempts: async () => {},
+    };
+    expect(await runProxyRestart(io)).toEqual({ ok: false, phase: "start" });
+    expect(calls).toEqual(["start", "start", "start"]);
+  });
+
   test("a proxy that crashed mid-restart is started fresh after strong re-observation", async () => {
     const calls: string[] = [];
     const previous: ProxyRestartLive = { pid: 10, port: 10100, source: "runtime" };
