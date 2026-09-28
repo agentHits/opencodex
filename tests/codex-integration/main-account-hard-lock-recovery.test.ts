@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   fetchMainAccountInfo, registerCodexCooldownRecoveryProbeWorker, runMainAccountHardLockRecovery,
 } from "../../src/codex/auth-api";
+import { fetchMainAccountInfoAttempt } from "../../src/codex/auth-api/main-account-probe";
 import { MAIN_CODEX_ACCOUNT_ID as MAIN } from "../../src/codex/account-id";
 import { reconcileMainCodexAccountRuntimeState, resetMainCodexAccountIdentityTrackingForTests } from "../../src/codex/account-lifecycle";
 import { clearAccountNeedsReauth, isAccountNeedsReauth, markAccountNeedsReauth } from "../../src/codex/account-runtime-state";
@@ -32,7 +33,10 @@ let previousFetch: typeof fetch;
 
 /** Build the minimal proxy configuration with main-account hard-lock recovery enabled. */
 function config(): OcxConfig {
-  return { port: 10100, defaultProvider: "openai", providers: {}, codexMainAccountHardLock: true };
+  return { port: 10100, defaultProvider: "openai", providers: { openai: {
+    adapter: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex",
+    authMode: "forward", codexAccountMode: "pool",
+  } }, codexMainAccountHardLock: true };
 }
 
 /** Encode synthetic account and expiry claims for the fixture; this is not a signed credential. */
@@ -131,6 +135,166 @@ afterEach(async () => {
 });
 
 describe("main hard-lock background recovery", () => {
+  test("known reset waits locally, then verifies recovery instead of unlocking by time", async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const deadline = now + 3_600_000;
+      setAccountQuotaFromParsed(MAIN, { shortPercent: 99, shortWindowSeconds: 18_000,
+        shortResetAt: deadline }, undefined, captureMainQuotaWriter(accountId));
+      const calls = fetchWith(async () => usage(99));
+      for (let tick = 0; tick < 60; tick++, now += 60_000) await runMainAccountHardLockRecovery(config());
+      expect(calls).toEqual([]);
+      expect(getMainAccountHardLockStatus(config()).state).toBe("blocked");
+      await runMainAccountHardLockRecovery(config());
+      expect(calls).toEqual([whamUrl]);
+      now += 60_000;
+      await runMainAccountHardLockRecovery(config());
+      expect(calls).toHaveLength(1);
+      now += 240_000;
+      const recovery = fetchWith(async () => usage(0));
+      await runMainAccountHardLockRecovery(config());
+      expect(recovery).toEqual([whamUrl]);
+      expect(getMainAccountHardLockStatus(config()).state).toBe("ready");
+    } finally { clock.mockRestore(); }
+  });
+
+  test("manual reads and hard-lock recovery share Retry-After without claiming fresh evidence", async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const calls = fetchWith(async () => new Response("{}", { status: 429, headers: { "Retry-After": "900" } }));
+    try {
+      await runMainAccountHardLockRecovery(config());
+      for (let tick = 0; tick < 14; tick++) {
+        now += 60_000;
+        await fetchMainAccountInfo(true);
+        await runMainAccountHardLockRecovery(config());
+      }
+      expect(calls).toEqual([whamUrl]);
+      expect(getMainAccountHardLockStatus(config()).state).toBe("blocked");
+      now += 60_000;
+      await fetchMainAccountInfo(true);
+      expect(calls).toHaveLength(2);
+    } finally { clock.mockRestore(); }
+  });
+
+  test("post-reset Retry-After paces ordinary main reads and hard-lock sweeps", async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    let reads = 0;
+    const calls = fetchWith(async () => ++reads === 1
+      ? new Response("{}", { status: 429, headers: { "Retry-After": "900" } })
+      : usage(0));
+    try {
+      await fetchMainAccountInfoAttempt(true, 1, undefined, false, true, true, config());
+      for (let tick = 0; tick < 14; tick++) {
+        now += 60_000;
+        await fetchMainAccountInfo(true, config());
+        await runMainAccountHardLockRecovery(config());
+      }
+      expect(calls).toEqual([whamUrl]);
+      now += 60_000;
+      await runMainAccountHardLockRecovery(config());
+      expect(calls).toEqual([whamUrl, whamUrl]);
+      expect(getMainAccountHardLockStatus(config()).state).toBe("ready");
+    } finally { clock.mockRestore(); }
+  });
+
+  test("an ordinary Retry-After prevents recovery token preparation until credential replacement", async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      writeMain(true);
+      block();
+      const calls = fetchWith(async url => url === tokenUrl
+        ? Response.json({ access_token: bearer(), refresh_token: "fixture-rotated", expires_in: 86_400 })
+        : new Response("{}", { status: 429, headers: { "Retry-After": "900" } }));
+      await fetchMainAccountInfo(true);
+      for (let tick = 0; tick < 14; tick++) {
+        now += 60_000;
+        await runMainAccountHardLockRecovery(config());
+      }
+      // An expired physical token would require token-endpoint work if the lease were entered.
+      expect(calls).toEqual([whamUrl]);
+      writeMain();
+      block();
+      globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0]) => {
+        calls.push(String(input));
+        expect(getNativeMainProfileRequestCount()).toBe(1);
+        return usage(0);
+      }, { preconnect: previousFetch.preconnect });
+      await runMainAccountHardLockRecovery(config());
+      expect(calls).toEqual([whamUrl, whamUrl]);
+      expect(getMainAccountHardLockStatus(config()).state).toBe("ready");
+    } finally { clock.mockRestore(); }
+  });
+
+  test.each(["900", "999999999"])("Retry-After %s prevents recovery preparation before the deadline", async header => {
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const calls = fetchWith(async url => url === tokenUrl
+      ? Response.json({ access_token: bearer(), refresh_token: "fixture-rotated", expires_in: 86_400 })
+      : new Response("{}", { status: 429, headers: { "Retry-After": header } }));
+    try {
+      await runMainAccountHardLockRecovery(config());
+      const delay = header === "900" ? 900_000 : 86_400_000;
+      now += delay - 1;
+      await runMainAccountHardLockRecovery(config());
+      expect(calls).toEqual([whamUrl]);
+      now++;
+      await runMainAccountHardLockRecovery(config());
+      expect(calls.filter(url => url === whamUrl)).toHaveLength(2);
+    } finally { clock.mockRestore(); }
+  });
+
+  test("malformed main 200 keeps failed-read pacing", async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    let count = 0;
+    const calls = fetchWith(async () => ++count === 1 ? Response.json({}) : usage(0));
+    try {
+      await fetchMainAccountInfo(true);
+      await fetchMainAccountInfo(true);
+      expect(calls).toHaveLength(1);
+      expect(getMainAccountHardLockStatus(config()).state).toBe("blocked");
+      now += 300_000;
+      await fetchMainAccountInfo(true);
+      expect(calls).toHaveLength(2);
+      expect(getMainAccountHardLockStatus(config()).state).toBe("ready");
+    } finally { clock.mockRestore(); }
+  });
+
+  test("successful but blocked recovery uses capped backoff without extending it on skipped ticks", async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const calls = fetchWith(async () => usage(99));
+    try {
+      await runMainAccountHardLockRecovery(config());
+      for (const minutes of [5, 10, 20, 40, 60, 60]) {
+        const count = calls.length;
+        now += minutes * 60_000 - 1;
+        await runMainAccountHardLockRecovery(config());
+        expect(calls).toHaveLength(count);
+        now++;
+        await runMainAccountHardLockRecovery(config());
+        expect(calls).toHaveLength(count + 1);
+      }
+      expect(getMainAccountHardLockStatus(config()).state).toBe("blocked");
+    } finally { clock.mockRestore(); }
+  });
+
+  test("a replacement main credential does not inherit recovery backoff", async () => {
+    const calls = fetchWith(async () => usage(99));
+    await runMainAccountHardLockRecovery(config());
+    writeFileSync(join(home, "auth.json"), JSON.stringify({ tokens: {
+      access_token: bearer() + "replacement", refresh_token: "fixture-new", account_id: accountId,
+    } }));
+    reconcileMainCodexAccountRuntimeState();
+    block();
+    await runMainAccountHardLockRecovery(config());
+    expect(calls).toHaveLength(2);
+  });
+
   test("owned metadata recovery replaces an obsolete short block with the current weekly window", async () => {
     const calls = fetchWith(async () => Response.json({ plan_type: "pro", rate_limit: {
       primary_window: { used_percent: 35, limit_window_seconds: 604_800 }, secondary_window: null, tertiary_window: null,

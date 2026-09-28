@@ -98,6 +98,8 @@ export interface ProviderAccount {
    */
   needsReauthReason?: "verify_account";
   plan?: string;
+  /** Operator exclusion from generic OAuth account selection until explicitly resumed. */
+  paused?: boolean;
   addedAt?: number;
 }
 

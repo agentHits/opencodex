@@ -4,6 +4,7 @@ import { join } from "node:path";
 import * as z from "zod/v4";
 import { compactionRecoveryConfigError } from "./schema/compaction-recovery";
 import type { OcxConfig } from "../types";
+import { parseAnthropicModelRoutes } from "../oauth/anthropic-model-routes";
 import { configReasoningPinsConfigError } from "./provider-validation";
 import { loopbackCompanionAllowed } from "../codex/loopback-target";
 import { UPSTREAM_HOST_CIRCUIT_MAX_THRESHOLD } from "../codex/upstream-host-health";
@@ -64,6 +65,7 @@ import {
   spendSchema,
   compactionRoutingSchema,
   skillsConfigSchema,
+  memoryModelsSchema,
 } from "./schema/leaf-validators";
 
 export type ConfigDiagnostics = {
@@ -610,6 +612,15 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
   const compactionRouting = rawConfigRecord(value)?.compactionRouting;
   if (compactionRouting !== undefined && !compactionRoutingSchema.safeParse(compactionRouting).success) {
     return { ok: false, error: "schema_invalid: compactionRouting: requires a nonblank model, an optional valid reasoningEffort, and optional non-repeating triggers drawn from \"manual\" and \"auto\"" };
+  }
+  const memoryModels = rawConfigRecord(value)?.memoryModels;
+  if (memoryModels !== undefined && !memoryModelsSchema.safeParse(memoryModels).success) {
+    return { ok: false, error: "schema_invalid: memoryModels: requires a nonblank model and an optional declared reasoningEffort per configured phase, and no other fields" };
+  }
+  const routeValue = (rawConfigRecord(value)?.anthropicAccountPool as Record<string, unknown> | undefined)?.routes;
+  if (routeValue !== undefined) {
+    const parsed = parseAnthropicModelRoutes(routeValue);
+    if (!parsed.ok) return { ok: false, error: `schema_invalid: anthropicAccountPool.routes: ${parsed.error}` };
   }
   const boundaryError = compactionRecoveryConfigError(value) ?? configReasoningPinsConfigError(value)
     ?? blankHostnameError(value)

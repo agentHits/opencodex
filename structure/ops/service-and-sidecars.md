@@ -24,6 +24,25 @@ Only proven absence enters registration. A query failure refuses the bare comman
 guidance, because treating `unknown` as absent can rerun elevated `schtasks /create` against an
 existing task. Explicit `ocx service install` remains the operator-owned registration request.
 
+`src/config/serving-runtimes.ts` records successfully serving installs and lets only a
+non-sibling managed-service start defer to a verified strictly newer recorded command. The
+census gate recognizes launchd, systemd, and current or repaired WinSW definitions through
+`OCX_SERVICE_MANAGED=1`; the Windows Task Scheduler wrapper uses `OCX_SERVICE=1` with its
+wrapper-protocol marker. Legacy WinSW definitions carrying only `OCX_SERVICE=1` do not
+delegate until `ocx service repair` rewrites the XML. The census update uses the shared
+cross-process config mutation lock; recorded paths must resolve to files owned
+by the current user without group/world write permission on POSIX. Candidate
+probes are newest-recorded first, capped at four three-second attempts; a failed probe
+falls through within that cap, and a failed launch or any pre-bind child exit (0 and the
+stay-out code included) leaves this install serving: its own lease-held bind fence then
+re-applies every stay-out condition, so a deliberate stand-down is still honored. A one-hop
+marker prevents recursive delegation; post-bind exits
+propagate to the manager. The
+foreground parent forwards SIGINT, SIGTERM and SIGHUP until the child exits, shares one
+five-second SIGKILL escalation timer across repeated signals, and clears that timer and
+its handlers on settlement. Signal exits preserve `128 + signalNumber`. A parent killed
+without running handlers is not covered by this forwarding mechanism.
+
 > Decision record: [ADR-0028](../decisions/ADR-0028-background-service-command-selection.md)
 
 ## Windows npm tray update badge
@@ -68,6 +87,14 @@ fallback, keeping diagnostics and tests independent of the host PATH. Launchd al
 package-local Bun and CLI pair selected by the trusted install or repair invocation; it never hands
 credential-bearing service state to a mutable PATH launcher, and a `launcherPath` recorded by an
 older install is reported stale so `ocx service repair` re-bakes the trusted package paths.
+
+Service launchers reject recorded and newly discovered paths inside shell-local `fnm`, `nvm`,
+`mise`, `asdf`, or `volta` multishell directories. Systemd, launchd, Windows Task Scheduler,
+and native WinSW definitions remove those entries from their rendered PATH while keeping other
+environment values. WinSW uses the same pure filter in `src/lib/transient-service-path.ts`
+without importing the service state module. Launchd
+repair compares the full plist after normalizing its previous PATH: a PATH cleanup or any other
+definition change reloads the live job through the guarded eviction and bootstrap path.
 
 Launcher mode omits the package-local Bun provenance pair because an upgrade may delete that
 versioned tree. The only runtime path carried through the launcher is a pre-Bun, proof-bound
@@ -233,9 +260,12 @@ The service loads the optional `compactionRouting` block from persisted configur
 [Responses ingress](../transports/responses-failover.md#compaction-routing-overrides) applies it to individual compaction
 requests whose trigger the block names.
 
-Standalone binaries use `src/lib/standalone.ts` to detect the Bun `$bunfs` runtime and
-`src/service/state.ts` to compose durable service commands as `<execPath> start`, without a
-source-tree CLI path. The copied `gui/dist` directory is located by `src/server/gui-static.ts`;
+Standalone binaries use `src/lib/standalone.ts` to recognize hostless `file:` module URLs
+whose decoded pathname begins at Bun's `$bunfs` or Windows `~BUN` virtual root. The helper
+decodes one URL layer, so encoded Windows tildes work while network-host and nested source
+paths do not impersonate a bundled module. `src/service/state.ts` composes durable service
+commands as `<execPath> start`, without a source-tree CLI path. The copied `gui/dist`
+directory is located by `src/server/gui-static.ts`;
 `OPENCODEX_GUI_DIST` remains an explicit override.
 
 ## Bun updater ownership transaction

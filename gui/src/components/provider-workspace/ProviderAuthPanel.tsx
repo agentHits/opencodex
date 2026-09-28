@@ -131,6 +131,7 @@ export default function ProviderAuthPanel({
   keys?: ApiKeyRow[];
   accountLoadState?: AccountLoadState;
   switchingAccountId?: string | null;
+  pausingAccountId?: string | null;
   busy?: boolean;
   loginHint?: LoginHint | null;
   authHandlers?: ProviderAuthHandlers;

@@ -125,6 +125,7 @@ async function readExplicitAccountQuota(provider: string, accountId: string, con
     case "cursor": result = await fetchCursorQuota(provider, accessToken); break;
     case "kimi": result = await fetchKimiQuota(provider, config, accessToken); break;
     case "command-code": result = await fetchCommandCodeQuota(provider, config, accessToken); break;
+    case "devin": result = await (await import("./devin")).fetchDevinQuota(provider, accessToken, credential.apiBaseUrl, config.baseUrl); break;
     default: return null;
   }
   return { result, identity, isCurrent };

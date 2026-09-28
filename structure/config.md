@@ -1,6 +1,6 @@
 # Config Surface
 
-Quota activation reuses the existing next-reset fields without adding a polling configuration key. See the [quota activation contract](providers/openai-tiers.md#public-provider-contract).
+Quota activation reuses the existing next-reset fields without adding a polling configuration key. See the [quota activation contract](providers/openai-tiers.md#public-provider-contract). `src/types/config.ts` defines `anthropicAccountPool.routes` as ordered model rules. `src/oauth/anthropic-model-routes.ts` validates bounded names, full case-sensitive globs and stored account IDs; `src/config/diagnostics.ts` rejects malformed candidate writes. Load retains a malformed hand edit so unrelated providers survive, while the enabled Anthropic selector refuses it locally before dispatch. Saved rules remain inert when the pool is disabled; affinity is process-local. Request logs use only the rule’s 1-based `route:#<n>` position, never its configured name.
 
 Native function-result injection follows [the separate opt-in control contract](transports/streaming-health.md#experimental-native-function-result-injection); this surface does not infer upstream support or alter its defaults.
 
@@ -98,7 +98,7 @@ A schema-invalid top-level JSON value is repairable only when it is a non-array 
 | Listener | `port`, `hostname` | The listener owns the port; `runtime-port.json` reports where it actually landed. |
 | Routing | `defaultProvider`, `providers`, per-provider `selectedModels`, `combos` | Explicit `provider/model` wins over `defaultProvider`; combo dispatch uses the selected target's existing capability ladder and does not create a second catalog authority. For Kiro OAuth, the management API validates `providers.kiro.oauthAccountFailover.strategy` (`least-loaded`) and `maxConcurrentPerAccount` (1–100) only for Kiro; the cap persists, while active lease counts remain process-local. |
 | Request pacing | `providers.<name>.requestPacing`, `requestPacing.models.<model>` | Optional client-side request-start pacing supports interval limits and positive-integer `maxConcurrentRequests` caps. A provider or model rule may be concurrency-only; model entries target exact upstream IDs and can only add delay or narrow concurrency. |
-| Compaction routing | `compactionRouting.model`, optional `compactionRouting.reasoningEffort`, optional `compactionRouting.triggers` | Explicit Codex compaction metadata whose `compaction.trigger` is one the block names activates a request-local override; `triggers` defaults to `["manual"]`. See [Responses compaction](transports/responses-failover.md#compaction-routing-overrides). Invalid hand edits disable the block with a load warning without discarding providers; candidate writes reject invalid blocks. |
+| Compaction and memory routing | `compactionRouting.model`, optional `compactionRouting.reasoningEffort`, optional `compactionRouting.triggers`; `memoryModels.extract`, `memoryModels.consolidation` | Explicit Codex compaction metadata whose `compaction.trigger` is one the block names activates a request-local override; `triggers` defaults to `["manual"]`. See [Responses compaction](transports/responses-failover.md#compaction-routing-overrides). Invalid hand edits disable the block with a load warning without discarding providers; candidate writes reject invalid blocks. Each optional memory phase names a nonblank model and optional declared `reasoningEffort`; absence preserves the current route, candidate writes reject malformed values, and load degrades only the invalid phase with a warning. See [memory phase routing](transports/responses-failover.md#memory-phase-routing). |
 | Catalog | `disabledModels`, `customModels`, `modelCacheTtlMs`, `providerContextCaps`, `contextCapValue`, per-provider `modelDisplayNames`, `codexAccountNamespaces`, `codexAccountPickerEnabled` | Catalog state is derived; config only records intent. Exact provider model display names are durable display only overlays. The picker flag is an explicit visibility override, while selector mappings remain the durable exact-routing contract. |
 | Retained state | `appOwnedMemoryBudgetMb` | Process-wide eviction target for app-owned logs, caches, blobs, and continuation payloads. Default 256 MiB, valid 64..4096; pinned state may temporarily exceed the target, but every pin-capable store has a finite local cap and their documented aggregate stays below `APP_OWNED_WORST_CASE_PINNED_BYTES` (512 MiB). Neither value caps RSS or native runtime memory. |
 | Spend | `spend.root`, `spend.identity`, `spend.pool`, `spend.retentionDays` | Durable token ceilings for the spend-reservation ledger. Absent is the default and means observe-only accounting: spend is still journaled and nothing is refused, so observe-only and enforced servers take the same state-directory writer lease. One live process may write one directory; explicit sibling instances need separate `OPENCODEX_HOME` directories. There is no default figure for any scope — the ledger is on by default, so a shipped ceiling would refuse real traffic on upgrade against a number nobody chose. Strictly validated and positive-integer only, because 0 would read as a budget and refuse everything; a malformed section degrades to no ceiling, which is why the write path rejects it and load diagnostics report it. Resolution and application live in `src/lib/spend-reservation-ledger.ts`; see [`transports/responses.md`](transports/responses.md). |
@@ -264,12 +264,13 @@ base-url-less table is the Codex desktop app's own native-routing placeholder (s
 each app-managed rewrite writes `model_provider = "custom"` plus such a table, stripping the
 injected root keys alongside), which re-injects cleanly because the injector strips a root
 `model_provider` line first. Recovery is drift detection (`src/codex/config-drift-heal.ts`): the
-auto-refresh tick re-runs the standard sync when a root key the journal says was injected is
-missing on disk (presence only; a present key with another value is left alone).
+auto-refresh tick re-injects the config when a root key the journal says was injected is missing on disk (presence only; a present key with another value is left alone).
+The heal calls the injector directly (no provider discovery or catalog write), waits at most the tick's 1-second commit-lock deadline, and its `beforeClientWrite` guard refuses the write once the timer generation changed or the persisted config no longer matches the tick's snapshot; the catalog path is a bounded read-only lookup of the journal's `injectedCatalogPath` (a regular, parseable catalog) falling back to the default; with no usable catalog the heal is deferred to a later tick, and "healed" is reported only after the keys are observed on disk.
 
 `ocx sync` and `ocx restore back` run the injector's non-writing preflight before provider
 discovery or catalog/cache replacement. Deterministic config and ownership refusals therefore
 leave the existing catalog and cache untouched, and their concrete messages are emitted on stderr.
+The earlier service-home admission refusal logs one path-free line; `POST /api/sync` returns its reason.
 Exactly one conversation-history refusal scopes the relabel unit instead of vetoing the apply
 transition, and only because it is permanent. Codex allocates paginated rollout ordinals inside
 its own writer, so `history_paginated_requires_native_writer` is not retryable: when the admitted
@@ -369,7 +370,7 @@ report is additive.
 
 When opencodex owns routing, it also writes `$CODEX_HOME/opencodex.config.toml` as an explicit profile
 target. Codex config uses `service_tier = "fast"` and `[features].fast_mode = true`;
-catalog/request tier metadata may use `priority`. Do not collapse these spellings into one value.
+catalog/request tier metadata may use `priority`. Do not collapse these spellings into one value. Provider `responseTierAuthoritative` is an optional strict boolean validated by `src/config/schema/leaf-validators.ts`; it changes response evidence only, as defined in the [response-tier observation contract](transports/responses.md#response-tier-observation-authority).
 
 ## Provider output defaults
 
@@ -478,16 +479,13 @@ the residual directory for manual review; there is no recursive-delete fallback.
 
 ## Remote client key files
 
-The connection's `tokenFingerprint` participates in
-[`ocx status` credential binding](runtime.md#remote-hub-status-credential-binding).
+The connection's `tokenFingerprint` participates in [`ocx status` credential binding](runtime.md#remote-hub-status-credential-binding).
 
-Client catalog readiness observes the selected Codex runtime without creating or rewriting
-`codex-runtime.json`; general status reuses its already-resolved command under the [runtime contract](runtime.md#remote-hub-hardening-ownership).
+Client catalog readiness observes the selected Codex runtime without creating or rewriting `codex-runtime.json`; general status reuses its already-resolved command under the [runtime contract](runtime.md#remote-hub-hardening-ownership).
 
 Client connection metadata stores a stable `apiKeyId` and a non-secret rotation `pendingOperation`. The current data secret remains only in `service-api-token`; a bounded rotation temporarily keeps the old secret in owner-only `service-api-token.prev`. Commit or recovery clears the marker before orphan cleanup. `ocx disconnect` is local-only and leaves remote revocation to the hub's **Integrations → API Keys** page. Hub and local usage stores are not mirrored.
 
-Codex display-cache expiry, retained blocking main-policy evidence, and reset history follow the
-[quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
+Codex display-cache expiry, retained blocking main-policy evidence, and reset history follow the [quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
 
 `codexPool.excludedPlans` is interpreted only by automatic selection; its all-excluded and explicit-route behavior follows the [plan exclusion contract](providers/openai-accounts.md#automatic-pool-plan-exclusions). Optional `codexPool.startIdleWindows` defaults off and follows the [idle-window steering contract](providers/openai-accounts.md#idle-window-steering), using real new requests to start observed idle 5-hour windows.
 
@@ -502,6 +500,10 @@ Usage consumers preserve positive incomplete-history metadata as specified in [u
 `dropCodexSafetyBuffering` is an optional boolean, default false. Invalid API candidates reject;
 malformed persisted values stay disabled. It controls only the allowlisted client-output hints
 described in [Responses transport](transports/responses.md), not upstream policy or model selection.
+
+## Codex Pool low-quota protection
+
+`codexPool.lowQuotaProtection` is opt-in, requires a 1–100 threshold and a selected action/window when enabled, covers pool accounts only and is independent of proactive switching and the main account’s 98% hard lock. `src/codex/low-quota-protection.ts` pauses in live `pausedCodexAccountIds` before selection, then coalesces a deferred config save with bounded retry and shutdown flush. Fresh accepted observations reach `src/codex/low-quota-observer.ts`; credits-only and expired windows do not act. Manual resume suppresses repause across currently qualifying window episodes; a new reset boundary or below-threshold reading re-arms the policy, but never automatically resumes an account. A timed-out in-flight save remains pending until its eventual success or failure; queued work is cancelled at owner close. An unsuccessful save does not survive restart. The default alert is log-and-API only and records `logged`, not notification delivery.
 
 ## Management-backed CLI commands need a management plane
 
@@ -582,5 +584,4 @@ so wrong types and unknown nested fields are rejected rather than silently saved
 `apiSurfaces` and `protocols` on `src/types/config.ts` are parsed by `src/protocols/settings.ts` only; [Protocol Paths](data-planes/protocol-paths.md#settings) owns their schema handling, meaning and the one writer (`PATCH /api/protocols/settings`), including why closing Messages also writes `claudeCode.enabled` through `commitClaudeCodeBlock` (`src/claude/claude-code-block.ts`, the sentinel-stamping block writer every management route uses).
 
 Stored Direct substitution follows the [credential identity contract](providers/openai-accounts.md#sidecars-management-and-ui): both synchronous and asynchronous materializers discard the caller account header before applying the stored credential; ordinary native Direct passthrough is unchanged.
-
 Proxy activation and credential-safe CLI output follow [Proxy Configuration](config-proxy.md).

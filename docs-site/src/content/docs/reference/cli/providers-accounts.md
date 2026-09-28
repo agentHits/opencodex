@@ -156,8 +156,11 @@ window. The block releases automatically, with the switch still on, once every b
 reports a fresh reading below 98% (a 0% reset counts); the next 98% observation blocks again.
 An unreadable 5h reading cannot hide a weekly block. Unknown usage does not fabricate a zero, and a missing reading does
 not erase an already measured blocking tuple. A predicted reset time alone does not unlock it.
-While blocked, the existing once-per-minute background cycle checks fresh owned usage; failed or
-invalid readings retain the block. Other pause, reauthentication, and upstream limits remain independent.
+While blocked, the minute sweep waits for the latest known blocking reset, then checks owned usage.
+If no future reset is known or a check remains blocked, recovery uses a capped 5/10/20/40/60-minute
+schedule; a longer `Retry-After` also delays profile and token preparation. Only a fresh valid reading
+can lift the block. In Pool mode, a quota `--refresh` bypasses cache freshness but still honors failed-read pacing;
+a deferred read makes no new diagnostic attempt. Other pause, reauthentication, and upstream limits remain independent.
 
 Protection treats one fresh valid WHAM usage response as a replacement for the old 5h reading when
 its primary window explicitly lasts **at least 24 hours** and secondary/tertiary windows are explicitly `null`
@@ -351,7 +354,7 @@ returns:
 ```
 
 `--quota` adds a `QUOTA` column with each account's own usage, for providers that support a
-per-account probe (Anthropic, Kiro, and Google Antigravity today). It is opt-in because the proxy probes the upstream
+per-account probe (Anthropic, Kiro, Google Antigravity, and Devin today). It is opt-in because the proxy probes the upstream
 once per stored credential; the default listing stays a local read. `--refresh` bypasses the
 cached result. An account with no per-account quota shows `-`, and one whose probe failed shows
 `unavailable` — blank would read as "no usage" rather than "not measured". `--json` carries the
@@ -363,6 +366,15 @@ talks to Google's Cloud Code Assist host through the pinned outbound transport, 
 configured `baseUrl`: a custom base URL is a routing choice for requests, not a second source of
 Google's accounting for a stored credential. An account without a project id, or one whose probe
 is redirected or fails, shows `unavailable`.
+
+Devin rows come from Cognition's `GetUserStatus` for that account's own key, sent to its
+allowlisted api-server host. If an older credential has no host, the probe uses the configured
+provider base URL when allowlisted, or the US default. They show the dated daily and weekly
+windows the plan exposes, and a monthly credit window only on a credit-billed plan that reports
+a credit balance; an unknown billing strategy uses that credit fallback only if both reset dates
+are absent. Expired daily and weekly windows stay hidden without becoming monthly credit quota.
+An unlimited balance, or a status with no balance at all, shows no credit window.
+Only a rejected key (401) clears a cached reading; other probe failures retain the last reading.
 
 ```text
 $ ocx account list anthropic --quota
@@ -383,7 +395,7 @@ kiro      oauth  8b24de70  k***1@examp***.net  -                mo 88%
 
 `ocx account list kiro` marks an account excluded from automatic selection as
 `not-auto-selected(<reason>)`. JSON carries `autoSelectable` and, when false, a closed
-`skipReason` (`needs_reauth`, `suspended`, `cooldown`, or `quota_exhausted`). An active
+`skipReason` (`paused`, `needs_reauth`, `suspended`, `cooldown`, or `quota_exhausted`). An active
 singleton or all-excluded pool may still send. Kiro `providerCredits` comes from measured
 `meteringEvent` values: the last reading within a physical response is retained, and
 separately billed sends add to the request spend. Credits are never estimated from tokens.
@@ -445,6 +457,23 @@ rotate the request to another eligible Pool account. These failure transitions r
 ### `ocx account clear <provider> [--json]`
 
 Clear the manual Codex account selection without resolving an account id, so it works even when an account is literally named `auto`. Codex pools only; other provider types have no automatic selection to restore.
+
+### `ocx account pause|resume <provider> <id|alias|main> [--json]`
+
+Pause or resume one account in the Codex pool or a generic OAuth provider pool, including
+`google-antigravity`. For the Codex pool, `main` identifies only the built-in Codex account;
+generic OAuth accounts must be identified by id or a unique alias. A paused generic OAuth account
+is excluded from request selection, 429 failover, and proactive token refresh, and cannot be
+selected manually. Pausing the active account switches to the next usable account when one exists.
+If every account is paused, requests that need that pool return 403 until an account is resumed.
+
+For a generic OAuth provider, identify the account by id or by a unique exact or case-insensitive
+alias. The JSON response reports the account id, pause state, and active account id.
+
+```bash
+ocx account pause google-antigravity <account-id-or-alias>
+ocx account resume google-antigravity <account-id-or-alias>
+```
 
 ### `ocx account refresh <provider> [--json]`
 
@@ -724,3 +753,15 @@ Use `ocx provider add mine --adapter openai-chat --base-url https://example.com/
 Ordinary token refresh preserves history. Reauthentication, removal or account replacement retires the old publication. Native main and probes performed before a login is published are not included. Missing history means insufficient observations, not zero usage. This command does not spend quota. Effective estimates, when supported by observations, carry the limitations below.
 
 The history output also includes effective reported-token estimates when same-window observations and attributable usage support them. Each estimate includes a sample count and low confidence. Quota rounding, external usage and assumed log-label continuity limit the inference; it is not your provider’s token allowance. Missing or truncated ledger evidence returns insufficient evidence. `--limit` controls displayed history, not the bounded estimate input.
+
+### `ocx account routes anthropic`
+
+Read the saved Anthropic OAuth model routes, replace them from a local JSON array, or clear them:
+
+```sh
+ocx account routes anthropic --json
+ocx account routes anthropic --file routes.json
+ocx account routes anthropic --clear
+```
+
+The file is limited to 64 KiB. The server validates each route and stores it under `anthropicAccountPool.routes`; writes require the running proxy. Use stored account IDs from `ocx account list anthropic --json`. Rules only affect the enabled pool and never claim that an account is entitled to a model. Request logs identify a matched rule as `route:#<n>` (1-based list position), without its operator name.

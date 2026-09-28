@@ -29,7 +29,7 @@ export interface AccountRow {
   needsReauth?: boolean;
   needsReauthReason?: "verify_account";
   autoSelectable?: boolean;
-  skipReason?: "needs_reauth" | "suspended" | "cooldown" | "quota_exhausted";
+  skipReason?: "paused" | "needs_reauth" | "suspended" | "cooldown" | "quota_exhausted";
   selectionExcludedReason?: "plan_excluded";
   selectionExcludedPlan?: string;
   /** Registered credential that is still excluded from routing until validation completes. */
@@ -347,6 +347,8 @@ interface OAuthAccountDto {
   active?: boolean;
   needsReauth?: boolean;
   needsReauthReason?: "verify_account";
+  /** Present only for providers that support operator pause (generic OAuth pools). */
+  paused?: boolean;
   autoSelectable?: boolean;
   skipReason?: unknown;
   /** Always sent by the management route; explicitly `null` when the tier is unknown. */
@@ -357,7 +359,7 @@ interface OAuthAccountDto {
 }
 
 function isKiroSkipReason(value: unknown): value is NonNullable<AccountRow["skipReason"]> {
-  return value === "needs_reauth" || value === "suspended"
+  return value === "paused" || value === "needs_reauth" || value === "suspended"
     || value === "cooldown" || value === "quota_exhausted";
 }
 
@@ -388,6 +390,7 @@ async function fetchOAuthRows(
     active: a.active ?? a.id === activeId,
     needsReauth: a.needsReauth,
     ...(a.needsReauthReason === "verify_account" ? { needsReauthReason: a.needsReauthReason } : {}),
+    ...(a.paused === true ? { paused: true } : {}),
     ...(name === "kiro" && typeof a.autoSelectable === "boolean"
       ? { autoSelectable: a.autoSelectable } : {}),
     ...(name === "kiro" && a.autoSelectable === false && isKiroSkipReason(a.skipReason)
