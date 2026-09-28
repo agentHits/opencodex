@@ -313,6 +313,23 @@ describe("tray proxy coordinator", () => {
     expect(verdict).toEqual({ status: "live", live: late });
     expect(waits).toBe(2);
   });
+  test("pollReplacementDeparture keeps polling after an uncertain round", async () => {
+    const previous: ProxyRestartLive = { pid: 10, port: 10100, source: "runtime" };
+    const late: ProxyRestartLive = { pid: 20, port: 10100, source: "runtime" };
+    const rounds: Array<ProxyRestartDiscovery> = [
+      { status: "uncertain" },
+      { status: "live", live: late },
+    ];
+    let waits = 0;
+    const verdict = await pollReplacementDeparture(
+      async () => rounds.shift() ?? { status: "absent" },
+      previous,
+      () => true,
+      async () => { waits += 1; },
+    );
+    expect(verdict).toEqual({ status: "live", live: late });
+    expect(waits).toBe(1);
+  });
 
   test("pollReplacementDeparture stops polling once the budget is spent", async () => {
     const previous: ProxyRestartLive = { pid: 10, port: 10100, source: "runtime" };

@@ -82,7 +82,6 @@ export async function pollReplacementDeparture(
     const round = await observe();
     if (round.status === "absent") return round;
     if (round.status === "live" && isProxyReplacement(previous, round.live)) return round;
-    if (round.status === "uncertain") return round;
     if (!shouldContinue()) return round;
     await wait();
   }

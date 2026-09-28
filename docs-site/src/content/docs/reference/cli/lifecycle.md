@@ -119,7 +119,7 @@ One invocation is the whole transaction: transient races are retried inside it, 
 start is attempted again and an uncertain discovery round is re-observed instead of failing
 the command. When an accepted restart never publishes a replacement, the command re-observes
 once before giving up — a proxy that crashed mid-restart reads absent and is started fresh,
-while a replacement that landed just past the deadline still proves success. A live target is
+while a replacement that landed just past the replacement-wait deadline still proves success. A live target is
 never stopped to make room, so a stale-but-listening process can not be replaced by a second
 proxy racing it for the port.
 Every failed start attempt is followed by a beat and a strong re-observation before the
