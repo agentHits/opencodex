@@ -1287,13 +1287,15 @@ export async function prepareAdapterExchange(
           hop.permit?.release();
           break;
         }
-        try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+        // The refusal body stays alive until the replacement owns the outcome: it
+        // is also the preserveFailureResponse below, so cancelling it early would
+        // hand back a 403 with a destroyed body when the rebuild is refused.
+        const failedResponse = upstreamResponse;
         try {
           // The FULL snapshot, not just the bearer: Antigravity pairs an
           // account-matched projectId with its token, so a token-only swap would mix
           // one account's credential with another's routing data.
           const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
-          transportState.genericFailovers += 1;
           if (!await applyFailoverSnapshot(snapshot)) {
             hop.permit?.release();
             break;
@@ -1303,14 +1305,21 @@ export async function prepareAdapterExchange(
             resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),
             config.cacheRetention,
           );
+          bindRouteReasoningReplayScope({
+            parsed,
+            providerName: route.providerName,
+            provider: route.provider,
+            adapterName: transportState.activeAdapter.name,
+            oauthCredentialSnapshot: transportState.replayOAuthCredentialSnapshot,
+          });
           sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, transportState.activeAdapter.name, logCtx.accountLogLabel);
           recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, transportState.activeAdapter.name);
           sendBudgetState.pendingHopPermit = hop.permit;
           let result: Response | { failed: Response };
           try {
-            result = await rebuildAndRefetch("oauth-account-429", () => {
+            result = await rebuildAndRefetch("oauth-account-403", () => {
               if (!adapterOwnsDispatch) hop.permit?.use();
-            }, upstreamResponse);
+            }, failedResponse);
           } finally {
             sendBudgetState.pendingHopPermit = undefined;
           }
@@ -1318,6 +1327,8 @@ export async function prepareAdapterExchange(
             hop.permit?.release();
             return result.failed;
           }
+          transportState.genericFailovers += 1;
+          try { void failedResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
           upstreamResponse = result;
           if (isNonReplayableResponse(upstreamResponse)) continue recovery;
         } catch {

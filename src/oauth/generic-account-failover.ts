@@ -734,3 +734,16 @@ export function clearGenericFailoverHealth(providerName?: string): void {
     if (key.startsWith(`${providerName}\u0000`)) health.delete(key);
   }
 }
+
+/**
+ * Retire one account's failover evidence after an explicit (re-)login. A cooldown
+ * recorded against the old grant must not hold out the fresh credential, so the
+ * entry leaves with the login rather than lingering until its deadline. Other
+ * accounts keep their evidence; use the provider-wide clear only to reset the pool.
+ */
+export function clearGenericFailoverHealthForAccount(providerName: string, accountId: string): void {
+  const bare = `${providerName}\u0000${accountId}`;
+  for (const key of [...health.keys()]) {
+    if (key === bare || key.startsWith(`${bare}\u0000`)) health.delete(key);
+  }
+}

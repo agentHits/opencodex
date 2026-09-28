@@ -8,7 +8,7 @@ import { credentialGeneration, getAccountSet, saveCredential, setAccountPaused, 
 import { startServer } from "../../src/server";
 import { ANTIGRAVITY_VALIDATION_REQUIRED_PREFIX } from "../../src/adapters/google-errors";
 import { readUsageEntries } from "../../src/usage/log";
-import { clearGenericFailoverHealth, genericFailoverRetryAfterSeconds, rotateAntigravityAccountOnAuthRefusal } from "../../src/oauth/generic-account-failover";
+import { clearGenericFailoverHealth, eligibleFailoverAccounts, genericFailoverRetryAfterSeconds, rotateAntigravityAccountOnAuthRefusal } from "../../src/oauth/generic-account-failover";
 import type { OcxConfig } from "../../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -386,6 +386,39 @@ describe("Google Antigravity OAuth upstream 401 replay", () => {
       expect(getAccountSet("google-antigravity")!.accounts.find(a => a.id === failedId))
         .toMatchObject({ needsReauth: true, needsReauthReason: "verify_account" });
       expect(genericFailoverRetryAfterSeconds("google-antigravity")).not.toBeNull();
+      // An explicit re-login retires both the durable mark and the generation-bound
+      // auth cooldown: the account is eligible again without waiting out the deadline.
+      await saveCredential("google-antigravity", {
+        access: "relogin-access", refresh: "relogin-refresh", expires: Date.now() + 3_600_000,
+        accountId: "antigravity-test-account", projectId: "initial-project-id", source: "oauth",
+      });
+      const row = getAccountSet("google-antigravity")!.accounts.find(a => a.id === failedId)!;
+      expect(row.needsReauth).toBeFalsy();
+      expect(row.needsReauthReason).toBeUndefined();
+      expect(eligibleFailoverAccounts("google-antigravity")).toContain(failedId);
+    } finally { await server.stop(true); }
+  });
+
+  test("verify 403 with no viable replacement delivers the original bounded 403", async () => {
+    await seedOAuth();
+    const failedId = getAccountSet("google-antigravity")!.activeAccountId;
+    // A sibling without a project cannot be admitted for Cloud Code Assist, so the
+    // rotation is refused after the refusal body was read: the client must still
+    // receive the original 403 with its body intact, not a cancelled stream.
+    await saveCredential("google-antigravity", {
+      access: "access-noproject", refresh: "refresh-noproject", expires: Date.now() + 3_600_000,
+      accountId: "account-noproject", source: "oauth",
+    }, { addAccount: true });
+    await setActiveAccount("google-antigravity", failedId);
+    saveConfig(antigravityConfig());
+    installOAuthFetch([{ status: 403, message: "Please verify your account to continue" }]);
+    const server = startServer(0);
+    try {
+      const response = await postResponses(server);
+      expect(response.status).toBe(403);
+      expect(await response.text()).toContain("verify your account");
+      expect(getAccountSet("google-antigravity")!.accounts.find(a => a.id === failedId))
+        .toMatchObject({ needsReauth: true, needsReauthReason: "verify_account" });
     } finally { await server.stop(true); }
   });
 

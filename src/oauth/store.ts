@@ -865,7 +865,7 @@ export async function saveCredentialWithReceipt(
 ): Promise<OAuthCredentialWriteReceipt | null> {
   const safe = normalizeCredential(cred);
   if (!safe) return null;
-  return await mutateStore(store => {
+  const receipt = await mutateStore(store => {
     const set = store[provider];
     const previousActiveAccountId = set?.activeAccountId;
     const previousAccounts = new Map(
@@ -950,6 +950,13 @@ export async function saveCredentialWithReceipt(
       receipt.selectionRevision = store[provider]?.selectionRevision;
     },
   });
+  // An explicit login retires that account's failover evidence: a cooldown recorded
+  // against the old grant must not hold out the fresh credential. Dynamic import
+  // keeps the store free of a static edge into the failover module, which reads the
+  // store itself.
+  const { clearGenericFailoverHealthForAccount } = await import("./generic-account-failover");
+  clearGenericFailoverHealthForAccount(provider, receipt.accountId);
+  return receipt;
 }
 
 /** Ordinary callers do not acquire rollback authority merely by saving a credential. */
