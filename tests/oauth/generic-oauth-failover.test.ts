@@ -1006,4 +1006,24 @@ describe("Antigravity authentication refusal selection", () => {
     expect(rotateAntigravityAccountOnAuthRefusal(true, a!, old, null)).toBe(b);
     expect(eligibleFailoverAccounts("google-antigravity")).toContain(a!);
   });
+
+  test("re-login retires only superseded auth evidence, preserving rate cooldowns", async () => {
+    const [a, b] = await seedProvider("google-antigravity", 2);
+    const cfg = { providers: { "google-antigravity": { authMode: "oauth" } } } as unknown as OcxConfig;
+    // Unrelated rate evidence on A (cla family and family-less default) plus auth
+    // evidence on A (gem family).
+    expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", a!, "120", Date.now(), "claude-sonnet-4-6")).toBe(b);
+    expect(rotateGenericOAuthAccountOn429(cfg, "google-antigravity", a!, null, Date.now(), null)).toBe(b);
+    const generation = credentialGeneration(getAccountSet("google-antigravity")!.accounts[0]!.credential);
+    rotateAntigravityAccountOnAuthRefusal(true, a!, generation, "gemini-3.8-flash");
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "gem")).not.toContain(a!);
+    // Explicit re-login with fresh tokens retires the superseded auth entry only.
+    await saveCredential("google-antigravity", {
+      access: "access-new", refresh: "refresh-new", expires: Date.now() + 3_600_000,
+      accountId: "uuid-0",
+    } as never);
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "gem")).toContain(a!);
+    expect(eligibleFailoverAccounts("google-antigravity", Date.now(), "cla")).not.toContain(a!);
+    expect(eligibleFailoverAccounts("google-antigravity")).toEqual([b!]);
+  });
 });
