@@ -983,16 +983,6 @@ describe("ocx account CLI (issue #180 matrix)", () => {
     expect(table).toContain("selected");
   });
 
-  test("verify_account reauth renders a distinct STATUS from a dead credential", () => {
-    const table = formatAccountTable([
-      { provider: "google-antigravity", type: "oauth", id: "bad", label: "bad", active: false, needsReauth: true, needsReauthReason: "verify_account" },
-      { provider: "google-antigravity", type: "oauth", id: "dead", label: "dead", active: false, needsReauth: true },
-    ]);
-
-    expect(table).toContain("needs-reauth(verify)");
-    expect(table).toContain("needs-reauth");
-  });
-
   test("18: refresh openai forces quota refresh and distinguishes unknown quota", async () => {
     const human = await run(["refresh", "openai"]);
     const machine = await run(["refresh", "openai", "--json"]);

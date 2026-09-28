@@ -8,7 +8,7 @@ import { credentialGeneration, getAccountSet, saveCredential, setAccountPaused, 
 import { startServer } from "../../src/server";
 import { ANTIGRAVITY_VALIDATION_REQUIRED_PREFIX } from "../../src/adapters/google-errors";
 import { readUsageEntries } from "../../src/usage/log";
-import { clearGenericFailoverHealth, rotateAntigravityAccountOnAuthRefusal } from "../../src/oauth/generic-account-failover";
+import { clearGenericFailoverHealth, genericFailoverRetryAfterSeconds, rotateAntigravityAccountOnAuthRefusal } from "../../src/oauth/generic-account-failover";
 import type { OcxConfig } from "../../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -170,6 +170,7 @@ function installOAuthFetch(
     tokenThrow?: string;
     refreshedProjectId?: string | null;
     beforeFirstUnauthorized?: () => Promise<void>;
+    beforeFirstForbidden?: () => Promise<void>;
   } = {},
 ): { chatAuth: string[]; chatProjects: string[]; requestPaths: string[]; counts: { refresh: number } } {
   const chatAuth: string[] = [];
@@ -177,6 +178,7 @@ function installOAuthFetch(
   const requestPaths: string[] = [];
   const counts = { refresh: 0 };
   let unauthorizedObserved = false;
+  let forbiddenObserved = false;
   globalThis.fetch = (async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
 
@@ -232,6 +234,10 @@ function installOAuthFetch(
         unauthorizedObserved = true;
         await options.beforeFirstUnauthorized?.();
       }
+      if (statusCode === 403 && !forbiddenObserved) {
+        forbiddenObserved = true;
+        await options.beforeFirstForbidden?.();
+      }
       if (statusCode >= 400) {
         return new Response(JSON.stringify({
           error: {
@@ -274,6 +280,10 @@ function installOAuthFetch(
       if (statusCode === 401 && !unauthorizedObserved) {
         unauthorizedObserved = true;
         await options.beforeFirstUnauthorized?.();
+      }
+      if (statusCode === 403 && !forbiddenObserved) {
+        forbiddenObserved = true;
+        await options.beforeFirstForbidden?.();
       }
       if (statusCode >= 400) {
         return new Response(JSON.stringify({
@@ -326,6 +336,56 @@ describe("Google Antigravity OAuth upstream 401 replay", () => {
       expect(observed.chatProjects).toEqual(["initial-project-id", "project-b"]);
       expect(observed.counts.refresh).toBe(0);
       expect(readUsageEntries().at(-1)?.attempts?.some(attempt => attempt.recoveryKinds.includes("oauth-account-403"))).toBe(true);
+    } finally { await server.stop(true); }
+  });
+  test("delayed verify 403 after re-login marks nothing and replays without a rate cooldown", async () => {
+    await seedOAuth();
+    const failedId = getAccountSet("google-antigravity")!.activeAccountId;
+    await seedSibling();
+    saveConfig(antigravityConfig());
+    const observed = installOAuthFetch(
+      [{ status: 403, message: "Please verify your account to continue" }, 200],
+      { beforeFirstForbidden: async () => {
+        // The 403 was already in flight when the human re-verified and re-logged in:
+        // the stored credential is now a different generation than the refused send.
+        await saveCredential("google-antigravity", {
+          access: "relogin-access", refresh: "relogin-refresh", expires: Date.now() + 3_600_000,
+          accountId: "antigravity-test-account", projectId: "initial-project-id", source: "oauth",
+        });
+      } },
+    );
+    const server = startServer(0);
+    try {
+      const response = await postResponses(server);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("ok after google refresh");
+      // The rotation targets the sibling, but committing it loses to the newer manual
+      // selection (the re-login bumped the selection revision), so the replay serves
+      // through the fresh grant — the optimal outcome, not a failure.
+      expect(observed.chatAuth).toEqual(["Bearer rejected-access", "Bearer relogin-access"]);
+      const row = getAccountSet("google-antigravity")!.accounts.find(a => a.id === failedId)!;
+      expect(row.needsReauth).toBeFalsy();
+      expect(row.needsReauthReason).toBeUndefined();
+      expect(genericFailoverRetryAfterSeconds("google-antigravity")).toBeNull();
+    } finally { await server.stop(true); }
+  });
+  test("fresh verify 403 quarantines with verify reason and fences the cooldown", async () => {
+    await seedOAuth();
+    const failedId = getAccountSet("google-antigravity")!.activeAccountId;
+    await seedSibling();
+    saveConfig(antigravityConfig());
+    const observed = installOAuthFetch(
+      [{ status: 403, message: "Please verify your account to continue" }, 200],
+    );
+    const server = startServer(0);
+    try {
+      const response = await postResponses(server);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("ok after google refresh");
+      expect(observed.chatAuth).toEqual(["Bearer rejected-access", "Bearer access-b"]);
+      expect(getAccountSet("google-antigravity")!.accounts.find(a => a.id === failedId))
+        .toMatchObject({ needsReauth: true, needsReauthReason: "verify_account" });
+      expect(genericFailoverRetryAfterSeconds("google-antigravity")).not.toBeNull();
     } finally { await server.stop(true); }
   });
 
