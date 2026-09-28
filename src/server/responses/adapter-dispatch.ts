@@ -46,7 +46,7 @@ import type { OpaqueBlobRecoveryGuard } from "./core-opaque-recovery";
 import type { AttemptRecoveryKind } from "../../usage/log";
 import type { OAuthAccessSnapshot } from "../../oauth";
 import { OAuthAccountPausedError, OAuthLoginRequiredError, publicOAuthAuthenticationErrorMessage } from "../../oauth";
-import { getAccountSet, markAccountNeedsReauth, markAccountNeedsReauthIfGeneration } from "../../oauth/store";
+import { getAccountSet, markAccountNeedsReauthIfGeneration } from "../../oauth/store";
 import { tryKiroAlternateAfterTerminalRefresh } from "../../oauth/kiro-terminal-failover";
 import { classifyKiroRefusal } from "../../adapters/kiro-refusal";
 import { classifyAntigravityRefusal } from "../../adapters/antigravity-refusal";
@@ -1263,23 +1263,24 @@ export async function prepareAdapterExchange(
         if (refusal.kind === "other") break;
         const sent = transportState.sentOAuthSnapshot;
         const failedAccountId = transportState.genericFailoverAccountId;
-        const marked = sent && sent.accountId === failedAccountId
-          ? await markAccountNeedsReauthIfGeneration(route.providerName, failedAccountId, sent.generation, undefined, "verify_account")
-          : false;
-        if (!marked) await markAccountNeedsReauth(route.providerName, failedAccountId, true, "verify_account");
+        // Fenced write: a 403 arriving after the credential rotated (refresh or
+        // re-login) must not quarantine the new login. Without the matching sent
+        // snapshot there is no owner for this write, so skip marking.
+        if (!sent || sent.accountId !== failedAccountId) break;
+        await markAccountNeedsReauthIfGeneration(route.providerName, failedAccountId, sent.generation, undefined, "verify_account");
         const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
         const hop = reserveCredentialHop(
           "auth-recovery",
-          `${route.providerName}|${route.modelId}|adapter-recovery-oauth-429`,
+          `${route.providerName}|${route.modelId}|adapter-recovery-oauth-verify`,
           !adapterOwnsDispatch && transientRetryPolicyFor(route.provider) !== null,
         );
         if (!hop.allowed) break;
-        const nextAccountId = rotateGenericOAuthAccountOn429(
-          config,
-          route.providerName,
+        // Auth-refusal rotation, not the rate-limit one: a verification refusal
+        // must not record rate-limit cooldown semantics against the account.
+        const nextAccountId = rotateAntigravityAccountOnAuthRefusal(
+          antigravityPoolActivated,
           failedAccountId,
-          upstreamResponse.headers.get("retry-after"),
-          Date.now(),
+          sent.generation,
           route.modelId,
         );
         if (!nextAccountId) {

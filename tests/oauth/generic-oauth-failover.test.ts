@@ -559,11 +559,12 @@ describe("sidecar on429 wiring", () => {
     // statement about which providers can recover where:
     //
     //   generic  = 5: streaming loop, continuation loop, sidecar hook, runTurn preflight,
-    //                native Responses passthrough, plus the Antigravity 403 verify-account
-    //                arm in the adapter exchange (it reuses this rotator; the 403 is
-    //                terminal per-account, so rotating to a healthy account IS the
-    //                recovery). The new default only moves OAuth traffic; key-auth
-    //                defaults and Anthropic's own wire/pool remain unchanged.
+    //                native Responses passthrough. The Antigravity 403 verify-account
+    //                arm deliberately does NOT use this rotator: a verification refusal
+    //                must not record rate-limit cooldown semantics, so it moves via
+    //                rotateAntigravityAccountOnAuthRefusal instead. The new default
+    //                only moves OAuth traffic; key-auth defaults and Anthropic's own
+    //                wire/pool remain unchanged.
     //   anthropic = 3: the same, MINUS runTurn -- that path is Cursor-only (cursor.ts is the
     //                  sole adapter implementing runTurn), so Anthropic cannot reach it.
     //   key       = 3: hasKeyPoolFailover guards the two 429 response loops plus the
@@ -573,9 +574,26 @@ describe("sidecar on429 wiring", () => {
     //
     // Adding a recovery site means deciding, deliberately, which rotators it needs and
     // updating the matching number. That decision is the thing this test exists to force.
-    expect(counts.generic).toBe(6);
+    expect(counts.generic).toBe(5);
     expect(counts.anthropic).toBe(3);
     expect(counts.key).toBe(3);
+  });
+
+  test("the verify-account arm moves via auth-refusal rotation, never rate-limit", () => {
+    // A verification refusal must not record rate-limit cooldown semantics: after
+    // reauthentication the account would otherwise stay excluded until a
+    // Retry-After or derived reset expires. The arm text is the contract.
+    const armStart = coreSource.indexOf("// Antigravity verify-account quarantine");
+    expect(armStart).toBeGreaterThan(-1);
+    const armEnd = coreSource.indexOf("// Unknown provenance", armStart);
+    expect(armEnd).toBeGreaterThan(armStart);
+    const arm = coreSource.slice(armStart, armEnd);
+    expect(arm).toContain("rotateAntigravityAccountOnAuthRefusal(");
+    expect(arm).not.toContain("rotateGenericOAuthAccountOn429(");
+    // Marking stays generation-fenced: no unfenced fallback may re-quarantine a
+    // credential that rotated after the 403 was sent.
+    expect(arm).toContain("markAccountNeedsReauthIfGeneration(");
+    expect(arm).not.toMatch(/await markAccountNeedsReauth\(route\.providerName/);
   });
 
   test("the helper fails closed rather than pairing a new bearer with an old identity", () => {
