@@ -403,8 +403,10 @@ describe("sidecar on429 wiring", () => {
     const snapshotUses = coreSource.match(/failoverAccountSnapshot\(/g) ?? [];
     const helperUses = coreSource.match(/applyFailoverSnapshot\(snapshot(?:, (?:next|retry)Parsed)?\)/g) ?? [];
     // Seven includes Kiro-specific adapter and continuation branches plus native passthrough.
+    // Eight adds the Antigravity 403 verify-account arm, which replays through the same
+    // snapshot helper so the rotated bearer keeps its account-matched project.
     // The explicit count keeps a newly added rotation site from skipping identity pairing.
-    expect(snapshotUses.length).toBe(7);
+    expect(snapshotUses.length).toBe(8);
     expect(helperUses.length).toBe(snapshotUses.length);
     // The bearer is written in exactly one place — inside the helper. Any other occurrence is a
     // rotation site that skipped the pairing rules.
@@ -455,8 +457,11 @@ describe("sidecar on429 wiring", () => {
     // statement about which providers can recover where:
     //
     //   generic  = 5: streaming loop, continuation loop, sidecar hook, runTurn preflight,
-    //                native Responses passthrough. The new default only moves OAuth traffic;
-    //                key-auth defaults and Anthropic's own wire/pool remain unchanged.
+    //                native Responses passthrough, plus the Antigravity 403 verify-account
+    //                arm in the adapter exchange (it reuses this rotator; the 403 is
+    //                terminal per-account, so rotating to a healthy account IS the
+    //                recovery). The new default only moves OAuth traffic; key-auth
+    //                defaults and Anthropic's own wire/pool remain unchanged.
     //   anthropic = 3: the same, MINUS runTurn -- that path is Cursor-only (cursor.ts is the
     //                  sole adapter implementing runTurn), so Anthropic cannot reach it.
     //   key       = 3: hasKeyPoolFailover guards the two 429 response loops plus the
@@ -464,9 +469,9 @@ describe("sidecar on429 wiring", () => {
     //                  failing the request); the sidecar reaches the key pool through
     //                  rotateProviderTransportOn429 instead.
     //
-    // Adding a fifth recovery site means deciding, deliberately, which rotators it needs and
+    // Adding a recovery site means deciding, deliberately, which rotators it needs and
     // updating the matching number. That decision is the thing this test exists to force.
-    expect(counts.generic).toBe(5);
+    expect(counts.generic).toBe(6);
     expect(counts.anthropic).toBe(3);
     expect(counts.key).toBe(3);
   });

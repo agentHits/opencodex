@@ -43,8 +43,10 @@ import type { OpaqueBlobRecoveryGuard } from "./core-opaque-recovery";
 import type { AttemptRecoveryKind } from "../../usage/log";
 import type { OAuthAccessSnapshot } from "../../oauth";
 import { OAuthLoginRequiredError, publicOAuthAuthenticationErrorMessage } from "../../oauth";
+import { markAccountNeedsReauth, markAccountNeedsReauthIfGeneration } from "../../oauth/store";
 import { tryKiroAlternateAfterTerminalRefresh } from "../../oauth/kiro-terminal-failover";
 import { classifyKiroRefusal } from "../../adapters/kiro-refusal";
+import { classifyAntigravityRefusal } from "../../adapters/antigravity-refusal";
 import { normalizeFinalKiroHttpError } from "../../adapters/kiro-retry";
 import { noteKiroMonthlyRefusal } from "../../providers/kiro-usage";
 import { persistKiroAccountState } from "../../providers/kiro-account-state-disk";
@@ -1119,6 +1121,86 @@ export async function prepareAdapterExchange(
           // request for a send it never made, and a later recovery in the same request is
           // refused on an allowance nothing spent. release() is idempotent and a no-op once
           // used, so a throw from the rebuild keeps its charge.
+          hop.permit?.release();
+          break;
+        }
+      }
+      // Antigravity verify-account quarantine: a 403 demanding account verification
+      // is terminal for THAT account — its grant still refreshes, so only a manual
+      // verification followed by a re-login clears it. Mark it needsReauth (durable,
+      // shown as `needs-reauth(verify)` in `ocx account list` with a `verify_account`
+      // health reason in the management API, excluded from the pool until re-login)
+      // and replay the same request on the next eligible account so the pool keeps
+      // serving.
+      while (
+        upstreamResponse.status === 403
+        && route.providerName === "google-antigravity"
+        && transportState.genericFailoverAccountId
+        && transportState.genericFailovers < transportState.genericFailoverLimit
+        && isGenericOAuthFailoverEnabled(config, route.providerName)
+      ) {
+        const refusal = classifyAntigravityRefusal(upstreamResponse.status,
+          await readDisplaySafeErrorText(upstreamResponse.clone(), upstream.signal, ""));
+        if (refusal.kind === "other") break;
+        const sent = transportState.sentOAuthSnapshot;
+        const failedAccountId = transportState.genericFailoverAccountId;
+        const marked = sent && sent.accountId === failedAccountId
+          ? await markAccountNeedsReauthIfGeneration(route.providerName, failedAccountId, sent.generation, undefined, "verify_account")
+          : false;
+        if (!marked) await markAccountNeedsReauth(route.providerName, failedAccountId, true, "verify_account");
+        const adapterOwnsDispatch = transportState.activeAdapter.fetchResponse !== undefined;
+        const hop = reserveCredentialHop(
+          "auth-recovery",
+          `${route.providerName}|${route.modelId}|adapter-recovery-oauth-429`,
+          !adapterOwnsDispatch && transientRetryPolicyFor(route.provider) !== null,
+        );
+        if (!hop.allowed) break;
+        const nextAccountId = rotateGenericOAuthAccountOn429(
+          config,
+          route.providerName,
+          failedAccountId,
+          upstreamResponse.headers.get("retry-after"),
+          Date.now(),
+          route.modelId,
+        );
+        if (!nextAccountId) {
+          hop.permit?.release();
+          break;
+        }
+        try { void upstreamResponse.body?.cancel().catch(() => {}); } catch { /* already consumed/closed */ }
+        try {
+          // The FULL snapshot, not just the bearer: Antigravity pairs an
+          // account-matched projectId with its token, so a token-only swap would mix
+          // one account's credential with another's routing data.
+          const snapshot = await failoverAccountSnapshot(route.providerName, nextAccountId);
+          transportState.genericFailovers += 1;
+          if (!await applyFailoverSnapshot(snapshot)) {
+            hop.permit?.release();
+            break;
+          }
+          invalidateSameTargetRequest();
+          transportState.activeAdapter = resolveSelectionAdapter(
+            resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire, route.staticPolicy),
+            config.cacheRetention,
+          );
+          sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, transportState.activeAdapter.name, logCtx.accountLogLabel);
+          recordAttemptCredentialSource(logCtx.activeAttempt, route.providerName, route.provider, transportState.activeAdapter.name);
+          sendBudgetState.pendingHopPermit = hop.permit;
+          let result: Response | { failed: Response };
+          try {
+            result = await rebuildAndRefetch("oauth-account-429", () => {
+              if (!adapterOwnsDispatch) hop.permit?.use();
+            }, upstreamResponse);
+          } finally {
+            sendBudgetState.pendingHopPermit = undefined;
+          }
+          if ("failed" in result) {
+            hop.permit?.release();
+            return result.failed;
+          }
+          upstreamResponse = result;
+          if (isNonReplayableResponse(upstreamResponse)) continue recovery;
+        } catch {
           hop.permit?.release();
           break;
         }

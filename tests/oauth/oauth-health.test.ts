@@ -7,6 +7,8 @@ import {
   CODEX_REAUTH_ACTION,
   collectOAuthHealthEntries,
   collectOAuthHealthEntriesForCli,
+  oauthHealthLabel,
+  oauthHealthSummary,
   projectOAuthAccountHealth,
   projectCodexAccountHealth,
 } from "../../src/oauth/health";
@@ -78,6 +80,14 @@ describe("projectOAuthAccountHealth", () => {
       reauthReason: "refresh_failed",
       cooldownUntilMs: Date.now() + 60_000,
     })).toEqual({ status: "reauth_required", reason: "refresh_failed" });
+  });
+
+  test("a verify_account cause projects distinctly from a dead credential", () => {
+    const health = projectOAuthAccountHealth({ needsReauth: true, reauthReason: "verify_account" });
+    expect(health).toEqual({ status: "reauth_required", reason: "verify_account" });
+    expect(oauthHealthLabel(health)).toBe("Verification required");
+    expect(oauthHealthSummary("google-antigravity", "abc", health))
+      .toContain("reauthentication required (verify account)");
   });
 
   test("active cooldown projects until ISO timestamp", () => {
@@ -235,6 +245,28 @@ describe("collectOAuthHealthEntries", () => {
       accountId,
       health: { status: "reauth_required", reason: "refresh_failed" },
       action: "run `ocx login kimi`",
+    });
+  });
+
+  test("a verify_account mark survives the store round-trip with its own action", async () => {
+    await saveCredential("kimi", {
+      access: "kimi-access",
+      refresh: "kimi-refresh",
+      expires: Date.now() + 3_600_000,
+      accountId: "kimi-acct-verify",
+    });
+    const accountId = getAccountSet("kimi")!.activeAccountId;
+    await markAccountNeedsReauth("kimi", accountId, true, "verify_account");
+    expect(getAccountSet("kimi")!.accounts.find(a => a.id === accountId))
+      .toMatchObject({ needsReauth: true, needsReauthReason: "verify_account" });
+
+    const entry = collectOAuthHealthEntries()
+      .find(e => e.provider === "kimi" && e.accountId === accountId);
+    expect(entry).toEqual({
+      provider: "kimi",
+      accountId,
+      health: { status: "reauth_required", reason: "verify_account" },
+      action: "verify the account with the provider in a browser, then run `ocx login kimi`",
     });
   });
 
