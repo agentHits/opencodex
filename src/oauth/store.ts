@@ -626,6 +626,9 @@ function normalizeAccount(value: unknown): ProviderAccount | null {
   const account: ProviderAccount = { id: candidate.id, credential };
   if (typeof candidate.alias === "string" && candidate.alias.trim()) account.alias = candidate.alias.trim();
   if (candidate.needsReauth === true) account.needsReauth = true;
+  if (candidate.needsReauth === true && candidate.needsReauthReason === "verify_account") {
+    account.needsReauthReason = "verify_account";
+  }
   if (typeof candidate.addedAt === "number") account.addedAt = candidate.addedAt;
   if (typeof candidate.loginId === "string"
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidate.loginId)) {
@@ -875,6 +878,7 @@ export async function saveCredentialWithReceipt(
       if (existing) {
         existing.credential = safe;
         delete existing.needsReauth;
+        delete existing.needsReauthReason;
         set.activeAccountId = existing.id;
         accountId = existing.id;
       } else {
@@ -886,6 +890,7 @@ export async function saveCredentialWithReceipt(
         if (!opts.preserveIdentityless && active && active.credential.accountId === undefined && active.credential.email === undefined) {
           active.credential = safe;
           delete active.needsReauth;
+          delete active.needsReauthReason;
           accountId = active.id;
         } else {
           const id = distinctAccountId(safe, set.accounts);
@@ -905,6 +910,7 @@ export async function saveCredentialWithReceipt(
       if (active) {
         active.credential = safe;
         delete active.needsReauth;
+        delete active.needsReauthReason;
         accountId = active.id;
       } else {
         const id = distinctAccountId(safe, set.accounts);
@@ -1032,6 +1038,7 @@ export async function upsertCredentialByIdentity(
     if (existing && set) {
       existing.credential = safe;
       delete existing.needsReauth;
+      delete existing.needsReauthReason;
       set.activeAccountId ??= existing.id;
       return "updated";
     }
@@ -1128,6 +1135,7 @@ export async function saveAccountCredential(
     account.credential = safe;
     if (opts.rotateLoginId) account.loginId = randomUUID();
     delete account.needsReauth;
+    delete account.needsReauthReason;
   }, [provider, accountId, safe], { assertBeforePersist: opts.assertBeforePersist });
 }
 
@@ -1239,6 +1247,7 @@ export async function replaceProviderAccountSet(
         credential: { ...account.credential, ...(account.credential.kiro ? { kiro: { ...account.credential.kiro } } : {}) },
         ...(account.alias ? { alias: account.alias } : {}),
         ...(account.needsReauth ? { needsReauth: true } : {}),
+        ...(account.needsReauthReason === "verify_account" ? { needsReauthReason: account.needsReauthReason } : {}),
         ...(account.addedAt !== undefined ? { addedAt: account.addedAt } : {}),
         ...(account.loginId ? { loginId: account.loginId } : {}),
       })),
@@ -1284,16 +1293,22 @@ export async function markAccountNeedsReauth(
   provider: string,
   accountId: string,
   needsReauth: boolean,
+  reason?: "verify_account",
   writerGeneration = captureConfigGeneration(),
 ): Promise<void> {
   if (writerGeneration < lastReconciledGeneration && !liveOAuthAccountKeys.has(oauthAccountKey(provider, accountId))) return;
   await mutateStore(store => {
     const account = store[provider]?.accounts.find(a => a.id === accountId);
     if (!account) return;
-    if (needsReauth) account.needsReauth = true;
-    else delete account.needsReauth;
+    if (needsReauth) {
+      account.needsReauth = true;
+      if (reason === "verify_account") account.needsReauthReason = reason;
+    } else {
+      delete account.needsReauth;
+      delete account.needsReauthReason;
+    }
   }, [provider, accountId]);
 }
 
-export async function mergeAccountCredential(provider:string,accountId:string,credential:OAuthCredentials,opts:{expectedGeneration?:string;afterPrePersistRead?:()=>void|Promise<void>}={}):Promise<{superseded:false}|{superseded:true;stored:OAuthCredentials}>{const safe=normalizeCredential(credential);if(!safe)throw new Error("Refusing to persist invalid OAuth credential");return await mutateStore(async store=>{await opts.afterPrePersistRead?.();const account=store[provider]?.accounts.find(x=>x.id===accountId);if(!account)throw new Error(`OAuth account disappeared before persist: ${provider}`);if(opts.expectedGeneration!==undefined&&credentialGeneration(account.credential)!==opts.expectedGeneration)return{superseded:true,stored:account.credential};account.credential=safe;delete account.needsReauth;return{superseded:false};},[provider,accountId,safe,opts.expectedGeneration]);}
-export async function markAccountNeedsReauthIfGeneration(provider:string,accountId:string,generation:string,writerGeneration=captureConfigGeneration()):Promise<boolean>{const key=oauthAccountKey(provider,accountId);if(writerGeneration<lastReconciledGeneration&&!liveOAuthAccountKeys.has(key))return false;return await mutateStore(store=>{const account=store[provider]?.accounts.find(x=>x.id===accountId);if(!account?.credential||credentialGeneration(account.credential)!==generation)return false;if(writerGeneration<lastReconciledGeneration&&!liveOAuthAccountKeys.has(key))return false;account.needsReauth=true;return true;},[provider,accountId,generation]);}
+export async function mergeAccountCredential(provider:string,accountId:string,credential:OAuthCredentials,opts:{expectedGeneration?:string;afterPrePersistRead?:()=>void|Promise<void>}={}):Promise<{superseded:false}|{superseded:true;stored:OAuthCredentials}>{const safe=normalizeCredential(credential);if(!safe)throw new Error("Refusing to persist invalid OAuth credential");return await mutateStore(async store=>{await opts.afterPrePersistRead?.();const account=store[provider]?.accounts.find(x=>x.id===accountId);if(!account)throw new Error(`OAuth account disappeared before persist: ${provider}`);if(opts.expectedGeneration!==undefined&&credentialGeneration(account.credential)!==opts.expectedGeneration)return{superseded:true,stored:account.credential};account.credential=safe;delete account.needsReauth;if(account.needsReauthReason!=="verify_account")delete account.needsReauthReason;return{superseded:false};},[provider,accountId,safe,opts.expectedGeneration]);}
+export async function markAccountNeedsReauthIfGeneration(provider:string,accountId:string,generation:string,writerGeneration=captureConfigGeneration(),reason?:"verify_account"):Promise<boolean>{const key=oauthAccountKey(provider,accountId);if(writerGeneration<lastReconciledGeneration&&!liveOAuthAccountKeys.has(key))return false;return await mutateStore(store=>{const account=store[provider]?.accounts.find(x=>x.id===accountId);if(!account?.credential||credentialGeneration(account.credential)!==generation)return false;if(writerGeneration<lastReconciledGeneration&&!liveOAuthAccountKeys.has(key))return false;account.needsReauth=true;if(reason==="verify_account")account.needsReauthReason=reason;return true;},[provider,accountId,generation]);}

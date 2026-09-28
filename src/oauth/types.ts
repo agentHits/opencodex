@@ -90,6 +90,13 @@ export interface ProviderAccount {
   credential: OAuthCredentials;
   /** Terminal refresh failure (invalid_grant / reused / revoked) — re-login required. */
   needsReauth?: boolean;
+  /**
+   * Why the account needs reauthentication. `verify_account` means the grant is
+   * alive but the provider blocks the account until the human verifies it
+   * (Antigravity 403 PERMISSION_DENIED) — a plain re-login without that
+   * verification will not help. Absent means an ordinary credential failure.
+   */
+  needsReauthReason?: "verify_account";
   plan?: string;
   addedAt?: number;
 }

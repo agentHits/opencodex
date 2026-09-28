@@ -1751,6 +1751,7 @@ export interface OAuthAccountSummary {
   email?: string;
   active: boolean;
   needsReauth?: boolean;
+  needsReauthReason?: "verify_account";
   expiresAt?: number;
   logLabel?: string;
   /**
@@ -1788,6 +1789,7 @@ export function getLoginStatus(provider: string, maskEmails = true): { loggedIn:
     email: projectEmail(a.credential.email, maskEmails) ?? undefined,
     active: a.id === set.activeAccountId,
     ...(a.needsReauth ? { needsReauth: true } : {}),
+    ...(a.needsReauth && a.needsReauthReason === "verify_account" ? { needsReauthReason: a.needsReauthReason } : {}),
     expiresAt: a.credential.expires,
     // Explicitly null rather than omitted — see OAuthAccountSummary.plan. No OAuth provider
     // exposes a subscription tier today, so there is nothing truthful to put here; deriving one
