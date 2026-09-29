@@ -121,7 +121,7 @@ function XaiChatOptInControl({
 
 export default function ProviderAuthPanel({
   item, apiBase, oauth, accounts = EMPTY_OAUTH_ACCOUNTS, keys = EMPTY_API_KEYS, accountLoadState = "ready",
-  switchingAccountId = null, busy = false, loginHint, authHandlers, onCodexActiveNeedsReauthChange,
+  switchingAccountId = null, pausingAccountId = null, busy = false, loginHint, authHandlers, onCodexActiveNeedsReauthChange,
   codexController, onUpdateProvider,
 }: {
   item: WorkspaceItem;
@@ -549,7 +549,7 @@ export default function ProviderAuthPanel({
                         viewMode={accountViewMode}
                         titleMode={accountTitleMode}
                         switching={switchingAccountId === analyzed.account.id}
-                        disabled={busy || Boolean(switchingAccountId && switchingAccountId !== analyzed.account.id)}
+                        disabled={busy || analyzed.account.paused === true || Boolean(switchingAccountId && switchingAccountId !== analyzed.account.id)}
                         refreshing={refreshingQuota && (refreshingAccountId === analyzed.account.id || !refreshingAccountId)}
                         onSwitch={acc => void authHandlers.onSwitchAccount(item.name, acc)}
                         onRefreshSingle={canRefreshQuota ? acc => {
@@ -563,6 +563,25 @@ export default function ProviderAuthPanel({
                       {kiroSkipReasonKey(analyzed.account, item.name) && (
                         <div className="pwi-account-badges">
                           <span className="badge badge-amber">{t(kiroSkipReasonKey(analyzed.account, item.name)!)}</span>
+                        </div>
+                      )}
+                      {(analyzed.account.paused || (typeof analyzed.account.paused === "boolean" && authHandlers.onPauseAccount)) && (
+                        <div className="pwi-account-badges">
+                          {analyzed.account.paused && <span className="badge badge-muted">{t("codexAuth.paused")}</span>}
+                          {analyzed.account.paused && <span className="pwi-auth-row-secondary faint">{t("pws.accountPausedHint")}</span>}
+                          {typeof analyzed.account.paused === "boolean" && authHandlers.onPauseAccount && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              aria-label={`${t(analyzed.account.paused ? "codexAuth.resume" : "codexAuth.pause")} — ${oauthAccountDisplayLabel(accounts, analyzed.account, t)}`}
+                              title={analyzed.account.paused ? t("pws.accountPausedHint") : undefined}
+                              aria-busy={pausingAccountId === analyzed.account.id}
+                              disabled={busy || Boolean(switchingAccountId) || Boolean(pausingAccountId)}
+                              onClick={() => void authHandlers.onPauseAccount(item.name, analyzed.account, !analyzed.account.paused)}
+                            >
+                              {t(analyzed.account.paused ? "codexAuth.resume" : "codexAuth.pause")}
+                            </button>
+                          )}
                         </div>
                       )}
                       {(grokCouponsEnabled || claudeGrantsEnabled) && !accountShowsReauth(analyzed.account) && (
