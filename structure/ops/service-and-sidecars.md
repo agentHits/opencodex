@@ -107,6 +107,49 @@ install rather than re-walking PATH, so such a job is never misreported as an ol
 > Decision record: [ADR-0030](../decisions/ADR-0030-stable-service-launcher-launchd-and-systemd.md)
 > Decision record: [ADR-0100](../decisions/ADR-0100-stable-service-launcher-launchd-and-systemd.md)
 
+## Service child ownership gate
+
+The verbs are only reachable through `ocx service`, but the process managers spawn
+`start` directly, so `handleStart` in `src/cli/index.ts` asks the same question through
+`src/service/service-child-ownership.ts` before startup work and again inside the
+ownership mutation lease held by `bindAndPublishStartOwnership`, before port selection or
+listener bind. The supervised-child classification is kept from the first check; the
+recorded owner is read fresh under the lease, so a desktop claim committed between checks
+cannot be overwritten by PID or runtime publication. Before either runtime branch,
+`recoverStartStateUnderOwnershipLease` (`src/cli/start-owner-fence.ts`) holds that same
+lease and rechecks the owner before stale PID cleanup, cross-home sibling detection, or startup journal recovery;
+an owner claim committed during the early probe cannot be followed by shared Codex writes.
+The connected-client branch, which returns into `startClientRuntime` before the server path,
+takes the same lease through `startClientRuntimeUnderOwnershipLease`
+(`src/cli/client-start-fence.ts`), rechecks there, and releases once the client runtime has
+published its PID and runtime records (`afterPublish`). A child carrying
+`OCX_SERVICE_MANAGED` or `OCX_WINDOWS_WRAPPER_PROTOCOL` resolves the recorded owner and
+exits the supervisor's stand-down code on a foreign or unknown answer: `42` inside the
+marker-protocol Windows wrapper, `0` elsewhere — the legacy `ERRORLEVEL NEQ 0` loop reads
+`0` as a clean stop; systemd's `on-failure` and launchd's `SuccessfulExit=false`
+keepalive do not restart it. The launchd plist restarts on an unsuccessful exit or signal,
+including the exit-1 supervised restart handoff described below. A handled SIGTERM, SIGINT or
+SIGHUP would otherwise end in a clean exit and be left down, so the launchd-managed job (macOS
+with `OCX_SERVICE_MANAGED=1`) exits `128 + signal` from both the server and client-runtime
+signal shutdowns (`src/lib/handled-signal-exit.ts`); every other run keeps exit 0.
+`launchctl bootout` and `ocx service stop` unload the job first, so that cannot resurrect a
+deliberate stop. Existing launchd jobs retain
+their old keepalive definition until `ocx service repair` rewrites and reloads the changed plist.
+New WinSW XML stamps `OCX_SERVICE_MANAGED=1`; parent command-line inference applies only to
+legacy registrations whose XML lacks that marker. Bare `OCX_SERVICE=1`
+is never the marker because `ocx claude` and `ocx opencode` companions carry it too; a
+marker-less Windows registration is still recognised by the parent's command line naming
+this install's wrapper script, launcher or WinSW host as a complete token in any position,
+and an unreadable parent command line is no evidence and proceeds. POSIX keeps the
+explicit-marker path: a companion reparented to init can look service-spawned, and
+`systemd --user` children are not init's, so a ppid check would refuse some companions
+while still missing user units. Known limits: a legacy POSIX registration written before the
+marker, and a Windows child whose parent command line cannot be read, are not classified as
+supervised, so until `ocx service repair` rewrites their definition they can still start
+over a desktop claim. `detachedStartEnvironment` strips `OCX_SERVICE` and both
+supervisor markers before spawning ensure/tray children, because a marker inherited from the
+service child's own environment would otherwise answer the gate as a managed job.
+
 ## Sidecars
 
 Web search and vision sidecars run only when the main request needs that capability and a usable

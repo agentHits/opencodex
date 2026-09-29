@@ -130,6 +130,9 @@ next attempt: a child that was just launched may still be binding, and post-heal
 may have thrown on an already-serving proxy. A live reading means
 no second start is spawned: a clean refusal then attests success, while a throw
 propagates as a start failure because post-health work failed on a serving process.
+During crash recovery after an accepted live restart, success instead requires a different
+runtime PID on the original port: if the original PID reads live again, the restart fails
+as a missed replacement rather than reporting success.
 Confirmed absence and launch-exit evidence together permit another start attempt. While the previous PID is still live, or a probe is uncertain, the
 confirmation window keeps polling for a replacement inside the reserve instead of
 failing at once. A second proxy is never spawned next to a live one.
@@ -514,6 +517,9 @@ On macOS, launchd instead uses the package-local Bun and CLI paths selected duri
 repair. This prevents a mutable PATH shim from receiving the service API token and configured proxy
 environment on a later restart. After upgrading a version-manager installation, run
 `ocx service repair` to refresh those paths before restarting the service.
+Launchd restarts the proxy after a crash or failed restart handoff, but leaves it stopped when
+the service deliberately exits cleanly because the desktop app owns the runtime. Run
+`ocx service repair` once to apply this behavior to a service installed by an older version.
 
 Definitions installed before this change still carry the old versioned paths and cannot migrate
 themselves — once the old executable is deleted, no opencodex code runs to fix it. Run
@@ -550,6 +556,11 @@ supersedes it rather than replacing it.
 
 A state file with no ownership record means the CLI installation owns the runtime, which is what
 every installation made before this feature is in. Nothing changes for you until an app takes over.
+
+Supervised service children also check the recorded owner before startup and once more while
+holding the startup ownership lease, before choosing a port or publishing a PID. If the desktop
+app claims the runtime during startup, the service child stands down even if the desktop proxy
+has not begun listening yet. An unreadable ownership record has the same stand-down behavior.
 
 Home paths inside a state record are compared with the current home by the physical directory they
 resolve to, not just their spelling. A junction or symlink recorded under an older install still

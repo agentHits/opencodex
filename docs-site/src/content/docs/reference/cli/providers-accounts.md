@@ -16,7 +16,7 @@ both `--adapter` and `--base-url`.
 | --- | --- | --- |
 | `list` | `--json`, `--jsonl` | List configured providers and the remaining registry entries; `--jsonl` emits one configured provider object per line. |
 | `add <name>` | `--adapter <adapter>`, `--base-url <url>`, `--api-key <key>`, `--default-model <model>`, `--set-default`, `--force`, `--json`, `--sync` | Add a registry/custom provider. `--force` overwrites; `--sync` refreshes a running proxy in human-output mode. |
-| `edit <name>` | provider field flags, `--headers <json>`, `--json` | Edit validated live provider fields without replacing key pools. `--headers` merges custom request headers; pass `{}` or `-` to clear them. |
+| `edit <name>` | provider field flags, `--headers <json>`, `--model-context-tier <model=default\|long_context>`, `--json` | Edit validated live provider fields without replacing key pools. Repeat `--model-context-tier` for multiple Copilot models. `--headers` merges custom request headers; pass `{}` or `-` to clear them. |
 | `test <name>` | `--json` | Probe the real upstream model endpoint. |
 | `show <name>` | `--json` | Show config with API keys masked. |
 | `remove <name>` | `--json` | Remove a non-default provider; the last provider cannot be removed. |
@@ -34,6 +34,7 @@ ocx provider test ark
 ocx provider add anthropic --api-key sk-ant-... --set-default --sync
 ocx provider add local-dev --adapter openai-chat --base-url http://localhost:11434/v1
 ocx provider show anthropic --json
+ocx provider edit github-copilot --model-context-tier gpt-5.6-luna=long_context
 ocx models --provider anthropic --json
 ocx models live --provider ark --json
 ```
@@ -168,6 +169,14 @@ or also explicitly last at least 24 hours and report their usage. This follows t
 one-day window qualifies as well as weekly/monthly windows. The current window still uses the same
 98% threshold. This relies on the single reported snapshot; repeated observations are not required.
 Omitted secondary/tertiary fields, an unknown primary duration, or partial response headers cannot clear a previous block.
+The proxy checks the stored credential again before applying a delayed response. An unreadable file
+or replaced bearer cannot update the usage cache, release the lock, or quarantine the new credential,
+even for the same account with no second quota read.
+Its parsed ordinary usage can still be returned to the requesting caller, without shared-state updates
+or recovery evidence. The account card shows the published cached usage, keeping its quota aligned
+with the lock status; Direct provider quota omits an unpublished response and its older cached report. Conflicting account
+identities and stale 401/403 replies retain the current
+cached info and cannot clear or set the current account's reauthentication state.
 
 The persisted option is `"codexMainAccountHardLock"` in OpenCodex's `config.json`. An absent key or
 `true` means on; only an explicit `false` turns it off, and that is what switching the setting off
