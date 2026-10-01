@@ -34,8 +34,7 @@ Etkinleştirildiğinde operasyonel sözleşme:
   içinde uygun başka bir hesaba dönebilir (sınırlı).
 - Bağlılık **işleme özeldir (process-local)** (proxy yeniden başlatıldığında
   kaybolur).
-- **401/403** kimlik bilgisi hataları hesabı karantinaya alır (`needsReauth`),
-  böylece yeniden kimlik doğrulanana kadar seçimden hariç tutulur.
+- Token yenileme hataları mevcut `needsReauth` kuralını korur. Doğrulanmış abonelik veya hesap ödeme 403 hatası çıktı başlamadan hesap değiştirebilir; soğuma `Retry-After` veya varsayılan on dakikadır. Genel izin reddi terminal kalır. Bkz. [hesap kurtarma](/guides/claude-code/).
 - Uygun tüm hesaplar soğutuluyorsa, proxy bilindiğinde `Retry-After` ile
   birlikte **429** (401 değil) döndürür.
 - 429 yük devretmesi dahil kurtarma, mevcut soğuma ve yük devretme sınırlarını
@@ -271,7 +270,7 @@ kimliğidir; bu yüzden bir seçici satırını bir opencodex rotasına bağlars
 
 ```bash
 ocx claude desktop bind claude-sonnet-4-6 xai/grok-4.7
-ocx claude desktop bind claude-opus-4-6 native/gpt-6-sol
+ocx claude desktop bind claude-opus-4-6 native/gpt-6.1-sol
 ocx claude desktop unbind claude-opus-4-6
 ```
 

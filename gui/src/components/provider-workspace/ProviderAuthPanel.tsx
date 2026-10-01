@@ -435,9 +435,11 @@ export default function ProviderAuthPanel({
           <>
             {item.name === "anthropic" && (
               <AnthropicAccountPoolSettings
+                key={apiBase}
                 apiBase={apiBase}
                 accountCount={accounts.length}
                 provider={item.name}
+                onThresholdChange={threshold => { void authHandlers?.onAccountPoolThreshold?.(item.name, threshold); }}
               />
             )}
 
@@ -478,6 +480,7 @@ export default function ProviderAuthPanel({
                       url: hintForThis.url,
                       deviceCode: hintForThis.deviceCode,
                       instructions: hintForThis.instructions,
+                      browserLaunch: hintForThis.browserLaunch,
                     }}
                     paste={{
                       value: manualCode,

@@ -294,14 +294,16 @@ by that retirement. Quota fallback retains independent shared/Reserve evidence.
 
 When account selectors are active, one featured bare native id expands into a complete selector row
 group. Catalog priorities use the selector count as a stride so each group stays together without
-widening Codex's five-row advertisement window. Fresh defaults are the GPT-6 trio: Astra, Sol,
-Luna. Startup upgrades unmarked rosters once: prepend `gpt-6-astra`, retain the first four unique
+widening Codex's five-row advertisement window. Fresh defaults are Astra, GPT-6.1 Sol and Luna
+(`DEFAULT_SUBAGENT_MODELS`). Startup upgrades unmarked rosters once: prepend `gpt-6-astra`, retain the first four unique
 non-Astra choices, then move retained bare `gpt-5.5` last. The old fifth choice is dropped;
 an unmarked empty list becomes Astra only, and an unset list receives the fresh defaults.
 A second one-time step rewrites bare `gpt-5.6-sol`/`gpt-5.6-luna` to their GPT-6 rows in place
 and drops every other bare `gpt-5.5`/`gpt-5.6` id; ids with a `/` are untouched, and a list left
 empty by the cleanup receives the defaults.
-`subagentModelsVersion: 2` records completion, so later user edits (including an empty list or
+A third one-time step (version 3) rewrites bare `gpt-6-sol` to `gpt-6.1-sol` in place without
+duplicating it; routed and account-qualified ids keep their spelling, and GPT-6 Sol re-added later
+stays. `subagentModelsVersion: 3` records completion, so later user edits (including an empty list or
 removing Astra) persist. The migration rebases on the latest disk config under the existing
 mutation lock; failed persistence degrades to an in-memory roster for that run without a stale
 whole-config overwrite. Existing disabled-model visibility rules remain unchanged.
@@ -310,6 +312,37 @@ Quota-aware fallback walks a configured chain when the featured model is exhaust
 availability on a bounded interval (default 60 s, `src/codex/subagent-model-fallback.ts`). It rewrites
 the requested model id only; effort remains owned by the caps described under
 [Ultra reasoning level](catalog.md#ultra-reasoning-level).
+
+### Per-role model pins
+
+Codex overrides a child's spawn-time model with the root `model` key of
+`$CODEX_HOME/agents/<role>.toml`, so that pin decides which model a role runs on.
+`src/codex/agent-role-models.ts` is opencodex's only writer into those files, and it writes only
+that one key, only when a user picks a role's model in the dashboard's omo (Codex / LazyCodex)
+section on the Codex tab (`PUT /api/codex-agent-roles/{role}`) or with `ocx agent roles set`,
+and only while LazyCodex is detected. No sync, startup, or
+catalog path calls it, and opencodex never creates, repairs, or removes a role file.
+
+- The key is located by the same TOML-aware scan the pin reader uses
+  (`locateTomlModelKey` in `src/codex/subagent-model-fallback.ts`), so a `model =` line inside
+  the instructions multiline string is never read or edited. A key under a table header is not
+  the root pin.
+- An existing one-line string value is replaced inside its span; every other byte, including
+  quote style when the new value allows it, trailing comments, line endings, and a leading BOM,
+  is kept. A missing key is inserted after the leading comment block. A non-string value is
+  refused rather than duplicated.
+- The original file and the edited result must both parse as TOML; otherwise the write is
+  refused with `invalid_role_file` and the file keeps its bytes, so an edit can never turn a
+  role Codex rejects into one it loads. Other write failures answer a fixed `write_failed`
+  message without the filesystem path or owner details.
+- The role name must equal a listed `*.toml` stem, which is also the path-traversal check. The
+  target must be a regular file owned by the running user; the replacement is atomic and does
+  not follow a symbolic link.
+- The same pick is mirrored into LazyCodex's `codex.agents.<role>.model`; that half belongs to
+  [client integrations](clients/integrations.md#omo-codex-lazycodex-role-models). The role file is written first
+  and stands even when the mirror is skipped.
+
+Sibling instances refuse the write, because it reaches the shared `CODEX_HOME`.
 
 `injectionModel` and `injectionEffort` are shared selections with two independent consumers.
 `multiAgentGuidanceEnabled` controls only OpenCodex-authored delegation guidance.

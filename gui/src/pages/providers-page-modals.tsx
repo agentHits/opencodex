@@ -6,6 +6,7 @@ import AccountAuthChoiceModal from "../components/AccountAuthChoiceModal";
 import { RemoveConfirmDialog, UnsavedLeaveDialog } from "../components/provider-workspace/ProviderDialogs";
 import type { AddProviderIntent } from "../components/provider-workspace/ProviderWorkspaceShell";
 import type { AccountLoginRow, AccountLoginStatus } from "../components/provider-catalog/ProviderCatalog";
+import type { CatalogLoginHint } from "../components/provider-catalog/login-hint-visibility";
 import type { ProvidersConfig } from "./providers-shared";
 import { oauthLabel } from "./providers-shared";
 import type { CodexAccountMutationCompletion } from "../codex-account-mutation";
@@ -55,7 +56,7 @@ export function ProvidersPageModals({
   busy: string | null;
   addModalAccountRows: AccountLoginRow[];
   accountLoginStatus: Record<string, AccountLoginStatus>;
-  accountLoginHint?: { provider: string; url?: string; instructions?: string; deviceCode?: string } | null;
+  accountLoginHint?: CatalogLoginHint | null;
   removeConfirmName: string | null;
   removeDefaultProvider: string | null;
   codexLoginOpen: boolean;

@@ -100,6 +100,8 @@ export interface ProviderAccount {
   plan?: string;
   /** Operator exclusion from generic OAuth account selection until explicitly resumed. */
   paused?: boolean;
+  /** Anthropic-only usage-switch override; absent inherits its pool default, zero disables it. */
+  autoSwitchThresholdOverride?: number;
   addedAt?: number;
 }
 

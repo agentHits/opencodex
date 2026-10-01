@@ -803,7 +803,7 @@ JSON mode: `payload`.
 
 ### `ocx account pause`
 
-Exclude one account in a Codex or supported generic OAuth pool from automatic selection.
+Exclude one account in a Codex, Anthropic or supported generic OAuth pool from automatic selection.
 
 | Method | Route |
 |---|---|
@@ -817,11 +817,11 @@ Exclude one account in a Codex or supported generic OAuth pool from automatic se
 
 JSON mode: `envelope`.
 
-- Codex pause unbinds pinned threads and selects a fallback when possible; with no fallback, a paused-but-selected Codex account still receives requests. Generic OAuth pause never dispatches to that account: it is excluded from new requests, failover and refresh, and an all-paused pool answers 403. Anthropic is unsupported.
+- Codex pause unbinds pinned threads and selects a fallback when possible; with no fallback, a paused-but-selected Codex account still receives requests. Anthropic and generic OAuth pause exclude the account from new requests, failover and refresh, and an all-paused pool answers 403. Credentials and health are preserved; already-sent turns are not cancelled.
 
 ### `ocx account resume`
 
-Return a paused account to a Codex or supported generic OAuth pool.
+Return a paused account to a Codex, Anthropic or supported generic OAuth pool.
 
 | Method | Route |
 |---|---|
@@ -919,15 +919,19 @@ Show or set the usage percentage at which a pool moves to another account.
 | PUT | `/api/codex-auth/auto-switch` |
 | GET | `/api/oauth/accounts/pool` |
 | PUT | `/api/oauth/accounts/pool` |
+| GET | `/api/oauth/accounts` |
+| PUT | `/api/oauth/accounts/auto-switch` |
 
 | Flag | Value | Meaning |
 |---|---|---|
 | `--json` | boolean | Emit the stored threshold and whether it is applied. |
+| `--account` | string | Anthropic account ID; inherit restores the pool default, off stores zero. |
 
 JSON mode: `envelope`.
 
 - A bare invocation reads and never writes.
 - `on` stores 80%, `off` stores 0%, and `threshold <n>` accepts 0-100.
+- Anthropic requires --account <id>; inherit sends null to restore its pool default. Manual/affinity precedence and pool-off recovery are unchanged.
 - For a generic OAuth pool, `inert: true` means the threshold is stored but not applied, `inert: false` means the pool is applying it, and an absent `inert` is an unknown capability.
 
 ### `ocx storage cleanup`
@@ -1180,6 +1184,25 @@ JSON mode: `payload`.
 
 - A bare invocation reads and never writes.
 
+### `ocx agent roles`
+
+omo (Codex / LazyCodex): show each Codex agent role's model pin, or set one role's model in its TOML and in omo.jsonc.
+
+| Method | Route |
+|---|---|
+| GET | `/api/codex-agent-roles` |
+| PUT | `/api/codex-agent-roles/{role}` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit the role list or the write result as JSON. |
+
+JSON mode: `payload`.
+
+- A bare invocation reads and never writes.
+- Requires Codex-based omo (LazyCodex): the omo@sisyphuslabs Codex plugin enabled in config.toml and installed; otherwise status lists no roles and set is refused.
+- set rewrites only the root model value of $CODEX_HOME/agents/<role>.toml; omo.jsonc is skipped when absent or when it contains comments.
+
 ### `ocx api policy`
 
 Read the protocol policy, or change the Messages surface, unrepresentable policy and rollout switches.
@@ -1203,6 +1226,6 @@ JSON mode: `payload`.
 
 ## Counts
 
-- declared capabilities: 67
-- of those, state-changing: 37
+- declared capabilities: 68
+- of those, state-changing: 38
 - head-resolved invocations: 2

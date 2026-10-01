@@ -6,7 +6,7 @@
  * contract without quotaWindow: the toggle is proactive pre-dispatch selection,
  * while 429 rotation stays presence-driven.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
 import { getPoolSettings, putPoolSettings } from "../../pool-settings";
 import {
@@ -54,10 +54,12 @@ export default function AnthropicAccountPoolSettings({
   apiBase,
   accountCount,
   provider = "anthropic",
+  onThresholdChange,
 }: {
   apiBase: string;
   accountCount: number;
   provider?: string;
+  onThresholdChange?: (threshold: number) => void;
 }) {
   const t = useT();
   const isAnthropic = provider === "anthropic";
@@ -67,6 +69,24 @@ export default function AnthropicAccountPoolSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const onThresholdChangeRef = useRef(onThresholdChange);
+  const mountedRef = useRef(true);
+  const apiBaseRef = useRef(apiBase);
+  const saveAbortRef = useRef<AbortController | null>(null);
+
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      saveAbortRef.current?.abort();
+      saveAbortRef.current = null;
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    onThresholdChangeRef.current = onThresholdChange;
+    apiBaseRef.current = apiBase;
+  }, [apiBase, onThresholdChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +112,7 @@ export default function AnthropicAccountPoolSettings({
           supported: json.supported,
         });
         setDraft(String(nextThreshold));
+        onThresholdChangeRef.current?.(nextThreshold);
         setStickyDraft(String(nextSticky));
         setLoadError(false);
       })
@@ -112,6 +133,12 @@ export default function AnthropicAccountPoolSettings({
     stickyLimit: number;
     quotaWindow: AccountPoolQuotaWindow;
   }) => {
+    const requestApiBase = apiBase;
+    saveAbortRef.current?.abort();
+    const controller = new AbortController();
+    saveAbortRef.current = controller;
+    const currentRequest = () => mountedRef.current && apiBaseRef.current === requestApiBase
+      && saveAbortRef.current === controller && !controller.signal.aborted;
     const previousState = state;
     setState({
       enabled: next.enabled,
@@ -124,14 +151,18 @@ export default function AnthropicAccountPoolSettings({
     setSaving(true);
     setError(null);
     try {
-      const json = await putPoolSettings(apiBase, provider, {
+      // The client owns the field mapping: `threshold` becomes `autoSwitchThreshold` and the
+      // provider is always sent, so no call site can forget either.
+      const json = await putPoolSettings(requestApiBase, provider, {
         enabled: next.enabled,
         threshold: next.threshold,
         strategy: next.strategy,
         stickyLimit: next.stickyLimit,
         ...(isAnthropic ? { quotaWindow: next.quotaWindow } : {}),
-      });
+      }, (input, init) => fetch(input, init), { signal: controller.signal });
+      if (!currentRequest()) return;
       if (!json) throw new Error("save");
+      const savedThreshold = typeof json.autoSwitchThreshold === "number" ? json.autoSwitchThreshold : next.threshold;
       const savedStrategy = normalizeAccountPoolStrategy(json?.strategy ?? next.strategy);
       const savedSticky = normalizeAccountPoolStickyLimit(json?.stickyLimit ?? next.stickyLimit);
       const savedWindow = json?.quotaWindow == null
@@ -139,23 +170,27 @@ export default function AnthropicAccountPoolSettings({
         : normalizeAccountPoolQuotaWindow(json.quotaWindow);
       setState({
         enabled: next.enabled,
-        threshold: next.threshold,
+        threshold: savedThreshold,
         strategy: savedStrategy,
         stickyLimit: savedSticky,
         quotaWindow: savedWindow,
         supported: json.supported.length > 0 ? json.supported : (previousState?.supported ?? []),
       });
-      setDraft(String(next.threshold));
+      setDraft(String(savedThreshold));
+      onThresholdChangeRef.current?.(savedThreshold);
       setStickyDraft(String(savedSticky));
     } catch {
-      setError(t(isAnthropic ? "anthropicPool.saveFailed" : "genericPool.saveFailed"));
+      if (!currentRequest()) return;
+      setError(t("anthropicPool.saveFailed"));
       if (previousState) {
         setState(previousState);
         setDraft(String(previousState.threshold));
         setStickyDraft(String(previousState.stickyLimit));
       }
     } finally {
-      setSaving(false);
+      const ownsSave = saveAbortRef.current === controller;
+      if (ownsSave) saveAbortRef.current = null;
+      if (ownsSave && mountedRef.current && apiBaseRef.current === requestApiBase) setSaving(false);
     }
   }, [apiBase, isAnthropic, provider, state, t]);
 
