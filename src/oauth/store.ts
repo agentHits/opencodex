@@ -954,8 +954,13 @@ export async function saveCredentialWithReceipt(
   // against the old grant must not hold out the fresh credential. Dynamic import
   // keeps the store free of a static edge into the failover module, which reads the
   // store itself.
-  const { clearGenericFailoverHealthForAccount } = await import("./generic-account-failover");
-  clearGenericFailoverHealthForAccount(provider, receipt.accountId);
+  try {
+    const { clearGenericFailoverHealthForAccount } = await import("./generic-account-failover");
+    clearGenericFailoverHealthForAccount(provider, receipt.accountId);
+  } catch {
+    // The credential write has already committed. A cleanup failure must not
+    // surface as a failed login, or the Kiro path rolls the new grant back.
+  }
   return receipt;
 }
 
@@ -1377,8 +1382,6 @@ export async function replaceProviderAccountSet(
         ...(account.alias ? { alias: account.alias } : {}),
         ...(account.needsReauth ? { needsReauth: true } : {}),
         ...(account.paused ? { paused: true } : {}),
-        ...(account.autoSwitchThresholdOverride !== undefined ? { autoSwitchThresholdOverride: account.autoSwitchThresholdOverride } : {}),
-        ...(account.needsReauthReason === "verify_account" ? { needsReauthReason: account.needsReauthReason } : {}),
         ...(account.autoSwitchThresholdOverride !== undefined ? { autoSwitchThresholdOverride: account.autoSwitchThresholdOverride } : {}),
         ...(account.needsReauthReason === "verify_account" ? { needsReauthReason: account.needsReauthReason } : {}),
         ...(account.addedAt !== undefined ? { addedAt: account.addedAt } : {}),

@@ -9,6 +9,15 @@ import { startServer } from "../../src/server";
 import { ANTIGRAVITY_VALIDATION_REQUIRED_PREFIX } from "../../src/adapters/google-errors";
 import { readUsageEntries } from "../../src/usage/log";
 import { clearGenericFailoverHealth, eligibleFailoverAccounts, genericFailoverRetryAfterSeconds, rotateAntigravityAccountOnAuthRefusal } from "../../src/oauth/generic-account-failover";
+import {
+  durableReplayCredentialIdentity,
+  durableReplayDestinationIdentity,
+} from "../../src/responses/reasoning-replay-cache";
+import {
+  rememberThoughtSignatureForReplay,
+  resetThoughtSignatureReplayForTests,
+  thoughtSignatureReplaySalt,
+} from "../../src/responses/thought-signature-replay";
 import type { OcxConfig } from "../../src/types";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
@@ -172,10 +181,11 @@ function installOAuthFetch(
     beforeFirstUnauthorized?: () => Promise<void>;
     beforeFirstForbidden?: () => Promise<void>;
   } = {},
-): { chatAuth: string[]; chatProjects: string[]; requestPaths: string[]; counts: { refresh: number } } {
+): { chatAuth: string[]; chatProjects: string[]; requestPaths: string[]; chatBodies: string[]; counts: { refresh: number } } {
   const chatAuth: string[] = [];
   const chatProjects: string[] = [];
   const requestPaths: string[] = [];
+  const chatBodies: string[] = [];
   const counts = { refresh: 0 };
   let unauthorizedObserved = false;
   let forbiddenObserved = false;
@@ -270,6 +280,7 @@ function installOAuthFetch(
       const auth = new Headers(init?.headers).get("authorization") ?? "";
       chatAuth.push(auth);
       if (typeof init?.body === "string") {
+        chatBodies.push(init.body);
         try {
           const parsedBody = JSON.parse(init.body) as { project?: string };
           if (parsedBody.project) chatProjects.push(parsedBody.project);
@@ -317,7 +328,7 @@ function installOAuthFetch(
     if (parsedUrl.hostname === "127.0.0.1" || parsedUrl.hostname === "localhost") return originalFetch(input, init);
     throw new Error("Unexpected external request in Antigravity replay fixture");
   }) as typeof fetch;
-  return { chatAuth, chatProjects, requestPaths, counts };
+  return { chatAuth, chatProjects, requestPaths, counts, chatBodies };
 }
 
 describe("Google Antigravity OAuth upstream 401 replay", () => {
@@ -397,6 +408,57 @@ describe("Google Antigravity OAuth upstream 401 replay", () => {
       expect(row.needsReauthReason).toBeUndefined();
       expect(eligibleFailoverAccounts("google-antigravity")).toContain(failedId);
     } finally { await server.stop(true); }
+  });
+
+  test("verify 403 replay sends account B without account A's durable thought signature", async () => {
+    resetThoughtSignatureReplayForTests();
+    await seedOAuth();
+    const failedId = getAccountSet("google-antigravity")!.activeAccountId;
+    await seedSibling();
+    saveConfig(antigravityConfig());
+    const signature = "CiQAx-verify-rebind-signature-0123456789abcdef";
+    const threadId = "thread-verify-ab";
+    const callId = "call_verify_ab";
+    const stored = rememberThoughtSignatureForReplay(callId, signature, {
+      clientThreadId: threadId,
+      current: {
+        providerName: "google-antigravity",
+        providerDestinationIdentity: "seed-only",
+        providerDestinationDurableIdentity: durableReplayDestinationIdentity(DAILY_API_BASE),
+        adapterName: "google",
+        modelId: "gemini-3.8-flash",
+        credentialIdentity: "seed-only",
+        credentialDurableIdentity: durableReplayCredentialIdentity("oauth", failedId, undefined, thoughtSignatureReplaySalt()),
+      },
+    });
+    expect(stored.result).toBe("stored");
+    const observed = installOAuthFetch([
+      { status: 403, message: "Please verify your account to continue" },
+      200,
+    ]);
+    const server = startServer(0);
+    try {
+      const response = await originalFetch(new URL("/v1/responses", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json", "thread-id": threadId },
+        body: JSON.stringify({
+          model: "google-antigravity/gemini-3.8-flash",
+          input: [
+            { type: "message", role: "user", content: "hello" },
+            { type: "function_call", call_id: callId, name: "lookup", arguments: "{}" },
+          ],
+        }),
+      });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(observed.chatAuth).toEqual(["Bearer rejected-access", "Bearer access-b"]);
+      expect(observed.chatBodies).toHaveLength(2);
+      expect(observed.chatBodies[0]).toContain(signature);
+      expect(observed.chatBodies[1]).not.toContain(signature);
+    } finally {
+      await server.stop(true);
+      resetThoughtSignatureReplayForTests();
+    }
   });
 
   test("verify 403 with no viable replacement delivers the original bounded 403", async () => {

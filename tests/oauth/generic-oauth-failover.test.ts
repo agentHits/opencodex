@@ -594,10 +594,9 @@ describe("sidecar on429 wiring", () => {
     // credential that rotated after the 403 was sent.
     expect(arm).toContain("markAccountNeedsReauthIfGeneration(");
     expect(arm).not.toMatch(/await markAccountNeedsReauth\(route\.providerName/);
-    // The replay must not retain the failed credential's reasoning scope: the Google
-    // serializer reads the prior replay scope for durable thought signatures.
-    expect(arm).toContain("bindRouteReasoningReplayScope({");
-    expect(arm).toContain("oauthCredentialSnapshot");
+    // Cross-account thought signatures are not a source-text claim. The dispatch
+    // test in server-google-antigravity-oauth-401-replay proves account A's
+    // durable signature is absent from the sibling replay.
     // Recovery accounting stays truthful: this is the verify 403 path, not a rate limit.
     expect(arm).toContain('rebuildAndRefetch("oauth-account-403"');
     expect(arm).not.toContain('rebuildAndRefetch("oauth-account-429"');

@@ -14,7 +14,9 @@ describe("ocx account CLI verify status", () => {
       { provider: "google-antigravity", type: "oauth", id: "dead", label: "dead", active: false, needsReauth: true },
     ]);
 
-    expect(table).toContain("needs-reauth(verify)");
-    expect(table).toContain("needs-reauth");
+    const [, badLine, deadLine] = table.split("\n");
+    expect(badLine).toMatch(/needs-reauth\(verify\)$/);
+    expect(deadLine).toMatch(/needs-reauth$/);
+    expect(deadLine).not.toContain("(verify)");
   });
 });

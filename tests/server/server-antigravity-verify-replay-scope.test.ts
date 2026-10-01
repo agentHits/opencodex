@@ -3,9 +3,9 @@
  * OAuth credential: a sibling retry that kept reading the failed account's scope
  * would replay thought signatures Google minted for a different credential.
  *
- * This drives the real `bindRouteReasoningReplayScope` + signature store across an
- * A-to-B rebinding (the exact call the dispatch arm makes) instead of asserting
- * on source text.
+ * This drives `bindRouteReasoningReplayScope` and the signature store directly.
+ * It is not the dispatch proof: the verify arm's A-to-B wire behavior is the
+ * server test that replays a verify 403 onto the sibling account.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
