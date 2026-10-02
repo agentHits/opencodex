@@ -5,6 +5,10 @@
  * providers (including Google Antigravity) share the same /api/pool/settings
  * contract without quotaWindow: the toggle is proactive pre-dispatch selection,
  * while 429 rotation stays presence-driven.
+ * Opt-in Anthropic OAuth account pool controls (#294).
+ * Experimental. The conditions it is meant for are static helper text next to the toggle,
+ * with the selection details behind a disclosure: the notice describes how to use the pool,
+ * so it is not announced as a live alert. Load and save failures keep their own messages.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
@@ -24,6 +28,9 @@ import {
 import AccountPoolStrategyControls from "../AccountPoolStrategyControls";
 import AccountPoolStrategyPreview from "../AccountPoolStrategyPreview";
 import { Select } from "../../ui";
+
+/** The public guide section that explains pool selection, failover and its limits. */
+const ANTHROPIC_POOL_GUIDE_URL = "https://opencodex.me/guides/claude-code/#claude-oauth-account-pool-experimental";
 
 const QUOTA_WINDOW_LABEL_KEYS = {
   "five-hour": "accountPool.quotaWindowFiveHour",
@@ -48,6 +55,31 @@ function controlId(provider: string, suffix: string): string {
     if (suffix === "sticky-limit") return "anthropic-pool-sticky-limit";
   }
   return safe + "-" + suffix;
+}
+/**
+ * The enabled status line names only what the selected strategy actually reads
+ * (src/oauth/anthropic-routing.ts). Round-robin rotates new sessions and refusal recovery
+ * through the ring and reads no usage, threshold or window. Fill-first drains the active
+ * account to its threshold in the window, then advances in stable order; at threshold 0 it
+ * stays until cooldown or sign-in. Quota keeps a healthy active account under the threshold
+ * and otherwise, and during recovery, picks the lowest usage in the window.
+ */
+ function enabledStatus(
+  t: ReturnType<typeof useT>,
+  strategy: AccountPoolStrategy,
+  threshold: number,
+  quotaWindow: AccountPoolQuotaWindow,
+): string {
+  const window = t(QUOTA_WINDOW_LABEL_KEYS[quotaWindow]);
+  if (strategy === "round-robin") return t("anthropicPool.enabledRoundRobinDesc");
+  if (strategy === "fill-first") {
+    return threshold === 0
+      ? t("anthropicPool.enabledFillFirstNoThresholdDesc")
+      : t("anthropicPool.enabledFillFirstDesc", { threshold, window });
+  }
+  return threshold === 0
+    ? t("anthropicPool.enabledNoProactiveDesc", { window })
+    : t("anthropicPool.enabledDesc", { threshold, window });
 }
 
 export default function AnthropicAccountPoolSettings({
@@ -226,7 +258,7 @@ export default function AnthropicAccountPoolSettings({
               : loading
                 ? t("common.loading")
                 : enabled
-                  ? enabledDesc
+                  ? (isAnthropic ? enabledStatus(t, strategy, threshold, quotaWindow) : enabledDesc)
                   : disabledDesc}
           </div>
         </div>
@@ -251,17 +283,25 @@ export default function AnthropicAccountPoolSettings({
         </button>
       </div>
 
-      {isAnthropic && (
-        <div role="alert" className="card-sub anthropic-pool-card__notice">
-          {t("anthropicPool.experimentalWarning")}
-        </div>
-      )}
+      <p className="card-sub anthropic-pool-card__notice">
+        {t("anthropicPool.experimentalWarning")}
+      </p>
 
       {accountCount < 2 && (
         <div className="card-sub" style={{ marginTop: 8 }}>
           {t(isAnthropic ? "anthropicPool.needTwoAccounts" : "genericPool.needTwoAccounts")}
         </div>
       )}
+
+      <details className="anthropic-pool-card__details">
+        <summary>{t("anthropicPool.detailsSummary")}</summary>
+        <p>{t("anthropicPool.detailsEnabling")}</p>
+        <p>{t("anthropicPool.detailsFailover")}</p>
+        <p>{t("anthropicPool.detailsActivity")}</p>
+        <p>
+          <a href={ANTHROPIC_POOL_GUIDE_URL} target="_blank" rel="noreferrer">{t("anthropicPool.detailsGuide")}</a>
+        </p>
+      </details>
 
       {enabled && state && (
         <>
