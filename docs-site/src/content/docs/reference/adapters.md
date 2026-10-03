@@ -118,6 +118,10 @@ be configured on a separately named custom or self-hosted Ollama provider with
   is refused rather than mis-sent, and remote image URLs are not fetched.
 - **Tools:** declared in Ollama's native shape, streamed tool calls are whole-call records with
   object-valued `arguments`, and tool-result replay is paired strictly by call id and tool name.
+  Codex may record assistant commentary before a pending call's results. Text/thinking with no
+  new tool calls is deferred until the batch is settled, so genuine results remain beside their
+  originating calls. A new tool-call batch still settles the preceding one; missing results retain
+  an explicit unknown-status marker, and orphan or duplicate results remain invalid.
   `tool_choice: "none"` and `auto` behave normally; **`required` or an exact named choice fails
   closed**, because Ollama's `/api/chat` has no `tool_choice` field to enforce it with.
 - **Structured output is refused on canonical Ollama Cloud.** Ollama currently documents structured
@@ -137,8 +141,10 @@ configured provider key.
 The adapter preserves the incoming client's `User-Agent` as a fallback in both auth modes because
 some Responses-compatible providers use the Codex client fingerprint for compatibility behavior.
 An explicitly configured provider `User-Agent` remains authoritative regardless of header casing;
-if the caller sends none, OpenCodex does not invent one. No other caller header is widened by this
-exception.
+if the caller sends none, OpenCodex does not invent one. Additional caller metadata can be selected
+with `forwardClientHeaders`; provider `headers` win for this option, and credential or transport-owned
+names are refused. Canonical ChatGPT forward auth retains its separate fixed header allowlist.
+Only `originator`, `x-client-request-id`, `x-codex-app-version`, and `user-agent` are supported by `forwardClientHeaders`; arbitrary names are rejected on load/write and ignored at runtime.
 
 Adapter selection does not select the upstream transport. Eligible requests can use the
 [upstream WebSocket proxy route](/reference/proxy-formats/#json-and-sse-output); invalid or unsupported

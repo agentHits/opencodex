@@ -1,8 +1,10 @@
+import type { CodexAccountModelRefusal } from "../../combos/failover";
 import {
   isCodexReasoningEffort,
   isDeclaredReasoningEffort,
   resolveEffortAtOrBelow,
 } from "../../reasoning-effort";
+import { resolveAdmissionModelScope, routeAllowedByScope } from "../admission-model-scope";
 import { recordAttemptRequestedEffort } from "../request-log";
 import {
   CODEX_TEXT_GUARDED_BUDGET_POLICY,
@@ -65,6 +67,8 @@ import {
   recoverEncryptedAgentTaskWithResult,
 } from "./agent-task-recovery";
 import { isThreadSpawnRequest, supportedLadderFor } from "../effort-policy";
+import { applyDroidResponsesReasoningDefault } from "../droid-reasoning-default";
+import { isPlainObject } from "../../lib/plain-data";
 import {
   clientCancelledResponse,
   comboUnavailable,
@@ -327,6 +331,7 @@ export async function executeComboResponses(
     config,
     logCtx,
     admission: options.admission,
+    droidDefaultEffort: options.droidDefaultEffort,
     comboId,
     targets: combo.targets,
   });
@@ -572,6 +577,9 @@ export async function executeComboResponses(
         candidates: choices.map(choice => choice.candidate),
         fallback,
         config,
+        isDestinationAllowed: (providerName, modelId) => routeAllowedByScope(
+          resolveAdmissionModelScope(config, options.admission), { providerName, modelId },
+        ),
         ...(combo.decisionProvider ? { decisionProvider: combo.decisionProvider } : {}),
         ...(combo.decisionModel
           ? {
@@ -709,8 +717,13 @@ export async function executeComboResponses(
       modelId: targetRoute.modelId,
     });
     const initialJevDecision = firstComboTarget ? jevDecision : undefined;
+    const childInput = options.droidDefaultEffort && isPlainObject(body) ? { ...body } : body;
+    applyDroidResponsesReasoningDefault(childInput, options.droidDefaultEffort, {
+      provider: targetRoute.provider,
+      modelId: targetRoute.modelId,
+    });
     const childBody = concreteComboRequestBody(
-      body,
+      childInput,
       pick.target,
       initialJevDecision ? initialJevDecision.effort : comboDefaultEffort(config, comboId),
       initialJevDecision?.effort === null ? [] : targetReasoningEfforts,
@@ -773,6 +786,7 @@ export async function executeComboResponses(
     const completedTarget = { provider: pick.target.provider, model: pick.target.model };
     const writerGeneration = pick.writerGeneration;
     let consumedChildFailure: ConsumedComboFailure | undefined;
+    let preflightModelRefusal: CodexAccountModelRefusal | undefined;
     const callbackGate = createChildPassthroughCallbackGate({
       ...options,
       onResponseComplete: model => {
@@ -895,6 +909,7 @@ export async function executeComboResponses(
         callbackGate.discard();
         terminalRecorder?.("failed", preflight.response.status);
         response = preflight.response;
+        preflightModelRefusal = preflight.codexModelRefusal;
       } else {
         response = preflight.response;
         if (nativePassthrough) markNativePassthroughSseResponse(response);
@@ -937,6 +952,7 @@ export async function executeComboResponses(
     try {
       failure = consumedChildFailure
         ?? await consumeComboFailure(response, options.abortSignal);
+      if (preflightModelRefusal !== undefined) failure = { ...failure, codexModelRefusal: preflightModelRefusal };
     } catch (error) {
       if (options.abortSignal?.aborted) {
         retainCancelledAttempt();
@@ -981,6 +997,7 @@ export async function executeComboResponses(
       ? "stop"
       : comboFailureDecision(failure.response.status, failure.classificationText, {
         code: failure.upstreamCode,
+        codexModelRefusal: failure.codexModelRefusal,
       });
     const wantsStream = (rawBody as { stream?: unknown } | null)?.stream === true;
     // Local byte admission has its own diagnostic; do not relabel it as an upstream refusal.
