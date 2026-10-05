@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { describeUpdateRestartFailure, runUpdateRestart, UpdateRestartEligibilityError, type UpdateRestartIo } from "../../src/cli/update-restart";
+import { describeUpdateRestartFailure, runUpdateRestart, serviceSupervisionBlocksRestart, UpdateRestartEligibilityError, type UpdateRestartIo } from "../../src/cli/update-restart";
 import type { UpdateRestartCandidate } from "../../src/cli/update-restart-candidate";
 import { reportRestartFailure } from "../../src/cli/restart-failure";
 import type { LiveProxy } from "../../src/server/proxy-liveness";
@@ -225,4 +225,11 @@ test("an unverified update home names status and the owning service recovery", (
     const text = errors.mock.calls.flat().join(" ");
     expect(text).toContain("ocx status"); expect(text).toContain("ocx service restart"); expect(text).toContain("No changes were made");
   } finally { errors.mockRestore(); }
+});
+
+test("service supervision blocks only a live supervisor, never a stale record", () => {
+  expect(serviceSupervisionBlocksRestart(() => ({ installed: true, running: true }))).toBe(true);
+  expect(serviceSupervisionBlocksRestart(() => ({ installed: true, running: false }))).toBe(false);
+  expect(serviceSupervisionBlocksRestart(() => ({ installed: false, running: false }))).toBe(false);
+  expect(serviceSupervisionBlocksRestart(() => { throw new Error("probe down"); })).toBe(true);
 });

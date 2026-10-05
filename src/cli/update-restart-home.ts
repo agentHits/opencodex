@@ -17,11 +17,20 @@ function physicalDirectory(path: string): UpdateRestartHome["config"] {
   return { path: canonical, dev: stat.dev, ino: stat.ino };
 }
 
-/** Only an unclaimed standalone home is eligible for this narrow update path. */
+/**
+ * Only an unclaimed standalone home is eligible for this narrow update path.
+ *
+ * A present-but-unowned service record does not block: liveness is decided at
+ * eligibility by the standalone classifier, which refuses a live supervisor.
+ * An ownership claim or an unreadable record still fails closed, and any
+ * mid-flight record change is caught by assertUpdateRestartHome comparing the
+ * full snapshot.
+ */
 export function readUpdateRestartHome(): UpdateRestartHome {
   const state = resolveServiceState();
   const owner = resolveServiceOwnership();
-  if (state.kind !== "none" || owner.kind !== "none") throw new Error("update_restart_owner_unverified");
+  if (owner.kind !== "none") throw new Error("update_restart_owner_unverified");
+  if (state.kind === "unknown") throw new Error("update_restart_owner_unverified");
   return { config: physicalDirectory(getConfigDir()), codex: physicalDirectory(currentCodexHome()), revision: owner.revision };
 }
 
