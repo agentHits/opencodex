@@ -244,6 +244,14 @@ The repository does not install an automatic pre-push validation hook;
 
 Do not rerun passing checks on unchanged code merely for additional confidence.
 
+### Restarting the local proxy
+
+Restart the local proxy only with `ocx restart` (in-place attested restart).
+Never `ocx stop` followed by `ocx start`: the gap leaves the proxy down until
+something else heals it and produces unclean-shutdown journal noise on the
+next start. If `ocx restart` refuses, fix the named cause and retry it instead
+of working around it with stop/start.
+
 ## What a green pull request does not tell you
 
 Exact-head CI cannot see a defect that exists only in the union of two changes. Each
