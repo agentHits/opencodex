@@ -74,6 +74,12 @@ barrier: a timeout verdict alone does not make the home removable. The contract 
 
 ## Service-manager probe
 
+CLI status and doctor give the attested startup-health read the isolated probe budget plus
+1.5 seconds (6.5 seconds on POSIX, 16.5 seconds on Windows), covering the endpoint's child
+settlement grace. The read client passes the same deadline to the direct local transport, so its
+default 10-second exchange bound does not cut the Windows read short. Identity/proof validation
+and local fallback on timeout remain mandatory.
+
 `src/service-manager-probe.ts` (`inspectServiceManagerInstallation`) reports what the platform
 service manager has installed for opencodex, read-only and fail-closed. It reads the service
 definition itself and parses the `CODEX_HOME` and `OPENCODEX_HOME` values embedded in it, because
@@ -153,6 +159,12 @@ cannot be overwritten by PID or runtime publication. Before either runtime branc
 `recoverStartStateUnderOwnershipLease` (`src/cli/start-owner-fence.ts`) holds that same
 lease and rechecks the owner before stale PID cleanup, cross-home sibling detection, or startup journal recovery;
 an owner claim committed during the early probe cannot be followed by shared Codex writes.
+When that lease is still busy after its wait, `acquireOwnershipMutationLease`
+(`src/service/ownership-mutation-lease.mjs`) names the holder in its error and on the error's
+`holder` field. That means the owner's PID, whether it is alive, a live holder's executable name
+when `tasklist`/`ps` answers within a second, and the owner's age on the clock stale recovery
+uses, plus the 30-second reclaim rule. `ocx service status` prints the same holder line whenever
+the lease directory exists. That read never reclaims.
 The connected-client branch, which returns into `startClientRuntime` before the server path,
 takes the same lease through `startClientRuntimeUnderOwnershipLease`
 (`src/cli/client-start-fence.ts`), rechecks there, and releases once the client runtime has

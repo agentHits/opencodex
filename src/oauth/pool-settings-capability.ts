@@ -51,7 +51,7 @@ export function parseGenericStickyLimit(value: unknown): number | null {
 
 /** Fields the unified pool-settings contract can carry, per kind. */
 export const POOL_SETTINGS_FIELDS = [
-  "enabled", "strategy", "stickyLimit", "autoSwitchThreshold", "quotaWindow", "maxConcurrentPerAccount", "routes",
+  "enabled", "strategy", "stickyLimit", "autoSwitchThreshold", "quotaWindow", "maxConcurrentPerAccount", "routes", "nativeMessages",
 ] as const;
 export type PoolSettingsField = typeof POOL_SETTINGS_FIELDS[number];
 
@@ -85,8 +85,12 @@ export interface PoolSettingsDto {
   quotaWindow: string | null;
   maxConcurrentPerAccount: number | null;
   routes: AnthropicModelRoute[] | null;
+  /** Anthropic preference, default true; null for unsupported pool kinds. */
+  nativeMessages: boolean | null;
   /** Present only when stored Anthropic routes fail validation on read. */
   routesError?: string;
+  /** Saved state confirmed despite a post-publication failure. */
+  warning?: "config_bookkeeping_failed";
 }
 
 
@@ -135,7 +139,7 @@ export function genericPoolSettingsDto(
 /** Which fields each kind actually honours. Declared, never silently omitted. */
 const SUPPORTED_BY_KIND: Record<PoolSettingsKind, PoolSettingsField[]> = {
   codex: ["strategy", "stickyLimit", "autoSwitchThreshold"],
-  anthropic: ["enabled", "strategy", "stickyLimit", "autoSwitchThreshold", "quotaWindow", "routes"],
+  anthropic: ["enabled", "strategy", "stickyLimit", "autoSwitchThreshold", "quotaWindow", "routes", "nativeMessages"],
   generic: ["enabled", "strategy", "stickyLimit", "autoSwitchThreshold"],
 };
 
@@ -166,6 +170,7 @@ export function unifiedPoolSettingsDto(
       quotaWindow: null,
       maxConcurrentPerAccount: null,
       routes: null,
+      nativeMessages: null,
     };
   }
   if (kind === "anthropic") {
@@ -175,6 +180,7 @@ export function unifiedPoolSettingsDto(
       ...base,
       enabled,
       enabledEffective: enabled === true,
+      nativeMessages: !Object.hasOwn(pool, "nativeMessages") || pool.nativeMessages === true,
       strategy: parseGenericPoolStrategy(pool.strategy) ?? "quota",
       stickyLimit: parseGenericStickyLimit(pool.stickyLimit) ?? 1,
       autoSwitchThreshold: parseGenericAutoSwitchThreshold(pool.autoSwitchThreshold) ?? 80,
@@ -199,5 +205,6 @@ export function unifiedPoolSettingsDto(
     quotaWindow: null,
     maxConcurrentPerAccount: provider === "kiro" ? parseKiroAccountCap(failover.maxConcurrentPerAccount) : null,
     routes: null,
+    nativeMessages: null,
   };
 }

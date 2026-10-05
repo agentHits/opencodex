@@ -12,7 +12,8 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../i18n/shared";
-import { getPoolSettings, putPoolSettings } from "../../pool-settings";
+import { getPoolSettings, putPoolSettings, PoolSettingsSaveStateUnknownError } from "../../pool-settings";
+import "../../styles/anthropic-native-messages.css";
 import {
   ACCOUNT_POOL_QUOTA_WINDOWS,
   DEFAULT_ACCOUNT_POOL_QUOTA_WINDOW,
@@ -45,6 +46,7 @@ type PoolState = {
   stickyLimit: number;
   quotaWindow: AccountPoolQuotaWindow;
   supported: string[];
+  nativeMessages: boolean;
 };
 
 function controlId(provider: string, suffix: string): string {
@@ -64,7 +66,7 @@ function controlId(provider: string, suffix: string): string {
  * stays until cooldown or sign-in. Quota keeps a healthy active account under the threshold
  * and otherwise, and during recovery, picks the lowest usage in the window.
  */
- function enabledStatus(
+function enabledStatus(
   t: ReturnType<typeof useT>,
   strategy: AccountPoolStrategy,
   threshold: number,
@@ -101,6 +103,10 @@ export default function AnthropicAccountPoolSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [warning, setWarning] = useState(false);
+  const [reloadRequired, setReloadRequired] = useState(false);
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const [reloading, setReloading] = useState(false);
   const onThresholdChangeRef = useRef(onThresholdChange);
   const mountedRef = useRef(true);
   const apiBaseRef = useRef(apiBase);
@@ -142,21 +148,27 @@ export default function AnthropicAccountPoolSettings({
             ? DEFAULT_ACCOUNT_POOL_QUOTA_WINDOW
             : normalizeAccountPoolQuotaWindow(json.quotaWindow),
           supported: json.supported,
+          nativeMessages: json.nativeMessages === true,
         });
         setDraft(String(nextThreshold));
         onThresholdChangeRef.current?.(nextThreshold);
         setStickyDraft(String(nextSticky));
         setLoadError(false);
+        setReloadRequired(false);
+        setError(null);
+        setWarning(false);
+        setReloading(false);
       })
       .catch(() => {
         if (cancelled || ac.signal.aborted) return;
         setLoadError(true);
+        setReloading(false);
       });
     return () => {
       cancelled = true;
       ac.abort();
     };
-  }, [apiBase, provider]);
+  }, [apiBase, provider, reloadVersion]);
 
   const save = useCallback(async (next: {
     enabled: boolean;
@@ -164,6 +176,7 @@ export default function AnthropicAccountPoolSettings({
     strategy: AccountPoolStrategy;
     stickyLimit: number;
     quotaWindow: AccountPoolQuotaWindow;
+    nativeMessages: boolean;
   }) => {
     const requestApiBase = apiBase;
     saveAbortRef.current?.abort();
@@ -172,16 +185,9 @@ export default function AnthropicAccountPoolSettings({
     const currentRequest = () => mountedRef.current && apiBaseRef.current === requestApiBase
       && saveAbortRef.current === controller && !controller.signal.aborted;
     const previousState = state;
-    setState({
-      enabled: next.enabled,
-      threshold: next.threshold,
-      strategy: next.strategy,
-      stickyLimit: next.stickyLimit,
-      quotaWindow: next.quotaWindow,
-      supported: previousState?.supported ?? [],
-    });
     setSaving(true);
     setError(null);
+    setWarning(false);
     try {
       // The client owns the field mapping: `threshold` becomes `autoSwitchThreshold` and the
       // provider is always sent, so no call site can forget either.
@@ -190,7 +196,7 @@ export default function AnthropicAccountPoolSettings({
         threshold: next.threshold,
         strategy: next.strategy,
         stickyLimit: next.stickyLimit,
-        ...(isAnthropic ? { quotaWindow: next.quotaWindow } : {}),
+        ...(isAnthropic ? { quotaWindow: next.quotaWindow, nativeMessages: next.nativeMessages } : {}),
       }, (input, init) => fetch(input, init), { signal: controller.signal });
       if (!currentRequest()) return;
       if (!json) throw new Error("save");
@@ -201,18 +207,27 @@ export default function AnthropicAccountPoolSettings({
         ? next.quotaWindow
         : normalizeAccountPoolQuotaWindow(json.quotaWindow);
       setState({
-        enabled: next.enabled,
+        enabled: json.enabled ?? next.enabled,
         threshold: savedThreshold,
         strategy: savedStrategy,
         stickyLimit: savedSticky,
         quotaWindow: savedWindow,
         supported: json.supported.length > 0 ? json.supported : (previousState?.supported ?? []),
+        nativeMessages: json.nativeMessages === true,
       });
       setDraft(String(savedThreshold));
       onThresholdChangeRef.current?.(savedThreshold);
       setStickyDraft(String(savedSticky));
-    } catch {
+      setWarning(json.warning === "config_bookkeeping_failed");
+    } catch (failure) {
       if (!currentRequest()) return;
+      if (failure instanceof PoolSettingsSaveStateUnknownError) {
+        setState(null);
+        setReloadRequired(true);
+        setLoadError(false);
+        setError(null);
+        return;
+      }
       setError(t("anthropicPool.saveFailed"));
       if (previousState) {
         setState(previousState);
@@ -236,9 +251,11 @@ export default function AnthropicAccountPoolSettings({
     : threshold;
   const quotaWindow = state?.quotaWindow ?? DEFAULT_ACCOUNT_POOL_QUOTA_WINDOW;
   const showQuotaWindow = isAnthropic || (state?.supported ?? []).includes("quotaWindow");
+  const nativeMessages = state?.nativeMessages ?? true;
   const quotaWindowInert = strategy === "round-robin";
-  const loading = state === null && !loadError;
-  const toggleDisabled = loading || saving || loadError || (!enabled && accountCount < 2);
+  const loading = reloading || (state === null && !loadError && !reloadRequired);
+  const controlsDisabled = loading || saving || loadError || reloadRequired;
+  const toggleDisabled = controlsDisabled || (!enabled && accountCount < 2);
   const titleKey = isAnthropic ? "anthropicPool.title" : "genericPool.title";
   const enabledDesc = isAnthropic
     ? (threshold === 0
@@ -253,7 +270,9 @@ export default function AnthropicAccountPoolSettings({
         <div style={{ flex: 1 }}>
           <strong>{t(titleKey)}</strong>
           <div className="card-sub" style={{ marginTop: 4 }}>
-            {loadError
+            {reloadRequired
+              ? t("anthropicPool.saveStateUnknown")
+              : loadError
               ? t(isAnthropic ? "anthropicPool.loadFailed" : "genericPool.loadFailed")
               : loading
                 ? t("common.loading")
@@ -266,7 +285,7 @@ export default function AnthropicAccountPoolSettings({
           type="button"
           className={`toggle ${enabled ? "on" : ""}`}
           disabled={toggleDisabled}
-          aria-pressed={enabled}
+          aria-pressed={reloadRequired ? undefined : enabled}
           aria-label={t(titleKey)}
           title={enabled ? t("anthropicPool.on") : t("anthropicPool.off")}
           onClick={() => {
@@ -276,6 +295,7 @@ export default function AnthropicAccountPoolSettings({
               strategy,
               stickyLimit,
               quotaWindow,
+              nativeMessages,
             });
           }}
         >
@@ -298,6 +318,22 @@ export default function AnthropicAccountPoolSettings({
         <p>{t("anthropicPool.detailsEnabling")}</p>
         <p>{t("anthropicPool.detailsFailover")}</p>
         <p>{t("anthropicPool.detailsActivity")}</p>
+        <label className="anthropic-pool-card__native-messages">
+          <input
+            type="checkbox"
+            checked={state ? nativeMessages : false}
+            disabled={controlsDisabled || !state}
+            aria-label={t("anthropicPool.nativeMessagesLabel")}
+            aria-describedby="anthropic-pool-native-messages-help"
+            onChange={(event) => {
+              void save({ enabled, threshold, strategy, stickyLimit, quotaWindow, nativeMessages: event.target.checked });
+            }}
+          />
+          <span className="anthropic-pool-card__native-messages-copy">
+            <span className="field-label">{t("anthropicPool.nativeMessagesLabel")}</span>
+            <span id="anthropic-pool-native-messages-help" className="card-sub">{t("anthropicPool.nativeMessagesHelp")}</span>
+          </span>
+        </label>
         <p>
           <a href={ANTHROPIC_POOL_GUIDE_URL} target="_blank" rel="noreferrer">{t("anthropicPool.detailsGuide")}</a>
         </p>
@@ -315,7 +351,7 @@ export default function AnthropicAccountPoolSettings({
               max={100}
               step={1}
               value={draft}
-              disabled={saving}
+              disabled={controlsDisabled}
               aria-label={t(isAnthropic ? "anthropicPool.thresholdAria" : "genericPool.thresholdAria")}
               onChange={(event) => setDraft(event.target.value)}
               onBlur={() => {
@@ -332,6 +368,7 @@ export default function AnthropicAccountPoolSettings({
                     strategy,
                     stickyLimit,
                     quotaWindow,
+                    nativeMessages,
                   });
                 }
               }}
@@ -347,7 +384,7 @@ export default function AnthropicAccountPoolSettings({
             allowResetFirst={!isAnthropic}
             compact={!isAnthropic}
             stickyDraft={stickyDraft}
-            disabled={saving}
+            disabled={controlsDisabled}
             strategySelectId={controlId(provider, "strategy")}
             stickyInputId={controlId(provider, "sticky-limit")}
             onStrategyChange={(next) => {
@@ -358,6 +395,7 @@ export default function AnthropicAccountPoolSettings({
                 strategy: next,
                 stickyLimit,
                 quotaWindow,
+                nativeMessages,
               });
             }}
             onStickyDraftChange={setStickyDraft}
@@ -378,6 +416,7 @@ export default function AnthropicAccountPoolSettings({
                 strategy,
                 stickyLimit: parsed,
                 quotaWindow,
+                nativeMessages,
               });
             }}
           />
@@ -401,7 +440,7 @@ export default function AnthropicAccountPoolSettings({
                   value,
                   label: t(QUOTA_WINDOW_LABEL_KEYS[value]),
                 }))}
-                disabled={saving || quotaWindowInert}
+                disabled={controlsDisabled || quotaWindowInert}
                 label={t("accountPool.quotaWindow")}
                 onChange={(next) => {
                   const parsed = normalizeAccountPoolQuotaWindow(next);
@@ -412,6 +451,7 @@ export default function AnthropicAccountPoolSettings({
                     strategy,
                     stickyLimit,
                     quotaWindow: parsed,
+                    nativeMessages,
                   });
                 }}
               />
@@ -424,6 +464,20 @@ export default function AnthropicAccountPoolSettings({
         </>
       )}
 
+      {reloadRequired && (
+        <div role="alert" className="anthropic-pool-card__save-warning">
+          <p>{t("anthropicPool.saveStateUnknown")}</p>
+          {loadError && <p>{t("anthropicPool.loadFailed")}</p>}
+          <button type="button" className="btn btn-ghost btn-sm" disabled={reloading} onClick={() => {
+            setLoadError(false);
+            setReloading(true);
+            setReloadVersion(version => version + 1);
+          }}>{t("anthropicPool.reloadSettings")}</button>
+        </div>
+      )}
+      {warning && (
+        <div role="status" className="anthropic-pool-card__save-warning">{t("anthropicPool.saveWarning")}</div>
+      )}
       {error && (
         <div role="alert" className="card-sub" style={{ marginTop: 8, color: "var(--danger, #c44)" }}>
           {error}
