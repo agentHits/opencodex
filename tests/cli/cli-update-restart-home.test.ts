@@ -35,6 +35,14 @@ test("unreadable ownership state fails closed", () => {
   const h = home(); writeFileSync(join(h.config, "service-state.json"), "{bad");
   expect(() => readUpdateRestartHome()).toThrow();
 });
+test("a present-but-unowned service record does not block the home snapshot", () => {
+  const h = home();
+  writeFileSync(join(h.config, "service-state.json"), JSON.stringify({
+    version: 2, codexHome: h.codex, opencodexHome: h.config, backend: "scheduler", revision: 8,
+  }));
+  const captured = readUpdateRestartHome();
+  assertUpdateRestartHome(captured);
+});
 
 test("busy child lease leaves config bytes, permissions and files unchanged", () => {
   const h = home(); const configPath = join(h.config, "config.json");

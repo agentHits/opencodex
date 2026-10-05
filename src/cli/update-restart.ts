@@ -180,6 +180,23 @@ export function describeUpdateRestartFailure(code: string, reason?: UpdateRestar
   }
 }
 
+/**
+ * A service blocks the update path only while it is actually supervising.
+ * An installed-but-unloaded record cannot race the stop/launch sequence;
+ * refusing on mere presence forces a downtime stop/start for a proxy the
+ * service does not manage. A failed probe fails closed (blocks).
+ */
+export function serviceSupervisionBlocksRestart(
+  diagnose: () => { installed: boolean; running: boolean } = diagnoseService,
+): boolean {
+  try {
+    const service = diagnose();
+    return service.installed && service.running;
+  } catch {
+    return true;
+  }
+}
+
 function standalone(target: UpdateRestartCandidate["target"]): boolean {
   try { assertUpdateRestartConfiguration(target.hostname ?? ""); }
   catch { throw new UpdateRestartEligibilityError("configuration_changed"); }
@@ -192,7 +209,7 @@ function standalone(target: UpdateRestartCandidate["target"]): boolean {
   if (!isIP(host) || target.source !== "runtime") throw new UpdateRestartEligibilityError("unverifiable_ancestry");
   const command = readProcessCommandLine(target.pid);
   if (!command || !isOcxStartCommandLine(command)) throw new UpdateRestartEligibilityError("unverifiable_ancestry");
-  if (diagnoseService().installed) throw new UpdateRestartEligibilityError("service");
+  if (serviceSupervisionBlocksRestart()) throw new UpdateRestartEligibilityError("service");
   const manager = inspectGuardedManagerTarget(target.pid, target.port);
   if (manager.kind !== "absent") throw new UpdateRestartEligibilityError(manager.kind === "bound" ? "service" : "unverifiable_ancestry");
   let parent: string;
