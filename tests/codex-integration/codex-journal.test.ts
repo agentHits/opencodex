@@ -304,6 +304,30 @@ describe("codex-journal", () => {
     expect(existsSync(journalPath)).toBe(false);
   });
 
+  test("reconcileJournal stays silent when a dead-owner journal needs no rewrite", () => {
+    const journalPath = join(testDir, "opencodex-journal.json");
+    const original = "# original config\nmodel_provider = \"openai\"\n";
+    writeFileSync(join(testDir, "config.toml"), original, "utf8");
+    writeFileSync(journalPath, JSON.stringify({
+      version: 1,
+      originalConfig: Buffer.from(original).toString("base64"),
+      originalProfile: null,
+      pid: 999999,
+      timestamp: new Date().toISOString(),
+    }), "utf8");
+
+    const r = runScript(testDir, `
+      const { reconcileJournal } = require("./src/codex/journal");
+      const result = reconcileJournal();
+      console.log(JSON.stringify({ restored: result }));
+    `);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).restored).toBe(false);
+    expect(readFileSync(join(testDir, "config.toml"), "utf8")).toBe(original);
+    expect(existsSync(journalPath)).toBe(false);
+    expect(r.stderr).not.toContain("did not shut down cleanly");
+  });
+
   test("reconcileJournal preserves corrupt JSON without authorizing recovery", () => {
     const journalPath = join(testDir, "opencodex-journal.json");
     writeFileSync(journalPath, "NOT VALID JSON{{{", "utf8");
