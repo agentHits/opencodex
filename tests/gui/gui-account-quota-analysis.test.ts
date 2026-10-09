@@ -16,6 +16,10 @@ describe("account-quota-analysis", () => {
     expect(extractMaskedLogin(undefined, undefined, "alphauser@example.com")).toBe("a***r");
   });
 
+  test("extractEmailLogin prefers the server login over a masked email", () => {
+    expect(extractEmailLogin("a***o@example.com", undefined, "id", undefined, "alice")).toBe("alice");
+  });
+
   test("extractEmailLogin strips @domain and keeps username", () => {
     expect(extractEmailLogin("g***1@example.com")).toBe("g***1");
     expect(extractEmailLogin("alphauser@example.com")).toBe("alphauser");

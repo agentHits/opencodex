@@ -110,9 +110,11 @@ export function extractEmailLogin(
   alias?: string,
   id?: string,
   rawEmail?: string,
+  login?: string,
 ): string {
   const source = (rawEmail && rawEmail.trim() && !rawEmail.includes("*") ? rawEmail.trim() : null)
     || (email && email.trim() && !email.includes("*") ? email.trim() : null)
+    || (login && login.trim())
     || (rawEmail && rawEmail.trim())
     || (email && email.trim());
   if (source) {
@@ -142,7 +144,7 @@ function isWeeklyWindow(label: string): boolean {
 }
 
 export function analyzeAccountQuota(account: OAuthAccountRow, providerName = "google-antigravity"): AnalyzedAccountQuota {
-  const emailLogin = extractEmailLogin(account.email, account.alias, account.id, account.rawEmail);
+  const emailLogin = extractEmailLogin(account.email, account.alias, account.id, account.rawEmail, account.login);
   const maskedLogin = extractMaskedLogin(account.maskedEmail, account.email, account.rawEmail, account.alias, account.id);
   const quota = account.quota;
 

@@ -58,6 +58,8 @@ export type OAuthAccountRow = AccountQuotaReading & {
   alias?: string;
   email?: string;
   rawEmail?: string;
+  /** Unmasked local part of the email, supplied by the server even while `email` is masked. */
+  login?: string;
   maskedEmail?: string;
   logLabel?: string;
   plan?: string | null;

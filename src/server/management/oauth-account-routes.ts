@@ -29,6 +29,7 @@ import {
   publicOAuthAuthenticationErrorMessage,
   startLoginFlow,
   submitManualLoginCode,
+  upsertOAuthProvider,
 } from "../../oauth";
 import { OAuthMutationBusyError, removeCredential } from "../../oauth/store";
 import { cancelKiroDeviceLogin, kiroDeviceConfigBaseline, startKiroDeviceLogin, statusKiroDeviceLogin, type KiroDeviceMethod } from "../../oauth/kiro-device-login";
@@ -944,6 +945,16 @@ export async function handleOauthAccountRoutes(ctx: ManagementContext): Promise<
         ? imported.result.importedCount > 0 || imported.result.updatedCount > 0
         : imported.changed === true;
       if (changed) {
+        // A normal login registers the provider row; an import only writes credentials, so
+        // without this the pool exists in auth.json but the dashboard never lists the provider.
+        if (!config.providers[provider]) {
+          try {
+            upsertOAuthProvider(config, provider);
+            saveConfigPreservingClaudeCode(config);
+          } catch {
+            delete config.providers[provider];
+          }
+        }
         reconcileLiveStateStores();
         const { clearModelCache } = await import("../../codex/model-cache");
         const { clearGatherRoutedModelsInflight } = await import("../../codex/catalog");

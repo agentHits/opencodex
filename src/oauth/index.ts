@@ -5,7 +5,7 @@ import { initializeProviderModelSelection } from "../providers/initial-model-sel
 import type { OcxConfig, OcxProviderConfig, RefreshPolicy } from "../types";
 import { ConfigMutationLockError, loadConfig, mutatePersistedConfig, saveConfig } from "../config";
 import { resolveProviderApiKey } from "../providers/key-store";
-import { projectEmail } from "../lib/privacy";
+import { emailLocalPart, projectEmail } from "../lib/privacy";
 import { KiroTokenRefreshError, environmentKiroRoutingMetadata, loginKiro, refreshKiroToken, settleKiroLoginTransaction } from "./kiro";
 import {
   OAuthMutationBusyError,
@@ -1804,6 +1804,7 @@ export interface OAuthAccountSummary {
   id: string;
   alias?: string;
   email?: string;
+  login?: string; // unmasked email local part, see emailLocalPart
   active: boolean;
   needsReauth?: boolean;
   needsReauthReason?: "verify_account";
@@ -1842,6 +1843,7 @@ export function getLoginStatus(provider: string, maskEmails = true): { loggedIn:
     id: a.id,
     ...(a.alias ? { alias: a.alias } : {}),
     email: projectEmail(a.credential.email, maskEmails) ?? undefined,
+    login: emailLocalPart(a.credential.email),
     active: a.id === set.activeAccountId,
     ...(a.needsReauth ? { needsReauth: true } : {}),
     ...(a.needsReauth && a.needsReauthReason === "verify_account" ? { needsReauthReason: a.needsReauthReason } : {}),

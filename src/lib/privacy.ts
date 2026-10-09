@@ -43,3 +43,12 @@ export function maskAccountId(value: string | null | undefined): string | null {
   if (id.length <= 4) return "account-…";
   return `account-…${id.slice(-4)}`;
 }
+
+/**
+ * Local part of an email, never masked. It carries no domain, so the dashboard's "login" title
+ * can name an account while `email` stays masked under `privacy.maskEmails`.
+ */
+export function emailLocalPart(value: string | null | undefined): string | undefined {
+  const at = value ? value.indexOf("@") : -1;
+  return value && at > 0 ? value.slice(0, at) : undefined;
+}
