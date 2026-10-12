@@ -29,6 +29,8 @@ export interface ProviderAccountCardProps {
   switching: boolean;
   disabled: boolean;
   refreshing: boolean;
+  /** A quota read is running somewhere in this roster, so no card may start another. */
+  refreshBusy?: boolean;
   onSwitch: (account: OAuthAccountRow) => void;
   onRefreshSingle?: (account: OAuthAccountRow) => void;
   onEditAlias: (account: OAuthAccountRow) => void;
@@ -55,6 +57,7 @@ export default function ProviderAccountCard({
   switching,
   disabled,
   refreshing,
+  refreshBusy = false,
   onSwitch,
   onRefreshSingle,
   onEditAlias,
@@ -273,7 +276,7 @@ export default function ProviderAccountCard({
                 type="button"
                 className="btn btn-ghost btn-xs pwi-icon-btn"
                 title={t("pws.refreshAccountQuota")}
-                disabled={refreshing || disabled}
+                disabled={refreshing || refreshBusy || disabled}
                 onClick={() => onRefreshSingle(account)}
               >
                 <IconRefresh width={12} height={12} className={refreshing ? "pwi-spin-inline" : ""} aria-hidden="true" />
@@ -303,7 +306,7 @@ export default function ProviderAccountCard({
         {/* Compact Bar Columns: Clean Gemini/Claude headers & round % */}
         <div className="pwi-dense-bars-grid">
           {showReauth && (
-            <div style={{ gridColumn: "span 2", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", background: "color-mix(in srgb, var(--amber) 10%, var(--surface))", borderRadius: "4px" }}>
+            <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", background: "color-mix(in srgb, var(--amber) 10%, var(--surface))", borderRadius: "4px" }}>
               <span style={{ fontSize: "11px", color: "var(--amber)", fontWeight: 600 }}>⚠️ {t("pws.healthLabel.reauthRequired")}</span>
               {onReauth && <button type="button" className="btn btn-primary btn-sm" style={{ height: "22px", padding: "0 8px", fontSize: "11px" }} onClick={() => onReauth(account)}>{t("pws.reauthenticate")}</button>}
             </div>
@@ -377,7 +380,7 @@ export default function ProviderAccountCard({
 
           {/* Generic fallback */}
           {!analyzed.gemini5h && !analyzed.geminiWeekly && !analyzed.claude5h && !analyzed.claudeWeekly && (
-            <div className="pwi-dense-col" style={{ gridColumn: "span 2" }}>
+            <div className="pwi-dense-col" style={{ gridColumn: "1 / -1" }}>
               {(analyzed.generic5h || analyzed.genericWeekly) ? (
                 <>
                   {renderSingleQuotaBar(t("pws.window5hLabel"), analyzed.generic5h?.percent, analyzed.generic5h?.resetAt)}
@@ -448,7 +451,7 @@ export default function ProviderAccountCard({
               type="button"
               className="btn btn-ghost btn-sm pwi-icon-btn"
               title={t("pws.refreshAccountQuota")}
-              disabled={refreshing || disabled || switching}
+              disabled={refreshing || refreshBusy || disabled || switching}
               onClick={() => onRefreshSingle(account)}
             >
               <IconRefresh width={13} height={13} className={refreshing ? "pwi-spin-inline" : ""} aria-hidden="true" />
@@ -513,14 +516,14 @@ export default function ProviderAccountCard({
         )}
 
         {showReauth && (
-          <div style={{ gridColumn: "span 2", padding: "12px 14px", background: "color-mix(in srgb, var(--amber) 10%, var(--surface))", border: "1px solid color-mix(in srgb, var(--amber) 30%, transparent)", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+          <div style={{ gridColumn: "1 / -1", padding: "12px 14px", background: "color-mix(in srgb, var(--amber) 10%, var(--surface))", border: "1px solid color-mix(in srgb, var(--amber) 30%, transparent)", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
             <span style={{ fontSize: "12px", color: "var(--amber)", fontWeight: 600 }}>⚠️ {t("pws.healthLabel.reauthRequired")}</span>
             {onReauth && <button type="button" className="btn btn-primary btn-sm" onClick={() => onReauth(account)}>{t("pws.reauthenticate")}</button>}
           </div>
         )}
 
         {!isAntigravity && !showReauth && (
-          <div className="pwi-quota-col" style={{ gridColumn: "span 2" }}>
+          <div className="pwi-quota-col" style={{ gridColumn: "1 / -1" }}>
             {(analyzed.generic5h || analyzed.genericWeekly) ? (
               <>
                 {renderSingleQuotaBar(t("pws.window5hLabel"), analyzed.generic5h?.percent, analyzed.generic5h?.resetAt)}

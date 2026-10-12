@@ -3983,7 +3983,7 @@ export const vi: Record<TKey, string> = {
   "genericPool.visualUsageAria": "Mức dùng ví dụ trên tài khoản đang dùng, phần trăm",
   "genericPool.visualStay": "Request tiếp theo ở lại tài khoản đang dùng.",
   "genericPool.visualSwitch": "Request tiếp theo chuyển sang tài khoản đã đăng nhập tiếp theo.",
-  "genericPool.visualResetFirst": "Dùng trước tài khoản có hạn mức 7 ngày reset sớm nhất. Request ở lại tài khoản đang dùng cho đến khi cạn (100% hoặc 429), rồi chuyển sang lần reset gần nhất tiếp theo.",
+  "genericPool.visualResetFirst": "Dùng trước tài khoản có hạn mức 7 ngày reset sớm nhất (cửa sổ 5 giờ khi không biết thời điểm reset tuần). Request ở lại tài khoản đang dùng cho đến khi cạn (100% hoặc 429), rồi chuyển sang lần reset gần nhất tiếp theo.",
   "genericPool.visualQuota": "Quota giữ tài khoản đang dùng cho đến khi cửa sổ 5 giờ hoặc hàng tuần chạm 100%, hoặc đến 429. Ngưỡng không chuyển sớm hơn.",
   "genericPool.visualFillFirst": "Fill-first sẽ giữ tài khoản đang dùng cho đến {threshold}%, rồi mở tài khoản tiếp theo.",
   "genericPool.visualRoundRobin": "Round-robin sẽ rải request mới chưa gắn qua các tài khoản sẵn sàng.",

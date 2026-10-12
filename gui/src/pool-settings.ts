@@ -33,6 +33,12 @@ export interface PoolSettings {
    */
   inert: boolean;
   strategy: AccountPoolStrategy;
+  /**
+   * The stored strategy name as the API reported it, or null when none is stored. Differs
+   * from `strategy` for a name this dashboard does not model (Kiro's CLI-only `least-loaded`),
+   * which `strategy` normalizes to the default: a caller must not write that default back.
+   */
+  storedStrategy: string | null;
   stickyLimit: number;
   autoSwitchThreshold: number | null;
   quotaWindow: AccountPoolQuotaWindow | null;
@@ -66,6 +72,7 @@ function toDto(json: unknown, provider: string, fallback?: PoolSettingsWrite): P
     // answer 204, and reporting the normalizer default there would silently show the operator
     // a different value than the one they just saved.
     strategy: normalizeAccountPoolStrategy(raw.strategy ?? fallback?.strategy),
+    storedStrategy: typeof raw.strategy === "string" ? raw.strategy : fallback?.strategy ?? null,
     stickyLimit: normalizeAccountPoolStickyLimit(raw.stickyLimit ?? fallback?.stickyLimit),
     autoSwitchThreshold: typeof threshold === "number" ? threshold : null,
     quotaWindow: (raw.quotaWindow ?? fallback?.quotaWindow) === undefined || raw.quotaWindow === null

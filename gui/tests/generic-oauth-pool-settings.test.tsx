@@ -288,3 +288,97 @@ describe("generic OAuth account pool settings", () => {
       expect(poolToggle()?.getAttribute("aria-pressed")).toBe("true");
     },
   );
+
+describe("generic pool cluster in the accounts toolbar", () => {
+  type Stored = { enabled: boolean; strategy: string; inert?: boolean };
+
+  /** A server that keeps the stored settings and answers every write with the full DTO. */
+  function stubPoolServer(stored: Stored): { puts: Record<string, unknown>[] } {
+    const puts: Record<string, unknown>[] = [];
+    const dto = () => ({ kind: "generic", supported: ["enabled", "strategy"], ...stored });
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (!url.includes("/api/pool/settings")) return new Response("{}", { status: 200 });
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        puts.push(body);
+        if (typeof body.enabled === "boolean") stored.enabled = body.enabled;
+        if (typeof body.strategy === "string") stored.strategy = body.strategy;
+      }
+      return new Response(JSON.stringify(dto()), { status: 200 });
+    }) as typeof fetch;
+    return { puts };
+  }
+
+  async function mountPanel(provider: string): Promise<HTMLElement> {
+    const host = testWindow.document.createElement("div");
+    testWindow.document.body.appendChild(host as never);
+    const { createRoot } = await import("react-dom/client");
+    const { default: ProviderAuthPanel } = await import("../src/components/provider-workspace/ProviderAuthPanel");
+    const noop = () => {};
+    await act(async () => {
+      const root = createRoot(host);
+      mountedRoots.push(root);
+      root.render(
+        <LanguageProvider>
+          <ProviderAuthPanel
+            item={{ name: provider, adapter: "openai-responses", authMode: "oauth", hasApiKey: false } as never}
+            apiBase="http://proxy"
+            accounts={[
+              { id: "a", email: "a@example.test", active: true },
+              { id: "b", email: "b@example.test", active: false },
+            ] as never}
+            authHandlers={{
+              onLogin: noop, onLogout: noop, onReauth: noop, onSwitchAccount: noop, onRemoveAccount: noop,
+              onAddApiKey: async () => true, onSwitchApiKey: noop, onRemoveApiKey: noop, onEditAlias: noop,
+            }}
+          />
+        </LanguageProvider>,
+      );
+    });
+    await act(async () => { await flush(); });
+    return host as unknown as HTMLElement;
+  }
+
+  const strategySelect = (host: HTMLElement) => host.querySelector<HTMLSelectElement>("select.pwi-pool-select");
+  const clusterToggle = (host: HTMLElement) => host.querySelector<HTMLButtonElement>(".pwi-pool-integrated-cluster button.toggle");
+
+  test("a strategy the runtime does not consume is shown as saved, not selectable as live", async () => {
+    stubPoolServer({ enabled: true, strategy: "round-robin", inert: true });
+    const host = await mountPanel("google-antigravity");
+    const select = strategySelect(host);
+    if (!select) throw new Error("strategy select missing");
+    expect(select.disabled).toBe(true);
+    expect(select.value).toBe("round-robin");
+    expect(host.querySelector(".pwi-pool-integrated-cluster")?.textContent).toContain("Saved, not live");
+  });
+
+  test("a live pool keeps the strategy selectable and carries no stored-only badge", async () => {
+    stubPoolServer({ enabled: true, strategy: "reset-first", inert: false });
+    const host = await mountPanel("google-antigravity");
+    const select = strategySelect(host);
+    if (!select) throw new Error("strategy select missing");
+    expect(select.disabled).toBe(false);
+    expect(select.value).toBe("reset-first");
+    expect(host.querySelector(".pwi-pool-integrated-cluster")?.textContent).not.toContain("Saved, not live");
+  });
+
+  test("toggling the pool never rewrites a stored strategy this dashboard does not model", async () => {
+    const stored: Stored = { enabled: true, strategy: "least-loaded" };
+    const { puts } = stubPoolServer(stored);
+    const host = await mountPanel("kiro");
+    expect(strategySelect(host)?.value).toBe("least-loaded");
+
+    const toggle = clusterToggle(host);
+    if (!toggle) throw new Error("pool toggle missing");
+    await act(async () => { toggle.click(); await flush(); });
+    await act(async () => { clusterToggle(host)?.click(); await flush(); });
+
+    expect(puts).toEqual([
+      { provider: "kiro", enabled: false },
+      { provider: "kiro", enabled: true },
+    ]);
+    expect(stored.strategy).toBe("least-loaded");
+    expect(strategySelect(host)?.value).toBe("least-loaded");
+  });
+});

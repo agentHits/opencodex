@@ -40,6 +40,10 @@ export interface ProviderAccountsToolbarProps {
   poolEnabled?: boolean;
   onTogglePoolEnabled?: () => void;
   poolStrategy?: AccountPoolStrategy;
+  /** The saved strategy is persisted but not consumed (shared pool kernel off). */
+  poolInert?: boolean;
+  /** A stored strategy outside this selector's options, shown as-is rather than as the default. */
+  poolUnmodeledStrategy?: string | null;
   onSelectPoolStrategy?: (strategy: AccountPoolStrategy) => void;
 }
 
@@ -66,6 +70,8 @@ export default function ProviderAccountsToolbar({
   poolEnabled = false,
   onTogglePoolEnabled,
   poolStrategy = DEFAULT_ACCOUNT_POOL_STRATEGY,
+  poolInert = false,
+  poolUnmodeledStrategy = null,
   onSelectPoolStrategy,
 }: ProviderAccountsToolbarProps) {
   const t = useT();
@@ -859,16 +865,20 @@ export default function ProviderAccountsToolbar({
               {poolEnabled && onSelectPoolStrategy && (
                 <select
                   className="pwi-pool-select"
-                  value={poolStrategy}
+                  value={poolUnmodeledStrategy ?? poolStrategy}
                   onChange={e => onSelectPoolStrategy(e.target.value as AccountPoolStrategy)}
                   aria-label={t("accountPool.strategy")}
+                  disabled={poolInert}
+                  title={poolInert ? t("genericPool.visualKernelGap") : undefined}
                 >
+                  {poolUnmodeledStrategy && <option value={poolUnmodeledStrategy}>{poolUnmodeledStrategy}</option>}
                   <option value="reset-first">📅 {t("accountPool.strategyResetFirst")}</option>
                   <option value="quota">⚡ {t("accountPool.strategyQuota")}</option>
                   <option value="round-robin">🔄 {t("accountPool.strategyRoundRobin")}</option>
                   <option value="fill-first">🎯 {t("accountPool.strategyFillFirst")}</option>
                 </select>
               )}
+              {poolEnabled && poolInert && <span className="badge badge-muted">{t("genericPool.visualStored")}</span>}
               <div className={`pwi-pool-tooltip-wrap${tooltipOpen ? " is-open" : ""}`}>
                 <button
                   type="button"

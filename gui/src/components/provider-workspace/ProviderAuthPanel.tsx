@@ -17,8 +17,8 @@ import CodexAccountPool from "../CodexAccountPool";
 import AnthropicAccountPoolSettings from "./AnthropicAccountPoolSettings";
 import { LoginHint as LoginHintView } from "../login-url-block";
 import { OpenBrowserPrefToggle } from "../open-browser-pref-toggle";
-import { getPoolSettings, putPoolSettings } from "../../pool-settings";
-import { normalizeAccountPoolStrategy, type AccountPoolStrategy } from "../../account-pool-strategy";
+import { getPoolSettings, putPoolSettings, type PoolSettings } from "../../pool-settings";
+import type { AccountPoolStrategy } from "../../account-pool-strategy";
 import { DEFAULT_ACCOUNT_POOL_STRATEGY } from "../../account-pool-strategy";
 import ProviderAccountQuota from "./ProviderAccountQuota";
 import { GrokResetCouponModal } from "./GrokResetCoupons";
@@ -273,7 +273,18 @@ export default function ProviderAuthPanel({
   // Pool settings belong to the provider and server they were read for. The panel is not
   // remounted per provider, so a value from another scope is hidden during render: it is
   // never shown, and the toggle can never persist it, under the provider now on screen.
-  const [genericPoolState, setGenericPool] = useState<{ scope: string; enabled: boolean; strategy: AccountPoolStrategy } | null>(null);
+  const [genericPoolState, setGenericPool] = useState<{
+    scope: string; enabled: boolean; strategy: AccountPoolStrategy; inert: boolean;
+    /** A stored strategy this dashboard does not model (Kiro's CLI-only least-loaded). */
+    unmodeledStrategy: string | null;
+  } | null>(null);
+  const poolStateFrom = (scope: string, res: PoolSettings) => ({
+    scope,
+    enabled: res.enabled === true || res.enabledEffective === true,
+    strategy: res.strategy,
+    inert: res.inert,
+    unmodeledStrategy: res.storedStrategy !== null && res.storedStrategy !== res.strategy ? res.storedStrategy : null,
+  });
   const genericPool = genericPoolState?.scope === grantScope ? genericPoolState : null;
 
   const [poolSaveError, setPoolSaveError] = useState<string | null>(null);
@@ -289,11 +300,7 @@ export default function ProviderAuthPanel({
     let cancelled = false;
     void getPoolSettings(apiBase, item.name).then(res => {
       if (cancelled || !res) return;
-      setGenericPool({
-        scope: grantScope,
-        enabled: res.enabled === true || res.enabledEffective === true,
-        strategy: normalizeAccountPoolStrategy(res.strategy),
-      });
+      setGenericPool(poolStateFrom(grantScope, res));
     });
     return () => { cancelled = true; };
   }, [apiBase, grantScope, isOauth, item.name]);
@@ -305,21 +312,16 @@ export default function ProviderAuthPanel({
     const generation = ++poolSaveGeneration.current;
     setGenericPool({ ...prev, enabled: nextEnabled });
     setPoolSaveError(null);
-    void putPoolSettings(apiBase, item.name, {
-      enabled: nextEnabled,
-      strategy: prev.strategy,
-    }).then(saved => {
+    // Only the switch is written. Sending the strategy along would overwrite a stored name
+    // this dashboard does not model with the default it was normalized to.
+    void putPoolSettings(apiBase, item.name, { enabled: nextEnabled }).then(saved => {
       if (generation !== poolSaveGeneration.current) return;
       if (!saved) {
         setGenericPool(prev);
         setPoolSaveError(t("prov.updateFail"));
         return;
       }
-      setGenericPool({
-        scope: prev.scope,
-        enabled: saved.enabled === true || saved.enabledEffective === true,
-        strategy: normalizeAccountPoolStrategy(saved.strategy),
-      });
+      setGenericPool(poolStateFrom(prev.scope, saved));
     });
   }, [apiBase, genericPool, item.name, t]);
 
@@ -327,7 +329,7 @@ export default function ProviderAuthPanel({
     if (!genericPool) return;
     const prev = genericPool;
     const generation = ++poolSaveGeneration.current;
-    setGenericPool({ ...prev, strategy: nextStrategy });
+    setGenericPool({ ...prev, strategy: nextStrategy, unmodeledStrategy: null });
     setPoolSaveError(null);
     void putPoolSettings(apiBase, item.name, {
       enabled: prev.enabled,
@@ -339,11 +341,7 @@ export default function ProviderAuthPanel({
         setPoolSaveError(t("prov.updateFail"));
         return;
       }
-      setGenericPool({
-        scope: prev.scope,
-        enabled: saved.enabled === true || saved.enabledEffective === true,
-        strategy: normalizeAccountPoolStrategy(saved.strategy),
-      });
+      setGenericPool(poolStateFrom(prev.scope, saved));
     });
   }, [apiBase, genericPool, item.name, t]);
 
@@ -614,6 +612,8 @@ export default function ProviderAuthPanel({
                   poolEnabled={genericPool?.enabled ?? false}
                   onTogglePoolEnabled={handleTogglePoolEnabled}
                   poolStrategy={genericPool?.strategy ?? DEFAULT_ACCOUNT_POOL_STRATEGY}
+                  poolInert={genericPool?.inert ?? false}
+                  poolUnmodeledStrategy={genericPool?.unmodeledStrategy ?? null}
                   onSelectPoolStrategy={handleSelectPoolStrategy}
                 />
                 {poolSaveError && (
@@ -646,6 +646,7 @@ export default function ProviderAuthPanel({
                           />
                         ) : undefined}
                         refreshing={refreshingQuota && (refreshingAccountId === analyzed.account.id || !refreshingAccountId)}
+                        refreshBusy={refreshingQuota}
                         onSwitch={acc => void authHandlers.onSwitchAccount(item.name, acc)}
                         onRefreshSingle={canRefreshQuota ? acc => {
                           setRefreshingAccountId(acc.id);

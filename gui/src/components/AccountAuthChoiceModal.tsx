@@ -32,7 +32,9 @@ export default function AccountAuthChoiceModal({
     if (!isOpen) return;
     const previous = document.activeElement as HTMLElement | null;
     primary.current?.focus();
-    return () => { if (previous?.isConnected && typeof previous.focus === "function") previous.focus(); };
+    // Deferred: React is still removing the dialog during cleanup and resets focus to the
+    // body afterwards, which would discard a synchronous restoration.
+    return () => { requestAnimationFrame(() => { if (previous?.isConnected && typeof previous.focus === "function") previous.focus(); }); };
   }, [isOpen]);
   useEffect(() => {
     if (!isOpen) return;

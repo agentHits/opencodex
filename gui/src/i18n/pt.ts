@@ -3920,7 +3920,7 @@ export const pt: Record<TKey, string> = {
   "genericPool.visualUsageAria": "Uso de exemplo na conta ativa, em porcentagem",
   "genericPool.visualStay": "A próxima solicitação permanece na conta ativa.",
   "genericPool.visualSwitch": "A próxima solicitação passa para a próxima conta conectada.",
-  "genericPool.visualResetFirst": "Consome a conta cuja franquia semanal de 7 dias reinicia primeiro. As solicitações permanecem na conta ativa até ela se esgotar (100% ou 429) e então passam para a próxima com reinício mais próximo.",
+  "genericPool.visualResetFirst": "Consome a conta cuja franquia semanal de 7 dias reinicia primeiro (a janela de 5 horas quando o reinício semanal não é conhecido). As solicitações permanecem na conta ativa até ela se esgotar (100% ou 429) e então passam para a próxima com reinício mais próximo.",
   "genericPool.visualQuota": "Cota mantém a conta ativa até que uma janela de 5 horas ou semanal chegue a 100%, ou até um 429. O limite não antecipa a troca.",
   "genericPool.visualFillFirst": "Fill-first permaneceria na conta ativa até o uso chegar a {threshold}% e então abriria a próxima.",
   "genericPool.visualRoundRobin": "Round-robin distribuiria novas solicitações sem vínculo entre as contas prontas.",
