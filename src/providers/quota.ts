@@ -15,6 +15,7 @@ import {
 } from "./kiro-usage";
 import { mapQuotaRoster, readProviderApiKeyQuotas, type ProviderApiKeyQuota } from "./quota-key-accounts";
 import type { OcxConfig, OcxProviderConfig } from "../types";
+import { isPassiveRead } from "../lib/passive-read";
 import type { ProviderQuota, QuotaFailureCode } from "./quota-types";
 import {
   accountReportCurrent,
@@ -23,7 +24,7 @@ import {
   captureProviderReportEpochs, providerReportEpochChanged,
   cacheKeyWithAggregationState,
   getProviderQuotaReportCache,
-  hasCodexPoolProvider,
+  hasCodexPoolProvider, heldProviderQuotaReports,
   inflight,
   invalidationEpoch,
   isBuiltInChatGptForwardProvider,
@@ -229,6 +230,8 @@ export function flushProviderQuotaObservationsForTests(): Promise<void> {
 }
 
 export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh = false): Promise<ProviderQuotaResponse> {
+  // A passive read (a Remote Link Child's, #6959) shows the held reports and starts nothing.
+  if (isPassiveRead()) return heldProviderQuotaReports(Object.keys(config.providers));
   // A Pool report's cache signature and provider fetch must share one account snapshot.
   // Preserve force semantics when deciding whether that snapshot refreshes upstream data.
   const prefetchedCodexSnapshot = hasCodexPoolProvider(config)
@@ -521,19 +524,14 @@ export async function fetchProviderAccountQuotas(
   forceRefresh = false,
   providerConfig?: OcxProviderConfig,
   liveConfig?: OcxConfig,
-  /**
-   * When set to a known account id, only that account is force-probed upstream
-   * and the rest serve from cache. An unknown id falls back to force-all so a
-   * stale caller can never leave every account unforced.
-   */
+  /** A known account id force-probes only that account; the rest serve from cache. An
+   *  unknown id falls back to force-all, so a stale caller never leaves every account unforced. */
   onlyAccountId?: string,
 ): Promise<ProviderAccountQuota[]> {
   if (!supportsPerAccountQuota(provider)) return [];
   const set = getAccountSet(provider);
   if (!set) return [];
-  const scoped = onlyAccountId && set.accounts.some(account => account.id === onlyAccountId)
-    ? onlyAccountId
-    : undefined;
+  const scoped = set.accounts.some(account => account.id === onlyAccountId) ? onlyAccountId : undefined;
   return mapQuotaRoster(set.accounts, async account => {
     const forced = forceRefresh && (!scoped || account.id === scoped);
     const entry = await fetchAccountQuota(provider, account.id, forced, providerConfig, liveConfig);
