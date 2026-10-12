@@ -179,15 +179,22 @@ export function useProviderAccountPools(deps: {
       requests.clear();
     };
   }, [apiBase]);
-  // Newest generation whose QUOTA data was actually applied, per provider key. A
-  // request superseded mid-flight by a newer one reports success only when fresher
-  // quota already landed, so a manual refresh racing the visibility poll does not
-  // surface a "refresh failed" state for data that is already on screen — and a
-  // failed newer quota request still surfaces as failure.
-  const freshLandedRef = useRef<Record<string, number>>({});
+  // Latest settled QUOTA outcome per provider key, with the request generation that
+  // owns it. A landed observation is not a successful refresh: an HTTP 200 whose rows
+  // report `quotaUnavailable` settles as a failure, and so does a failed quota read.
+  // A request superseded mid-flight may only join a newer SUCCESSFUL outcome, so a
+  // manual refresh racing the visibility poll does not surface "refresh failed" for
+  // data already on screen, while a newer structured-unavailable or failed quota
+  // result still surfaces as failure to every caller it superseded.
+  const quotaOutcomeRef = useRef<Record<string, { generation: number; ok: boolean }>>({});
+  // Forced quota reads in flight per provider key. The visibility poll skips a provider
+  // that already has one: its targeted refresh would only supersede the read the operator
+  // (or the previous tick) is still waiting on, and that read answers the same question.
+  const forcedQuotaInFlightRef = useRef<Record<string, number>>({});
   const supersededByFresher = useCallback((key: string, generation: number): boolean => {
     if (!aliveRef.current || !mountedRef.current || serverRef.current !== apiBase) return false;
-    return (freshLandedRef.current[key] ?? -1) > generation;
+    const outcome = quotaOutcomeRef.current[key];
+    return outcome !== undefined && outcome.generation > generation && outcome.ok;
   }, [aliveRef, apiBase]);
   // Provider lists this instance has already fetched for. The deferred loads below are deliberately
   // uncancellable, and StrictMode double-invokes their effects, so dedupe by list identity here.
@@ -231,6 +238,7 @@ export function useProviderAccountPools(deps: {
       const currentRequest = () => aliveRef.current && mountedRef.current && serverRef.current === apiBase && accountRequestGenerationRef.current[key] === generation;
       const currentRoster = () => currentRequest() && rosterGenerationRef.current[key] === rosterGeneration;
       const url = `${apiBase}/api/oauth/accounts?provider=${encodeURIComponent(provider)}`;
+      if (refresh) forcedQuotaInFlightRef.current[key] = (forcedQuotaInFlightRef.current[key] ?? 0) + 1;
       try {
         const targetQuery = targetAccountId ? `&accountId=${encodeURIComponent(targetAccountId)}` : "";
         // Cheap local read first so account switch / reauth / remove controls appear
@@ -269,10 +277,12 @@ export function useProviderAccountPools(deps: {
                 accounts: mergeQuotaRows(enriched, current[provider]?.accounts ?? [], true),
               },
             });
-            if (currentQuota()) freshLandedRef.current[key] = generation;
-            return !enriched.some(row => row.quotaUnavailable === true);
+            const ok = !enriched.some(row => row.quotaUnavailable === true);
+            if (currentQuota()) quotaOutcomeRef.current[key] = { generation, ok };
+            return ok;
           } catch {
             if (!currentQuota()) return supersededByFresher(key, generation);
+            quotaOutcomeRef.current[key] = { generation, ok: false };
             setAccountSets(current => currentQuota() && current[provider] ? {
               ...current, [provider]: { ...current[provider], accounts: unavailableQuotaRows(current[provider].accounts, rows) },
             } : current);
@@ -284,11 +294,15 @@ export function useProviderAccountPools(deps: {
         return true;
       } catch {
         if (!currentRoster()) return supersededByFresher(key, generation);
+        // The rows below are marked unavailable, so this is the latest quota outcome too.
+        quotaOutcomeRef.current[key] = { generation, ok: false };
         setAccountLoadStates(current => currentRoster() ? { ...current, [provider]: "error" } : current);
         setAccountSets(current => currentRoster() && current[provider] ? {
           ...current, [provider]: { ...current[provider], accounts: unavailableQuotaRows(current[provider].accounts) },
         } : current);
         return false;
+      } finally {
+        if (refresh) forcedQuotaInFlightRef.current[key] = Math.max(0, (forcedQuotaInFlightRef.current[key] ?? 1) - 1);
       }
     }));
     return results.every(Boolean);
@@ -712,6 +726,7 @@ export function useProviderAccountPools(deps: {
     if (oauthCardProviders.length === 0) return;
     return startVisibilityPoll(() => {
       for (const provider of oauthCardProviders) {
+        if (forcedQuotaInFlightRef.current[`oauth:${provider}`]) continue;
         const activeId = accountSetsRef.current[provider]?.activeAccountId;
         if (activeId) {
           // Force refresh ONLY for the active/selected account; inactive accounts read from cache (10m TTL)
