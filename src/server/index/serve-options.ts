@@ -21,6 +21,7 @@ import {
 } from "./live-sideband";
 import {
   withRequestLogId,
+  withMessagesRequestLogId,
 } from "./startup-warnings";
 
 import { remoteWorkspaceEnabled } from "../../remote-control/workspace-activation";
@@ -87,6 +88,7 @@ import {
 import { sessionLaneIdFromRequest } from "../request-log-conversation";
 import { responseWithDeferredRequestLog } from "../relay";
 import { createRequestMetricsOwner } from "../request-metrics";
+import { cachedKiroQuotaMetricRows } from "../../providers/kiro-quota-metrics";
 import {
   corsHeaders,
   managementCorsHeaders,
@@ -94,6 +96,7 @@ import {
   isAllowedManagementOrigin,
   isApiAuthRequired,
   isLoopbackHostname,
+  markTrustedHubManagementRequest,
   jsonResponse,
   admissionFields,
   resolveApiAuth,
@@ -117,6 +120,7 @@ import { handleChatCompletions } from "../chat-completions";
 import { anthropicErrorResponse } from "../../claude/outbound";
 import {
   buildDesktop3pRegistry,
+  desktop3pModelOptions,
   generateDesktop3pModels,
 } from "../../claude/desktop-3p";
 import { buildDesktopDiscoveryInputs } from "../../claude/desktop-discovery-inputs";
@@ -169,18 +173,18 @@ import {
   createLocalAttestationProof,
 } from "../../lib/local-management-attestation";
 import { SYSTEM_RESTART_CAPABILITY_VERSION } from "../../lib/system-restart-contract";
+import { LOCAL_MANAGEMENT_NONCE_HEADER } from "../../lib/local-management-capability";
 import { LOCAL_PROVIDER_RELOAD_CAPABILITY_VERSION } from "../../lib/local-provider-reload-contract";
 import { LOCAL_ASIDE_SYNC_CAPABILITY_VERSION } from "../../lib/local-aside-sync-contract";
 import {
-  GUI_PAIR_BROWSER_ORIGIN_HEADER,
   GUI_PAIR_CAPABILITY_VERSION,
   GUI_PAIR_PATH,
 } from "../../lib/gui-pair-capability";
 import {
   GuiPairingGrantRateLimitError,
   consumeGuiPairingGrant,
-  createGuiPairingGrant,
 } from "../gui-session";
+import { deliverGuiPairingGrant, GuiPairingIntentRequiredError } from "../gui-pair-delivery";
 import { recordCursorSeen } from "../../integrations/cursor-seen";
 import { detectCursorInstalls } from "../../integrations/cursor-detect";
 import { loadCursorEffortTable } from "../../integrations/cursor-effort-table";
@@ -200,6 +204,8 @@ import type { WorkflowRefusalLog } from "../workflow-refusal";
 import { readyProtocolMetadata } from "../../remote/protocol";
 import { modelCapabilityFields } from "../models-capabilities";
 import { createWebsocketHandler } from "./websocket-handler";
+import { withGrokSessionIdentity } from "../../grok/session-identity";
+import { withCallerSessionIdentity } from "../caller-session-identity";
 
 export type ServerIngress = "public" | "unauthenticated-loopback" | "hub-management" | "claude-intercept" | "hub-link";
 
@@ -292,11 +298,14 @@ export function createServeOptions(ctx: ServeOptionsContext) {
     port,
   } = ctx;
   void port;
-  const requestMetrics = metricsExportEnabled(config) ? createRequestMetricsOwner() : undefined;
+  const requestMetrics = metricsExportEnabled(config)
+    ? createRequestMetricsOwner(Date.now() / 1000, cachedKiroQuotaMetricRows) : undefined;
   const requestMetricsLogContext = requestMetrics ? { requestMetricsRecorder: requestMetrics } : {};
-  const requestManagementApiDeps: ManagementApiDeps = requestMetrics
-    ? { ...managementApiDeps, requestMetrics: { snapshot: () => requestMetrics.snapshot() } }
-    : managementApiDeps;
+  const requestManagementApiDeps: ManagementApiDeps = {
+    ...managementApiDeps,
+    liveListenPort: () => ctx.boundPort ?? listenPort,
+    ...(requestMetrics ? { requestMetrics: { snapshot: () => requestMetrics.snapshot() } } : {}),
+  };
   const serveOptions = {
       idleTimeout: 255,
       // Bun rejects an oversized body before `fetch` runs, so the listener has to be raised
@@ -305,6 +314,11 @@ export function createServeOptions(ctx: ServeOptionsContext) {
       maxRequestBodySize: inboundBodyLimitBytes,
       async fetch(req: Request, requestServer: Server<WsData>): Promise<Response> {
       const ingress = ingressForServer(requestServer);
+      // Bind management-origin trust to the actual Bun listener object resolved above.
+      // Neither Host nor any X-Forwarded-* header can manufacture this process-local mark.
+      if (ingress === "hub-management" && config.runtimeRole === "hub") {
+        markTrustedHubManagementRequest(req);
+      }
       const requestUrl = codexCompatibleUrl(req.url);
       const linkPolicyView = ingress === "hub-link" ? linkPolicy() : undefined;
       // The unauthenticated loopback listener (#1102) serves a fixed allowlist and nothing
@@ -674,18 +688,16 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             return withManagementCors(Response.json({ error: "GUI pairing capability required" }, { status: 403 }), req, config);
           }
           try {
-            const grant = createGuiPairingGrant(
-              req.headers.get(GUI_PAIR_BROWSER_ORIGIN_HEADER) ?? "",
-              config,
-              managementAuth,
-            );
+            const grant = deliverGuiPairingGrant(req, config, managementAuth);
             return withManagementCors(Response.json(grant, {
               status: 201,
               headers: { "Cache-Control": "no-store" },
             }), req, config);
           } catch (error) {
             const status = error instanceof GuiPairingGrantRateLimitError ? 429 : 403;
-            return withManagementCors(Response.json({ error: "GUI pairing grant refused" }, {
+            return withManagementCors(Response.json({ error: "GUI pairing grant refused",
+              ...(error instanceof GuiPairingIntentRequiredError ? { code: "local_pairing_intent_required" } : {}),
+            }, {
               status,
               ...(status === 429 ? { headers: { "Retry-After": "60" } } : {}),
             }), req, config);
@@ -695,6 +707,17 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           trustedLoopback: trustedLoopbackForIngress(ingress, config.hostname ?? "127.0.0.1"),
           guiSessionIssuance: managementSessionIssuance(req, managementAuth),
         });
+        // A local read capability authenticates the request; sign its single-use nonce so the
+        // caller can tell this answer came from this process and not from whoever holds the port.
+        const readNonce = principal === "local-read-capability" ? req.headers.get(LOCAL_MANAGEMENT_NONCE_HEADER) : null;
+        const readProof = readNonce
+          ? createLocalAttestationProof(localAttestationSecret, readNonce, process.pid, localManagementAuth.port) : null;
+        if (mgmtResponse && readProof) {
+          const headers = new Headers(mgmtResponse.headers);
+          headers.set(LOCAL_ATTESTATION_PROOF_HEADER, readProof);
+          const signed = new Response(mgmtResponse.body, { status: mgmtResponse.status, statusText: mgmtResponse.statusText, headers });
+          return withManagementCors(signed, req, config);
+        }
         if (mgmtResponse) return withManagementCors(mgmtResponse, req, config);
         return withManagementCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);
       }
@@ -1009,6 +1032,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
             const models = config.claudeCode?.enabled === false ? [] : generateDesktop3pModels(
               desktopInputs.nativeSlugs, desktopInputs.routedModels,
               config.claudeCode?.desktopProfile, desktopInputs.nativeContextCap,
+              desktop3pModelOptions(config.claudeCode),
             );
             const response = jsonResponse({ version: 1, models }, 200, req, policy);
             response.headers.set("Cache-Control", "no-store");
@@ -1459,10 +1483,11 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           logged = true;
           addFinalRequestLog(requestId, start, logCtx, status, meta);
         };
-        return runAdmittedHttpTurn(req, policy, async turnAdmissionLease => {
+        const sessionReq = withCallerSessionIdentity(withGrokSessionIdentity(req), admission);
+        return runAdmittedHttpTurn(sessionReq, policy, async turnAdmissionLease => {
           let response: Response;
           try {
-            response = await handleResponses(req, config, logCtx, {
+            response = await handleResponses(sessionReq, config, logCtx, {
               turnAdmissionLease,
               admission,
               onRequestBodyRead: () => disableResponsesRequestTimeout(req, requestServer),
@@ -1539,11 +1564,17 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         // Logging is finalized inside handleClaudeMessages (Responses-vocab tap on the
         // pre-translation stream + native passthrough callbacks) — do not re-wrap the
         // translated Anthropic stream here.
-        return runAdmittedHttpTurn(req, policy, async turnAdmissionLease => withCors(
-          await handleClaudeMessages(req, config, logCtx, { requestId, start, turnAdmissionLease, admission }, policy, { claudeIntercept: ingress === "claude-intercept" }),
+        const sessionReq = withCallerSessionIdentity(req, admission);
+        // Entering the handler, or a logged refusal, means the final request log owns requestId.
+        let ownsRequestLog = false;
+        const claimRequestLog = (work: (lease: ActiveTurnLease) => Promise<Response>) =>
+          (lease: ActiveTurnLease) => { ownsRequestLog = true; return work(lease); };
+        const response = await runAdmittedHttpTurn(sessionReq, policy, claimRequestLog(async turnAdmissionLease => withCors(
+          await handleClaudeMessages(sessionReq, config, logCtx, { requestId, start, turnAdmissionLease, admission }, policy, { claudeIntercept: ingress === "claude-intercept" }),
           req,
           policy,
-        ), { requestId, start, logCtx });
+        )), { requestId, start, logCtx, onLogged: () => { ownsRequestLog = true; } });
+        return ownsRequestLog ? withMessagesRequestLogId(response, requestId) : response;
       }
 
       // OpenAI Chat Completions inbound (GitHub Copilot App / OpenAI-compatible clients).
@@ -1569,8 +1600,11 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         // `policy`, not `config`: this route is now served on the unauthenticated loopback
         // listener too (#4236), and only the receiving listener's view produces CORS headers
         // that match the admission decision made above.
-        return runAdmittedHttpTurn(req, policy, async turnAdmissionLease => withCors(
-          await handleChatCompletions(req, config, logCtx, { requestId, start, turnAdmissionLease, admission }),
+        // Promote a caller `x-session-id` before admission, as Responses and Messages do (#6520):
+        // the ChatGPT bridge forwards only canonical session headers, so the raw marker is lost.
+        const sessionReq = withCallerSessionIdentity(req, admission);
+        return runAdmittedHttpTurn(sessionReq, policy, async turnAdmissionLease => withCors(
+          await handleChatCompletions(sessionReq, config, logCtx, { requestId, start, turnAdmissionLease, admission }),
           req,
           policy,
         ), { requestId, start, logCtx });
@@ -1691,7 +1725,9 @@ export function createServeOptions(ctx: ServeOptionsContext) {
         if (audioController) registerTurn(audioController, turnAdmissionLease);
         const acquisition = audioController
           ? clearableDeadline(120_000, AbortSignal.any([req.signal, audioController.signal])) : undefined;
+        const detachClientAbort = turnAdmissionLease.bindAbortSignal(req.signal);
         const releaseAcquisition = () => {
+          detachClientAbort();
           acquisition?.clear();
           if (audioController) unregisterTurn(audioController);
           else turnAdmissionLease.release();
@@ -1810,6 +1846,7 @@ export function createServeOptions(ctx: ServeOptionsContext) {
           return withCors(formatErrorResponse(502, "upstream_error", "Audio WebSocket upgrade failed"), req, policy);
         }
         if (upgraded) {
+          detachClientAbort();
           acquisition?.clear();
           finalizeLiveRequest(101);
           return undefined as unknown as Response;

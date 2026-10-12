@@ -5,6 +5,7 @@ import type { QuotaFailureCode } from "../../../../src/providers/quota-types";
  */
 import type { ProviderSortMode, WorkspaceItem } from "../../provider-workspace/catalog";
 import type { AccountQuota } from "../../codex-quota-utils";
+import type { BrowserLaunch } from "../../oauth-browser-launch";
 
 export type { ProviderSortMode, WorkspaceItem };
 
@@ -62,6 +63,12 @@ export type OAuthAccountRow = AccountQuotaReading & {
   plan?: string | null;
   active: boolean;
   needsReauth?: boolean;
+  autoSelectable?: boolean;
+  skipReason?: "needs_reauth" | "paused" | "suspended" | "cooldown" | "quota_exhausted";
+  paused?: boolean;
+  autoSwitchThresholdOverride?: number | null;
+  autoSwitchThreshold?: number;
+  effectiveAutoSwitchThreshold?: number;
   health?: { status: OAuthAccountHealthStatus; reason?: string; until?: string };
   healthLabel?: string;
   healthSummary?: string;
@@ -80,16 +87,21 @@ export type LoginHint = {
   url?: string;
   instructions?: string;
   deviceCode?: string;
+  browserLaunch?: BrowserLaunch;
 };
 
 export type AccountLoadState = "idle" | "loading" | "ready" | "error";
 
 export interface ProviderAuthHandlers {
   onLogin: (provider: string, addAccount?: boolean) => void | Promise<void>;
+  onNativeLoginSettled?: (provider: string, outcome: "added" | "ended" | "failed") => void | Promise<void>;
   onCancelLogin?: (provider: string) => void;
   onLogout: (provider: string) => void | Promise<void>;
   onReauth: (provider: string, accountId?: string) => void | Promise<void>;
   onSwitchAccount: (provider: string, account: OAuthAccountRow) => void | Promise<void>;
+  onPauseAccount: (provider: string, account: OAuthAccountRow, paused: boolean) => void | Promise<void>;
+  onAccountThreshold?: (provider: string, account: OAuthAccountRow, threshold: number | null) => Promise<boolean>;
+  onAccountPoolThreshold?: (provider: string, threshold: number) => void | Promise<boolean>;
   /**
    * Remove an OAuth account. `alreadyConfirmed` skips the hook's own prompt
    * (the panel already confirmed via dialog). Returns false when the removal

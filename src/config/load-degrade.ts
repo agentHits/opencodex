@@ -1,5 +1,10 @@
+import { setCodexWsReuseAcrossTurns } from "./codex-ws-reuse-setting";
+import { isSubagentModelEntry, rawSubagentModelForce } from "./subagent-models";
 import { chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { compactionRecoveryConfigError } from "./schema/compaction-recovery";
+import { blockedModelRedirectsError } from "./schema/blocked-model-redirects";
+import { anthropicSidecarConfigError } from "./schema/anthropic-account-pool";
 import {
   modelPinnedEffortsConfigError,
   pinnedReasoningEffortConfigError,
@@ -22,6 +27,7 @@ import { refreshConfigDerivedRegistries } from "./derived-registries";
 import { type OcxClaudeCodeConfig, type OcxConfig } from "../types";
 import {
   agentTaskRecoverySchema,
+  asideProfileSyncSchema,
   catalogAutoRefreshSchema,
   clientConnectionSchema,
   isUsableApiKeySecret,
@@ -35,8 +41,10 @@ import {
   remoteGuiConfigSchema,
   retryOn429PolicySchema,
   retryOnResetPolicySchema,
+  transientRetryOn5xxPolicySchema,
   runtimeRoleSchema,
   spendSchema,
+  chatgptDesktopConfigIssue,
 } from "./schema/leaf-validators";
 import { hasWarnedInheritedFastWireConflict, markWarnedInheritedFastWireConflict } from "./warn-memo";
 
@@ -118,8 +126,80 @@ export function warnDegradedCompactionRouting(rawParsed: unknown, validated: Ocx
  * the ratchet only ever moves down: a per-block call there costs a line the file does not have.
  */
 export function warnDegradedTopLevelOptIns(rawParsed: unknown, validated: OcxConfig): void {
+  setCodexWsReuseAcrossTurns(validated.codexWsReuseAcrossTurns === true);
+  if (compactionRecoveryConfigError(rawParsed)) console.warn("⚠️  invalid compactionRecovery disabled; the original compaction failure is preserved");
+  if (blockedModelRedirectsError(rawParsed)) console.warn("⚠️  invalid blockedModelRedirects ignored; provider routing remains available");
+  const chatgptDesktop = chatgptDesktopConfigIssue(rawParsed);
+  if (chatgptDesktop) console.warn(`⚠️  config.json ${chatgptDesktop} — the whole chatgptDesktop block is ignored, so the ChatGPT desktop integration reads as off`);
   warnDegradedStreamMode(rawParsed, validated);
   warnDegradedCompactionRouting(rawParsed, validated);
+  warnDegradedMemoryModels(rawParsed, validated);
+  // The schema replaces a malformed policy with { allProfiles: false }, which silently turns every Aside profile off (#6757).
+  const asidePolicy = rawParsed && typeof rawParsed === "object" ? (rawParsed as Record<string, unknown>).asideProfileSync : undefined;
+  if (asidePolicy !== undefined && !asideProfileSyncSchema.safeParse(asidePolicy).success) {
+    console.warn("⚠️  config.json asideProfileSync is invalid — Aside profile sync falls back to all profiles off; fix the block or inspect `ocx integration client status --client aside`");
+  }
+}
+
+/**
+ * A malformed `memoryModels` phase disables that phase rather than failing the whole schema, so
+ * say so once: silently keeping whatever route the phase already had — which may be the shadow
+ * intercept rather than Codex's own model — is the outcome a typo must not produce quietly.
+ */
+export function warnDegradedMemoryModels(rawParsed: unknown, validated: OcxConfig): void {
+  if (!rawParsed || typeof rawParsed !== "object") return;
+  const raw = (rawParsed as Record<string, unknown>).memoryModels;
+  if (raw === undefined) return;
+  if (validated.memoryModels === undefined || raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    console.warn("\u26a0\ufe0f  config.json memoryModels is invalid (expected { extract?: { model, reasoningEffort? }, consolidation?: { model, reasoningEffort? } } with a nonblank model and a declared effort per phase) \u2014 the memory pipeline keeps its existing route, which may include shadow-call interception");
+    return;
+  }
+  // A misspelled phase key is stripped by the permissive load schema, so without this warning it
+  // disappears silently and the next settings save persists the sanitized map without it.
+  for (const key of Object.keys(raw as Record<string, unknown>)) {
+    if (key === "extract" || key === "consolidation") continue;
+    // Redact and JSON-escape the key name: a malformed hand-edit can place a secret in a property
+    // name, and a control character in one must not be able to forge a log line.
+    console.warn("\u26a0\ufe0f  config.json memoryModels." + JSON.stringify(redactSecretString(key)) + " is not a recognized phase \u2014 ignoring it");
+  }
+  for (const phase of ["extract", "consolidation"] as const) {
+    if ((raw as Record<string, unknown>)[phase] !== undefined && validated.memoryModels[phase] === undefined) {
+      console.warn("\u26a0\ufe0f  config.json memoryModels." + phase + " is invalid (expected { model, reasoningEffort? } with a nonblank model) \u2014 that phase keeps its existing route, which may include shadow-call interception");
+    }
+  }
+}
+
+/**
+ * Load-time degradation for helper `anthropicInstance` (loadConfig only). A malformed id, or one
+ * that conflicts with its block's backend or model, drops just that key with a warning, so the
+ * helper inherits the request's pool and every provider/key survives. Validated writes still
+ * reject the value and file diagnostics still report it from the raw document.
+ *
+ * Each location is checked in isolation, global blocks first, so a Claude override is judged
+ * against the already-degraded global block it inherits from. An override that owns no
+ * `anthropicInstance` of its own is left untouched: the conflicting key lives in the global
+ * block, which is valid on its own, and the inherited value is still a well-formed instance.
+ */
+export function sanitizeAnthropicSidecarInstanceForLoad(parsed: unknown): void {
+  const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  const root = asRecord(parsed);
+  if (!root) return;
+  for (const scope of ["global", "claude"] as const) {
+    const owner = scope === "global" ? root : asRecord(root.claudeCode);
+    for (const field of ["webSearchSidecar", "visionSidecar"] as const) {
+      const sidecar = asRecord(owner?.[field]);
+      if (!sidecar || !Object.hasOwn(sidecar, "anthropicInstance")) continue;
+      const probe = scope === "global"
+        ? { [field]: sidecar }
+        : { [field]: root[field], claudeCode: { [field]: sidecar } };
+      const error = anthropicSidecarConfigError(probe);
+      if (!error) continue;
+      delete sidecar.anthropicInstance;
+      // The message names a static path and reason only; the hand-edited value is never echoed.
+      console.warn(`⚠️  config.json ${error} — ignoring that anthropicInstance; the helper inherits the request's Anthropic pool`);
+    }
+  }
 }
 
 /**
@@ -208,6 +288,20 @@ export function retryOn429PolicyConfigError(policy: unknown): string | null {
  */
 export function retryOnResetPolicyConfigError(policy: unknown): string | null {
   return strictPolicyConfigError("retryOnReset", retryOnResetPolicySchema, policy);
+}
+
+/**
+ * Management write-boundary validation for `transientRetryOn5xx`, with the same fail-closed
+ * contract as the other retry policies.
+ *
+ * The load-time schema does not degrade a malformed block: `transientRetryOn5xxPolicySchema` has
+ * no `.catch`, so a bad value fails the whole config parse and the loader substitutes the default
+ * config, taking every provider with it. That makes this check the only place a malformed ladder
+ * can be refused without losing the file, and PATCH never runs the schema — only POST does,
+ * through `validateConfigCandidate`.
+ */
+export function transientRetryOn5xxPolicyConfigError(policy: unknown): string | null {
+  return strictPolicyConfigError("transientRetryOn5xx", transientRetryOn5xxPolicySchema, policy);
 }
 
 /**
@@ -544,6 +638,7 @@ export function normalizePersistedClaudeCode(claudeCode: unknown): OcxConfig["cl
     return claudeCode as OcxConfig["claudeCode"];
   }
   const normalized = { ...claudeCode } as Record<string, unknown>;
+  if (Object.hasOwn(normalized, "subagentModelForce") && !isSubagentModelEntry(normalized.subagentModelForce)) delete normalized.subagentModelForce;
   // A malformed hand edit must not arm CLI interception or discard the whole config.
   if (Object.hasOwn(normalized, "cliFirstParty") && typeof normalized.cliFirstParty !== "boolean") {
     delete normalized.cliFirstParty;
@@ -586,6 +681,8 @@ export function normalizeClaudeSubagentEffort(config: OcxConfig, _rawParsed: unk
 }
 
 export function warnDegradedClaudeSubagentEffort(rawParsed: unknown): void {
+  const force = rawSubagentModelForce(rawParsed);
+  if (force !== undefined && !isSubagentModelEntry(force)) console.warn("⚠️ config.json claudeCode.subagentModelForce is invalid — ignoring it. Other settings were preserved.");
   const rawEffort = rawClaudeSubagentEffort(rawParsed);
   if (rawEffort !== undefined && !isClaudeSubagentEffort(rawEffort)) {
     console.warn(`⚠️  config.json claudeCode.subagentEffort is invalid (expected ${CLAUDE_SUBAGENT_EFFORTS.join(", ")}) — ignoring it. Other settings were preserved.`);

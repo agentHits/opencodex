@@ -1,4 +1,9 @@
+import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
+import { createPhysicalSendReporter } from "../../lib/request-execution-budget";
+import { createInferenceSendBudget } from "../inference/context";
+import { unboundPoolSpendRefusalResponse } from "../workflow-refusal";
 import { capturePoolQuotaWriter } from "../../codex/account-store";
+import { previewXaiOauthWireModel } from "./core-normalize";
 import {
   admissionModelDeniedResponse,
   AdmissionModelDeniedError,
@@ -52,7 +57,7 @@ import { createAdapterEventQueue, preflightAdapterEvents } from "../../adapters/
 import {
   applyCodexAuthContextToProvider,
   callerCodexWorkspaceAccountId,
-  createCodexReserveDispatchGuard,
+  createCodexAuthDispatchGuard,
   unwrapUpstreamRetryEvidenceError,
   CodexMainProfileDrainingError,
   headersForCodexAuthContext,
@@ -181,6 +186,8 @@ import {
 import { hasResponsesItemIdRepair, relaySseWithResponsesItemIdRepair } from "../responses-item-id-repair";
 import type { EffectiveSubagentRoster, SpawnAgentSurface } from "../../codex/catalog";
 import { codexAuthContextLogLabel } from "../../codex/account-label";
+import { rebindPoolCreditPolicy } from "../../codex/pool-credit-policy";
+import { clientCancelledResponse } from "./core-errors";
 
 import {
   codexAccountGatedCanonicalWireModel,
@@ -196,6 +203,7 @@ import { fetchWithHeaderTimeout, providerFetch, safeHostLabel, safeOriginLabel }
 import { mapCodexAuthContextErrorToResponse, nativeMainRefreshFailureResponse } from "./codex-auth-error";
 import { linkRequestSessionLane, sessionLaneIdFromRequest } from "../request-log-conversation";
 import { recallComboForLane } from "./combo-session-recall";
+import { redactHostedImageDisplayPaths } from "../responses-hosted-image-display";
 
 export const COMPACT_RESPONSE_MAX_BYTES = 32 * 1024 * 1024;
 
@@ -433,6 +441,9 @@ async function refreshPoolCompactContext(args: {
       generation: refreshed.generation,
       poolQuotaWriter: capturePoolQuotaWriter(authCtx.accountId, refreshed),
     };
+    // See the core counterpart: the spread dropped the WeakMap-bound credit policy, so a hold
+    // or opt-out landing during the refresh await would go unchecked on the copy.
+    rebindPoolCreditPolicy(authCtx, refreshedAuthCtx);
     const refreshedProvider = applyCodexAuthContextToProvider(
       stripCodexRuntimeProviderFields(provider),
       refreshedAuthCtx,
@@ -461,6 +472,16 @@ async function refreshPoolCompactContext(args: {
     if (isTerminalCompactPoolRefreshFailure(error)) {
       return { ok: false, quarantine: true, response: reauthResponse() };
     }
+    if (req.signal.aborted) {
+      return { ok: false, quarantine: false, response: clientCancelledResponse() };
+    }
+    // See the core counterpart: a policy refusal raised after a successful refresh maps like
+    // the admission path — a reset-bound 429, never a 503 mislabeled as a refresh failure.
+    const policyResponse = mapCodexAuthContextErrorToResponse(error, {
+      now: Date.now(),
+      accountSelector: args.codexAccountNamespace,
+    });
+    if (policyResponse) return { ok: false, quarantine: false, response: policyResponse };
     return {
       ok: false,
       quarantine: false,
@@ -622,6 +643,8 @@ export async function handleResponsesCompact(
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return formatErrorResponse(400, "invalid_request_error", "Invalid compaction request body");
   }
+  // Compaction forwards client history upstream too; keep local artifact paths out of it.
+  redactHostedImageDisplayPaths(body);
   if (!options.compactionRoutingOverride) {
     options = { ...options, compactionRoutingOverride: applyCompactionRoutingOverride(body, req.headers, config, { endpoint: "compact" }) };
   }
@@ -670,7 +693,15 @@ export async function handleResponsesCompact(
     // A compaction override picks the model, not the caller, so the key's scope
     // is applied to what the override resolved to rather than to the selector
     // the client sent.
-    assertRouteAllowedByScope(resolveAdmissionModelScope(config, admission), compactRequestedModel, route);
+    // Routed xAI OAuth compaction must preview its Fast wire model here;
+    // native compact keeps checking the destination it dispatches directly.
+    const callerTier = (raw as Record<string, unknown>).service_tier;
+    assertRouteAllowedByScope(resolveAdmissionModelScope(config, admission), compactRequestedModel, {
+      providerName: route.providerName,
+      modelId: previewXaiOauthWireModel({ options: {
+        serviceTier: compactFastRow ? "priority" : typeof callerTier === "string" ? callerTier : undefined,
+      } }, route, config, "responses"),
+    });
   } catch (err) {
     if (err instanceof AdmissionModelDeniedError) return admissionModelDeniedResponse(err);
     if (err instanceof NoEligiblePolicyCandidateError) {
@@ -691,9 +722,11 @@ export async function handleResponsesCompact(
   logCtx.requestedModel = compactRequestedModel;
   logCtx.model = selectedModelId;
   logCtx.routeDecision = route.routeDecision;
+  logCtx.policyEligibility = route.policyEligibility;
   logCtx.provider = route.codexAccountNamespace
     ? `${route.providerName}-${route.codexAccountNamespace}`
     : route.providerName;
+  logCtx.spendPoolId = route.providerName;
   logCtx.providerAdapter = route.provider.adapter;
   // #4940, and the same refusal the ordinary Responses path makes in request-prepare.ts. Compact has
   // to repeat it rather than inherit it: the native branch below dispatches straight to
@@ -776,7 +809,7 @@ export async function handleResponsesCompact(
   // failure that hands off, continues here. The routed turn used to call handleResponses with
   // no budget at all, so `handleResponsesInner` minted a fresh four after the native attempt
   // had already spent some of the first one.
-  const sendBudget: RequestExecutionBudget = options.sendBudget ?? createRequestExecutionBudget();
+  const sendBudget: RequestExecutionBudget = options.sendBudget ?? createInferenceSendBudget(req, logCtx);
   // A manual override onto another backend must not mint ciphertext the conversation model cannot replay.
   const manualOverrideCrossesProvider = options.compactionRoutingOverride
     ? !compactionRoutingKeepsProviderIdentity(config, options.compactionRoutingOverride, route)
@@ -994,12 +1027,21 @@ export async function handleResponsesCompact(
     // `kind === "pool"` and a main-pool credential left it false -- so 401 then 429 really did
     // reach five. The single sends spend the base allowance first and then the one shared
     // final-recovery reserve, which is the same rule the Responses path follows.
-    const sendSingleCompactAttempt = (
+    const sendSingleCompactAttempt = async (
       doFetch: () => Promise<Response>,
     ): Promise<Response> => {
       if (sendBudget.remainingBaseSends(TRANSIENT_RETRY_MAX_ATTEMPTS) > 0) {
-        sendBudget.used += 1;
-        return doFetch();
+        const report = createPhysicalSendReporter(sendBudget, () => ({ poolId: logCtx.spendPoolId ?? route.providerName,
+          identityId: logCtx.accountLogLabel }));
+        let started = false;
+        try {
+          if (report.beforeSend?.() === false) throw new SendBudgetExhaustedError(safeHostLabel(compactUrl));
+          started = true;
+          return await doFetch();
+        } finally {
+          try { if (started) report(1); }
+          finally { report.close?.(); }
+        }
       }
       const decision = sendBudget.reserveDispatch({
         sendClass: "auth-recovery",
@@ -1029,7 +1071,7 @@ export async function handleResponsesCompact(
           providerName: route.providerName,
           modelId: route.modelId,
           beforeDispatch: isCanonicalOpenAiForwardProvider(sendProvider)
-            ? createCodexReserveDispatchGuard(sendAuthCtx, config, selectedModelId, admission) : undefined,
+            ? createCodexAuthDispatchGuard(sendAuthCtx, config, selectedModelId, admission) : undefined,
         }),
         // Every credential-bearing forward send gets manual redirects, not only
         // pool sends: direct mode carries the caller's credential too (#914).
@@ -1048,7 +1090,8 @@ export async function handleResponsesCompact(
           // Draws the shared remainder instead of a fresh three. Compact is a native endpoint
           // of the same logical turn, so its sends belong to the same cap.
           attempts: sendBudget.remainingBaseSends(TRANSIENT_RETRY_MAX_ATTEMPTS),
-          onSendsConsumed: (used: number) => { sendBudget.used += Math.max(0, used); },
+          onSendsConsumed: createPhysicalSendReporter(sendBudget, () => ({ poolId: logCtx.spendPoolId ?? route.providerName,
+            identityId: logCtx.accountLogLabel })),
         });
     };
 
@@ -1056,9 +1099,12 @@ export async function handleResponsesCompact(
     // actually happens, so every recorder call names the context that produced it.
     let outcomeCtx = authCtx;
     const localDispatchRefusal = (error: unknown): Response | undefined => {
-      const response = mapCodexAuthContextErrorToResponse(unwrapUpstreamRetryEvidenceError(error), {
-        now: Date.now(), accountSelector: route.codexAccountNamespace,
-      });
+      const cause = unwrapUpstreamRetryEvidenceError(error);
+      const response = spendLedgerStorageErrorResponse(error, logCtx) ?? (cause instanceof SendBudgetExhaustedError
+        ? unboundPoolSpendRefusalResponse(logCtx) ?? formatErrorResponse(429, "request_send_budget_exhausted", cause.message)
+        : mapCodexAuthContextErrorToResponse(cause, {
+          now: Date.now(), accountSelector: route.codexAccountNamespace,
+        }));
       if (response) {
         releaseUpstreamHostAdmission(compactHostAdmissionLease);
         compactHostAdmissionLease = null;
@@ -1259,7 +1305,8 @@ export async function handleResponsesCompact(
             upstream.headers,
             authCtx.writerGeneration,
             authCtx.kind === "main-pool" ? authCtx.mainQuotaWriter : undefined,
-            { modelId: route.modelId, poolWriter: authCtx.kind === "pool" ? authCtx.poolQuotaWriter : undefined },
+            { modelId: route.modelId, poolWriter: authCtx.kind === "pool" ? authCtx.poolQuotaWriter : undefined,
+              poolResponse: authCtx.kind === "pool" },
           );
         }
         recordCompactPoolOutcome(authCtx, upstream.status, {
@@ -1328,7 +1375,7 @@ export async function handleResponsesCompact(
     if (outcomeCtx.kind === "pool") {
       const { applyAccountQuotaFromUpstreamHeaders } = await import("../../codex/quota");
       applyAccountQuotaFromUpstreamHeaders(outcomeCtx.accountId, upstream.headers, outcomeCtx.writerGeneration,
-        undefined, { modelId: route.modelId, poolWriter: outcomeCtx.poolQuotaWriter });
+        undefined, { modelId: route.modelId, poolWriter: outcomeCtx.poolQuotaWriter, poolResponse: true });
     }
     const retryAfter = upstream.headers.get("retry-after");
     const resetAt = [
@@ -1435,7 +1482,7 @@ export async function handleResponsesCompact(
   // The routed compaction turn is a handoff inside the same logical request, so it draws the
   // REMAINDER. Minting here is what let a native attempt spend three sends and the routed
   // fallback spend four more.
-  const response = await handleResponses(internalReq, config, logCtx, { abortSignal: req.signal, turnAdmissionLease, sendBudget, compactionRoutingOverride: options.compactionRoutingOverride, ...(admission ? { admission } : {}) });
+  const response = await handleResponses(internalReq, config, logCtx, { abortSignal: req.signal, turnAdmissionLease, sendBudget, compactionRecoveryKind: "compaction-v1", compactionRoutingOverride: options.compactionRoutingOverride, ...(admission ? { admission } : {}) });
   if (!response.ok) return response;
   let json: { output?: unknown[]; status?: unknown; error?: unknown };
   if (response.headers.get("content-type")?.includes("text/event-stream")) {

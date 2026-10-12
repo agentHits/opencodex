@@ -1,4 +1,4 @@
-/* oxlint-disable react/react-compiler */
+import { anthropicInstanceRowShapeMatches, isAnthropicInstanceId } from "../../../../src/providers/anthropic-instance-id";
 /**
  * ProviderAuthPanel — OAuth accounts, API-key pool, and forward-auth
  * embedding for the workspace Settings tab (WP091). Consumes WP040+WP060
@@ -9,6 +9,7 @@ import { useT } from "../../i18n/shared";
 import { IconLock, IconRefresh, IconTrash } from "../../icons";
 import type { WorkspaceItem } from "../../provider-workspace/catalog";
 import { oauthAccountDisplayLabel, providerAuthSurface } from "../../provider-workspace/auth";
+import AccountAutoSwitchControl from "../AccountAutoSwitchControl";
 import {
   oauthHealthShowsReauth,
 } from "../../oauth-health-display";
@@ -38,6 +39,8 @@ import type { CodexAccountPoolController } from "../../hooks/useCodexAccountPool
 import { useGrokResetCoupons } from "../../hooks/useGrokResetCoupons";
 import { useAnthropicResetGrants } from "../../hooks/useAnthropicResetGrants";
 import { Switch } from "../../ui";
+import { kiroSkipReasonKey } from "../../kiro-device-login-helpers";
+import KiroDeviceLoginDialog from "../KiroDeviceLoginDialog";
 import type {
   AccountLoadState,
   OAuthAccountRow,
@@ -120,7 +123,7 @@ function XaiChatOptInControl({
 
 export default function ProviderAuthPanel({
   item, apiBase, oauth, accounts = EMPTY_OAUTH_ACCOUNTS, keys = EMPTY_API_KEYS, accountLoadState = "ready",
-  switchingAccountId = null, busy = false, loginHint, authHandlers, onCodexActiveNeedsReauthChange,
+  switchingAccountId = null, pausingAccountId = null, busy = false, loginHint, authHandlers, onCodexActiveNeedsReauthChange,
   codexController, onUpdateProvider,
 }: {
   item: WorkspaceItem;
@@ -130,6 +133,7 @@ export default function ProviderAuthPanel({
   keys?: ApiKeyRow[];
   accountLoadState?: AccountLoadState;
   switchingAccountId?: string | null;
+  pausingAccountId?: string | null;
   busy?: boolean;
   loginHint?: LoginHint | null;
   authHandlers?: ProviderAuthHandlers;
@@ -140,6 +144,13 @@ export default function ProviderAuthPanel({
 }) {
   const t = useT();
   const [addingKey, setAddingKey] = useState(false);
+  const [kiroChooser, setKiroChooser] = useState<{ addAccount: boolean } | null>(null);
+  const kiroLoginTriggerRef = useRef<HTMLButtonElement>(null);
+  const kiroAddTriggerRef = useRef<HTMLButtonElement>(null);
+  const openLogin = (addAccount: boolean) => {
+    if (item.name === "kiro") setKiroChooser({ addAccount });
+    else void authHandlers?.onLogin(item.name, addAccount);
+  };
   const [newKey, setNewKey] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
   const [manualCode, setManualCode] = useState("");
@@ -176,22 +187,31 @@ export default function ProviderAuthPanel({
   const grokCoupons = useGrokResetCoupons({ apiBase, accountIds: grokAccountIds, enabled: grokCouponsEnabled });
   const [couponAccount, setCouponAccount] = useState<OAuthAccountRow | null>(null);
   // Claude usage resets ride a separate usage read, like the Grok coupons above.
-  const claudeGrantsEnabled = isOauth && item.name === "anthropic" && accounts.length > 0;
+  const isAnthropicPool = isAnthropicInstanceId(item.name) && anthropicInstanceRowShapeMatches(item.name, item);
+  const claudeGrantsEnabled = isOauth && isAnthropicPool && accounts.length > 0;
   const claudeAccountIds = useMemo(
     () => (claudeGrantsEnabled ? accounts.filter(account => !accountShowsReauth(account)).map(account => account.id) : []),
     [claudeGrantsEnabled, accounts],
   );
-  const claudeGrants = useAnthropicResetGrants({ apiBase, accountIds: claudeAccountIds, enabled: claudeGrantsEnabled });
-  const [grantAccount, setGrantAccount] = useState<OAuthAccountRow | null>(null);
-  const [accountToRemove, setAccountToRemove] = useState<OAuthAccountRow | null>(null);
-  const [removingAccount, setRemovingAccount] = useState(false);
-  // The confirmation targets one provider's account. If the selected provider or
-  // API base changes while the dialog is open, dismiss it: confirming afterwards
-  // would remove an account the operator is no longer looking at.
-  useEffect(() => {
-    setAccountToRemove(null);
-    setRemovingAccount(false);
-  }, [item.name, apiBase]);
+  const claudeGrants = useAnthropicResetGrants({ apiBase, provider: isAnthropicInstanceId(item.name) ? item.name : "anthropic", accountIds: claudeAccountIds, enabled: claudeGrantsEnabled });
+  // The open reset dialog belongs to the pool it was opened in. Switching server or pool
+  // hides it during render rather than resetting it from an effect.
+  const grantScope = `${apiBase}\0${item.name}`;
+  const [grantSelection, setGrantSelection] = useState<{ scope: string; account: OAuthAccountRow } | null>(null);
+  const grantAccount = grantSelection?.scope === grantScope ? grantSelection.account : null;
+  const setGrantAccount = (account: OAuthAccountRow | null) => {
+    setGrantSelection(account ? { scope: grantScope, account } : null);
+  };
+  // The removal confirmation is bound to the same scope: provider identity plus API base.
+  // Confirming after either changed would remove an account the operator is no longer
+  // looking at, so a selection from another scope is never rendered or confirmable.
+  const [removeSelection, setRemoveSelection] = useState<{ scope: string; account: OAuthAccountRow } | null>(null);
+  const accountToRemove = removeSelection?.scope === grantScope ? removeSelection.account : null;
+  const setAccountToRemove = (account: OAuthAccountRow | null) => {
+    setRemoveSelection(account ? { scope: grantScope, account } : null);
+  };
+  const [removingScope, setRemovingScope] = useState<string | null>(null);
+  const removingAccount = removingScope === grantScope;
   const [accountFilter, setAccountFilter] = useState<AccountFilterKey>(() => {
     try {
       const saved = localStorage.getItem("ocx_account_filter");
@@ -250,7 +270,11 @@ export default function ProviderAuthPanel({
   const [accountSearch, setAccountSearch] = useState("");
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | null>(null);
 
-  const [genericPool, setGenericPool] = useState<{ enabled: boolean; strategy: AccountPoolStrategy } | null>(null);
+  // Pool settings belong to the provider and server they were read for. The panel is not
+  // remounted per provider, so a value from another scope is hidden during render: it is
+  // never shown, and the toggle can never persist it, under the provider now on screen.
+  const [genericPoolState, setGenericPool] = useState<{ scope: string; enabled: boolean; strategy: AccountPoolStrategy } | null>(null);
+  const genericPool = genericPoolState?.scope === grantScope ? genericPoolState : null;
 
   const [poolSaveError, setPoolSaveError] = useState<string | null>(null);
 
@@ -261,21 +285,18 @@ export default function ProviderAuthPanel({
   useEffect(() => { poolSaveGeneration.current += 1; }, [apiBase, item.name]);
 
   useEffect(() => {
-    // The panel is not remounted per provider: without this, a failed read (or an
-    // empty roster) leaves the previous provider's strategy on screen, and the
-    // toggle would persist it under the new provider.
-    setGenericPool(null);
-    if (!isOauth || item.name === "openai" || item.name === "anthropic") return;
+    if (!isOauth || item.name === "openai" || isAnthropicInstanceId(item.name)) return;
     let cancelled = false;
     void getPoolSettings(apiBase, item.name).then(res => {
       if (cancelled || !res) return;
       setGenericPool({
+        scope: grantScope,
         enabled: res.enabled === true || res.enabledEffective === true,
         strategy: normalizeAccountPoolStrategy(res.strategy),
       });
     });
     return () => { cancelled = true; };
-  }, [apiBase, isOauth, item.name]);
+  }, [apiBase, grantScope, isOauth, item.name]);
 
   const handleTogglePoolEnabled = useCallback(() => {
     if (!genericPool) return;
@@ -295,11 +316,12 @@ export default function ProviderAuthPanel({
         return;
       }
       setGenericPool({
+        scope: prev.scope,
         enabled: saved.enabled === true || saved.enabledEffective === true,
         strategy: normalizeAccountPoolStrategy(saved.strategy),
       });
     });
-  }, [apiBase, genericPool, item.name]);
+  }, [apiBase, genericPool, item.name, t]);
 
   const handleSelectPoolStrategy = useCallback((nextStrategy: AccountPoolStrategy) => {
     if (!genericPool) return;
@@ -318,11 +340,12 @@ export default function ProviderAuthPanel({
         return;
       }
       setGenericPool({
+        scope: prev.scope,
         enabled: saved.enabled === true || saved.enabledEffective === true,
         strategy: normalizeAccountPoolStrategy(saved.strategy),
       });
     });
-  }, [apiBase, genericPool, item.name]);
+  }, [apiBase, genericPool, item.name, t]);
 
   const showModelFamilies = item.name === "google-antigravity";
 
@@ -484,11 +507,13 @@ export default function ProviderAuthPanel({
         )}
         {isOauth && (
           <>
-            {item.name === "anthropic" && (
+            {isAnthropicPool && (
               <AnthropicAccountPoolSettings
+                key={`${apiBase}:${item.name}`}
                 apiBase={apiBase}
+                provider={isAnthropicInstanceId(item.name) ? item.name : "anthropic"}
                 accountCount={accounts.length}
-                provider={item.name}
+                onThresholdChange={threshold => { void authHandlers?.onAccountPoolThreshold?.(item.name, threshold); }}
               />
             )}
 
@@ -510,7 +535,7 @@ export default function ProviderAuthPanel({
                   {loggedIn ? (
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => void authHandlers.onLogout(item.name)}>{t("prov.logout")}</button>
                   ) : (
-                    <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => void authHandlers.onLogin(item.name, false)}>
+                    <button ref={item.name === "kiro" ? kiroLoginTriggerRef : undefined} type="button" className="btn btn-primary btn-sm" disabled={busy || (item.name === "kiro" && Boolean(kiroChooser))} onClick={() => openLogin(false)}>
                       {busy ? <span className="pwi-spin-inline" aria-hidden="true" /> : <IconLock style={{ width: 13, height: 13 }} aria-hidden="true" />}
                       {busy ? t("prov.waitingBrowser") : t("prov.login")}
                     </button>
@@ -529,6 +554,7 @@ export default function ProviderAuthPanel({
                       url: hintForThis.url,
                       deviceCode: hintForThis.deviceCode,
                       instructions: hintForThis.instructions,
+                      browserLaunch: hintForThis.browserLaunch,
                     }}
                     paste={{
                       value: manualCode,
@@ -605,7 +631,20 @@ export default function ProviderAuthPanel({
                         viewMode={accountViewMode}
                         titleMode={accountTitleMode}
                         switching={switchingAccountId === analyzed.account.id}
-                        disabled={busy || Boolean(switchingAccountId && switchingAccountId !== analyzed.account.id)}
+                        disabled={busy || Boolean(pausingAccountId) || Boolean(switchingAccountId && switchingAccountId !== analyzed.account.id)}
+                        pausing={pausingAccountId === analyzed.account.id}
+                        onPause={(acc, paused) => void authHandlers.onPauseAccount(item.name, acc, paused)}
+                        skipReasonKey={kiroSkipReasonKey(analyzed.account, item.name)}
+                        quotaControls={isAnthropicPool && analyzed.account.autoSwitchThresholdOverride !== undefined
+                          && analyzed.account.autoSwitchThreshold !== undefined && authHandlers.onAccountThreshold ? (
+                          <AccountAutoSwitchControl
+                            accountLabel={oauthAccountDisplayLabel(accounts, analyzed.account, t)} inputId={`anthropic-threshold-${analyzed.account.id}`}
+                            globalThreshold={analyzed.account.autoSwitchThreshold} override={analyzed.account.autoSwitchThresholdOverride}
+                            hintText={t("pws.anthropicAccountThresholdHint")}
+                            disabled={busy || Boolean(switchingAccountId) || Boolean(pausingAccountId)}
+                            onChange={threshold => authHandlers.onAccountThreshold!(item.name, analyzed.account, threshold)}
+                          />
+                        ) : undefined}
                         refreshing={refreshingQuota && (refreshingAccountId === analyzed.account.id || !refreshingAccountId)}
                         onSwitch={acc => void authHandlers.onSwitchAccount(item.name, acc)}
                         onRefreshSingle={canRefreshQuota ? acc => {
@@ -641,15 +680,18 @@ export default function ProviderAuthPanel({
                 onCancel={() => { if (!removingAccount) setAccountToRemove(null); }}
                 onConfirm={async () => {
                   if (removingAccount || !accountToRemove) return;
-                  setRemovingAccount(true);
+                  const scope = grantScope;
+                  setRemovingScope(scope);
                   try {
                     // The dialog already confirmed: skip the hook's own prompt and
                     // keep the dialog open when the removal reports failure.
                     const removed = await authHandlers.onRemoveAccount(item.name, accountToRemove, true);
                     if (removed === false) return;
-                    setAccountToRemove(null);
+                    // Only close the dialog this removal belongs to: the operator may have
+                    // moved to another provider and opened a new confirmation meanwhile.
+                    setRemoveSelection(current => current?.scope === scope ? null : current);
                   } finally {
-                    setRemovingAccount(false);
+                    setRemovingScope(current => current === scope ? null : current);
                   }
                 }}
               />
@@ -665,6 +707,7 @@ export default function ProviderAuthPanel({
             )}
             {grantAccount && (
               <AnthropicResetGrantModal
+                key={`${apiBase}:${item.name}:${grantAccount.id}`}
                 accountId={grantAccount.id}
                 accountLabel={oauthAccountDisplayLabel(accounts, grantAccount, t)}
                 entry={claudeGrants.entries[grantAccount.id]}
@@ -677,8 +720,8 @@ export default function ProviderAuthPanel({
             )}
             {loggedIn && (
               <div className="pwi-auth-actions">
-                <button type="button" className="btn btn-ghost btn-sm"
-                  onClick={() => void authHandlers.onLogin(item.name, true)} disabled={busy || Boolean(switchingAccountId)}>
+                <button ref={item.name === "kiro" ? kiroAddTriggerRef : undefined} type="button" className="btn btn-ghost btn-sm"
+                  onClick={() => openLogin(true)} disabled={busy || Boolean(switchingAccountId) || (item.name === "kiro" && Boolean(kiroChooser))}>
                   {t("pws.addAccount")}
                 </button>
                 {canRefreshQuota && (
@@ -701,6 +744,12 @@ export default function ProviderAuthPanel({
               </div>
             )}
           </>
+        )}
+        {item.name === "kiro" && kiroChooser && (
+          <KiroDeviceLoginDialog apiBase={apiBase} triggerRef={kiroChooser.addAccount ? kiroAddTriggerRef : kiroLoginTriggerRef}
+            addAccount={kiroChooser.addAccount} busy={busy} onClose={() => setKiroChooser(null)}
+            onCli={addAccount => { void authHandlers.onLogin(item.name, addAccount); }}
+            onSettled={authHandlers.onNativeLoginSettled} />
         )}
 
         {isKeyAuth && (

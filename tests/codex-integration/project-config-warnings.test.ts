@@ -352,11 +352,11 @@ describe("collectProjectCodexConfigWarnings", () => {
   });
 
   test("skips untrusted projects even when they define bypass config", () => {
-    const escaped = testDir.replace(/\\/g, "\\\\");
     const projectDir = join(testDir, "proj");
     const codexConfigPath = join(process.env.CODEX_HOME!, "config.toml");
+    // A TOML literal string keeps the platform path verbatim, so the key matches on every OS.
     writeGlobalRoutingConfig(`
-[projects.'${escaped}\\proj']
+[projects.'${projectDir}']
 trust_level = "untrusted"
 `);
     mkdirSync(join(projectDir, ".codex"), { recursive: true });
@@ -365,7 +365,15 @@ model_provider = "anthropic"
 [model_providers.anthropic]
 name = "anthropic"
 `);
-    expect(collectProjectCodexConfigWarnings({ cwd: testDir, codexConfigPath })).toEqual([]);
+    const warnings = collectProjectCodexConfigWarnings({ cwd: testDir, codexConfigPath });
+    expect(warnings.filter(warning => warning.path === join(projectDir, ".codex", "config.toml"))).toEqual([]);
+    writeGlobalRoutingConfig(`
+[projects.'${projectDir}']
+trust_level = "trusted"
+`);
+    expect(collectProjectCodexConfigWarnings({ cwd: testDir, codexConfigPath })
+      .filter(warning => warning.path === join(projectDir, ".codex", "config.toml"))
+      .map(warning => warning.code)).toEqual(["model_providers_table"]);
   });
 
   test("uncached collection reflects project config changes", () => {
@@ -392,6 +400,27 @@ name = "anthropic"
     const second = collectProjectCodexConfigWarnings({ cwd: testDir, codexConfigPath })
       .filter(warning => warning.path === projectConfigPath);
     expect(second.length).toBe(0);
+  });
+
+  test("an oversized global config is reported as unreadable instead of silently inactive", () => {
+    const codexConfigPath = join(process.env.CODEX_HOME!, "config.toml");
+    mkdirSync(process.env.CODEX_HOME!, { recursive: true });
+    writeFileSync(codexConfigPath, `# ${"x".repeat(1024 * 1024)}`);
+    const warnings = collectProjectCodexConfigWarnings({ cwd: testDir, codexConfigPath });
+    const global = warnings.find(warning => warning.code === "global_config_unreadable");
+    expect(global?.path).toBe(codexConfigPath);
+  });
+
+  test("an oversized global config still surfaces bypasses found by walking parents", () => {
+    const codexConfigPath = join(process.env.CODEX_HOME!, "config.toml");
+    mkdirSync(process.env.CODEX_HOME!, { recursive: true });
+    writeFileSync(codexConfigPath, `# ${"x".repeat(1024 * 1024)}`);
+    const projectConfigPath = join(testDir, ".codex", "config.toml");
+    mkdirSync(join(testDir, ".codex"), { recursive: true });
+    writeFileSync(projectConfigPath, `model_provider = "anthropic"`);
+    const warnings = collectProjectCodexConfigWarnings({ cwd: testDir, codexConfigPath });
+    expect(warnings.some(warning => warning.code === "global_config_unreadable")).toBe(true);
+    expect(warnings.some(warning => warning.path === projectConfigPath)).toBe(true);
   });
 });
 

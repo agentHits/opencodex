@@ -1,3 +1,4 @@
+import { isBuiltinAnthropicInstanceRow } from "../providers/anthropic-instance";
 /**
  * Generic OAuth multi-account 429 failover (#2568).
  *
@@ -15,6 +16,7 @@
  * Both are excluded by `isGenericFailoverProvider`.
  */
 import { credentialGeneration, getAccountSet } from "./store";
+import { accountInFlight } from "./kiro-account-load";
 import type { ProviderAccount } from "./types";
 import { getValidAccessSnapshotForAccount, type OAuthAccessSnapshot } from "./index";
 import {
@@ -39,8 +41,10 @@ import { parseRetryAfterMs } from "../combos/failover";
 import type { KiroRefusalKind } from "../adapters/kiro-refusal";
 import { kiroAccountEvidence } from "../providers/kiro-usage";
 import { kiroEvidenceIdentity } from "../providers/kiro-account-state-disk";
+import { kiroAccountSupportsModel } from "../providers/kiro-model-catalog";
 import { ACCOUNT_QUOTA_TTL_MS } from "../providers/quota-wire";
 import { sweepExpiredOnWrite } from "../lib/state-store-sweeper";
+import { subscribeOAuthAccountPauseChanges } from "../lib/account-selection-events";
 import type { OcxConfig, OcxProviderConfig } from "../types";
 
 /** Cap same-request rotations so a short Retry-After cannot spin. Mirrors the Anthropic bound. */
@@ -82,7 +86,7 @@ const EXCLUDED_PROVIDERS = new Set(["openai", "anthropic"]);
 
 interface AccountHealth {
   cooldownUntil: number;
-  cooldownSource: "retry-after" | "default" | "kiro-suspension";
+  cooldownSource: "retry-after" | "default" | "kiro-suspension" | "auth";
   identity?: string;
 }
 
@@ -96,6 +100,8 @@ const health = new Map<string, AccountHealth>();
 
 /** Provider -> recent eligible-account count. TTL-bounded; never holds credential material. */
 const presence = new Map<string, PresenceEntry>();
+
+subscribeOAuthAccountPauseChanges(provider => presence.delete(provider));
 
 const healthKey = (provider: string, accountId: string, family?: QuotaModelFamily) =>
   family ? `${provider}\u0000${accountId}\u0000${family}` : `${provider}\u0000${accountId}`;
@@ -113,6 +119,13 @@ export function quarantineKiroSuspendedAccount(accountId: string, generation?: s
 function isCooled(provider: string, accountId: string, now: number, family?: QuotaModelFamily): boolean {
   const entry = health.get(healthKey(provider, accountId, family));
   if (!entry) return false;
+  if (provider === "google-antigravity" && entry.cooldownSource === "auth") {
+    const live = getAccountSet(provider)?.accounts.find(row => row.id === accountId);
+    if (!live || entry.identity !== credentialGeneration(live.credential)) {
+      health.delete(healthKey(provider, accountId, family));
+      return false;
+    }
+  }
   if (provider === "kiro" && entry.cooldownSource === "kiro-suspension") {
     const live = getAccountSet("kiro")?.accounts.find(row => row.id === accountId);
     if (!live || entry.identity !== kiroEvidenceIdentity(live)) {
@@ -127,9 +140,27 @@ function isCooled(provider: string, accountId: string, now: number, family?: Quo
   return true;
 }
 
+export type KiroSkipReason = "paused" | "needs_reauth" | "suspended" | "cooldown" | "quota_exhausted";
+
+/** Eligibility for automatic alternatives; an active singleton can still send. */
+export function kiroAutoSelection(
+  account: ProviderAccount, now = Date.now(),
+): { autoSelectable: boolean; skipReason?: KiroSkipReason } {
+  if (account.paused === true) return { autoSelectable: false, skipReason: "paused" };
+  if (account.needsReauth === true) return { autoSelectable: false, skipReason: "needs_reauth" };
+  const cooled = isCooled("kiro", account.id, now);
+  if (cooled && health.get(healthKey("kiro", account.id))?.cooldownSource === "kiro-suspension")
+    return { autoSelectable: false, skipReason: "suspended" };
+  if (kiroAccountEvidence(account, now).exhausted === true)
+    return { autoSelectable: false, skipReason: "quota_exhausted" };
+  if (cooled) return { autoSelectable: false, skipReason: "cooldown" };
+  return { autoSelectable: true };
+}
+
 /** True when this provider participates in generic rotation at all. */
 export function isGenericFailoverProvider(providerName: string, provider: OcxProviderConfig): boolean {
-  return provider.authMode === "oauth" && !EXCLUDED_PROVIDERS.has(providerName);
+  return provider.authMode === "oauth" && !EXCLUDED_PROVIDERS.has(providerName)
+    && !isBuiltinAnthropicInstanceRow(providerName, provider);
 }
 
 /**
@@ -146,8 +177,10 @@ function eligibleAccountCount(providerName: string, now: number): number {
   const set = getAccountSet(providerName);
   // Kiro terminal refresh marks the just-refused account needsReauth before the alternate
   // selector runs. Both stored logins still express consent to recover through the survivor.
-  const eligible = set ? (providerName === "kiro" ? set.accounts.length
-    : set.accounts.filter(account => account.needsReauth !== true).length) : 0;
+  const eligible = set
+    ? set.accounts.filter(account => account.paused !== true
+      && (providerName === "kiro" || account.needsReauth !== true)).length
+    : 0;
   presence.set(providerName, { eligible, readAt: now });
   return eligible;
 }
@@ -198,7 +231,7 @@ export function isGenericOAuthFailoverEnabled(
  * turns it off only when the provider has no override. A malformed value falls through rather
  * than taking a provider out of service.
  */
-function isProactivePreferenceEnabled(config: OcxConfig, providerName: string, now: number): boolean {
+export function isProactivePreferenceEnabled(config: OcxConfig, providerName: string, now: number): boolean {
   const provider = config.providers?.[providerName];
   if (!provider || !isGenericFailoverProvider(providerName, provider)) return false;
   const perProvider = provider.oauthAccountFailover?.enabled;
@@ -216,6 +249,25 @@ export function eligibleFailoverAccounts(providerName: string, now = Date.now(),
   return eligibleIdsIn(getAccountSet(providerName), providerName, now, family);
 }
 
+/** Model evidence only ranks accounts already eligible and below any configured cap. */
+export function preferKiroModelSupport(
+  providerName: string, ids: string[], model?: string | null, config?: OcxConfig,
+): string[] {
+  if (providerName !== "kiro" || !model) return ids;
+  const cap = config?.providers?.kiro?.oauthAccountFailover?.maxConcurrentPerAccount;
+  const withRoom = typeof cap === "number" && Number.isInteger(cap) && cap >= 1 && cap <= 100
+    ? ids.filter(id => accountInFlight("kiro", id) < cap) : ids;
+  const positive = withRoom.filter(id => kiroAccountSupportsModel(id, model) === true);
+  return positive.length ? positive : ids;
+}
+
+function kiroModelListingHasRoom(config: OcxConfig, accountId: string, model: string): boolean {
+  if (kiroAccountSupportsModel(accountId, model) !== true) return false;
+  const cap = config.providers?.kiro?.oauthAccountFailover?.maxConcurrentPerAccount;
+  return !(typeof cap === "number" && Number.isInteger(cap) && cap >= 1 && cap <= 100)
+    || accountInFlight("kiro", accountId) < cap;
+}
+
 function eligibleIdsIn(
   set: ReturnType<typeof getAccountSet>,
   providerName: string,
@@ -224,9 +276,9 @@ function eligibleIdsIn(
 ): string[] {
   if (!set) return [];
   return set.accounts
-    .filter(account => account.needsReauth !== true && !isCooled(providerName, account.id, now, family)
-      && (providerName !== "kiro" || (!isCooled("kiro", account.id, now)
-        && kiroAccountEvidence(account, now).exhausted !== true)))
+    .filter(account => account.paused !== true
+      && (providerName === "kiro" ? kiroAutoSelection(account, now).autoSelectable
+        : account.needsReauth !== true && !isCooled(providerName, account.id, now, family)))
     .map(account => account.id);
 }
 
@@ -250,8 +302,36 @@ export function hasEligibleGenericOAuthFailoverTarget(
   return eligibleIdsIn(set, providerName, now, family).some(id => id !== failedAccountId);
 }
 
+/** Select a live Antigravity sibling using activation captured before the refused send. */
+export function rotateAntigravityAccountOnAuthRefusal(
+  poolActivated: boolean,
+  failedAccountId: string,
+  sentGeneration: string,
+  requestedModelId: string | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (!poolActivated) return null;
+  const set = getAccountSet("google-antigravity");
+  if (!set || set.accounts.length < 2) return null;
+  const family = classifyModelFamilyForQuota("google-antigravity", requestedModelId);
+  const failed = set.accounts.find(row => row.id === failedAccountId);
+  if (failed && credentialGeneration(failed.credential) === sentGeneration) {
+    health.set(healthKey("google-antigravity", failedAccountId, family), {
+      cooldownUntil: now + DEFAULT_COOLDOWN_MS,
+      cooldownSource: "auth",
+      identity: sentGeneration,
+    });
+    sweepExpiredOnWrite(now);
+  }
+  const eligible = new Set(eligibleIdsIn(set, "google-antigravity", now, family));
+  const order = set.accounts.map(row => row.id);
+  const start = order.indexOf(failedAccountId);
+  const ring = start >= 0 ? [...order.slice(start + 1), ...order.slice(0, start)] : order;
+  return ring.find(id => id !== failedAccountId && eligible.has(id)) ?? null;
+}
+
 /** Generic pool strategies the kernel can actually run. `quota` IS the pre-kernel path. */
-type ActiveGenericStrategy = "round-robin" | "fill-first" | "reset-first";
+type ActiveGenericStrategy = "round-robin" | "fill-first" | "reset-first" | "least-loaded";
 
 /** Matches the Codex and Anthropic pools; the DTO still reports `null` for "not stored". */
 const DEFAULT_GENERIC_AUTO_SWITCH_THRESHOLD = 80;
@@ -270,6 +350,7 @@ function activeGenericStrategy(config: OcxConfig, providerName: string): ActiveG
   // opted into kernel-gated strategies.
   if (config.pool?.kernel !== true) return null;
   const raw = config.providers?.[providerName]?.oauthAccountFailover?.strategy;
+  if (providerName === "kiro" && raw === "least-loaded") return raw;
   return raw === "round-robin" || raw === "fill-first" || raw === "reset-first" ? raw : null;
 }
 
@@ -322,7 +403,8 @@ function pickFillFirstGenericAccount(
   const stableAll = stableGenericRoster(providerName);
   if (stableAll.length < 2) return null;
   const family = classifyModelFamilyForQuota(providerName, requestedModelId);
-  const eligible = new Set(eligibleFailoverAccounts(providerName, now, family));
+  const eligible = new Set(preferKiroModelSupport(providerName,
+    eligibleFailoverAccounts(providerName, now, family), requestedModelId, config));
   const stored = config.providers?.[providerName]?.oauthAccountFailover?.autoSwitchThreshold;
   const threshold = typeof stored === "number" && Number.isInteger(stored) && stored >= 0 && stored <= 100
     ? stored
@@ -440,12 +522,21 @@ export function rotateGenericOAuthAccountOnRefusal(
   const order = set.accounts.map(account => account.id);
   const start = order.indexOf(failedAccountId);
   const ring = start >= 0 ? [...order.slice(start + 1), ...order.slice(0, start)] : order;
-  const candidates = ring.filter(id => id !== failedAccountId && eligible.includes(id));
+  let candidates = ring.filter(id => id !== failedAccountId && eligible.includes(id));
   if (candidates.length === 0) return null;
+  const cap = providerName === "kiro" ? config.providers?.kiro?.oauthAccountFailover?.maxConcurrentPerAccount : undefined;
+  if (typeof cap === "number" && Number.isInteger(cap) && cap >= 1 && cap <= 100) {
+    const withRoom = candidates.filter(id => accountInFlight("kiro", id) < cap);
+    if (withRoom.length > 0) candidates = withRoom;
+  }
+  candidates = preferKiroModelSupport(providerName, candidates, requestedModelId, config);
   // The 429 path branches too. Leaving it on the quota ranking would make a configured
   // strategy inert in practice the moment anything actually failed, which is the case the
   // operator chose the strategy for.
   const strategy = activeGenericStrategy(config, providerName);
+  if (strategy === "least-loaded" && isProactivePreferenceEnabled(config, "kiro", now)) {
+    return candidates.sort((a, b) => accountInFlight("kiro", a) - accountInFlight("kiro", b))[0] ?? null;
+  }
   if (strategy === "round-robin") {
     // PICK here, not peek: the failure already happened and this answer is the one being used,
     // so the ring genuinely advances.
@@ -483,9 +574,14 @@ export function refusalAwareInitialKiroAccount(
   const set = getAccountSet("kiro");
   if (!set || set.accounts.length < 2) return null;
   const active = set.accounts.find(account => account.id === activeId);
-  if (!active || (!isCooled("kiro", activeId, now)
-    && kiroAccountEvidence(active, now).exhausted !== true)) return null;
-  const eligible = new Set(eligibleIdsIn(set, "kiro", now, classifyModelFamilyForQuota("kiro", requestedModelId)));
+  if (!active) return null;
+  const eligibleIds = eligibleIdsIn(set, "kiro", now, classifyModelFamilyForQuota("kiro", requestedModelId));
+  const preferred = preferKiroModelSupport("kiro", eligibleIds, requestedModelId, config);
+  const activeLacks = requestedModelId && kiroAccountSupportsModel(activeId, requestedModelId) === false
+    && preferred.some(id => id !== activeId && kiroModelListingHasRoom(config, id, requestedModelId));
+  if (!activeLacks && !isCooled("kiro", activeId, now)
+    && kiroAccountEvidence(active, now).exhausted !== true) return null;
+  const eligible = new Set(preferred);
   const start = set.accounts.findIndex(account => account.id === activeId);
   for (const account of [...set.accounts.slice(start + 1), ...set.accounts.slice(0, start)]) {
     if (eligible.has(account.id)) return account.id;
@@ -534,8 +630,20 @@ export function preferredInitialAccount(
   if (!selected) return null;
   const active = selected.activeAccountId;
   const accountRows = new Map(selected.accounts.map(account => [account.id, account]));
-  const order = selected.accounts.filter(account => account.needsReauth !== true).map(account => account.id);
+  const order = selected.accounts
+    .filter(account => account.paused !== true && account.needsReauth !== true)
+    .map(account => account.id);
   if (order.length < 2) return null;
+
+  const modelEligible = preferKiroModelSupport(providerName,
+    eligibleFailoverAccounts(providerName, now, classifyModelFamilyForQuota(providerName, requestedModelId)),
+    requestedModelId, config);
+  const activeLacks = providerName === "kiro" && !!active && !!requestedModelId
+    && kiroAccountSupportsModel(active, requestedModelId) === false;
+  const listingSibling = activeLacks
+    ? modelEligible.find(id => id !== active && kiroModelListingHasRoom(config, id, requestedModelId!))
+    : undefined;
+  if (listingSibling) return listingSibling;
 
   // A configured strategy answers this question itself. Both guards below exist to protect the
   // QUOTA answer, and both are fatal to the other two: hasHeadroomEvidence refuses every
@@ -543,9 +651,21 @@ export function preferredInitialAccount(
   // healthy-active return fires before autoSwitchThreshold can ever be read, so fill-first
   // would never reach its own test. Cooldowns and reauth are still honoured inside each pick.
   const strategy = activeGenericStrategy(config, providerName);
+  if (strategy === "least-loaded" && providerName === "kiro") {
+    const family = classifyModelFamilyForQuota(providerName, requestedModelId);
+    let candidates = eligibleFailoverAccounts(providerName, now, family);
+    const cap = config.providers?.kiro?.oauthAccountFailover?.maxConcurrentPerAccount;
+    if (typeof cap === "number" && Number.isInteger(cap) && cap >= 1 && cap <= 100) {
+      candidates = candidates.filter(id => accountInFlight("kiro", id) < cap);
+    }
+    candidates = preferKiroModelSupport(providerName, candidates, requestedModelId, config);
+    const picked = candidates.sort((a, b) => accountInFlight("kiro", a) - accountInFlight("kiro", b))[0];
+    return picked && picked !== active ? picked : null;
+  }
   if (strategy === "round-robin") {
     const family = classifyModelFamilyForQuota(providerName, requestedModelId);
-    const eligibleNow = eligibleFailoverAccounts(providerName, now, family);
+    const eligibleNow = preferKiroModelSupport(providerName,
+      eligibleFailoverAccounts(providerName, now, family), requestedModelId, config);
     if (eligibleNow.length === 0) return null;
     // PEEK, not pick: this proposal is discardable, and advancing the ring for an account the
     // resolver then rejects would skip a turn for nothing. noteGenericPoolSelection commits.
@@ -570,7 +690,7 @@ export function preferredInitialAccount(
   }
 
   const activeRow = selected.accounts.find(account => account.id === active);
-  if (activeRow && activeRow.needsReauth !== true
+  if (activeRow && activeRow.paused !== true && activeRow.needsReauth !== true
     && !isCooled(providerName, activeRow.id, now, classifyModelFamilyForQuota(providerName, requestedModelId))
     && !isAccountQuotaExhausted(providerName, activeRow.id, requestedModelId, activeRow)) return null;
 
@@ -584,7 +704,9 @@ export function preferredInitialAccount(
   // Cooldowns are respected here, unlike in the presence count: this picks the account to
   // send to right now, and one inside its 429 window is the single candidate we hold
   // positive evidence against.
-  const eligible = order.filter(id => !isCooled(providerName, id, now, classifyModelFamilyForQuota(providerName, requestedModelId)));
+  const eligible = preferKiroModelSupport(providerName,
+    order.filter(id => !isCooled(providerName, id, now, classifyModelFamilyForQuota(providerName, requestedModelId))),
+    requestedModelId, config);
   if (eligible.length === 0) return null;
 
   // Start the ring at the active account so an unranked outcome reproduces today's choice.
@@ -627,5 +749,26 @@ export function clearGenericFailoverHealth(providerName?: string): void {
   presence.delete(providerName);
   for (const key of [...health.keys()]) {
     if (key.startsWith(`${providerName}\u0000`)) health.delete(key);
+  }
+}
+
+/**
+ * Retire one account's superseded auth evidence after an explicit (re-)login. An
+ * auth cooldown recorded against the old grant must not hold out the fresh
+ * credential, so it leaves with the login rather than lingering until its
+ * deadline. Rate, quota, and suspension evidence is preserved: a re-login says
+ * nothing about those verdicts, and dropping them would make a throttled account
+ * eligible early. Entries bound to the still-current generation stay as well.
+ */
+export function clearGenericFailoverHealthForAccount(providerName: string, accountId: string): void {
+  const live = getAccountSet(providerName)?.accounts.find(row => row.id === accountId);
+  const current = live ? credentialGeneration(live.credential) : undefined;
+  const bare = `${providerName}\u0000${accountId}`;
+  for (const key of [...health.keys()]) {
+    if (key !== bare && !key.startsWith(`${bare}\u0000`)) continue;
+    const entry = health.get(key);
+    if (!entry || entry.cooldownSource !== "auth") continue;
+    if (current !== undefined && entry.identity === current) continue;
+    health.delete(key);
   }
 }

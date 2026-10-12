@@ -1,3 +1,4 @@
+import { createLinkRelaySessions } from "./link-relay-sessions";
 import type { Server } from "bun";
 import {
   emptyLinkStore,
@@ -7,12 +8,22 @@ import {
 } from "../../link/store";
 import { linkStorePath } from "../../link/paths";
 import { linkRouteAllowed } from "../../link/routes";
+import { withConfigMutationLockSync } from "../../config/mutation-lock";
 
 export const LINK_INGRESS_HOSTNAME = "opencodex-link.invalid";
+
+/** Internal signal: the store's port differs from the port this bind landed on. */
+class LinkListenerPortMismatchError extends Error {
+  constructor(storedPort: number, boundPort: number) {
+    super(`stored port ${storedPort} differs from bound port ${boundPort}`);
+    this.name = "LinkListenerPortMismatchError";
+  }
+}
 
 export interface LinkListenerStartContext<T> {
   dispatch: (req: Request, server: Server<T>) => Promise<Response>;
   maxRequestBodySize: number;
+  keyFingerprints?: (apiKeyId: string) => readonly string[];
 }
 
 export interface LinkListenerDeps {
@@ -58,6 +69,7 @@ export function createLinkListenerLifecycle<T>(deps: LinkListenerDeps = {}): Lin
   const serve = deps.serve ?? (options => Bun.serve(options));
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   let listener: Server<T> | null = null;
+  let relaySessions: ReturnType<typeof createLinkRelaySessions> | undefined;
   let startContext: LinkListenerStartContext<T> | undefined;
   let ensureFlight: Promise<void> | undefined;
   let closeFlight: Promise<void> | undefined;
@@ -92,13 +104,20 @@ export function createLinkListenerLifecycle<T>(deps: LinkListenerDeps = {}): Lin
       return;
     }
     const requestedPort = store.listenerPort ?? 0;
+    const sessions = createLinkRelaySessions({ fingerprints: (keyId, linkId) => {
+      if (!readStoreForAdmission().links.some(link => link.id === linkId && link.apiKeyId === keyId)) return [];
+      return startContext?.keyFingerprints?.(keyId) ?? [];
+    } });
     let bound: Server<unknown>;
     try {
       bound = serve({
         hostname: "127.0.0.1",
         port: requestedPort,
+        // The public listener's idle limit (serve-options.ts). Bun's 10 s default would cut a
+        // relayed turn that the Home holds or that streams with a long gap.
+        idleTimeout: 255,
         maxRequestBodySize: startContext.maxRequestBodySize,
-        fetch: (req: Request, server: Server<unknown>) => startContext!.dispatch(req, server as Server<T>),
+        fetch: (req: Request, server: Server<unknown>) => sessions.dispatch(req, server as Server<T>, startContext!.dispatch),
       } as Parameters<typeof Bun.serve>[0]);
     } catch (error) {
       reportFailure("bind", error, "bind");
@@ -108,31 +127,36 @@ export function createLinkListenerLifecycle<T>(deps: LinkListenerDeps = {}): Lin
       closeWithoutAwait(bound);
       return;
     }
-    if (store.listenerPort === null) {
-      const port = bound.port;
-      if (!port || port === 0) {
-        closeWithoutAwait(bound);
-        reportFailure("bind", new Error("Bun did not report a concrete listener port"), "bind");
-        return;
-      }
-      try {
+    const port = bound.port;
+    if (!port || port === 0) {
+      closeWithoutAwait(bound);
+      reportFailure("bind", new Error("Bun did not report a concrete listener port"), "bind");
+      return;
+    }
+    try {
+      // Revalidate the admission and persist a new port in one mutation section.
+      // Even a known-port bind can race the deletion of its last recorded link.
+      const needed = withConfigMutationLockSync(() => {
         const current = readStore(storePath);
+        if (current.links.length === 0) return false;
         if (current.listenerPort !== null && current.listenerPort !== port) {
-          // Another writer fixed a different port while this bind ran. Tunnels target the stored
-          // port, so serving on this one would strand them: give it up and let the next
-          // ensureStarted() bind the stored port.
-          closeWithoutAwait(bound);
-          reportFailure("listenerPort persistence", new Error(`stored port ${current.listenerPort} differs from bound port ${port}`), "persist");
-          return;
+          throw new LinkListenerPortMismatchError(current.listenerPort, port);
         }
-        writeStore(storePath, { ...current, listenerPort: port });
-      } catch (error) {
+        if (current.listenerPort === null) writeStore(storePath, { ...current, listenerPort: port });
+        return true;
+      });
+      if (!needed) {
         closeWithoutAwait(bound);
-        reportFailure("listenerPort persistence", error, "persist");
+        setStatus("off", null, null);
         return;
       }
+    } catch (error) {
+      closeWithoutAwait(bound);
+      reportFailure("listenerPort persistence", error, "persist");
+      return;
     }
     listener = bound as Server<T>;
+    relaySessions = sessions;
     setStatus("listening", bound.port ?? (requestedPort > 0 ? requestedPort : null), null);
   };
 
@@ -156,8 +180,13 @@ export function createLinkListenerLifecycle<T>(deps: LinkListenerDeps = {}): Lin
     const flight = (async () => {
       if (ensureFlight) await ensureFlight;
       const current = listener;
-      listener = null;
-      if (current) await current.stop(true);
+      // Retain the bound port AND ingress ownership while an authenticated connection is
+      // reserved or a dispatched response is still being consumed. No new proofs are issued.
+      if (current) {
+        await relaySessions?.drain();
+        await current.stop(false);
+      }
+      if (listener === current) { listener = null; relaySessions = undefined; }
       // Closing is the caller saying "no links now": an earlier bind or persist failure no
       // longer describes anything, so the status reads off either way.
       setStatus("off", null, null);
@@ -191,6 +220,10 @@ export function createLinkListenerLifecycle<T>(deps: LinkListenerDeps = {}): Lin
     close,
     async stop() {
       stopped = true;
+      // Process shutdown is deliberately forceful, unlike last-link removal. Every
+      // authenticated socket is closed, and the client transport cannot reconnect it.
+      relaySessions?.abortReservations();
+      if (listener) await listener.stop(true);
       await close();
       startContext = undefined;
       setStatus("off", null, null);

@@ -188,7 +188,7 @@ once the server observes the client disconnect (Bun propagates it asynchronously
 cancelled with 499 before any replay; because the propagation is async, a replay may precede
 the cancel if the interval elapses first (bounded by the same `attempts` budget).
 
-OpenCode Go (`https://opencode.ai/zen/go/v1`, serving subscription traffic such as Muse Spark) ships a patient same-target fallback when no explicit `retryOn429` is configured: same-key wait-and-replay with a 10s interval and a 60s cap, `Retry-After` honored. Replays draw from the shared per-request send budget, so a burst typically absorbs a couple of paced sends before the 429 surfaces — without this, a single-key pool surfaced the first 429 immediately and the client’s own retry budget aborted the goal (`exceeded retry limit, last status: 429`). An explicit `retryOn429` — including `enabled: false` — always overrides the fallback; every other provider without the knob keeps fail-fast behavior.
+OpenCode Go (`https://opencode.ai/zen/go/v1`, serving subscription traffic such as Muse Spark) ships a patient same-target fallback when no explicit `retryOn429` is configured: same-key wait-and-replay with a 10s interval and a 60s cap, `Retry-After` honored. Replays draw from the shared per-request send budget, so a burst typically absorbs a couple of paced sends before the 429 surfaces — without this, a single-key pool surfaced the first 429 immediately and the client’s own retry budget aborted the goal (`exceeded retry limit, last status: 429`). The same fallback covers key-auth Command Code at its canonical endpoints (`https://api.commandcode.ai/provider/v1` and the API root), where long muse-spark turns hit the same burst limit (#5180); OAuth rows are never replayed on the same token, and a row repointed at a custom relay keeps fail-fast. An explicit `retryOn429` — including `enabled: false` — always overrides the fallback; every other provider without the knob keeps fail-fast behavior.
 
 Provider-level `requestPacing` is the proactive companion to `retryOn429`. It reserves outbound
 request-start slots before transport work begins, so a known RPM ceiling does not have to fail once
@@ -324,7 +324,7 @@ Pool quota producers and account commands follow the [bounded raw-observation co
 
 Account quota surfaces use [safe probe diagnostics](inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
 
-Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](responses.md) documents this boundary, and native Chat capability stripping applies only for an explicit empty declaration or no-reasoning model; an initial JEV null choice separately strips caller effort.
 
 Live sideband admission and its bounded upstream handshake follow the [runtime contract](../runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
 

@@ -30,6 +30,10 @@ export interface ProviderQuotaWindow {
    * provider-wide group named "Opus" there would otherwise be mistaken for a per-model window.
    */
   scope?: "model";
+  /** Passive family readings have their own freshness clock, independent of active probes. */
+  passiveObservedAt?: number;
+  /** Upstream refusal evidence, distinct from a measured utilization counter. */
+  rejected?: true;
 }
 
 export interface ProviderQuotaCreditsUsd {
@@ -48,6 +52,9 @@ export interface ProviderQuota {
   weeklyResetAt?: number;
   monthlyPercent?: number;
   monthlyResetAt?: number;
+  /** Observed Kiro plan credits, independent of token and currency estimates. */
+  kiroCreditsUsed?: number;
+  kiroCreditsLimit?: number;
   customWindows?: ProviderQuotaWindow[];
   creditsUsd?: ProviderQuotaCreditsUsd;
   updatedAt: number;

@@ -1,4 +1,4 @@
-import type { OcxClaudeCodeConfig } from "../types";
+import type { OcxConfig, OcxClaudeCodeConfig } from "../types";
 import { isAnthropicOutputSchema, satisfiesOpenAiStrictSchema } from "../adapters/anthropic-output-schema";
 import { resolveAlias } from "./alias";
 import { stripOneMillionMarker } from "./context-windows";
@@ -96,7 +96,13 @@ export function effortFromOutputConfig(outputConfig: unknown): string | undefine
   return typeof effort === "string" && OUTPUT_CONFIG_EFFORTS.has(effort) ? effort : undefined;
 }
 
-export function formatFromOutputConfig(outputConfig: unknown): Rec | undefined {
+function isFineTunedOpenAiTarget(model: string | undefined): boolean {
+  if (!model) return false;
+  const separator = model.lastIndexOf("/");
+  return model.slice(separator + 1).startsWith("ft:");
+}
+
+export function formatFromOutputConfig(outputConfig: unknown, resolvedModel?: string): Rec | undefined {
   if (!isRec(outputConfig) || !isRec(outputConfig.format)) return undefined;
   const format = outputConfig.format;
   if (
@@ -115,7 +121,9 @@ export function formatFromOutputConfig(outputConfig: unknown): Rec | undefined {
     name: "response",
     schema: format.schema,
     // Strict Structured Outputs also needs an object at the root; a root anyOf/oneOf is refused.
-    strict: format.schema.type === "object" && satisfiesOpenAiStrictSchema(format.schema),
+    strict: format.schema.type === "object"
+      && !Object.hasOwn(format.schema, "anyOf") && !Object.hasOwn(format.schema, "oneOf")
+      && satisfiesOpenAiStrictSchema(format.schema, isFineTunedOpenAiTarget(resolvedModel)),
   };
 }
 
@@ -145,7 +153,14 @@ export function extractOcxRouteDirective(body: unknown): string | null {
   const text = systemText(body);
   if (!text) return null;
   const match = OCX_ROUTE_RE.exec(text);
-  return match ? match[1]! : null;
+  if (!match) return null;
+  // Explicit gateway selection belongs to this invocation, not the mutable saved
+  // force setting. Bare Claude ids still need the legacy frontmatter fallback.
+  if (isRec(body) && typeof body.model === "string") {
+    const selector = stripOneMillionMarker(body.model);
+    if (resolveAlias(selector) || resolveDesktop3pAlias(selector)) return body.model;
+  }
+  return match[1]!;
 }
 
 /**

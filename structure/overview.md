@@ -136,8 +136,9 @@ still cover the rule, which is a judgement only review makes.
   unchanged. The service-stop and uninstall paths of the same promise are covered
   separately in `tests/cli/restore-completes-shared-teardown.test.ts` and are not bound to this id.
   Enforced by `tests/codex-integration/codex-catalog-restore.test.ts`.
-- **INV-TESTS-01** — `tests/` is organised by domain (`tests/<domain>/`, mirroring `src/`); the map
-  is `scripts/test-layout/layout.json` and `tests/test-layout.test.ts` rejects a test outside its
+- **INV-TESTS-01** — `tests/` is organised by domain (`tests/<domain>/`, mirroring `src/`); the explicit map
+  is `scripts/test-layout/layout.json`, with regex seeds and migration state in
+  `scripts/test-layout/seeds.json`, and `tests/test-layout.test.ts` rejects a test outside its
   domain. Only the two layout guards sit at the root. Source-oracle tests reach the repository
   through `tests/helpers/repo-root.ts`, never `import.meta.dir + "/.."`. Provider additions register
   their focused test in both the explicit layout map and its expected-map fixture.
@@ -147,6 +148,10 @@ still cover the rule, which is a judgement only review makes.
   there, reported as an unidentified holder otherwise. A configured `port: 0` still asks the OS for a
   port, and an explicit `--port` still waits for its pin instead of hopping.
   Enforced by `tests/cli/cli-dispatch.test.ts`.
+- **INV-START-02** — A sibling instance (`ocx start --port <other>` beside a live proxy, see
+  [`codex-home.md`](codex-home.md#codex-home)) never writes, restores or reverts the shared client
+  routing: not at startup, not in its own exit cleanup, and not through an `ocx stop` of its runtime.
+  Enforced by `tests/cli/cli-start-journal-order.test.ts`.
 - **INV-FENCE-01** — A proxy fenced by the package-tree guard stays discoverable by attested identity:
   `/healthz` keeps answering the local attestation challenge, and liveness accepts the fenced 503
   only for opted-in callers and only with a proof from the pid and port this home's runtime record
@@ -166,6 +171,10 @@ still cover the rule, which is a judgement only review makes.
   are assembled partly from upstream text. An unknown upstream execution state is attributed to a
   cause that refuses an automatic resend rather than to one that permits it, and the resend verdict
   the pair implies is computed at read time and never persisted.
+  A proxy replay refusal is one such fact: the deferred logger in `src/server/relay.ts` reads the
+  in-process `isReplayRefusalResponse` marker and passes a synthetic `transport-ambiguous` cause
+  hint, so its 429 keeps the `upstream_reset_replay_refused` code but is never attributed as a
+  provider rate limit; refusal-like provider text alone cannot establish it.
   Enforced by `tests/lib/failure-attribution.test.ts`.
 - **INV-RESEND-02** — One logical request holds one operator-granted replacement for an ambiguous
   failure, however many stages ask for it. `src/lib/request-resend-gate.ts` is the only place
@@ -206,12 +215,29 @@ still cover the rule, which is a judgement only review makes.
   there is none, no icon is claimed, the window is shown on launch whatever the launch origin, and
   closing it quits through the same drain; see [`desktop-shell.md`](desktop-shell.md).
   Enforced by `tests/clients/desktop-tray-availability.test.ts`.
+- **INV-PICKER-01** — The Claude Desktop picker never terminates `claude.ai` TLS while a replaced
+  picker certificate may still be trusted. When predecessor untrust fails, is deferred, or its
+  record is unreadable, startup builds no picker and adds no trust; if a picker profile is applied,
+  a blind-only CONNECT relay serves the profile's recorded egress port so Desktop stays connected,
+  and the profile row, previous selection and retry intent are left in place; see
+  [`claude-desktop.md`](clients/claude-desktop.md).
+  Enforced by `tests/claude-integration/claude-picker-runtime.test.ts`.
+- **INV-PICKER-02** — A startup rotation records the outgoing picker certificate's public PEM and
+  fingerprints (no key material) before replacing `ca.pem`, and removes that record only after a
+  confirmed keychain untrust, so a later process retries it; a controller enable refuses while it
+  exists; see [`claude-desktop.md`](clients/claude-desktop.md).
+  Enforced by `tests/claude-integration/claude-picker-recovery.test.ts`.
+- **INV-CLIPICKER-01** — The intercept adds opencodex rows to the Claude Code CLI's `cc` model
+  catalog only for a CLI-classified User-Agent with `claudeCode.cliFirstParty` on, advertises only
+  Desktop 3P aliases the registry decodes, and relays the upstream bytes unchanged on any failure;
+  see [`runtime.md`](runtime.md).
+  Enforced by `tests/claude-integration/claude-cli-picker.test.ts`.
 
 CI enumerates that domain layout through `scripts/ci/run-bun-test-batches.sh`. Its default general
 scope and 12-file/120-second process shape leave the dedicated Linux storage-policy and api-usage
 jobs out of the general shards. The manual Windows matrix selects all-file scope and overrides the
 process shape to six files and 480 seconds, so batching changes process size without changing the
-platform suite's file set. macOS shards select 1/2 and 2/2; control selects 1/1, all in twelve-file, one-worker
+platform suite's file set. macOS shards select 1/3, 2/3 and 3/3; control selects 1/1, all in twelve-file, one-worker
 batches bounded to 300 seconds, with dedicated worker-heavy families kept singleton. These
 dedicated batch steps set `OCX_TEST_NO_QUEUE=1`: their sequential
 processes are one logical runner, while each process still installs its own isolated home and test

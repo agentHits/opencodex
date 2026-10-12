@@ -1,5 +1,10 @@
 mod auth;
 mod claim;
+mod cli_command;
+#[cfg(unix)]
+mod cli_command_posix;
+mod cli_command_record;
+mod cli_command_windows;
 #[cfg(target_os = "macos")]
 mod companion_query;
 mod companion_usage;
@@ -9,6 +14,9 @@ mod first_run;
 mod formatting;
 mod identity;
 mod logging;
+mod login_autostart;
+#[cfg(any(target_os = "windows", test))]
+mod windows_autostart_command;
 // macOS only: it exists to replace one item in a menu no other platform installs. Compiling it
 // elsewhere would leave its contents unreachable, which -D warnings rejects.
 #[cfg(target_os = "macos")]
@@ -38,6 +46,7 @@ mod resolve;
 mod runtime_stop;
 mod sidecar;
 mod startup;
+mod supervisor;
 mod tray;
 mod tray_availability;
 mod updater;
@@ -59,6 +68,9 @@ pub struct AppState {
     child: Mutex<Option<CommandChild>>,
     /// The pid of the child this app started, if it started one.
     child_pid: Mutex<Option<u32>>,
+    /// When that child was spawned, so a later run can tell a child still starting from one that
+    /// will never answer (`startup::waits_on_child`).
+    child_spawned: Mutex<Option<std::time::Instant>>,
     /// Whether the process answering the endpoint has been confirmed to be that child.
     ///
     /// Durable consent and current process ownership are different facts. Consent is a recorded
@@ -77,6 +89,7 @@ impl AppState {
             proxy: Mutex::new(None),
             child: Mutex::new(None),
             child_pid: Mutex::new(None),
+            child_spawned: Mutex::new(None),
             confirmed: AtomicBool::new(false),
             watch: sidecar::SidecarWatch::default(),
         }
@@ -104,6 +117,12 @@ impl AppState {
         *Self::slot(&self.child_pid)
     }
 
+    /// How long ago the child this app tracks was spawned; nothing when it tracks none.
+    pub fn child_age(&self) -> Option<std::time::Duration> {
+        self.child_pid()?;
+        Self::slot(&self.child_spawned).map(|spawned| spawned.elapsed())
+    }
+
     /// Confirm that the instance answering is the child this app started.
     ///
     /// This is the only thing that grants ownership. A spawn records a pid; it does not record that
@@ -117,6 +136,7 @@ impl AppState {
 
     pub fn adopt(&self, child: CommandChild) {
         *Self::slot(&self.child_pid) = Some(child.pid());
+        *Self::slot(&self.child_spawned) = Some(std::time::Instant::now());
         *Self::slot(&self.child) = Some(child);
         // Spawned, not yet confirmed: the health probe is what establishes that this pid is the
         // one answering.
@@ -130,6 +150,7 @@ impl AppState {
     pub fn release(&self) {
         self.confirmed.store(false, Ordering::Release);
         let _ = Self::slot(&self.child_pid).take();
+        let _ = Self::slot(&self.child_spawned).take();
         let _ = Self::slot(&self.child).take();
     }
 }
@@ -178,8 +199,11 @@ fn startup_phases() -> Vec<startup::PhaseInfo> {
 }
 
 /// Run the startup sequence again. A run already in flight is left alone.
+///
+/// A person asking for a runtime again also resumes supervision, even after the tray's Stop.
 #[tauri::command]
 fn retry_startup(app: tauri::AppHandle) {
+    supervisor::resume(&app);
     startup::begin(&app);
 }
 
@@ -192,6 +216,43 @@ fn decide_takeover(app: tauri::AppHandle, approved: bool) {
     if let Some(startup) = app.try_state::<startup::Startup>() {
         startup.decide_takeover(approved);
     }
+}
+
+#[tauri::command]
+fn cli_status(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<cli_command::Status, String> {
+    window::require_cli_page(&window)?;
+    Ok(cli_command::status(&app))
+}
+
+#[tauri::command]
+async fn cli_set_enabled(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<cli_command::Status, String> {
+    window::require_cli_page(&window)?;
+    cli_command::set_enabled(app, enabled).await
+}
+
+#[tauri::command]
+async fn cli_install(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<cli_command::Status, String> {
+    window::require_cli_page(&window)?;
+    cli_command::install(app).await
+}
+
+#[tauri::command]
+async fn cli_remove(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<cli_command::Status, String> {
+    window::require_cli_page(&window)?;
+    cli_command::remove(app).await
 }
 
 #[tauri::command]
@@ -228,7 +289,7 @@ async fn update_install(
 
 #[tauri::command]
 fn return_to_dashboard(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
-    window::require_update_page(&window)?;
+    window::require_local_settings_page(&window)?;
     startup::return_to_dashboard(&app)
 }
 
@@ -238,7 +299,14 @@ pub fn run() {
             popup::hide(app);
             startup::open_dashboard(app);
         }))
-        .plugin(tauri_plugin_opener::init())
+        // Links are opened by the webviews' own new-window handler (`window.rs`), not by the
+        // plugin's injected click interceptor, which calls an IPC command the loopback dashboard
+        // is not granted and so swallowed every `target="_blank"` click.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_process::init())
         // The argument is what makes a login launch recognisable. Nothing else in a bare launch
         // distinguishes it from a person opening the app, and D7 needs the difference.
@@ -265,6 +333,10 @@ pub fn run() {
             startup_phases,
             retry_startup,
             decide_takeover,
+            cli_status,
+            cli_set_enabled,
+            cli_install,
+            cli_remove,
             update_status,
             update_check,
             update_install,
@@ -272,6 +344,7 @@ pub fn run() {
         ])
         .setup(|app| {
             app.manage(AppState::new());
+            app.manage(cli_command::State::default());
             app.manage(updater::PendingUpdate(Mutex::new(None)));
             app.manage(updater::DesktopUpdateState::new(
                 app.package_info().version.to_string(),
@@ -282,6 +355,8 @@ pub fn run() {
             app.manage(tray::TrayState::default());
             app.manage(exit::ExitCoordinator::new());
             app.manage(startup::Startup::new());
+            // Registers the exit hook and an idle watchdog; it starts no runtime of its own.
+            supervisor::watch_runtime(app.handle());
 
             // D7: the window is created and shown before anything is registered, resolved, probed
             // or started, so every state below has somewhere to be reported. A login launch stays
@@ -298,6 +373,7 @@ pub fn run() {
                     // to the loopback dashboard by `capabilities/dashboard-zoom.json`.
                     .zoom_hotkeys_enabled(true)
                     .on_navigation(window::navigation_allowed(app.handle().clone()))
+                    .on_new_window(window::open_new_windows_in_default_browser())
                     // A hidden window still loads pages: wry builds this one with WebView2
                     // IsVisible=false, and the bootstrap page navigates to the dashboard URL
                     // afterwards, so the eval that a later show or hide would rely on has nowhere

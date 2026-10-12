@@ -1,7 +1,7 @@
 /**
  * `ocx resolve` — the machine-readable runtime resolution surface for an embedding shell.
  *
- * D5 of devlog/_plan/260921_app_runtime_ownership/: the desktop shell must stop resolving
+ * D5 of devlog/_fin/260921_app_runtime_ownership/: the desktop shell must stop resolving
  * the config home, the port and liveness itself. The tuned probe budgets in
  * src/server/proxy-liveness.ts exist because a shell-side reimplementation answered
  * "nobody listening" twice and started duplicate proxies; this verb exposes that module's
@@ -59,6 +59,8 @@ import {
 } from "../service/ownership-compatibility";
 import { observeManagingClis } from "../service/managing-cli";
 import { SERVICE_OWNERSHIP_MINIMUM_CLI_VERSION } from "../service/install-state-contract.mjs";
+import { inspectDesktopSupervision } from "../service/desktop-supervision.mjs";
+import { computeVersionSkew, type VersionSkew } from "./version-skew";
 
 /** Wire version of the resolve document. Bump only on an incompatible shape change. */
 export const RESOLVE_SCHEMA = "ocx-resolve/1";
@@ -114,6 +116,20 @@ export interface ResolveJson {
    * member of `ServiceTakeoverCompatibility`'s union.
    */
   takeover: ResolveTakeover;
+  /**
+   * The bundled CLI's version compared against the live proxy's, present only when
+   * something is live. A shell reads `relation` to decide whether attaching or a
+   * takeover moves versions: `"proxy-newer"` means this CLI's bundled runtime would
+   * DOWNGRADE the listener, which the desktop uses to stay a guest instead of offering
+   * takeover. Additive within ocx-resolve/1; older shells ignore it and read as unknown.
+   */
+  versionSkew?: VersionSkew;
+  supervisor?: {
+    kind: "desktop" | "none" | "unknown" | "unsupported";
+    supervisorPid?: number;
+    runtimePid?: number;
+    app?: string;
+  };
 }
 
 export type ResolveTakeover =
@@ -151,6 +167,7 @@ export interface ResolveIo {
   observeManagers?: (
     state: ServiceInstallState | null,
   ) => Readonly<Record<ManagingCliRole, ManagingCliObservation>>;
+  inspectSupervision?: typeof inspectDesktopSupervision;
   stdout?: { log: (s: string) => void };
   stderr?: { error: (s: string) => void };
 }
@@ -178,6 +195,7 @@ export function buildResolveJson(
   cliVersion: string,
   ownership: ServiceOwnershipResolution,
   takeover: ResolveTakeover,
+  supervision?: ReturnType<typeof inspectDesktopSupervision>,
 ): ResolveJson {
   const configured = config.port ?? RESOLVE_DEFAULT_PORT;
   return {
@@ -190,8 +208,14 @@ export function buildResolveJson(
       source: live ? live.source : "config",
     },
     liveness: livenessJson(live),
+    ...(live && supervision ? { supervisor: supervision.kind === "desktop"
+      ? { kind: supervision.kind, supervisorPid: supervision.supervisorPid, runtimePid: supervision.runtimePid, app: supervision.app }
+      : { kind: supervision.kind } } : {}),
     ownership,
     takeover,
+    // A proven absence has nothing to skew against; the field is omitted there rather
+    // than emitted as an "unknown" row, matching the liveness identity fields.
+    ...(live ? { versionSkew: computeVersionSkew(cliVersion, live.version) } : {}),
   };
 }
 
@@ -204,7 +228,8 @@ function reportHuman(json: ResolveJson, stdout: { log: (s: string) => void }): v
   if (live.status === "live") {
     const pidText = live.pid === null ? "unknown" : String(live.pid);
     const versionText = live.version ?? "unknown version";
-    stdout.log(`Proxy live on port ${json.port.effective} (PID ${pidText}, ${versionText}); effective port ${json.port.effective}.`);
+    const supervisor = json.supervisor?.kind === "desktop" ? `; supervisor: desktop (pid ${json.supervisor.supervisorPid})` : "";
+    stdout.log(`Proxy live on port ${json.port.effective} (PID ${pidText}, ${versionText}); effective port ${json.port.effective}${supervisor}.`);
   } else {
     stdout.log(`No live proxy (absence proven); effective port ${json.port.effective} (configured).`);
   }
@@ -221,6 +246,12 @@ function reportHuman(json: ResolveJson, stdout: { log: (s: string) => void }): v
       ? "Takeover: supported"
       : `Takeover: blocked (${json.takeover.reason}: ${json.takeover.detail})`,
   );
+  // The skew warning is the same sentence `ocx status` and `doctor` surface; an
+  // operator comparing a live proxy against this CLI gets it here too instead of
+  // discovering the mismatch only inside the desktop shell.
+  if (json.versionSkew?.warning) {
+    stdout.log(`Version skew: ${json.versionSkew.warning}`);
+  }
 }
 
 /**
@@ -335,7 +366,17 @@ export async function runResolve(args: ResolveArgs, io: ResolveIo = {}): Promise
       };
     }
   }
-  const json = buildResolveJson(diagnostics.config, live, configHome, cliVersion(), ownership, takeover);
+  let supervision: ReturnType<typeof inspectDesktopSupervision> | undefined;
+  if (live) {
+    try {
+      supervision = live.pid === null ? { kind: "unknown", reason: "pid-unavailable", desktopSeen: false }
+        : (io.inspectSupervision ?? inspectDesktopSupervision)({ targetPid: live.pid });
+    } catch {
+      // Supervision is independent evidence; its failure cannot invalidate established liveness.
+      supervision = { kind: "unknown", reason: "probe-failed", desktopSeen: false };
+    }
+  }
+  const json = buildResolveJson(diagnostics.config, live, configHome, cliVersion(), ownership, takeover, supervision);
   if (args.json) stdout.log(JSON.stringify(json));
   else reportHuman(json, stdout);
   return 0;

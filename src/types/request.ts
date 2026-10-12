@@ -1,4 +1,5 @@
 import type { KiroOAuthMetadata } from "../oauth/types";
+import type { NativeReasoningOwner } from "../responses/reasoning-replay-cache";
 import type { OcxTool, OcxToolChoice } from "./tools";
 import type { TierDecision, TierObservationContext } from "./provider";
 
@@ -50,11 +51,17 @@ export interface OcxParsedRequest {
   _responseModelId?: string;
   /** Selected OpenAI API virtual-model id retained after it rewrites the upstream wire model. */
   _openAiVirtualSelectedModelId?: string;
+  /** Serialized-only model id (xAI OAuth Fast lane); policy keeps reading `modelId`. */
+  _wireModelOverride?: string;
   previousResponseId?: string;
   context: OcxContext;
   stream: boolean;
   options: OcxRequestOptions;
   _rawBody?: unknown;
+  /** Claude replay tags, retained only until each route binding verifies them. */
+  _nativeReasoningReplay?: ReadonlyMap<string, string>;
+  _nativeReasoningBoundOwner?: NativeReasoningOwner;
+  _nativeReasoningMint?: { owner?: NativeReasoningOwner };
   /**
    * Boundary between replayed history and this turn's newly appended input. Usually the
    * items the proxy restored from local previous_response_id state; also set when the
@@ -114,6 +121,8 @@ export interface OcxParsedRequest {
   _cursorIsolateConversation?: boolean;
   /** Account-scoped, non-secret Kiro request metadata selected with the OAuth access token. */
   _kiroAuthContext?: Pick<KiroOAuthMetadata, "profileArn" | "apiRegion" | "ssoRegion" | "authType">;
+  /** Account-scoped Zed user identity paired with the long-lived access token. */
+  _zedAuthContext?: { userId: string };
   /** Provider-private continuation metadata resolved from the Responses previous_response_id chain. */
   _providerContinuation?: OcxProviderContinuationState;
   /** Persisted continuation considered only after the final physical route is known. */
@@ -143,6 +152,12 @@ export interface OcxParsedRequest {
   _compactionRequest?: boolean;
   /** Manual compaction moved to another provider: summarize portably even on a canonical ChatGPT target. */
   _portableCompaction?: boolean;
+  /**
+   * Codex memory pipeline phase this turn belongs to, when `memoryModels` routes it
+   * (src/server/responses/memory-models.ts). Read at the effort choke point, which runs after the
+   * route is known.
+   */
+  _memoryModelPhase?: "extract" | "consolidation";
   /**
    * True when the current request newly introduced a stored compaction summary/marker. Historical
    * markers restored by previous_response_id expansion were already acknowledged and do not reset
@@ -221,8 +236,17 @@ export interface OcxImageContent {
 
 export interface OcxVideoContent {
   type: "video";
-  /** A base64 `data:` URL from an OpenAI-compatible `video_url` part. */
+  /**
+   * A base64 `data:` URL from an OpenAI-compatible `video_url` part, or a URI
+   * the upstream can fetch itself (a YouTube watch URL, a Files API uri).
+   */
   videoUrl: string;
+  /**
+   * Gemini's agentic video mode, carried verbatim from the caller's
+   * `video_url.processing` (#3271). Absent for every request that does not ask
+   * for it, so no existing traffic gains a field.
+   */
+  processing?: string;
 }
 
 /**
@@ -301,6 +325,8 @@ export interface OcxRequestOptions {
   parallelToolCalls?: boolean;
   reasoning?: string;
   hideThinkingSummary?: boolean;
+  /** Provider policy: suppress raw content-channel reasoning while summaries stay visible. */
+  hideRawReasoning?: boolean;
   serviceTier?: string;
   /** Final outbound tier action, resolved after the provider/model wire is settled. */
   tierDecision?: TierDecision;
@@ -416,6 +442,11 @@ export type AdapterEvent =
       errorType?: string;
       code?: string;
       retryable?: boolean;
+      /**
+       * Proxy-internal, never serialized: the upstream failed the turn before producing text or a
+       * tool call, so the opt-in empty-completion guard may replay the identical request once.
+       */
+      replaySafeBeforeOutput?: boolean;
     };
 
 /**

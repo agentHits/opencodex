@@ -15,17 +15,20 @@ import type { NativeResponseControl } from "./native-response-control";
 // returned event frames as an SSE byte stream, so every downstream consumer
 // (passthrough relay, adapter parsers, usage sniffing) is unchanged.
 
+import { codexWsReuseAcrossTurnsEnabled } from "../../config/codex-ws-reuse-setting";
 import { compareBunVersions } from "../../lib/bun-stream-caps";
 import { resolveProxyRoute, socks5ProxyFromEnv } from "../../lib/proxy-env";
 import type { CodexWsQuotaObserver } from "./codex-ws-metadata";
-import { CODEX_RESPONSES_HTTP_URL, CODEX_RESPONSES_WS_URL, prepareCodexHttpInit, prepareCodexWsRequest } from "./codex-ws-request";
+import { CODEX_RESPONSES_HTTP_URL, CODEX_RESPONSES_WS_URL, CODEX_WS_FRAME_HEADERS, prepareCodexHttpInit, prepareCodexWsRequest } from "./codex-ws-request";
 import { codexWsExchange } from "./codex-ws-exchange";
 import { CodexWsSession } from "./codex-ws-session";
 import { codexWsPool, codexWsReuseIdentity } from "./codex-ws-pool";
 import { codexWsCreateFrameExceedsLimit } from "./codex-ws-wire";
+import { isLoopbackUrl, rewriteWebSocketDial } from "../../plugins/upstream-hooks";
+import { outboundCredentials } from "../../lib/outbound-credential-registry";
 export { CODEX_WS_LIVENESS_PING_INTERVAL_MS, CODEX_WS_RESPONSE_PRELUDE_TIMEOUT_MS, MAX_CODEX_WS_FRAME_BYTES, MAX_CODEX_WS_QUEUE_BYTES,
   MAX_CODEX_WS_CREATE_FRAME_BYTES, CODEX_WS_CREATE_FRAME_LIMIT_BYTES, codexWsCreateFrameExceedsLimit,
-  isCodexWsQuotaObservedResponse, isCodexWsUpstreamResponse } from "./codex-ws-wire";
+  isCodexWsQuotaObservedResponse, isCodexWsUpstreamResponse, isCodexWsPreludeProjection } from "./codex-ws-wire";
 export const MIN_BOUNDED_CODEX_WS_BUN_VERSION = "1.4.0";
 
 /**
@@ -81,6 +84,42 @@ export function bunSupportsBoundedCodexWsRelay(
   return comparison !== null && comparison >= 0;
 }
 
+/**
+ * Apply plugin rewrites to one Codex WebSocket dial and settle its proxy. `proxy` was resolved
+ * for the canonical `wsUrl`. A loopback rewrite dials directly; any other rewrite gets its own
+ * route (scheme and `NO_PROXY` may differ). Null means the rewritten destination needs the SSE
+ * fallback, exactly as an unusable route for the canonical URL does.
+ */
+export function planCodexWsDial(
+  wsUrl: string,
+  headers: Record<string, string>,
+  proxy: string | undefined,
+  env: Parameters<typeof resolveProxyRoute>[1] = process.env,
+): { url: string; headers: Record<string, string>; proxy: string | undefined } | null {
+  const rewritten = rewriteWebSocketDial(wsUrl, headers, proxy);
+  // Per-turn headers ride in each frame's client_metadata, which was prepared before the rewrite
+  // and is authoritative; a pooled socket's upgrade copy is intentionally ignored. A rewriter
+  // therefore cannot change them here, and the upgrade keeps the values the frame carries.
+  const dialHeaders = { ...rewritten.headers };
+  const reuseAcrossTurns = codexWsReuseAcrossTurnsEnabled();
+  for (const name of CODEX_WS_FRAME_HEADERS) {
+    if (reuseAcrossTurns) delete dialHeaders[name];
+    else if (Object.hasOwn(headers, name)) dialHeaders[name] = headers[name]!;
+    else delete dialHeaders[name];
+  }
+  const dial = { ...rewritten, headers: dialHeaders };
+  if (dial.url === wsUrl || isLoopbackUrl(dial.url)) return dial;
+  let destination: URL;
+  try {
+    destination = new URL(dial.url);
+  } catch {
+    return null;
+  }
+  const route = resolveProxyRoute(destination, env);
+  if (route.kind === "fallback") return null;
+  return { ...dial, proxy: route.kind === "proxy" ? route.proxy : undefined };
+}
+
 export function shouldUseCodexWsUpstream(
   url: string,
   init?: RequestInit,
@@ -113,7 +152,8 @@ export function shouldUseCodexWsUpstream(
   }
 }
 
-export function codexWsUpstreamFetch(
+/** Select the bounded WS lane or HTTP fallback, forwarding receipts at physical dispatch. */
+export async function codexWsUpstreamFetch(
   url: string,
   init: RequestInit,
   sseFallback: typeof globalThis.fetch,
@@ -122,6 +162,7 @@ export function codexWsUpstreamFetch(
   beforeDispatch?: (headers: Headers) => void,
   nativeControl?: NativeResponseControl,
   beforeContinuation?: () => Promise<void>,
+  onPhysicalDispatch?: () => void,
 ): Promise<Response> {
   const prepared = prepareCodexWsRequest(url, init);
   if (!prepared) return sseFallback(url, prepareCodexHttpInit(url, init));
@@ -176,9 +217,26 @@ export function codexWsUpstreamFetch(
   try {
     // Steering keeps a private physical connection across successor responses; it
     // must never enter the idle-socket pool or move to a different credential.
-    const identity = control ? null : codexWsReuseIdentity(url, headers, frameText, proxy);
-    session = (identity ? codexWsPool.acquire(identity, wsUrl, headers, proxy) : null)
-      ?? new CodexWsSession(wsUrl, headers, false, undefined, proxy);
+    // Plugin rewrite runs per exchange, before the pool lookup. The dialled destination, its
+    // headers and its proxy are all part of the reuse identity, so a pooled socket is never
+    // reused for a different destination or with stale plugin headers.
+    const dial = planCodexWsDial(wsUrl, headers, proxy);
+    if (!dial) return sseFallback(url, init);
+    // The final dial headers, after plugin rewrites, are what the WebSocket upstream receives; the
+    // per-turn headers planning drops from the upgrade still reach it inside the frame metadata.
+    outboundCredentials().remember(headers);
+    outboundCredentials().remember(dial.headers);
+    const identity = control ? null : codexWsReuseIdentity(url, dial.headers, frameText, dial.proxy, dial.url);
+    const reuseAcrossTurns = identity !== null && codexWsReuseAcrossTurnsEnabled();
+    const pooled = identity
+      ? reuseAcrossTurns
+        ? await codexWsPool.acquireWaiting(identity, dial.url, dial.headers, dial.proxy, signal)
+        : codexWsPool.acquire(identity, dial.url, dial.headers, dial.proxy)
+      : null;
+    if (reuseAcrossTurns && signal?.aborted) {
+      return Promise.reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+    }
+    session = pooled ?? new CodexWsSession(dial.url, dial.headers, false, undefined, dial.proxy);
     if (!session.busy && !session.reserve()) {
       session.dispose();
       return sseFallback(url, init);
@@ -189,7 +247,7 @@ export function codexWsUpstreamFetch(
   return codexWsExchange({
     session, url, init, prepared, sseFallback, onQuota, beforeDispatch,
     nativeControl: control,
-    beforeContinuation,
+    beforeContinuation, onPhysicalDispatch,
     bunVersion: typeof runtime === "string" ? runtime : runtime.version,
   });
 }

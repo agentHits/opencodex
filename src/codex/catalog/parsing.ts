@@ -1,3 +1,4 @@
+import { isCodexControlPlaneModel } from "../control-plane-models";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
@@ -113,6 +114,8 @@ export interface CatalogModel {
   displayName?: string;
   owned_by?: string;
   reasoningEfforts?: string[];
+  /** Exact CCA family evidence, retained through the in-memory discovery cache. */
+  antigravityEffortWireModelIds?: Partial<Record<"low" | "medium" | "high", string>>;
   /** Suppress only catalog synthesis of a missing max rung; provider-declared max survives. */
   suppressSyntheticMax?: boolean;
   defaultReasoningEffort?: string;
@@ -633,7 +636,10 @@ export function ensureStrictCatalogFields(
     entry.max_context_window = contextWindow;
   }
   if (typeof entry.effective_context_window_percent !== "number") entry.effective_context_window_percent = 95;
-  if (typeof entry.comp_hash !== "string") entry.comp_hash = "opencodex";
+  // Unknown compatibility is not an incompatibility marker. Codex compares hashes only
+  // when both turns supply one; a synthetic value forces native/routed switches to compact
+  // even below the token limit. Keep authoritative strings and represent unknown as null.
+  if (typeof entry.comp_hash !== "string") entry.comp_hash = null;
   // Routed rows must not carry NATIVE eligibility metadata. `deriveEntry` deep-clones a
   // native template and deletes a fixed denylist, so these eligibility fields survive onto rows backed
   // by unrelated provider credentials — advertising ChatGPT plan eligibility for a model
@@ -695,7 +701,7 @@ export function catalogEntryIsNativeChatGpt(entry: RawEntry): boolean {
     && entry.use_responses_lite === true
     && hasNativeOpenAiCapabilityMetadata(routedNativeSlug)
   ) return true;
-  if (UPSTREAM_NATIVE_ENTRIES.has(slug) || SUPPORTED_NATIVE_OPENAI_SLUGS.has(slug)) return true;
+  if (isCodexControlPlaneModel(slug) || UPSTREAM_NATIVE_ENTRIES.has(slug) || SUPPORTED_NATIVE_OPENAI_SLUGS.has(slug)) return true;
   return false;
 }
 

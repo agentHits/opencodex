@@ -47,6 +47,7 @@ export const MODEL_ADAPTER_OVERRIDE_ALLOWED: ReadonlySet<string> = new Set([
  */
 const ANTHROPIC_WIRE_MODELS: Record<string, ReadonlySet<string>> = {
   "opencode-go": new Set([
+    "claude-haiku-5-5",
     "minimax-m2.5",
     "minimax-m2.7",
     "minimax-m3",
@@ -85,6 +86,13 @@ interface WirePinPrefixRule {
 const WIRE_ADAPTER_PIN_PREFIXES: Readonly<Record<string, WirePinPrefixRule>> = Object.freeze({
   commandcode: Object.freeze({
     endpoint: "https://api.commandcode.ai/provider/v1",
+    prefixes: Object.freeze({ "claude-": "anthropic" }),
+  }),
+  // TokenLab declares Claude ids as Chat + Anthropic Messages, never Responses
+  // (`tokenlab.accepted_request_formats` on GET /v1/models/{id}, all 11 live claude-* ids on
+  // 2026-09-30). Messages is their native wire; POST /v1/messages accepts x-api-key.
+  tokenlab: Object.freeze({
+    endpoint: "https://api.tokenlab.sh/v1",
     prefixes: Object.freeze({ "claude-": "anthropic" }),
   }),
 });

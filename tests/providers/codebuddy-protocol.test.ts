@@ -7,9 +7,13 @@ import {
   mapStreamMessageToEvents,
   projectedHistoryCharLimit,
   readJsonLines,
+  releaseOpenToolBlocks,
+  type StreamParseState,
   usageFromResult,
 } from "../../src/adapters/coding-agent/protocol";
 import type { OcxParsedRequest } from "../../src/types";
+import { normalizeCostTokens } from "../../src/usage/cost";
+import { createTestTranslatorBudget } from "../helpers/translator-budget";
 
 // The stream-json protocol for coding-agent CLIs
 // (src/adapters/coding-agent/protocol.ts); these fixtures exercise it via CodeBuddy frames.
@@ -211,7 +215,7 @@ describe("codebuddy stream-json event mapping", () => {
     expect(events).toEqual([{
       type: "done",
       stopReason: "stop",
-      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cachedInputTokens: 2, cacheReadInputTokens: 2 },
+      usage: { inputTokens: 12, outputTokens: 5, totalTokens: 17, cachedInputTokens: 2, cacheReadInputTokens: 2 },
     }]);
   });
 
@@ -253,6 +257,105 @@ describe("codebuddy stream-json event mapping", () => {
     ]);
     expect(state.completedToolCalls).toBe(1);
     expect(state.openToolBlocks?.size ?? 0).toBe(0);
+  });
+
+  test("charges identity and interleaved fragments, then releases each closed block", () => {
+    const translatorBudget = createTestTranslatorBudget({ maxCallArgumentBytes: 12 });
+    const state: StreamParseState = { sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false, translatorBudget };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    feed({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "id1", name: "exec" } });
+    feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "id2", name: "exec" } });
+    feed({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "{}" } });
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 16, activeCalls: 2 });
+    feed({ type: "content_block_stop", index: 1 });
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 7, activeCalls: 1 });
+    releaseOpenToolBlocks(state);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 0, activeCalls: 0 });
+  });
+
+  test("closed bridge tool IDs remain charged until turn cleanup and can exhaust the budget", () => {
+    const translatorBudget = createTestTranslatorBudget({ maxTurnBytes: 22 });
+    const state: StreamParseState = {
+      sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false,
+      translatorBudget, partialToolCallIds: new Set<string>(),
+    };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    for (const [index, id] of ["abcdefgh", "ijklmnop"].entries()) {
+      feed({ type: "content_block_start", index, content_block: { type: "tool_use", id, name: "x" } });
+      feed({ type: "content_block_stop", index });
+    }
+    expect(state.partialToolCallIds?.size).toBe(2);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 16, activeCalls: 2 });
+    expect(() => feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "qrstuvwx", name: "x" } }))
+      .toThrow("translator tool_args buffer exceeded 22 bytes");
+    expect(translatorBudget.snapshot().overflows).toBe(1);
+    releaseOpenToolBlocks(state);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 0, activeCalls: 0 });
+  });
+
+  test("retained bridge IDs are leased per call, so the per-call limit never pools them", () => {
+    const translatorBudget = createTestTranslatorBudget({ maxCallArgumentBytes: 12 });
+    const state: StreamParseState = {
+      sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false,
+      translatorBudget, partialToolCallIds: new Set<string>(),
+    };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    for (const [index, id] of ["abcdefgh", "ijklmnop", "qrstuvwx"].entries()) {
+      feed({ type: "content_block_start", index, content_block: { type: "tool_use", id, name: "x" } });
+      feed({ type: "content_block_stop", index });
+    }
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 24, activeCalls: 3, overflows: 0 });
+    releaseOpenToolBlocks(state);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 0, activeCalls: 0 });
+  });
+
+  test("rejects an over-budget fragment before retention and releases on cleanup", () => {
+    const translatorBudget = createTestTranslatorBudget({ maxCallArgumentBytes: 9 });
+    const state: StreamParseState = { sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false, translatorBudget };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    feed({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "i", name: "exec" } });
+    feed({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "1234" } });
+    expect(() => feed({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "5" } })).toThrow("translator tool_args buffer exceeded 9 bytes");
+    expect(state.openToolBlocks?.get(1)?.argParts).toEqual(["1234"]);
+    releaseOpenToolBlocks(state);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 0, activeCalls: 0, overflows: 1 });
+  });
+
+  test("same-index replacement releases the previous identity and arguments", () => {
+    const translatorBudget = createTestTranslatorBudget();
+    const state: StreamParseState = { sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false, translatorBudget, strictToolBlockCapture: true };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "first", name: "exec" } });
+    feed({ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: "{}" } });
+    expect(feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "next", name: "exec" } }).map(e => e.type))
+      .toEqual(["tool_call_start", "tool_call_delta", "tool_call_end"]);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 8, activeCalls: 1 });
+    releaseOpenToolBlocks(state);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 0, activeCalls: 0 });
+  });
+
+  test("failed same-index replacement keeps its reservation until error cleanup", () => {
+    const translatorBudget = createTestTranslatorBudget();
+    const state: StreamParseState = { sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false, translatorBudget, strictToolBlockCapture: true };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "first", name: "exec" } });
+    feed({ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: "{" } });
+    expect(() => feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "next", name: "exec" } }))
+      .toThrow("incomplete JSON arguments");
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 10, activeCalls: 1 });
+    releaseOpenToolBlocks(state);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 0, activeCalls: 0 });
+  });
+
+  test("refuses the seventeenth valid start before allocation; empty IDs do not count", () => {
+    const state: StreamParseState = { sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false, maxToolBlockStarts: 16 };
+    const feed = (index: number, id: string) => mapStreamMessageToEvents({ type: "stream_event", event: { type: "content_block_start", index, content_block: { type: "tool_use", id, name: "exec" } } }, state);
+    expect(feed(-1, "")).toEqual([]);
+    for (let i = 0; i < 16; i++) expect(feed(i, `id_${i}`)).toEqual([]);
+    expect(feed(16, "id_16")).toEqual([]);
+    expect(state.toolCallLimitExceeded).toBe(true);
+    expect(state.toolBlockStarts).toBe(16);
+    expect(state.openToolBlocks?.size).toBe(16);
   });
 
   test("interleaved parallel tool_use blocks are serialized per block index", () => {
@@ -311,8 +414,95 @@ describe("codebuddy stream-json event mapping", () => {
     expect(state.openToolBlocks?.size ?? 0).toBe(0);
   });
 
+  test.each(["", "{\"value\":"])("same-index reuse rejects incomplete arguments %j before closing the previous call", partial => {
+    const state: StreamParseState = {
+      sawPartialText: false,
+      sawPartialThinking: false,
+      sawTerminalResult: false,
+      strictToolBlockCapture: true,
+    };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "tu_a", name: "alpha" } });
+    if (partial) feed({ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: partial } });
+
+    expect(() => feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "tu_b", name: "beta" } }))
+      .toThrow("incomplete JSON arguments");
+    expect(state.completedToolCalls ?? 0).toBe(0);
+    expect(state.openToolBlocks?.get(2)?.id).toBe("tu_a");
+  });
+
+  test("same-index reuse rejects complete JSON that is not an argument object", () => {
+    const state: StreamParseState = {
+      sawPartialText: false,
+      sawPartialThinking: false,
+      sawTerminalResult: false,
+      strictToolBlockCapture: true,
+    };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "tu_a", name: "alpha" } });
+    feed({ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: "[]" } });
+
+    expect(() => feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "tu_b", name: "beta" } }))
+      .toThrow("non-object JSON arguments");
+    expect(state.completedToolCalls ?? 0).toBe(0);
+    expect(state.openToolBlocks?.get(2)?.id).toBe("tu_a");
+  });
+
+  test("an unindexed argument delta cannot be dropped from the sole indexed CodeBuddy tool block", () => {
+    const state: StreamParseState = {
+      sawPartialText: false,
+      sawPartialThinking: false,
+      sawTerminalResult: false,
+      strictToolBlockCapture: true,
+    };
+    const feed = (event: unknown) => mapStreamMessageToEvents({ type: "stream_event", event: event as Record<string, unknown> }, state);
+    feed({ type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "tu_a", name: "alpha" } });
+
+    expect(() => feed({ type: "content_block_delta", delta: { type: "input_json_delta", partial_json: "{\"wrong\":true}" } }))
+      .toThrow("tool argument delta that cannot be attributed");
+    expect(state.openToolBlocks?.get(2)?.argParts).toEqual([]);
+    expect(state.completedToolCalls ?? 0).toBe(0);
+  });
+
   test("usageFromResult returns undefined when no usage is present", () => {
     expect(usageFromResult({ type: "result" })).toBeUndefined();
+  });
+
+  test("Anthropic cache-exclusive input becomes the inclusive OpenCodex input, so the turn keeps its cost", () => {
+    // Reported shape (carried from #6566): 12 fresh, 150,000 cache-read and 4,000 cache-write
+    // tokens used to surface as inputTokens 12, and normalizeCostTokens then returned null.
+    const usage = usageFromResult({
+      type: "result",
+      usage: { input_tokens: 12, output_tokens: 30, cache_read_input_tokens: 150_000, cache_creation_input_tokens: 4_000 },
+    });
+    expect(usage).toEqual({
+      inputTokens: 154_012,
+      outputTokens: 30,
+      totalTokens: 154_042,
+      cachedInputTokens: 150_000,
+      cacheReadInputTokens: 150_000,
+      cacheCreationInputTokens: 4_000,
+    });
+    expect(normalizeCostTokens(usage!)).toEqual({ input: 12, output: 30, cacheRead: 150_000, cacheWrite: 4_000 });
+    // Malformed counters count as zero instead of poisoning the inclusive sum.
+    expect(usageFromResult({ type: "result", usage: { input_tokens: 5, output_tokens: 1, cache_read_input_tokens: -3, cache_creation_input_tokens: Number.NaN } }))
+      .toEqual({ inputTokens: 5, outputTokens: 1, totalTokens: 6 });
+  });
+
+  test("repeated cumulative snapshots count cache tokens once in the partial fold", () => {
+    const state: StreamParseState = { sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false };
+    const snapshot = { input_tokens: 12, output_tokens: 3, cache_read_input_tokens: 150_000, cache_creation_input_tokens: 4_000 };
+    mapStreamMessageToEvents({ type: "stream_event", event: { type: "message_start", message: { usage: snapshot } } }, state);
+    mapStreamMessageToEvents({ type: "stream_event", event: { type: "message_delta", usage: { ...snapshot, output_tokens: 30 } } }, state);
+    expect(state.partialUsage).toEqual({
+      inputTokens: 154_012,
+      outputTokens: 30,
+      totalTokens: 154_042,
+      cachedInputTokens: 150_000,
+      cacheReadInputTokens: 150_000,
+      cacheCreationInputTokens: 4_000,
+    });
+    expect(normalizeCostTokens(state.partialUsage!)).toEqual({ input: 12, output: 30, cacheRead: 150_000, cacheWrite: 4_000 });
   });
 
   test("a cache-creation-only usage snapshot is kept instead of collapsing to undefined", () => {
@@ -322,9 +512,9 @@ describe("codebuddy stream-json event mapping", () => {
       type: "result",
       usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 200 },
     })).toEqual({
-      inputTokens: 0,
+      inputTokens: 200,
       outputTokens: 0,
-      totalTokens: 0,
+      totalTokens: 200,
       cacheCreationInputTokens: 200,
     });
     // Cache-creation-only through the partial fold too: message_start carries it before any delta.
@@ -334,9 +524,9 @@ describe("codebuddy stream-json event mapping", () => {
       state,
     );
     expect(state.partialUsage).toEqual({
-      inputTokens: 0,
+      inputTokens: 7,
       outputTokens: 0,
-      totalTokens: 0,
+      totalTokens: 7,
       cacheCreationInputTokens: 7,
     });
   });
@@ -371,21 +561,21 @@ describe("codebuddy stream-json event mapping", () => {
       state,
     );
     expect(state.partialUsage).toEqual({
-      inputTokens: 15, outputTokens: 5, totalTokens: 20, cachedInputTokens: 3, cacheReadInputTokens: 3,
+      inputTokens: 18, outputTokens: 5, totalTokens: 23, cachedInputTokens: 3, cacheReadInputTokens: 3,
     });
     // Assistant-frame usage snapshots participate in the same fold.
     mapStreamMessageToEvents(
       { type: "assistant", message: { role: "assistant", content: [], usage: { input_tokens: 10, output_tokens: 9 } } },
       state,
     );
-    expect(state.partialUsage).toMatchObject({ inputTokens: 15, outputTokens: 9, totalTokens: 24 });
+    expect(state.partialUsage).toMatchObject({ inputTokens: 18, outputTokens: 9, totalTokens: 27 });
     // message_start carries input tokens in Anthropic-shaped streams; a capture-only tool leg
     // terminates at message_stop before any result frame, so this snapshot must be recorded.
     mapStreamMessageToEvents(
       { type: "stream_event", event: { type: "message_start", message: { usage: { input_tokens: 40, output_tokens: 0 } } } },
       state,
     );
-    expect(state.partialUsage).toMatchObject({ inputTokens: 40, outputTokens: 9, totalTokens: 49 });
+    expect(state.partialUsage).toMatchObject({ inputTokens: 43, outputTokens: 9, totalTokens: 52 });
     // A terminal result frame carries its own usage and does not consult partialUsage.
     const events = mapStreamMessageToEvents(
       { type: "result", subtype: "success", is_error: false, usage: { input_tokens: 30, output_tokens: 2 } },

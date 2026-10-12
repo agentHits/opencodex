@@ -448,6 +448,9 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
   } = d;
   const visionEnabled = sidecar?.vision?.enabled !== false;
   const visionModel = visionEnabled ? (sidecar?.vision?.model ?? "gpt-5.6-luna") : "";
+  const visionBackend = sidecar?.vision.backend ?? visionModels.find(option => option.value === sidecar?.vision.model)?.backend;
+  // Same derivation as Vision: a stored setting without a backend takes the picker option's backend.
+  const webSearchBackend = sidecar?.webSearch.backend ?? sidecarModels.find(option => option.value === sidecar?.webSearch.model)?.backend;
   const webSearchEnabled = sidecar?.webSearch?.enabled !== false;
   // Same shape as the Vision card: Off is a row in the picker, and choosing a model is the way back.
   const webSearchModel = webSearchEnabled ? (sidecar?.webSearch?.model ?? "gpt-5.6-luna") : "";
@@ -517,6 +520,7 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="font-semibold">{t("dash.codexDesktopAuthless")}</div>
             <div className="muted setting-hint">{t("dash.codexDesktopAuthlessHint")}</div>
+            {settings?.codexDesktopAuthless && <div className="muted setting-hint">{t("dash.codexRemoteHistoryHint")}</div>}
             {settings?.catalogRefreshPending && <div className="muted setting-hint" role="status">{t("codexAuth.catalogRefreshPending")}</div>}
           </div>
           <button
@@ -537,6 +541,9 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="font-semibold">{t("dash.codexClientCompaction")}</div>
             <div className="muted setting-hint">{t("dash.codexClientCompactionHint")}</div>
+            {!settings?.codexDesktopAuthless && settings?.codexClientCompaction && (
+              <div className="muted setting-hint">{t("dash.codexRemoteHistoryHint")}</div>
+            )}
             {settings?.catalogRefreshPending && <div className="muted setting-hint" role="status">{t("codexAuth.catalogRefreshPending")}</div>}
           </div>
           <button
@@ -593,6 +600,21 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
                 align="right"
               />
             </div>
+            {sidecar && webSearchBackend === "anthropic" && (
+              <div className="dash-sidecar-trailing-row">
+                <Select value={sidecar.webSearch.anthropicInstance ?? ""} label={t("sidecar.pool")}
+                  options={[
+                    { value: "", label: t("sidecar.poolCurrent") },
+                    { value: "anthropic", label: t("sidecar.poolA") },
+                    { value: "anthropic2", label: t("sidecar.poolB") },
+                  ]}
+                  disabled={sidecarSaving} align="right"
+                  onChange={value => { void saveSidecar({ webSearch: {
+                    anthropicInstance: value === "anthropic" || value === "anthropic2" ? value : null,
+                  } }); }} />
+                {sidecar.webSearch.anthropicPool?.mixed && <span className="muted setting-hint">{t("sidecar.poolMixed")}</span>}
+              </div>
+            )}
             <div className="dash-sidecar-trailing-row" title={t("dash.webSearchStreamHint")}>
               <span className="muted setting-hint dash-sidecar-toggle-label">{t("dash.webSearchStream")}</span>
               <button
@@ -649,6 +671,21 @@ export function DashboardSidecarPanels({ d }: { d: Dash }) {
                 label={`${t("dash.visionSidecar")} — ${t("dash.injectionEffortLabel")}`}
               />
             </div>
+            {sidecar && visionBackend === "anthropic" && (
+              <div className="dash-sidecar-trailing-row">
+                <Select value={sidecar.vision.anthropicInstance ?? ""} label={t("sidecar.pool")}
+                  options={[
+                    { value: "", label: t("sidecar.poolCurrent") },
+                    { value: "anthropic", label: t("sidecar.poolA") },
+                    { value: "anthropic2", label: t("sidecar.poolB") },
+                  ]}
+                  disabled={sidecarSaving} align="right"
+                  onChange={value => { void saveSidecar({ vision: {
+                    anthropicInstance: value === "anthropic" || value === "anthropic2" ? value : null,
+                  } }); }} />
+                {sidecar.vision.anthropicPool?.mixed && <span className="muted setting-hint">{t("sidecar.poolMixed")}</span>}
+              </div>
+            )}
             <div className="dash-sidecar-trailing-row">
               <button
                 type="button"

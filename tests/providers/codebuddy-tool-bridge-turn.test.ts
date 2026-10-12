@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { existsSync, readdirSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -11,6 +11,12 @@ import { buildCodeBuddyToolBridge } from "../../src/adapters/codebuddy/tool-brid
 import { CODEBUDDY_GLOBAL_PROFILE, clearCodeBuddyBinaryCache } from "../../src/adapters/codebuddy/profiles";
 import type { AdapterEvent, OcxParsedRequest, OcxProviderConfig, OcxTool } from "../../src/types";
 import { createTestTranslatorBudget } from "../helpers/translator-budget";
+
+import { createRequestExecutionBudget, CODEX_TEXT_GUARDED_BUDGET_POLICY } from "../../src/lib/request-execution-budget";
+import { createSpendReservationLedger } from "../../src/lib/spend-reservation-ledger";
+import { createRequestSpendTracker } from "../../src/server/responses/request-spend";
+import { SpendLedgerOwnerError } from "../../src/lib/spend-ledger-owner";
+import { spendTestJournal, spendTestPolicy, testSpendSalt } from "../helpers/shipped-spend-ledger";
 
 const enc = new TextEncoder();
 
@@ -66,8 +72,8 @@ function provider(): OcxProviderConfig {
   } as OcxProviderConfig;
 }
 
-function incoming() {
-  return { headers: new Headers(), translatorBudget: createTestTranslatorBudget() };
+function incoming(translatorBudget = createTestTranslatorBudget()) {
+  return { headers: new Headers(), translatorBudget };
 }
 
 async function run(adapter: ReturnType<typeof createCodeBuddyAdapter>, p: OcxParsedRequest): Promise<AdapterEvent[]> {
@@ -93,6 +99,81 @@ const BLOCK_STOP = { type: "stream_event", event: { type: "content_block_stop" }
 const MESSAGE_STOP = { type: "stream_event", event: { type: "message_stop" } };
 
 describe("CodeBuddy capture-only tool bridge turn", () => {
+  test.each(["acquire", "release", "close"])("owner error during %s still closes the producer and removes the tool bridge", async phase => {
+    const ledger = createSpendReservationLedger({ journal: spendTestJournal(), salt: testSpendSalt,
+      policy: spendTestPolicy({ pool: { maxTokens: 50 } }) });
+    const tracker = createRequestSpendTracker({ provider: "codebuddy", spendInputEstimateTokens: 1 }, undefined, ledger);
+    const budget = createRequestExecutionBudget({ ...CODEX_TEXT_GUARDED_BUDGET_POLICY }, undefined, tracker);
+    const error = new SpendLedgerOwnerError("SPEND_LEDGER_OWNER_UNAVAILABLE", "injected cleanup owner refusal");
+    const begin = budget.beginSpendProducer!.bind(budget);
+    let close: (() => void) | undefined;
+    let closed = false;
+    spyOn(budget, "beginSpendProducer").mockImplementation(() => {
+      if (phase === "acquire") throw error;
+      const producer = begin()!;
+      close = producer.close.bind(producer);
+      return { close() { close!(); closed = true; if (phase === "close") throw error; } };
+    });
+    const reserve = budget.reserveDispatch.bind(budget);
+    spyOn(budget, "reserveDispatch").mockImplementation(intent => {
+      const decision = reserve(intent);
+      if (decision.allowed && phase === "release") {
+        const release = decision.permit.release.bind(decision.permit);
+        decision.permit.release = () => { release(); throw error; };
+      }
+      return decision;
+    });
+    let bridgeDir: string | undefined;
+    let spawns = 0;
+    const adapter = createCodeBuddyAdapter(provider(), {
+      which: () => "/usr/bin/codebuddy",
+      spawn: () => { spawns++; return fakeChild(frameLines([INIT_OK, { type: "result", subtype: "success", is_error: false }])) as unknown as ChildProcess; },
+      writeToolBridgeFile: async (path, data, options) => { bridgeDir = dirname(String(path)); await writeFile(path, data, options); },
+    });
+    try {
+      await expect(adapter.runTurn!(parsed([tool("exec")]), { ...incoming(), sendBudget: budget }, () => {})).rejects.toBe(error);
+      expect(spawns).toBe(phase === "acquire" ? 0 : 1);
+      expect(closed).toBe(phase !== "acquire");
+      expect(bridgeDir).toBeDefined();
+      expect(existsSync(bridgeDir!)).toBe(false);
+      await ledger.waitForReporterDrain();
+    } finally {
+      close?.();
+      if (bridgeDir) await rm(bridgeDir, { recursive: true, force: true });
+    }
+  });
+
+  test("active bridge continuation keeps prior tool calls under the bare request name", async () => {
+    const p = parsed([tool("probe_echo")]);
+    const callId = "cb_prior_call";
+    p.context.messages = [
+      { role: "user", content: "run probe", timestamp: 0 },
+      { role: "assistant", content: [{ type: "toolCall", id: callId, name: "probe_echo", arguments: { a: 1 } }], timestamp: 1 },
+      { role: "toolResult", toolCallId: callId, content: "PROBE_OK", timestamp: 2 },
+    ];
+    const cliName = [...buildCodeBuddyToolBridge(p).emittedNameMap.keys()][0]!;
+    expect(cliName).toMatch(/^mcp__/);
+    let stdin = "";
+    let args: readonly string[] = [];
+    const adapter = createCodeBuddyAdapter(provider(), {
+      which: () => "/usr/bin/codebuddy",
+      spawn: (_command, childArgs) => {
+        args = childArgs;
+        const child = fakeChild(frameLines([INIT_OK, { type: "result", subtype: "success", is_error: false }]));
+        child.stdin = new Writable({ write(chunk, _encoding, callback) { stdin += String(chunk); callback(); } });
+        return child as unknown as ChildProcess;
+      },
+    });
+    const events = await run(adapter, p);
+    expect(args).toContain("--mcp-config");
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe(cliName);
+    const text = JSON.parse(stdin.trim()).message.content[0].text;
+    expect(text).toContain(`[Tool call: probe_echo (call_id: ${callId}) with args: {"a":1}]`);
+    expect(text).not.toContain(`[Tool call: ${cliName}`);
+    expect(text).toContain(`TOOL RESULT (call_id: ${callId}):\nPROBE_OK`);
+    expect(events.at(-1)?.type).toBe("done");
+  });
+
   test.each(["catalog.json", "mcp.json"])("bridge staging failure in %s is private and cleans both staging directories", async failedFile => {
     const before = new Set(readdirSync(tmpdir()));
     const promptDirs: string[] = [];
@@ -261,7 +342,7 @@ describe("CodeBuddy capture-only tool bridge turn", () => {
       type: "done",
       stopReason: "tool_use",
       endTurn: false,
-      usage: { inputTokens: 15, outputTokens: 5, totalTokens: 20, cachedInputTokens: 3, cacheReadInputTokens: 3 },
+      usage: { inputTokens: 18, outputTokens: 5, totalTokens: 23, cachedInputTokens: 3, cacheReadInputTokens: 3 },
     });
   });
 
@@ -417,6 +498,28 @@ describe("CodeBuddy capture-only tool bridge turn", () => {
     expect(child?.killed).toBe(true);
   });
 
+  test("an indexless argument delta for the sole indexed tool block fails before a later indexed stop", async () => {
+    const p = parsed([tool("exec")]);
+    const cliName = [...buildCodeBuddyToolBridge(p).emittedNameMap.keys()][0]!;
+    let child: FakeChild | undefined;
+    const spawn: SpawnFn = () => {
+      child = fakeChild(frameLines([
+        INIT_OK,
+        { type: "stream_event", event: { type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "tu_a", name: cliName } } },
+        inputJsonDelta("{\"wrong\":true}"),
+        { type: "stream_event", event: { type: "content_block_stop", index: 2 } },
+        MESSAGE_STOP,
+      ]));
+      return child as unknown as ChildProcess;
+    };
+    const adapter = createCodeBuddyAdapter(provider(), { spawn, which: () => "/usr/bin/codebuddy" });
+    const events = await run(adapter, p);
+
+    expect(events).toEqual([expect.objectContaining({ type: "error", code: "protocol_error", status: 502, retryable: false })]);
+    expect(events.some(e => e.type === "tool_call_start" || e.type === "tool_call_delta" || e.type === "done")).toBe(false);
+    expect(child?.killed).toBe(true);
+  });
+
   test("a parallel batch on one shared block index completes every call in the leg", async () => {
     const p = parsed([tool("exec")]);
     const bridge = buildCodeBuddyToolBridge(p);
@@ -463,6 +566,48 @@ describe("CodeBuddy capture-only tool bridge turn", () => {
     expect(events[4]).toMatchObject({ arguments: "{\"command\":[\"ls\"]}" });
     expect(events[6]).toMatchObject({ type: "done", stopReason: "tool_use", endTurn: false });
     expect(child?.killed).toBe(true);
+  });
+
+  test.each(["", "{\"command\":"])("same-index reuse fails closed when the previous arguments are incomplete %j", async partial => {
+    const p = parsed([tool("exec")]);
+    const cliName = [...buildCodeBuddyToolBridge(p).emittedNameMap.keys()][0]!;
+    const start = (id: string) => ({
+      type: "stream_event",
+      event: { type: "content_block_start", index: 2, content_block: { type: "tool_use", id, name: cliName } },
+    });
+    const frames: unknown[] = [INIT_OK, start("tu_a")];
+    if (partial) frames.push({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: partial } },
+    });
+    frames.push(start("tu_b"), MESSAGE_STOP);
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => fakeChild(frameLines(frames)) as unknown as ChildProcess,
+      which: () => "/usr/bin/codebuddy",
+    });
+
+    const events = await run(adapter, p);
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "protocol_error", status: 502, retryable: false });
+    expect(events.some(e => e.type === "tool_call_start" || e.type === "done")).toBe(false);
+  });
+
+  test("an unindexed stop cannot complete an indexed tool call", async () => {
+    const p = parsed([tool("exec")]);
+    const cliName = [...buildCodeBuddyToolBridge(p).emittedNameMap.keys()][0]!;
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => fakeChild(frameLines([
+        INIT_OK,
+        { type: "stream_event", event: { type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "tu_a", name: cliName } } },
+        { type: "stream_event", event: { type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: "{}" } } },
+        BLOCK_STOP,
+        MESSAGE_STOP,
+      ])) as unknown as ChildProcess,
+      which: () => "/usr/bin/codebuddy",
+    });
+
+    const events = await run(adapter, p);
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "protocol_error", status: 502, retryable: false });
+    expect(events.some(e => e.type === "tool_call_start" || e.type === "done")).toBe(false);
   });
 
   test("a tool call before the init frame fails closed with tool_bridge_init_missing", async () => {
@@ -741,6 +886,7 @@ describe("CodeBuddy capture-only tool bridge turn", () => {
     const frames: unknown[] = [INIT_OK];
     for (let i = 0; i < 17; i += 1) {
       frames.push(toolUseStart(cliName, `tu_${i}`));
+      frames.push(inputJsonDelta("{}"));
       frames.push(BLOCK_STOP);
     }
     frames.push(MESSAGE_STOP);
@@ -750,5 +896,79 @@ describe("CodeBuddy capture-only tool bridge turn", () => {
     });
     const events = await run(adapter, p);
     expect(events.at(-1)).toMatchObject({ type: "error", code: "tool_call_limit" });
+  });
+
+  test("the turn limit is enforced when the seventeenth block opens", async () => {
+    const p = parsed([tool("exec")]);
+    const cliName = [...buildCodeBuddyToolBridge(p).emittedNameMap.keys()][0]!;
+    const frames: unknown[] = [INIT_OK];
+    for (let i = 0; i < 17; i += 1) {
+      frames.push({
+        type: "stream_event",
+        event: { type: "content_block_start", index: i, content_block: { type: "tool_use", id: `tu_${i}`, name: cliName } },
+      });
+    }
+    frames.push(MESSAGE_STOP);
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => fakeChild(frameLines(frames)) as unknown as ChildProcess,
+      which: () => "/usr/bin/codebuddy",
+    });
+
+    const events = await run(adapter, p);
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "tool_call_limit", status: 502, retryable: false });
+    expect(events.some(e => e.type === "tool_call_start" || e.type === "done")).toBe(false);
+  });
+
+  test("an empty-ID start does not consume a turn slot", async () => {
+    const p = parsed([tool("exec")]);
+    const cliName = [...buildCodeBuddyToolBridge(p).emittedNameMap.keys()][0]!;
+    const frames: unknown[] = [INIT_OK, toolUseStart(cliName, "")];
+    for (let i = 0; i < 16; i++) frames.push(toolUseStart(cliName, `valid_${i}`), inputJsonDelta("{}"), BLOCK_STOP);
+    frames.push(MESSAGE_STOP);
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => fakeChild(frameLines(frames)) as unknown as ChildProcess,
+      which: () => "/usr/bin/codebuddy",
+    });
+    const events = await run(adapter, p);
+    expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "tool_use" });
+    expect(events.filter(e => e.type === "tool_call_start")).toHaveLength(16);
+  });
+
+  test("argument overflow fails before emission and releases the parser reservation", async () => {
+    const p = parsed([tool("exec")]);
+    const cliName = [...buildCodeBuddyToolBridge(p).emittedNameMap.keys()][0]!;
+    const translatorBudget = createTestTranslatorBudget({ maxCallArgumentBytes: Buffer.byteLength(cliName) + 4 });
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => fakeChild(frameLines([INIT_OK, toolUseStart(cliName), inputJsonDelta("1234"), inputJsonDelta("5")])) as unknown as ChildProcess,
+      which: () => "/usr/bin/codebuddy",
+    });
+    const events: AdapterEvent[] = [];
+    await adapter.runTurn!(p, incoming(translatorBudget), e => events.push(e));
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "translation_buffer_limit", status: 502, retryable: false });
+    expect(events.some(e => e.type === "tool_call_start" || e.type === "done")).toBe(false);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 0, activeCalls: 0, overflows: 1 });
+  });
+
+  test("aborting with an open block releases its identity and argument reservation", async () => {
+    const p = parsed([tool("exec")]);
+    const cliName = [...buildCodeBuddyToolBridge(p).emittedNameMap.keys()][0]!;
+    const controller = new AbortController();
+    const translatorBudget = createTestTranslatorBudget();
+    const charge = translatorBudget.chargeRetained.bind(translatorBudget);
+    let charges = 0;
+    translatorBudget.chargeRetained = (bytes, scope) => {
+      charge(bytes, scope);
+      if (++charges === 2) queueMicrotask(() => controller.abort());
+    };
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => fakeChild(frameLines([INIT_OK, toolUseStart(cliName), inputJsonDelta("x")])) as unknown as ChildProcess,
+      which: () => "/usr/bin/codebuddy",
+    });
+    const events: AdapterEvent[] = [];
+    await adapter.runTurn!(p, { ...incoming(translatorBudget), abortSignal: controller.signal }, e => events.push(e));
+    expect(events.at(-1)).toMatchObject({ type: "error", retryable: false });
+    expect(controller.signal.aborted).toBe(true);
+    expect(charges).toBe(2);
+    expect(translatorBudget.snapshot()).toMatchObject({ currentBytes: 0, activeCalls: 0 });
   });
 });

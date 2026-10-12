@@ -54,7 +54,7 @@ import { noteExplicitShutdownRequested } from "./management/system-restart";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "./request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../usage/cost";
 import type { PersistedUsageAttempt } from "../usage/log";
-import { isAllowedManagementOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "./auth-cors";
+import { inheritTrustedHubManagementRequest, isAllowedManagementOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "./auth-cors";
 import { applySystemEnvToggle } from "./system-env";
 
 import type { ManagementApiDeps } from "./management/context";
@@ -66,9 +66,11 @@ import { handleRoutingAnalyticsRoutes } from "./management/routing-analytics-rou
 import { handleMetricsRoutes } from "./management/metrics-routes";
 import { handleProviderRoutes } from "./management/provider-routes";
 import { handleModelRoutes } from "./management/model-routes";
+import { handleClaudeInterceptRoutes } from "./management/claude-intercept-routes";
 import { handleAgentSettingsRoutes } from "./management/agent-settings-routes";
 import { handleOauthAccountRoutes } from "./management/oauth-account-routes";
 import { handleComboRoutes } from "./management/combo-routes";
+import { handleDecisionRoutes } from "./management/decision-routes";
 import { handleSystemRoutes } from "./management/system-routes";
 import { handleSidebarRoutes } from "./management/sidebar-routes";
 import { handleUsageTimelineRoutes } from "./management/usage-timeline-routes";
@@ -88,6 +90,8 @@ import type { CatalogDisposition, ConvergeCodex } from "../codex/convergence-typ
 import { normalizeCatalogDisposition } from "../codex/catalog-refresh-status";
 import { managementBodyTooLargeResponse } from "./management/body";
 import { handleSessionRoutes } from "./management/session-routes";
+import { siblingRefusesManagementRequest } from "./management/sibling-guard";
+import { siblingOfLivePort, siblingSkipMessage } from "../codex/sibling-start";
 import { packageVersion } from "../lib/package-version";
 import { isLocalAccountSwitchPath } from "../lib/local-account-switch-capability";
 import { readVerifiedAccountSwitchBody } from "./local-account-switch-auth";
@@ -147,6 +151,12 @@ async function handleQuotaResetRoutesOnDemand(ctx: ManagementContext): Promise<R
   return handleQuotaResetRoutes(ctx);
 }
 
+async function handleLowQuotaRoutesOnDemand(ctx: ManagementContext): Promise<Response | null> {
+  if (!pathInManagementNamespace(ctx.url.pathname, "/api/codex-auth/low-quota-events", false)) return null;
+  const { handleLowQuotaRoutes } = await import("./management/low-quota-routes");
+  return handleLowQuotaRoutes(ctx);
+}
+
 /**
  * Lazy like the Lab and routing-profile handlers, and for the same recorded reason: this file is
  * mounted for every dashboard request, so a static import would put the workflow-budget ledger
@@ -156,6 +166,12 @@ async function handleWorkflowBudgetRoutesOnDemand(ctx: ManagementContext): Promi
   if (!pathInManagementNamespace(ctx.url.pathname, "/api/workflow-budget", true)) return null;
   const { handleWorkflowBudgetRoutes } = await import("./management/workflow-budget-routes");
   return handleWorkflowBudgetRoutes(ctx);
+}
+
+async function handleCodexAgentRoleRoutesOnDemand(ctx: ManagementContext): Promise<Response | null> {
+  if (!pathInManagementNamespace(ctx.url.pathname, "/api/codex-agent-roles")) return null;
+  const { handleCodexAgentRoleRoutes } = await import("./management/codex-agent-role-routes");
+  return handleCodexAgentRoleRoutes(ctx);
 }
 
 /**
@@ -226,7 +242,9 @@ export async function handleManagementAPI(
     if (verified.status !== 200) {
       return jsonResponse({ error: "account switch body rejected" }, verified.status, req, config);
     }
+    const sourceReq = req;
     req = new Request(req.url, { method: req.method, headers: req.headers, body: Buffer.from(verified.body) });
+    inheritTrustedHubManagementRequest(sourceReq, req);
   }
   // Management bodies are small JSON (provider names, key ids, settings). Reject oversized
   // payloads before any handler buffers them — the data plane has its own decompression cap.
@@ -312,9 +330,14 @@ export async function handleManagementAPI(
     guiSessionIssuance: requestIngress.guiSessionIssuance ?? null,
     convergeCodexCatalog, syncClaudeAgentDefsBestEffort,
   };
+  // Before any route module, including the link, native-main and codex-auth dispatch below.
+  if (siblingRefusesManagementRequest(req.method, url.pathname)) {
+    return jsonResponse({ error: siblingSkipMessage(), code: "sibling_instance" }, 409, req, config);
+  }
   let routed: Response | null | undefined;
   try {
-    routed = handleSessionRoutes(ctx)
+    routed = await handleClaudeInterceptRoutes(ctx)
+    ??     handleSessionRoutes(ctx)
     ??     (await handleLinkRoutesOnDemand(ctx))
     ??     (await handleRemoteWorkspaceRoutesOnDemand(ctx))
     ??     (await handleConfigRoutes(ctx))
@@ -322,7 +345,9 @@ export async function handleManagementAPI(
     ??     (await handleLogsUsageRoutes(ctx))
     ??     (await handleRequestHistoryRoutes(ctx))
     ??     (await handleQuotaResetRoutesOnDemand(ctx))
+    ??     (await handleLowQuotaRoutesOnDemand(ctx))
     ??     (await handleWorkflowBudgetRoutesOnDemand(ctx))
+    ??     (await handleCodexAgentRoleRoutesOnDemand(ctx))
     ??     (await handleProtocolRoutesOnDemand(ctx))
     ??     (await handleGrokCouponRoutesOnDemand(ctx))
     ??     (await handleAnthropicResetGrantRoutesOnDemand(ctx))
@@ -338,6 +363,7 @@ export async function handleManagementAPI(
     ??     (await handleAgentSettingsRoutes(ctx))
     ??     (await handleCodexPromptRoutes(ctx))
     ??     (await handleOauthAccountRoutes(ctx))
+    ??     (await handleDecisionRoutes(ctx))
     ??     (await handleComboRoutes(ctx))
     ??     (await handleSystemRoutes(ctx))
     ??     (await handleLabRoutesOnDemand(ctx))
@@ -379,9 +405,16 @@ export async function handleManagementAPI(
     // outcome. This process cannot verify its own post-exit respawn window; only the
     // receipt-backed parent `ocx stop` can, which is what the deferral exists for.
     const { deferralMatchesReceipt } = await import("../config/pending-teardown");
-    const { deferralHonored, performStopTeardown } = await import("./stop-teardown");
+    const { deferralHonored, desktopSupervisedStopRefusal, performStopTeardown } = await import("./stop-teardown");
+    // The desktop app would start this proxy again within seconds; refuse before anything is
+    // touched and point at its tray, whose Stop it honours (#3008 refuses an undone stop the same way).
+    const desktopRefusal = desktopSupervisedStopRefusal(principal);
+    if (desktopRefusal) return jsonResponse(desktopRefusal, 409, req, config);
     const holdsReceipt = deferralHonored(url, deferralMatchesReceipt);
-    const respawnRisk = holdsReceipt ? "none" : installedServiceRespawnRisk();
+    // A sibling never runs under a service manager, and the installed service is the live
+    // owner's: asking the manager to stop from here would refuse, or boot the owner's job out.
+    const sibling = siblingOfLivePort() !== null;
+    const respawnRisk = holdsReceipt || sibling ? "none" : installedServiceRespawnRisk();
     if (respawnRisk === "respawnable") {
       return jsonResponse({
         success: false,
@@ -415,7 +448,7 @@ export async function handleManagementAPI(
     }
     let serviceStop: import("../service").ServiceStopOutcome;
     try {
-      serviceStop = stopServiceIfInstalledDetailed();
+      serviceStop = sibling ? "absent" : stopServiceIfInstalledDetailed();
     } catch (err) {
       if (isServiceOwnershipError(err)) {
         // The installed service belongs to another CODEX_HOME/OPENCODEX_HOME: it would respawn

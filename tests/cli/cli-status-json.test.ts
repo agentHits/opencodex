@@ -8,6 +8,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectHubStatus, hubStatusLines, isConnectionRefused, isUncleanExitEvidence, proxyHealthFailureReason, resolveStatusPid, selectListenTarget } from "../../src/cli/status";
+import * as proxyLiveness from "../../src/server/proxy-liveness";
+import * as startupHealth from "../../src/codex/autostart-health";
+import * as service from "../../src/service";
+import * as supervision from "../../src/service/desktop-supervision.mjs";
 import * as statusFacade from "../../src/cli/status";
 import * as statusProbes from "../../src/cli/status-probes";
 import { packageVersion } from "../../src/cli/help";
@@ -113,18 +117,18 @@ describe("status version skew projection", () => {
   }, COLD_SPAWN_WARMUP_HOOK_BUDGET_MS);
 
   test.each([
-    ["0.0.1", "0.0.1", "the running proxy is older"],
-    ["999999.0.0", "999999.0.0", "this ocx on PATH is older"],
-    [packageVersion(), packageVersion(), null],
-    [`${packageVersion()}+skew-fixture`, `${packageVersion()}+skew-fixture`, "neither can be identified as older"],
-    ["not-a-version", null, null],
-    ["unknown", null, null],
-    ["0.0.0", "0.0.0", null],
-    [null, null, null],
-    [undefined, null, null],
-    ["1.2.3\nuntrusted-health-marker", null, null],
-    [`1.2.3+${"x".repeat(59)}`, null, null],
-  ] as const)("projects proxy %s in JSON and human output", async (proxyVersion, projectedVersion, expected) => {
+    ["0.0.1", "0.0.1", "the running proxy is older", "cli-newer"],
+    ["999999.0.0", "999999.0.0", "this ocx on PATH is older", "proxy-newer"],
+    [packageVersion(), packageVersion(), null, "match"],
+    [`${packageVersion()}+skew-fixture`, `${packageVersion()}+skew-fixture`, "neither can be identified as older", "incomparable"],
+    ["not-a-version", null, null, "unknown"],
+    ["unknown", null, null, "unknown"],
+    ["0.0.0", "0.0.0", null, "unknown"],
+    [null, null, null, "unknown"],
+    [undefined, null, null, "unknown"],
+    ["1.2.3\nuntrusted-health-marker", null, null, "unknown"],
+    [`1.2.3+${"x".repeat(59)}`, null, null, "unknown"],
+  ] as const)("projects proxy %s in JSON and human output", async (proxyVersion, projectedVersion, expected, relation) => {
     await withStatusVersionFixture(proxyVersion, "ocx-status-skew-", async ({ home, codexHome }) => {
       for (const json of [true, false]) {
         // Async child execution lets the fixture answer the real identity/health probes.
@@ -139,12 +143,13 @@ describe("status version skew projection", () => {
         if (json) {
           const parsed = JSON.parse(result.stdout);
           expect(parsed.schemaVersion).toBe(1);
-          expect(Object.keys(parsed.versionSkew).sort()).toEqual(["cliVersion", "proxyVersion", "skewed", "warning"]);
+          expect(Object.keys(parsed.versionSkew).sort()).toEqual(["cliVersion", "proxyVersion", "relation", "skewed", "warning"]);
           expect(parsed.versionSkew.cliVersion).toBe(packageVersion());
           // Health identity carries only bounded semver; arbitrary listener text
           // must not become a version or an operator-facing skew warning.
           expect(parsed.versionSkew.proxyVersion).toBe(projectedVersion);
           expect(parsed.versionSkew.skewed).toBe(expected !== null);
+          expect(parsed.versionSkew.relation).toBe(relation);
           if (expected === null) expect(parsed.versionSkew.warning).toBeNull();
           else expect(parsed.versionSkew.warning).toContain(expected);
         } else if (expected === null) {
@@ -325,6 +330,7 @@ describe("CLI status JSON", () => {
 
       const parsed = JSON.parse(result.stdout) as {
         schemaVersion?: unknown;
+        startupSource?: unknown;
         proxy?: { running?: unknown; pid?: unknown; health?: { ok?: unknown; url?: unknown; message?: unknown } };
         dashboard?: { url?: unknown };
         listen?: { port?: unknown; source?: unknown };
@@ -371,6 +377,7 @@ describe("CLI status JSON", () => {
       };
 
       expect(parsed.schemaVersion).toBe(1);
+      expect(parsed.startupSource).toBe("local");
       expect(parsed.proxy?.running).toBe(false);
       expect(parsed.proxy?.pid).toBeNull();
       expect(parsed.proxy?.health?.ok).toBe(false);
@@ -1083,3 +1090,97 @@ describe("status reports stale process records end to end", () => {
     }
   });
 });
+
+
+describe("status selected supervision verdict", () => {
+  test.each(["local", "live", "local-supervision-override"] as const)("JSON and service summary use %s", async source => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-status-supervision-"));
+    const previousHome = process.env.OPENCODEX_HOME;
+    const previousCodexHome = process.env.CODEX_HOME;
+    const restore: Array<() => void> = [];
+    try {
+      mkdirSync(join(home, "codex"));
+      process.env.OPENCODEX_HOME = home;
+      process.env.CODEX_HOME = join(home, "codex");
+      writeFileSync(join(home, "config.json"), JSON.stringify({ ...getDefaultConfig(), port: 9 }));
+      const local = startupHealth.deriveStartupHealth({ routingKind: "opencodex-local", platform: "darwin",
+        autostartEnabled: true, serviceInstalled: false, serviceViable: false, serviceEnabled: false,
+        serviceRunning: false, serviceStale: false, serviceConflict: false, serviceSupported: true,
+        shimInstalled: false, shimHealthy: false,
+        desktop: { owned: false, loginEnabled: false, running: true, viable: false,
+          supervisor: { supervisorPid: 3131, runtimePid: 4242, app: "/fixture/opencodex-desktop" } } });
+      const old = { ...local, desktop: undefined, recommendedAction: undefined, recommendedCommand: "ocx service install" };
+      const find = spyOn(proxyLiveness, "findLiveProxy").mockResolvedValue(source === "local" ? null
+        : { pid: 4242, port: 9, source: "runtime" });
+      restore.push(() => find.mockRestore());
+      const read = spyOn(statusFacade, "fetchLiveStartupHealth").mockResolvedValue(source === "local-supervision-override" ? old : local);
+      restore.push(() => read.mockRestore());
+      const collect = spyOn(startupHealth, "collectStartupHealth").mockReturnValue(local);
+      restore.push(() => collect.mockRestore());
+      let probes = 0;
+      const inspect = spyOn(supervision, "inspectDesktopSupervision").mockImplementation(deps => {
+        expect(deps?.targetPid).toBe(4242);
+        probes++;
+        return { kind: "desktop", supervisorPid: 3131, runtimePid: 4242, app: "/fixture/opencodex-desktop", proxy: "/fixture/ocx" };
+      });
+      restore.push(() => inspect.mockRestore());
+      const result = (await statusFacade.collectStatus()).json;
+      expect(result.startupSource).toBe(source);
+      expect(result.startup).toBe(local);
+      if (source === "local") {
+        expect(result.service.summary).not.toContain("OpenCodex Desktop supervises the running proxy");
+        expect(result.service.summary).not.toContain("running under the live managed service");
+      } else {
+        expect(result.service.summary).toContain("OpenCodex Desktop supervises the running proxy");
+        expect(result.service.summary).not.toContain("run '");
+      }
+      expect(probes).toBe(source === "local-supervision-override" ? 1 : 0);
+    } finally {
+      for (const cleanup of restore.reverse()) cleanup();
+      if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = previousHome;
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      removeTreeWithRetry(home);
+    }
+  }, STORE_BUDGET_MS);
+});
+
+
+test("collectStatus keeps a viable registered service marked NOT serving without a live proxy", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ocx-status-service-absent-"));
+  const previousHome = process.env.OPENCODEX_HOME;
+  const previousCodexHome = process.env.CODEX_HOME;
+  const restore: Array<() => void> = [];
+  try {
+    mkdirSync(join(home, "codex"));
+    process.env.OPENCODEX_HOME = home;
+    process.env.CODEX_HOME = join(home, "codex");
+    writeFileSync(join(home, "config.json"), JSON.stringify({ ...getDefaultConfig(), port: 9 }));
+    const local = startupHealth.deriveStartupHealth({ routingKind: "opencodex-local", platform: "darwin",
+      autostartEnabled: true, serviceInstalled: true, serviceViable: true, serviceEnabled: true,
+      serviceRunning: true, serviceStale: false, serviceConflict: false, serviceSupported: true,
+      shimInstalled: false, shimHealthy: false });
+    const find = spyOn(proxyLiveness, "findLiveProxy").mockResolvedValue(null);
+    restore.push(() => find.mockRestore());
+    const collect = spyOn(startupHealth, "collectStartupHealth").mockReturnValue(local);
+    restore.push(() => collect.mockRestore());
+    const diagnostic = spyOn(service, "diagnoseService").mockReturnValue({ supported: true,
+      installed: true, enabled: true, running: true, viable: true, startable: true, stale: false,
+      conflict: false, backend: "launchd", summary: "registered viable fixture" });
+    restore.push(() => diagnostic.mockRestore());
+    const result = (await statusFacade.collectStatus()).json;
+    expect(result.proxy.running).toBe(false);
+    expect(result.startupSource).toBe("local");
+    expect(result.startup.protection).toBe("service");
+    expect(result.service.summary).toContain("registered viable fixture — registered but NOT serving");
+    expect(result.service.summary).not.toContain("running under the live managed service");
+  } finally {
+    for (const cleanup of restore.reverse()) cleanup();
+    if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+    else process.env.OPENCODEX_HOME = previousHome;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    removeTreeWithRetry(home);
+  }
+}, STORE_BUDGET_MS);

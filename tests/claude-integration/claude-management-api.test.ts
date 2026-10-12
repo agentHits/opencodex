@@ -123,7 +123,8 @@ test("GET classifies settings against the injected bound listener", async () => 
     const get = async () => (await (await fetch(new URL("/api/claude-code", server.url))).json()) as Record<string, unknown>;
     expect(await get()).toMatchObject({ sharedProxy: "none", cliFirstPartyApplied: false,
       desktopFirstParty: false, interceptEligible: true, interceptRunning: false });
-    writeFileSync(settingsPath, JSON.stringify({ env }));
+    // A fully applied block carries the loopback bypass (#6936); without it the block is stale.
+    writeFileSync(settingsPath, JSON.stringify({ env: { ...env, NO_PROXY: "127.0.0.1,localhost,::1,0.0.0.0" } }));
     expect(await get()).toMatchObject({ sharedProxy: "stopped", cliFirstPartyApplied: false });
     bound = { proxyPort: 10200, caCertPath: env.NODE_EXTRA_CA_CERTS, pickerProxyPort: null };
     expect(await get()).toMatchObject({ sharedProxy: "live", cliFirstPartyApplied: true, interceptRunning: true });
@@ -155,7 +156,7 @@ test("GET keeps ineligible bound, stale and stopped states distinct", async () =
   saveConfig(current);
   const settingsPath = join(process.env.CLAUDE_CONFIG_DIR!, "settings.json");
   mkdirSync(process.env.CLAUDE_CONFIG_DIR!, { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify({ env }));
+  writeFileSync(settingsPath, JSON.stringify({ env: { ...env, NO_PROXY: "127.0.0.1,localhost,::1,0.0.0.0" } }));
   let bound: { proxyPort: number; caCertPath: string; pickerProxyPort: null } | null =
     { proxyPort: 10200, caCertPath: env.NODE_EXTRA_CA_CERTS, pickerProxyPort: null };
   const server = startServer(0, { managementApi: { getClaudeInterceptState: () => bound } });
@@ -184,7 +185,7 @@ test("CLI-on refuses a disabled intercept without mutation", async () => {
     });
     const first = await put();
     expect(first.status).toBe(409);
-    expect(await first.json()).toMatchObject({ code: "intercept_disabled" });
+    expect(await first.json()).toMatchObject({ code: "disabled" });
     expect(loadConfig().claudeCode?.cliFirstParty).toBeUndefined();
     const settingsPath = join(process.env.CLAUDE_CONFIG_DIR!, "settings.json");
     expect(existsSync(settingsPath)).toBe(false);
@@ -234,7 +235,7 @@ test("CLI-on rechecks a drifted persisted port under the config lock", async () 
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliFirstParty: true }),
     });
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ code: "intercept_unavailable" });
+    expect(await response.json()).toMatchObject({ code: "port_mismatch" });
     expect(readFileSync(configPath, "utf8")).toBe(configBytes);
     expect(existsSync(settingsPath) ? readFileSync(settingsPath, "utf8") : null).toBe(settingsBefore);
     expect(existsSync(tokenPath) ? readFileSync(tokenPath, "utf8") : null).toBe(tokenBefore);
@@ -364,6 +365,51 @@ test("CLI-off reports a tokenless local proxy with foreign CA as residue", async
     expect(await response.json()).toMatchObject({ warnings: ["settings_residual"] });
     expect(loadConfig().claudeCode?.cliFirstParty).toBeUndefined();
     expect(readFileSync(settingsPath, "utf8")).toBe(bytes);
+  } finally { await server.stop(true); }
+});
+
+test("CLI-off keeps a shared env Desktop could own, pinning first-party instead of removing it", async () => {
+  // A legacy install can carry an owned shared proxy and cliFirstParty without a desktopMode
+  // marker. The env is ambiguous while the flag is set, so opt-out must not pin gateway and
+  // remove a connection Desktop may still be using.
+  const current = loadConfig();
+  current.port = 10100;
+  current.claudeCode = { ...current.claudeCode, cliFirstParty: true };
+  saveConfig(current);
+  const settingsPath = join(process.env.CLAUDE_CONFIG_DIR!, "settings.json");
+  mkdirSync(process.env.CLAUDE_CONFIG_DIR!, { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify({ env: desktopFirstPartyTarget(current).env }));
+  const server = startServer(0);
+  try {
+    const response = await fetch(new URL("/api/claude-code", server.url), {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliFirstParty: false }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ cliFirstParty: false, warnings: ["shared_proxy_retained"] });
+    const claudeCode = loadConfig().claudeCode;
+    expect(claudeCode?.cliFirstParty).toBeUndefined();
+    expect(claudeCode?.desktopMode).toBe("first-party");
+    expect(JSON.parse(readFileSync(settingsPath, "utf8")).env).toBeDefined();
+    expect(await (await fetch(new URL("/api/claude-code", server.url))).json())
+      .toMatchObject({ cliFirstParty: false, desktopFirstParty: true });
+  } finally { await server.stop(true); }
+});
+
+test("CLI-off pins gateway and clears the env when nothing on disk is ours", async () => {
+  const current = loadConfig();
+  current.port = 10100;
+  current.claudeCode = { ...current.claudeCode, cliFirstParty: true };
+  saveConfig(current);
+  const server = startServer(0);
+  try {
+    const response = await fetch(new URL("/api/claude-code", server.url), {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliFirstParty: false }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ cliFirstParty: false, warnings: [] });
+    expect(loadConfig().claudeCode).toMatchObject({ desktopMode: "gateway" });
+    expect(await (await fetch(new URL("/api/claude-code", server.url))).json())
+      .toMatchObject({ cliFirstParty: false, desktopFirstParty: false, sharedProxy: "none" });
   } finally { await server.stop(true); }
 });
 
@@ -558,7 +604,7 @@ test("PUT round-trips three-state authMode (devlog 260720 + 260726_claude_auth_a
     get = await fetch(new URL("/api/claude-code", server.url)).then(r => r.json()) as Record<string, unknown>;
     expect(get.authMode).toBe("subscription");
     // Under Claude Code's own login it passes through natively and keeps its 1M window.
-    expect(sonnetTier(get)).toBe("claude-sonnet-5[1m]");
+    expect(sonnetTier(get)).toBe("claude-sonnet-5-5[1m]");
 
     // "auto" is the return path: it deletes the key so detection drives the mode again.
     const auto = await fetch(new URL("/api/claude-code", server.url), {
@@ -718,6 +764,7 @@ test.each([
   ["alwaysEnableEffort", true],
   ["autoContext", false],
   ["autoCompactWindow", 400_000],
+  ["contextAccounting", "200k"],
 ] as const)("%s-only PUT triggers system-env reconciliation", async (field, value) => {
   const applySpy = spyOn(systemEnv, "applySystemEnvToggle").mockResolvedValue({ reverted: false, reason: "test" });
   const server = startServer(0);
@@ -842,7 +889,7 @@ test("PUT immediately restores generated agents after re-enable and roster chang
       body: JSON.stringify({ injectAgents: true }),
     });
     expect(enable.status).toBe(200);
-    expect(readdirSync(agentsDir).some(name => name === "ocx-gpt-6-sol.md")).toBe(true);
+    expect(readdirSync(agentsDir).some(name => name === "ocx-gpt-6-1-sol.md")).toBe(true);
 
     const disable = await fetch(new URL("/api/claude-code", server.url), {
       method: "PUT",
@@ -858,7 +905,7 @@ test("PUT immediately restores generated agents after re-enable and roster chang
       body: JSON.stringify({ injectAgents: true }),
     });
     expect(reenable.status).toBe(200);
-    expect(readdirSync(agentsDir).some(name => name === "ocx-gpt-6-sol.md")).toBe(true);
+    expect(readdirSync(agentsDir).some(name => name === "ocx-gpt-6-1-sol.md")).toBe(true);
 
     const roster = await fetch(new URL("/api/subagent-models", server.url), {
       method: "PUT",
@@ -900,6 +947,28 @@ test("PUT/GET round-trips the context/effort levers (devlog 136 B6)", async () =
     expect(persisted.claudeCode?.maxContextTokens).toBeUndefined();
     expect(persisted.claudeCode?.alwaysEnableEffort).toBeUndefined();
   } finally {
+    await server.stop(true);
+  }
+});
+
+test("PUT/GET round-trips contextAccounting; 1m drops the key, anything else is a 400", async () => {
+  const applySpy = spyOn(systemEnv, "applySystemEnvToggle").mockResolvedValue({ reverted: false, reason: "test" });
+  const server = startServer(0);
+  const put = (contextAccounting: unknown) => fetch(new URL("/api/claude-code", server.url), {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contextAccounting }),
+  });
+  const get = async () => (await fetch(new URL("/api/claude-code", server.url)).then(r => r.json()) as Record<string, unknown>).contextAccounting;
+  try {
+    expect(await get()).toBe("1m");
+    expect((await put("200k")).status).toBe(200);
+    expect(loadConfig().claudeCode?.contextAccounting).toBe("200k");
+    expect(await get()).toBe("200k");
+    expect((await put("1m")).status).toBe(200);
+    expect(loadConfig().claudeCode?.contextAccounting).toBeUndefined();
+    expect(await get()).toBe("1m");
+    expect((await put("500k")).status).toBe(400);
+  } finally {
+    applySpy.mockRestore();
     await server.stop(true);
   }
 });

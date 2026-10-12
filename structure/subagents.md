@@ -1,5 +1,7 @@
 # Subagents And Multi-Agent Surface
 
+Subagent quota priming remains separate from automatic activation scheduling. See the [quota activation contract](providers/openai-tiers.md#public-provider-contract).
+
 Native result continuations and function-result injection follow [the mode-specific result and control contract](transports/streaming-health.md#experimental-native-function-result-injection); this surface does not infer upstream support or alter its defaults.
 Explicit Codex CLI installation observation does not attest the runtime used by a subagent or change agent selection. See the [read-only observation contract](runtime.md#explicit-codex-cli-installation-observation).
 
@@ -7,6 +9,9 @@ Native steering follows [the shared WebSocket contract](transports/streaming-hea
 
 Encrypted-task and fallback request handling follow the Responses
 [core module ownership](transports/responses.md#core-module-ownership). This surface retains its existing behavior.
+For policy-selected turns, both subagent selection and the post-recovery selection retain the
+[original policy authorization](transports/policy-fallback.md);
+ordinary subagent fallback configuration does not authorize a destination outside that evaluation.
 
 Catalog HTTP acquisition follows the [proxy-routing contract](catalog.md#remote-catalog-http-proxy-routing).
 
@@ -292,14 +297,16 @@ by that retirement. Quota fallback retains independent shared/Reserve evidence.
 
 When account selectors are active, one featured bare native id expands into a complete selector row
 group. Catalog priorities use the selector count as a stride so each group stays together without
-widening Codex's five-row advertisement window. Fresh defaults are the GPT-6 trio: Astra, Sol,
-Luna. Startup upgrades unmarked rosters once: prepend `gpt-6-astra`, retain the first four unique
+widening Codex's five-row advertisement window. Fresh defaults are Astra, GPT-6.1 Sol and Luna
+(`DEFAULT_SUBAGENT_MODELS`). Startup upgrades unmarked rosters once: prepend `gpt-6-astra`, retain the first four unique
 non-Astra choices, then move retained bare `gpt-5.5` last. The old fifth choice is dropped;
 an unmarked empty list becomes Astra only, and an unset list receives the fresh defaults.
 A second one-time step rewrites bare `gpt-5.6-sol`/`gpt-5.6-luna` to their GPT-6 rows in place
 and drops every other bare `gpt-5.5`/`gpt-5.6` id; ids with a `/` are untouched, and a list left
 empty by the cleanup receives the defaults.
-`subagentModelsVersion: 2` records completion, so later user edits (including an empty list or
+A third one-time step (version 3) rewrites bare `gpt-6-sol` to `gpt-6.1-sol` in place without
+duplicating it; routed and account-qualified ids keep their spelling, and GPT-6 Sol re-added later
+stays. `subagentModelsVersion: 3` records completion, so later user edits (including an empty list or
 removing Astra) persist. The migration rebases on the latest disk config under the existing
 mutation lock; failed persistence degrades to an in-memory roster for that run without a stale
 whole-config overwrite. Existing disabled-model visibility rules remain unchanged.
@@ -308,6 +315,102 @@ Quota-aware fallback walks a configured chain when the featured model is exhaust
 availability on a bounded interval (default 60 s, `src/codex/subagent-model-fallback.ts`). It rewrites
 the requested model id only; effort remains owned by the caps described under
 [Ultra reasoning level](catalog.md#ultra-reasoning-level).
+
+### Per-role model pins
+
+Codex overrides a child's spawn-time model with the root `model` key of
+`$CODEX_HOME/agents/<role>.toml`, so that pin decides which model a role runs on.
+`src/codex/agent-role-models.ts` is opencodex's only writer into those files, and it writes only
+the root `model` and `model_reasoning_effort` keys, each only when the request carries it, only when a user saves a role in the dashboard's omo (Codex / LazyCodex)
+section on the omo tab (`PUT /api/codex-agent-roles/{role}`) or with `ocx agent roles set`,
+and only while LazyCodex is detected. No sync, startup, or
+catalog path calls it, and opencodex never creates, repairs, or removes a role file.
+
+- The key is located by the same TOML-aware scan the pin reader uses
+  (`locateTomlModelKey` in `src/codex/subagent-model-fallback.ts`), so a `model =` line inside
+  the instructions multiline string is never read or edited. A key under a table header is not
+  the root pin.
+- An existing one-line string value is replaced inside its span; every other byte, including
+  quote style when the new value allows it, trailing comments, line endings, and a leading BOM,
+  is kept. A missing key is inserted after the leading comment block. A non-string value is
+  refused rather than duplicated.
+- The original file and the edited result must both parse as TOML; otherwise the write is
+  refused with `invalid_role_file` and the file keeps its bytes, so an edit can never turn a
+  role Codex rejects into one it loads. Other write failures answer a fixed `write_failed`
+  message without the filesystem path or owner details.
+- The role name must equal a listed `*.toml` stem, which is also the path-traversal check. The
+  target must be a regular file owned by the running user; the replacement is atomic and does
+  not follow a symbolic link.
+- On `PUT /api/codex-agent-roles/{role}`, `effort` is optional: omitted keeps the role's
+  `model_reasoning_effort`, a level inserts or replaces it, and JSON `null` removes its root line
+  and trailing comment. Only a one-line string value can be removed; a multiline or non-string
+  value is refused with 409 `unsupported_model_value`, leaving both TOML and omo.jsonc unchanged.
+  Removal preserves the BOM, line endings, and all other bytes; an absent key is a no-op.
+  Clearing the role-level override lets Codex resolve effort normally (spawn value, `[agents]`
+  default, parent). The dashboard offers **Inherit effort** on every row and sends `null` to clear.
+- `model` is optional too: omitted leaves the root pin, or its absence, untouched, so a role that
+  inherits its model can set or clear its effort alone; the dashboard sends `{ "effort": ... }` for a
+  row without a pin. A `null` model is refused with 400 `invalid_model` (a save never removes a pin),
+  and a body with neither key is refused with 400 `empty_update` before any role file is read.
+- The same pick is mirrored into LazyCodex's `[codex].agents.<role>` as `model` and, for an effort LazyCodex can express, `reasoning`; that half belongs to
+  [client integrations](clients/integrations.md#omo-codex-lazycodex-role-models). The role file is written first
+  and stands even when the mirror is skipped.
+
+Sibling instances refuse the write, because it reaches the shared `CODEX_HOME`.
+
+### Role model auto-assign
+
+`POST /api/codex-agent-roles/auto-assign` (dashboard Auto-assign, `ocx agent roles suggest`) proposes a
+model for every role and writes nothing. It belongs to omo (Codex / LazyCodex): without
+`detectLazyCodex()` it answers 409 `lazycodex_not_detected` before reading the body or calling a model,
+the same refusal as the PUT. Applying a proposal is the ordinary
+`PUT /api/codex-agent-roles/{role}`, now with an optional `effort`. The work splits in two on purpose:
+
+- **Sizing is one model call.** `src/codex/role-sizing.ts` holds the rubric (ported from the MIT-licensed
+  modelchk skill, cited in the file) as the system prompt, the neutral vocabulary
+  (`fast|standard|frontier`, `glance|measured|thorough|exhaustive`), and the validator. Each role sends its
+  name and the first 1500 characters of `description` plus `developer_instructions`; a role with neither
+  is not sent. The call goes through the proxy's own `/v1/chat/completions` via
+  `postLocalChatCompletion` (`src/lib/local-chat-completion.ts`, shared with the routed vision describer), on
+  the root `model` of Codex `config.toml` unless the caller names one. An answer that is not the strict JSON
+  shape, a missing role, or a field outside the vocabulary leaves that role **unsized** with the reason;
+  nothing is guessed. Keys beyond the five answer fields are ignored, and all five stay required. The
+  sizing model never names a model.
+- **Mapping is deterministic code.** `src/codex/role-auto-assign.ts` draws candidates from
+  `subagentSelectableModels` (the same list the role picker renders) and tiers them: `codexRoleTiers` in the
+  opencodex config first, then price rank (input plus output per 1M tokens). Three or more priced models
+  split evenly across the three tiers. Fewer are anchored at the top, the dearest frontier and each cheaper
+  one a tier lower, so one is frontier and two are standard and frontier; fast is the tier left empty,
+  which keeps a standard role on the cheaper model. Unpriced, unmapped models are never proposed. A role
+  gets the lowest sufficient tier, then the lowest price. Effort binds to ladder positions of the chosen
+  model (floor, default or middle, the rung above, ceiling), collapsing inside the range; it is proposed
+  for every sized role whose chosen model has a non-empty ladder. Apply and `--apply` insert or
+  replace `model_reasoning_effort` through the same span-preserving editor as `model`, located by
+  the same TOML-aware scan. An empty ladder gives `proposedEffort: null`, meaning no proposal;
+  Apply omits `effort` and preserves the existing pin. A null proposal never means a null PUT. A routed
+  model's ladder is its row's
+  `reasoningEfforts`; a row that declares none takes the ladder the written Codex catalog shows for it, an
+  explicit empty list stays empty, and a row without its own default takes the catalog's default when that
+  rung is on the ladder.
+
+The sizing call is injectable (`completeCodexRoleSizing` on the management deps), so route tests answer it
+without a provider. Sibling instances refuse the preview too: it sits under the refused
+`/api/codex-agent-roles` prefix, and its proposals could not be applied there anyway.
+
+### Delegation model suggest
+
+`POST /api/injection-model/suggest` (Subagents page **Suggest**, `ocx agent injection suggest`) applies the
+same sizing to the delegation default. The caller describes the work Codex usually hands off (nonblank, at
+most 1500 characters, the role excerpt limit); `proposeDelegationModel` in
+`src/server/management/codex-role-auto-assign.ts` sends it as one role named `delegated-work` with the same
+parser and the role rubric followed by a short addendum (`DELEGATED_WORK_SIZING_SYSTEM_PROMPT`) that has the
+sizer size the described one-shot work rather than a standing role; the role rubric's own text is unchanged.
+It maps the answer with the same `buildRoleProposals`. Candidates are the `available` list
+`GET /api/injection-model` offers (one helper builds both), with effort ladders cut to the Codex
+levels `PUT /api/injection-model` accepts. As with roles, a non-empty ladder gives an effort
+proposal even when no effort is set; an empty ladder gives none. The route writes nothing; the page shows tier, effort, rationale and move triggers,
+and **Use this** goes through the page's ordinary `PUT /api/injection-model` save. It is not
+sibling-refused, like the `PUT` it feeds, since both touch only this instance's config.
 
 `injectionModel` and `injectionEffort` are shared selections with two independent consumers.
 `multiAgentGuidanceEnabled` controls only OpenCodex-authored delegation guidance.
@@ -329,6 +432,28 @@ V1 uses the shared `MULTI_AGENT_MODE_HINT_RECOMMENDATION.text` inside `<multi_ag
 at `max` or `ultra`. Only the separate explicit delegation-request trigger changes; user,
 authority, task-scope and collaboration-tool rules remain applicable. This is guidance,
 not an enforcement mechanism or a change to native settings or tool access.
+
+Both guidance paths start from `collabSurface()`, which reads only what the request declares. A
+directly declared `spawn_agent` and its companions decide the surface as before. Codex
+code-mode-only turns declare no collaboration tool on the wire, so
+`src/server/responses/code-mode-collab-surface.ts` also reads the nested listing that codex-rs
+renders inside the custom `exec` description: a tool heading, its description, and a final
+`exec tool declaration:` fence naming the same tool. It accepts only a freeform, un-namespaced
+`exec` that starts with the codex-rs template line, ignores headings inside fences or without their
+own declaration, and counts only `multi_agent_v1__spawn_agent` as V1 evidence. Any other
+`spawn_agent` or V2 companion beside it, or a different direct surface, makes the turn
+contradictory (`null`), which also withdraws a direct V2 surface's designation and effort cap.
+Collaboration-named tools in an `mcp__` namespace, direct or nested, are MCP server tools and
+neither prove nor contradict a native surface.
+The two checks are asymmetric on purpose: evidence needs a rendered section, while the
+contradiction check reads every heading and declaration line, quoted or not, so text copied into
+the listing can push a turn toward `null` but cannot hide another surface.
+Nested evidence never produces `v2`. When the model supports tool search (every OpenCodex catalog
+row), codex-rs defers the V1 tools and leaves them out of the description, and no other
+per-request V1 signal exists: codex-rs sends its own `<multi_agent_mode>` item only on V2 and pins the
+version per session, so neither the saved mode nor the catalog stamp proves a conversation's
+surface. Those turns stay `null` and receive no V1 proactive text (#6844). A tool description that
+copies a complete V1 section verbatim cannot be told apart from the host's own rendering.
 
 Replay deduplication compares the latest exact generated developer text separately for
 each tag family, preserving built-in ??custom ??built-in transitions without duplicating
@@ -416,7 +541,7 @@ The account history response can include a [low-confidence effective capacity es
 
 Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
 
-Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](transports/responses.md) documents this boundary, and native Chat capability stripping applies only for an explicit empty declaration or no-reasoning model; an initial JEV null choice separately strips caller effort.
 
 Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
 
@@ -451,3 +576,11 @@ Dashboard Fast-row persistence and client refresh follow the [Fast selector rows
 The [compaction routing override](transports/responses-failover.md#compaction-routing-overrides) uses explicit request-kind and trigger metadata, independently of spawned-child markers.
 
 Ongoing priority failback keeps model-detour and independent-quota affinity isolated; preview remains read-only and no child changes an unrelated shared cursor. The routing details live in [OpenAI account operations](providers/openai-accounts.md#ongoing-priority-failback).
+
+Automatic account exhaustion and recovery use the [spendable Codex credit evidence contract](providers/openai-tiers.md#spendable-codex-credits), including independent freshness, upstream refusal, and reset-ticket separation.
+
+### Forced Claude Code subagent model
+
+`src/claude/subagent-model.ts` shares the roster alias and authoritative context-marker resolver with routed launch force. `claudeCode.subagentModelForce` is opt-in and default-off. Force availability excludes retained unavailable roster entries. Caller-added `[1m]` suffixes require a finite authoritative long window (`src/claude/long-context.ts`: 1M, or at least the 829,800 default compact window; a genuine 1M for Claude models on either Anthropic pool or a bare `claude-*` id) or an exact advertised marked identity; generated markers follow the same rule; exact upstream ids remain literal, while legacy roster marker handling is unchanged. `claudeCode.contextAccounting` `"200k"` stops automatic marking on generated and forced selectors; an explicit `[1m]` still follows the window rule above ([Claude Desktop picker mode](clients/claude-desktop.md#picker-mode-the-desktop-egress-proxy)). The generated-agent legacy directive cannot replace a wire selector matching the configured forced alias. `src/claude/subagent-force-status.ts` performs bounded, read-only server-local version and settings-key inspection; unknown is not supported.
+
+Explicit gateway selectors outrank generated-agent `ocx-route` fallback independently of saved force state. `src/claude/inbound-model-options.ts` shares this precedence across Messages and count-tokens; bare Claude fallback and requests without directives retain their existing behavior. Native Claude force targets use reversible native aliases, restored before existing credential/model-map checks. Connected launch exposure comes from fresh authenticated gateway rows, not cached context-window keys; acquisition is independent of cache-write success.

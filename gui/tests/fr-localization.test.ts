@@ -25,6 +25,14 @@ function carriesTranslatableWords(value: string): boolean {
 }
 
 const INTENTIONAL_ENGLISH = new Set<TKey>([
+  "nav.claude", // Product name.
+  "nav.codexSet", // Product name: the sidebar row reads "Codex" in every locale.
+  // The vendor name, and the Pool 2 label that de and pt also keep: "pool" is the French UI term here.
+  "sidecar.poolA",
+  "sidecar.poolB",
+  "provider.name.anthropic2",
+  // A token count ("200k") reads the same in French; the 1M choice carries the translated "par défaut".
+  "claude.contextAccounting200k",
   // Units, symbols, protocol values, machine labels, and product names.
   "integrations.cursor.noControl",
   "uptime.hour",
@@ -32,6 +40,10 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   // "auto" is the same word in French, and it labels a machine-derived alias source rather
   // than prose. Translating it would invent a difference the UI does not have.
   "models.aliasAuto",
+  // "Zoom" is the ordinary French word for page zoom too.
+  "zoom.label",
+  // "Actions" is the ordinary French word for a row's action column, read only by screen readers.
+  "api.colActions",
   "common.github",
   // Product names and ordinary French words whose correct spelling is identical to English.
   "remote.pairingCommandWindows",
@@ -56,8 +68,6 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   "nav.grok",
   "grok.title",
   "claude.pageTitle",
-  "claude.tabCode",
-  "claude.tabDesktop",
   // A literal Claude Desktop picker model id shown as the input placeholder; model ids are
   // identical in every locale.
   "claudeDesktop.firstParty.bindings.pickerPlaceholder",
@@ -146,6 +156,14 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   // Cline product name and CLI acronym are intentionally preserved.
   "integrations.tab.cline",
   "api.clientConfig.clientCline",
+  "integrations.tab.kilo",
+  "api.clientConfig.clientKilo",
+  // Command Code is a product name, identical in every locale.
+  "integrations.tab.commandcode",
+  "api.clientConfig.clientCommandCode",
+  // Factory Droid is a product name, identical in every locale.
+  "integrations.tab.droid",
+  "api.clientConfig.clientDroid",
   "models.reasoningEffort.minimal",
   "models.reasoningEffort.max",
   "models.reasoningEffort.ultra",
@@ -199,6 +217,8 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   // Both labels are ordinary French words with the same spelling and meaning.
   "cws.jev.stats.efforts",
   "cws.jev.stats.total",
+  // The TypeSafe decision method is a product name, rendered as written in every locale.
+  "cws.jev.backend.typesafe",
   "claudeDesktop.alias",
   "lab.filter.verdict",
   "lab.col.suite",
@@ -211,41 +231,45 @@ const INTENTIONAL_ENGLISH = new Set<TKey>([
   "integrations.catalog.title",
   // Cost cells are a fixed `$0.1401` / `≥$0.1401` in every locale (the column header is the
   // untranslated `~$`); the templates are pure placeholders on purpose.
-    "logs.cost.approximate",
-    "logs.cost.lowerBound",
-    // Protocol wire names on the Logs protocol path, and the IR acronym beside them.
-    "logs.protocol.wire.responses",
-    "logs.protocol.wire.chat",
-    "logs.protocol.wire.messages",
-    "logs.protocol.hop.ir",
-    // Provider-workspace redesign: model names ("Gemini", "Claude"), the "Cockpit Tools
-    // Antigravity" card title, and ordinary French words whose correct spelling is
-    // identical to English ("Total", "Alias", "Compact"). The exhausted badges pair a
-    // model name with a bare percentage, so there is no prose to translate.
-    "pws.cockpitCardTitle",
-    "pws.statsTotal",
-    "pws.geminiExhaustedShort",
-    "pws.claudeExhaustedShort",
-    "pws.modelGemini",
-    "pws.modelClaude",
-    "pws.titleAlias",
-    "pws.aliasShort",
-    "pws.viewCompact",
-    "prov.editAliasShort",
-    // Pool follow-up: product and provider names ("Google Antigravity", "AI Ultra",
-    // "AI Pro", "Enterprise"), model-name column headers, and bare units ("5h").
-    // The suffixed token headers pair those with a unit in parentheses.
-    "pws.providerLabelAntigravity",
-    "pws.plan.ultra",
-    "pws.plan.pro",
-    "pws.plan.enterprise",
-    "pws.tokensColClaude",
-    "pws.tokensColGemini",
-    "pws.tokensLabel5h",
-    "pws.tokensClaude5h",
-    "pws.tokensGemini5h",
-    "pws.tokensTotal5h",
-  ]);
+  "logs.cost.approximate",
+  "logs.cost.lowerBound",
+  // Protocol wire names on the Logs protocol path, and the IR acronym beside them.
+  "logs.protocol.wire.responses",
+  "logs.protocol.wire.chat",
+  "logs.protocol.wire.messages",
+  "logs.protocol.hop.ir",
+  // The consolidation phase's name is the ordinary French noun, spelled exactly as in English.
+  // Inventing a synonym would also break the pair with the extract row, whose French label is
+  // "Extraction".
+  "memoryModels.consolidation",
+  // Provider-workspace redesign: model names ("Gemini", "Claude"), the "Cockpit Tools
+  // Antigravity" card title, and ordinary French words whose correct spelling is
+  // identical to English ("Total", "Alias", "Compact"). The exhausted badges pair a
+  // model name with a bare percentage, so there is no prose to translate.
+  "pws.cockpitCardTitle",
+  "pws.statsTotal",
+  "pws.geminiExhaustedShort",
+  "pws.claudeExhaustedShort",
+  "pws.modelGemini",
+  "pws.modelClaude",
+  "pws.titleAlias",
+  "pws.aliasShort",
+  "pws.viewCompact",
+  "prov.editAliasShort",
+  // Pool follow-up: product and provider names ("Google Antigravity", "AI Ultra",
+  // "AI Pro", "Enterprise"), model-name column headers, and bare units ("5h").
+  // The suffixed token headers pair those with a unit in parentheses.
+  "pws.providerLabelAntigravity",
+  "pws.plan.ultra",
+  "pws.plan.pro",
+  "pws.plan.enterprise",
+  "pws.tokensColClaude",
+  "pws.tokensColGemini",
+  "pws.tokensLabel5h",
+  "pws.tokensClaude5h",
+  "pws.tokensGemini5h",
+  "pws.tokensTotal5h",
+]);
 
 function placeholders(value: string): string[] {
   return [...value.matchAll(PLACEHOLDER_RE)].map(match => match[1]!).sort();

@@ -62,3 +62,47 @@ test("snapshot persists mode 0600, loads synchronously, and retains last good on
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("picker preserves real million-token routed windows without promoting small or unknown routes", () => {
+  const rows = buildPickerModels({ nativeSlugs: ["gpt-5.5"], routedModels: [
+    { provider: "meta-muse", id: "muse-spark-1.3-contributor", contextWindow: 1_048_576 },
+    { provider: "meta-model", id: "muse-spark-1.3-contributor", contextWindow: 1_048_576 },
+    { provider: "example", id: "small", contextWindow: 128_000 },
+    { provider: "example", id: "unknown" },
+  ] });
+  expect(rows.map(row => row.id)).toEqual([
+    "ocx-claude-native--gpt-5.5",
+    "ocx-claude-meta-muse--muse-spark-1.3-contributor[1m]",
+    "ocx-claude-meta-model--muse-spark-1.3-contributor[1m]",
+    "ocx-claude-example--small", "ocx-claude-example--unknown",
+  ]);
+  expect(rows[1]?.contextWindow).toBe(1_048_576);
+});
+
+test("picker marks long native opt-ins on the prompt-too-long recovery and leaves 272k unmarked", () => {
+  // Desktop runners lack CLAUDE_CODE_AUTO_COMPACT_WINDOW; an 872k window is marked anyway because an
+  // overflow comes back as `prompt is too long`, which Claude Code compacts on (261009 020).
+  const rows = buildPickerModels({
+    nativeSlugs: ["gpt-5.5", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra"],
+    routedModels: [], nativeContextCap: { modelWindows: {
+      "gpt-6-astra": 872_000, "gpt-6-sol": 872_000, "gpt-6-luna": 872_000, "gpt-5.6-terra": 922_000,
+    } },
+  });
+  expect(rows.map(row => row.id.endsWith("[1m]"))).toEqual([false, true, true, true, true]);
+  expect(rows.map(row => row.contextWindow)).toEqual([272_000, 872_000, 872_000, 872_000, 922_000]);
+});
+
+test("picker marks windows from the default compact floor up and leaves smaller routed windows unmarked", () => {
+  const rows = buildPickerModels({ nativeSlugs: [], routedModels: [
+    { provider: "example", id: "short", contextWindow: 262_144 },
+    { provider: "example", id: "below", contextWindow: 829_799 },
+    { provider: "example", id: "floor", contextWindow: 829_800 },
+    { provider: "example", id: "exact", contextWindow: 1_000_000 },
+    { provider: "example", id: "larger", contextWindow: 2_000_000 },
+    { provider: "anthropic2", id: "claude-pool-two", contextWindow: 872_000 },
+  ] });
+  expect(rows.map(row => row.id)).toEqual([
+    "ocx-claude-example--short", "ocx-claude-example--below", "ocx-claude-example--floor[1m]",
+    "ocx-claude-example--exact[1m]", "ocx-claude-example--larger[1m]", "ocx-claude-anthropic2--claude-pool-two",
+  ]);
+});

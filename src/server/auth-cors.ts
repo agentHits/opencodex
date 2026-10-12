@@ -1,5 +1,5 @@
 import { providerRelativeSendPathConfigError } from "../config/provider-relative-send-path";
-import { modelCapabilitiesConfigError } from "../config/provider-validation";
+import { contextTierRecordConfigError, modelCapabilitiesConfigError } from "../config/provider-validation";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { initialModelSelection } from "../providers/initial-model-selection";
 import { extractAccountId } from "../oauth/chatgpt";
@@ -16,6 +16,7 @@ import {
 } from "../config";
 import {
   apiKeyTransportConfigError,
+  projectContextConfigError,
   autoReviewModelOverridesConfigError,
   autoReviewModelTargetConfigError,
   booleanRecordConfigError,
@@ -26,15 +27,18 @@ import {
   positiveIntegerRecordConfigError,
   providerBaseUrlConfigError,
   providerHeadersConfigError,
+  providerForwardClientHeadersConfigError,
   reasoningSummaryDeliveryRecordConfigError,
   upstreamHttpVersionConfigError,
 } from "../config/provider-validation";
 import { providerDestinationConfigError } from "../lib/destination-policy";
 import { providerEgressConfigError } from "../lib/provider-egress";
+import { providerTlsProfileConfigError } from "../lib/provider-tls-profile";
 import { redactSecretString } from "../lib/redact";
 import { DECLARABLE_HOSTED_TOOL_TYPES } from "../responses/hosted-tool-policy";
 import { effectiveGoogleMode, getProviderRegistryEntry, providerCodexAccountMode, providerMatchesRegistryTransport, registryEntryForProviderDestination } from "../providers/registry";
 import { providerConfigSeed } from "../providers/derive";
+import { anthropicOAuthInstanceConfigError } from "../config/schema/anthropic-account-pool";
 import type { OcxConfig, OcxProviderConfig } from "../types";
 import { openRouterRoutingConfigError } from "../providers/openrouter-routing";
 import { modelAutoCompactTokenLimitsConfigError } from "../providers/auto-compact-budget";
@@ -43,6 +47,18 @@ import { googleVertexLocationConfigError } from "../providers/google-vertex-loca
 import { xaiResponsesOptInState } from "../providers/xai-responses-opt-in";
 
 let _corsOrigin = "http://localhost:10100";
+// Listener identity is process-local. Never infer this trust from forwarded headers: the
+// request handler marks a Request only after resolving the actual Bun Server instance.
+const trustedHubManagementRequests = new WeakSet<Request>();
+
+export function markTrustedHubManagementRequest(req: Request): void {
+  trustedHubManagementRequests.add(req);
+}
+
+export function inheritTrustedHubManagementRequest(source: Request, target: Request): void {
+  if (trustedHubManagementRequests.has(source)) trustedHubManagementRequests.add(target);
+}
+
 export function setCorsOrigin(port: number): void { _corsOrigin = `http://localhost:${port}`; }
 /** The proxy's own listening port. No admission check uses it: both loopback predicates key on hostname alone. */
 export function configuredPort(): string {
@@ -136,6 +152,24 @@ export function managementRequestOrigin(req: Request, config: OcxConfig): string
       const protocol = new URL(req.url).protocol;
       if (protocol !== "http:" && protocol !== "https:") return null;
       return new URL(`${protocol}//${host}`).origin;
+    } catch {
+      return null;
+    }
+  }
+  if (trustedHubManagementRequests.has(req)) {
+    if (config.runtimeRole !== "hub") return null;
+    const canonical = canonicalHubManagementOrigin(config.hub?.managementPublicOrigin);
+    if (!canonical) return null;
+    try {
+      // The dedicated listener may receive HTTP from a local TLS terminator, so its URL
+      // scheme is not authoritative. Host must still name exactly the configured public
+      // authority; forwarded host/proto headers are deliberately ignored.
+      const requestAuthority = new URL(`https://${host}`);
+      if (requestAuthority.username || requestAuthority.password || requestAuthority.pathname !== "/"
+        || requestAuthority.search || requestAuthority.hash || requestAuthority.host !== new URL(canonical).host) {
+        return null;
+      }
+      return canonical;
     } catch {
       return null;
     }
@@ -433,6 +467,18 @@ export function resolveDataPlaneAdmissionSecret(
   return null;
 }
 
+function canonicalHubManagementOrigin(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.pathname !== "/"
+      || parsed.search || parsed.hash) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 /** The principal an authenticated admission belongs to, or undefined for loopback. */
 export function contextPrincipalIdOf(admission: DataPlaneAdmission | undefined): string | undefined {
   return admission && "contextPrincipalId" in admission ? admission.contextPrincipalId : undefined;
@@ -693,6 +739,8 @@ export function providerManagementConfigError(
     return "provider must be a plain object";
   }
   const raw = provider as Record<string, unknown>;
+  const contextTiersError = contextTierRecordConfigError(raw.modelContextTiers);
+  if (contextTiersError) return contextTiersError;
   const capabilitiesError = modelCapabilitiesConfigError(raw.modelCapabilities);
   if (capabilitiesError) return capabilitiesError;
   const pinsError = providerReasoningPinsConfigError(raw);
@@ -761,6 +809,9 @@ export function providerManagementConfigError(
     // validation and then rejected by the seed comparison, so canonical OpenAI could never
     // set OR clear it — the value was admitted and then refused in the same request.
     delete canonicalCandidate.annotateEmptyToolOutputs;
+    // forwardClientHeaders is an editor-managed request-metadata overlay. It is validated
+    // separately below and must not make an otherwise canonical OpenAI provider fail the seed check.
+    delete canonicalCandidate.forwardClientHeaders;
     // Canonical ChatGPT keeps WebSocket as the default, but an operator may
     // select the existing HTTP/SSE path without changing its auth or endpoint.
     if (raw.upstreamWebsocket !== undefined) {
@@ -777,6 +828,13 @@ export function providerManagementConfigError(
     return `provider ${name} must not include codexAccountMode`;
   }
   const typed = provider as unknown as OcxProviderConfig;
+  const markerError = anthropicOAuthInstanceConfigError({ providers: { [name]: provider } });
+  if (markerError) return markerError;
+  // Every write path (POST, PUT, reload, both PATCH passes) funnels through here, so a PATCH
+  // that changes authMode/baseUrl/adapter under a retained tlsProfile is refused before it
+  // persists a row the config schema would later reject as document-fatal.
+  const tlsProfileError = providerTlsProfileConfigError(name, typed);
+  if (tlsProfileError) return `provider ${JSON.stringify(redactSecretString(name))} ${tlsProfileError}`;
   const baseUrlError = providerBaseUrlConfigError(typed.baseUrl);
   if (baseUrlError) return `provider ${name} ${baseUrlError}`;
   if (effectiveGoogleMode(name, typed) === "vertex" && typed.location !== undefined) {
@@ -791,6 +849,8 @@ export function providerManagementConfigError(
   }
   const headersError = providerHeadersConfigError(typed.headers);
   if (headersError) return `provider ${name} ${headersError}`;
+  const forwardClientHeadersError = providerForwardClientHeadersConfigError(raw.forwardClientHeaders);
+  if (forwardClientHeadersError) return `provider ${name} ${forwardClientHeadersError}`;
   const retryOn429Error = retryOn429PolicyConfigError(raw.retryOn429);
   if (retryOn429Error) {
     // The provider name is caller-controlled and can be token-shaped; redact and JSON-escape
@@ -828,6 +888,8 @@ export function providerManagementConfigError(
   }
   const apiKeyTransportError = apiKeyTransportConfigError(typed);
   if (apiKeyTransportError) return `provider ${name} ${apiKeyTransportError}`;
+  const projectContextError = projectContextConfigError(typed);
+  if (projectContextError) return `provider ${JSON.stringify(redactSecretString(name))} ${projectContextError}`;
   const maxInputError = positiveIntegerRecordConfigError(raw.modelMaxInputTokens, "modelMaxInputTokens");
   if (maxInputError) return `provider ${name} ${maxInputError}`;
   const autoCompactError = modelAutoCompactTokenLimitsConfigError(
@@ -967,12 +1029,14 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   defaultAliases: "editor",
   adapter: "editor",
   codexToolMode: "editor",
+  projectContext: "editor",
   requestPacing: "editor",
   mcpMaxTools: "editor",
   mcpMaxSchemaBytes: "editor",
   mcpMaxResultBytes: "editor",
   modelAdapters: "editor",
   fastWire: "editor",
+  responseTierAuthoritative: "editor",
   fastEnabled: "editor",
   baseUrl: "editor",
   responsesPath: "editor",
@@ -985,6 +1049,8 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   supportsServiceTier: "editor",
   modelSupportsServiceTier: "editor",
   preserveResponsesReasoningContent: "editor",
+  preserveResponsesInputItemIds: "editor",
+  preserveResponsesMessageMetadata: "editor",
   dropResponsesReasoningItems: "editor",
   modelReasoningEffortsAuthoritative: "editor",
   decodesNativeCompactionBlobs: "editor",
@@ -1020,6 +1086,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   modelPreset: "editor",
   contextWindow: "editor",
   modelContextWindows: "editor",
+  modelContextTiers: "editor",
   modelInputModalities: "editor",
   modelCapabilities: "editor",
   modelMaxInputTokens: "runtime",
@@ -1028,12 +1095,15 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   modelMaxOutputTokens: "editor",
   modelCosts: "editor",
   headers: "redacted",
+  forwardClientHeaders: "editor",
   openRouterRouting: "editor",
   modelOpenRouterRouting: "editor",
   vercelGatewayRouting: "editor",
   modelVercelGatewayRouting: "editor",
   authMode: "editor",
   oauthAccountFailover: "editor",
+  anthropicAccountPool: "editor",
+  anthropicOAuthInstance: "editor",
   keyOptional: "editor",
   freeTier: "editor",
   note: "editor",
@@ -1083,6 +1153,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   preserveReasoningContentModels: "editor",
   requiresReasoningPlaceholderModels: "editor",
   showThinkingSummary: "editor",
+  hideRawReasoning: "editor",
   retryOn429: "editor",
   transientRetryOn5xx: "editor",
   retryOnReset: "editor",
@@ -1101,6 +1172,7 @@ const PROVIDER_CONFIG_FIELD_POLICY = {
   desktopExecutor: "redacted",
   unsafeAllowNativeLocalExec: "editor",
   nativeLocalExec: "editor",
+  tlsProfile: "editor",
 } as const satisfies Record<keyof OcxProviderConfig, ProviderConfigFieldPolicy>;
 
 type ProviderFieldWithPolicy<Policy extends ProviderConfigFieldPolicy> = {
@@ -1249,6 +1321,7 @@ export function safeConfigDTO(config: OcxConfig): unknown {
     // The GUI's browser-open toggle reads and writes this; absent means the
     // historical auto-open behavior.
     oauthOpenBrowser: config.oauthOpenBrowser !== false,
+    showCodexCredits: config.showCodexCredits === true,
     providers,
   };
 }

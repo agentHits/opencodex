@@ -1,5 +1,7 @@
 # Kiro Provider
 
+Kiro retry permits retain their [physical executor span](../transports/responses-spend.md#historical-pool-continuity-and-rollback) through credential selection and rebuild. A newly selected identity needs its own normal-capacity seed before inference I/O; a refused permit leaves the executor untouched.
+
 Native steering follows [the shared WebSocket contract](../transports/streaming-health.md#experimental-native-mid-turn-steering); this surface's defaults remain unchanged.
 
 The configuration-only [plaintext V2 contract](../subagents.md#plaintext-v2-agent-messages)
@@ -9,6 +11,20 @@ The shared hosted-tool policy has no Codex Spark-specific branch. Kiro continues
 provider capabilities below; see [Responses compatibility](../transports/responses.md#responses-httpsse).
 
 ## Kiro CLI executable resolution
+
+Native device login is an add-only Kiro account path for Builder ID, Google, and GitHub.
+It uses fixed Kiro authorization hosts, guarded outbound POSTs, and a bounded process-local
+flow table. A flow ID is returned only at start; status and cancellation require that ID and
+the same management principal kind. Polling follows the server's interval, and only an exact
+approval shape reaches the protected OAuth store. Device codes and tokens never enter
+management responses. Native slots carry `loginOrigin: "kiro-device"`; kiro-cli reauth
+refuses them before starting CLI work. Upstream verification URLs require HTTPS, no credentials
+or control characters, and a 2048-character limit; user codes use 4–32 plain alphanumeric or
+hyphen characters. Completed flow results are consumed once, terminal entries expire after
+60 seconds, and the table holds at most 16 entries. Terminal entries retain no config snapshot.
+Explicit reauth rotates login identity, while token
+refresh preserves it. A first-account config-publication failure compensates the new slot
+through the existing receipt ownership check.
 
 Forced and add-account login spawn the local CLI, so `resolveKiroCliExecutable` in
 `src/oauth/kiro-credentials.ts` decides which file runs with credential-flow arguments. The
@@ -35,6 +51,28 @@ account without a formable ARN is not probed. Persisted quota and exhaustion evi
 are bound independently by observation time, reset, and login identity, never by token
 or raw account label; removal, identity change, expiry, or malformed disk degrades routing
 evidence to unknown. Initial routing reads it through `kiroAccountEvidence`.
+The same identity-fenced reading carries precise plan `kiroCreditsUsed` and
+`kiroCreditsLimit`; missing or expired evidence has no metric sample. The automatic
+candidate filter and account list both use `kiroAutoSelection` from
+`src/oauth/generic-account-failover.ts`. Its closed reasons are `needs_reauth`,
+`suspended`, `cooldown`, and `quota_exhausted`. An active singleton can still send
+when it is excluded as an alternative. The existing `health` field does not reflect
+Kiro suspension or quota exhaustion, so `health: ok` can coexist with
+`autoSelectable: false`; the GUI does not display the new projection.
+
+After an account is admitted, a detached `ListAvailableModels` request reads that account's
+regional management host with its own timeout and account-paired bearer/profile. The request
+never waits for discovery. `OPENCODEX_KIRO_MODEL_DISCOVERY=0` disables this optional path at
+call time, primarily for tests or operational rollback. The process-local list is fenced to
+the login identity, refreshed after one hour, and retained as last good for at most 24 hours.
+Malformed or empty replies preserve the static model roster. Observed model membership only
+prefers accounts already eligible and with room under a configured cap; unknown IDs remain
+callable. Reported `tokenLimits.maxInputTokens` informs a conservative catalog and token
+estimate window, including the static limit when any live account lacks evidence. Only accounts
+that have served acquire list evidence; inactive siblings may remain unknown until refusal
+rotation reaches them. The public catalog advertises only observed IDs made of plain
+characters (no `/` the router would have to decode), at most 64 across the roster; every
+observed ID still informs routing preference.
 
 `src/adapters/kiro-refusal.ts` recognizes an exact monthly reason on HTTP 400/429 and a
 confirmed suspension on HTTP 403; ordinary 400/403 remains an error without an account
@@ -45,6 +83,15 @@ hydration. Suspension is a process-local quarantine; rate refusals use a short c
 Reactive account rotation is presence-driven even when a proactive preference switch is
 off. Pre-dispatch exclusion of an already refused account requires effective proactive
 preference with the provider override taking precedence over the global setting.
+Kiro OAuth may use `least-loaded` as an opt-in proactive strategy under `pool.kernel`.
+`maxConcurrentPerAccount` independently limits active requests on each account in this
+process: a full selected account waits up to 250 ms, then returns 503
+`account_capacity` with `Retry-After: 1`. Capacity does not select a sibling;
+reactive refusal rotation remains presence-driven and prefers a sibling with room.
+A released slot is handed to the first live waiter before it wakes, so a new arrival
+cannot take it, and every send (first send, reactive rotation, 401 replay) holds the lease of
+the account whose credentials it carries: a replay that resolves a different account takes
+that account's lease first or stops with the formatted 401.
 
 ## Kiro client parallel-tool hint
 
@@ -76,6 +123,18 @@ raw body.
 > Decision record: [ADR-0061](../decisions/ADR-0061-kiro-responses-text-controls.md)
 
 ## Bounded fallback HTTP errors
+
+Tool-enabled turns in `src/adapters/kiro/stream.ts` hold ordinary text through the one
+bounded completion retry. A valid private final answer or accepted retry text supersedes
+first-attempt prose, so the client receives one final answer. A real tool call releases
+held progress as commentary before the tool; failed validation also releases progress
+and preserves the non-retryable boundary. Held events stay charged to the translator
+budget until emitted, discarded, or cancelled; replay collectors are released after
+retry construction. Native `END_TURN` and `STOP_SEQUENCE` alone do not distinguish
+progress from an answer and therefore still require validation. Normal private completion
+and real tool calls need no completion retry.
+Coverage: `tests/providers/kiro/kiro-single-final.test.ts` and
+`tests/server/server-kiro-completion-e2e.test.ts`.
 
 `src/adapters/kiro-retry.ts` uses the configured executor for every generation send and may try the existing `q.{region}.amazonaws.com` host once after a canonical-host HTTP 502/503/504 before output, subject to the same send budget. Reset, 429, alternate, and completion-fallback sends wait for a pacing slot; only the first send is pre-paid. Kiro web-search turns are paced as well. A Kiro-local wrapper maps its header deadline to HTTP 504 without changing shared or Google fetch behavior; caller cancellation remains an abort. Final HTTP 5xx text is fixed for clients, and opt-in provider diagnostics carry only closed-set status and classification codes.
 
@@ -149,9 +208,20 @@ is a snapshot; separate completion-fallback responses add their credits. Missing
 absent and measured zero stays zero. `initial-response` carries `conversationId` through the same
 validated provider-state path as `messageMetadataEvent`. Unknown event types produce opt-in
 `debugProviderDiagnostic` entries containing only the event-type length, never the raw header or payload.
+The final usage row records summed request spend across billed physical sends; sealed attempt
+rows preserve per-serving-account spend in `src/usage/log.ts`.
 Coverage: `tests/providers/kiro/kiro-metering-events.test.ts`,
 `tests/providers/kiro/kiro-metering-usage.test.ts`, and
 `tests/server/server-kiro-completion-e2e.test.ts`.
+
+## Image count limits
+
+`src/adapters/kiro-images.ts` limits each user input message to 20 inline images and
+the whole `GenerateAssistantResponse` request to 100. It applies the per-message
+limit first, then removes the oldest structurally usable history images to meet
+the request count before applying the separate 18 MiB image byte budget.
+A bounded text marker remains in each affected message; the current turn's
+newest images are retained.
 
 ## Remote image references
 
@@ -159,13 +229,18 @@ Kiro's wire inlines base64 bytes only, so a remote `https` image reference canno
 sent. It used to be dropped with neither bytes nor any marker, so the payload and the
 evidence that an attachment existed both disappeared.
 
-`countKiroUninlinableImages` reports how many parts `parseDataUrlImage` could not
-inline, and the payload builder appends a bounded marker to that turn's text. The
+`countKiroUninlinableImages` counts non-`data:` image references, and the payload
+builder appends a bounded marker to that turn's text. The
 marker is appended before `rawGroupText` is computed, because adjacency grouping
 rebuilds a turn's content from its collected texts and would otherwise discard it.
 
 No fetch is introduced: resolving the reference server-side would add an outbound
 request on a request path. The marker carries a count and no URL, because a remote
 image URL can carry a signed token.
+
+Malformed `data:` image URLs that lack a comma or image bytes also cannot be
+inlined. `kiroImageOmissionMarker` reports those separately from remote references,
+without echoing the URL or its bytes. The payload builder carries that marker in
+both user turns and tool results, including grouped adjacent tool outputs.
 
 Translated audio/file admission follows the [final-adapter input contract](../adapters/registry.md#untranslated-input-media); native raw passthrough remains separate.

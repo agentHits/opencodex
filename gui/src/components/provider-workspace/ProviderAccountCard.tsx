@@ -3,9 +3,10 @@
  * compact view, displaying full Gemini and Claude quota windows, unclipped login,
  * one-click copy, brand headroom badges, and active account pulse indicator.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { copyTextToClipboard } from "../../oauth-health-display";
 import { useT, useI18n } from "../../i18n/shared";
+import type { TKey } from "../../i18n/en";
 import { IconPencil, IconRefresh, IconTrash } from "../../icons";
 import { formatResetFuture } from "../QuotaBars";
 import type {
@@ -33,6 +34,14 @@ export interface ProviderAccountCardProps {
   onEditAlias: (account: OAuthAccountRow) => void;
   onRemove: (account: OAuthAccountRow) => void;
   onReauth?: (account: OAuthAccountRow) => void;
+  /** True while this account's pause/resume write is in flight. */
+  pausing?: boolean;
+  /** Offered only for rows the server reports a pause state for. */
+  onPause?: (account: OAuthAccountRow, paused: boolean) => void;
+  /** Locale key for why Kiro auto-selection skips this account, when it does. */
+  skipReasonKey?: TKey | null;
+  /** Per-account controls shown above the quota bars (Anthropic threshold override). */
+  quotaControls?: ReactNode;
   grokCouponEntry?: GrokCouponEntry | undefined;
   onGrokCouponClick?: (account: OAuthAccountRow) => void;
   grantEntry?: AnthropicGrantEntry | undefined;
@@ -51,6 +60,10 @@ export default function ProviderAccountCard({
   onEditAlias,
   onRemove,
   onReauth,
+  pausing = false,
+  onPause,
+  skipReasonKey,
+  quotaControls,
   grokCouponEntry,
   onGrokCouponClick,
   grantEntry,
@@ -60,6 +73,10 @@ export default function ProviderAccountCard({
   const { locale } = useI18n();
   const { account } = analyzed;
   const active = account.active;
+  // A paused account stays in the roster but is out of rotation: it cannot be
+  // selected, and it never reads as the live account even when it is the stored one.
+  const paused = account.paused === true;
+  const live = active && !paused;
   const showReauth = Boolean(account.needsReauth) || account.health?.status === "reauth_required";
 
   const [copied, setCopied] = useState(false);
@@ -139,6 +156,26 @@ export default function ProviderAccountCard({
     }
   };
 
+  const stateBadges = (
+    <>
+      {skipReasonKey && <span className="badge badge-amber">{t(skipReasonKey)}</span>}
+      {paused && <span className="badge badge-muted" title={t("pws.accountPausedHint")}>{t("codexAuth.paused")}</span>}
+    </>
+  );
+  const pauseButton = (size: "btn-xs" | "btn-sm") => typeof account.paused === "boolean" && onPause ? (
+    <button
+      type="button"
+      className={`btn btn-ghost ${size}`}
+      aria-label={`${t(paused ? "codexAuth.resume" : "codexAuth.pause")} — ${primaryTitle}`}
+      title={paused ? t("pws.accountPausedHint") : undefined}
+      aria-busy={pausing}
+      disabled={disabled || switching}
+      onClick={() => onPause(account, !paused)}
+    >
+      {t(paused ? "codexAuth.resume" : "codexAuth.pause")}
+    </button>
+  ) : null;
+
   const renderSingleQuotaBar = (label: string, percent: number | undefined, resetAt: number | undefined) => {
     if (percent === undefined) {
       return (
@@ -190,19 +227,20 @@ export default function ProviderAccountCard({
 
   if (viewMode === "compact") {
     return (
-      <div className={`pwi-card-dense${active ? " pwi-card-dense--active pwi-auth-acct--active" : ""}`}>
+      <div className={`pwi-card-dense${live ? " pwi-card-dense--active pwi-auth-acct--active" : ""}`}>
         <div className="pwi-dense-top">
           <div className="pwi-dense-id-group">
             <button
               type="button"
               className="pwi-dense-select-btn"
-              disabled={disabled || active}
+              disabled={disabled || active || paused}
               onClick={() => onSwitch(account)}
-              title={active ? t("prov.accountActive") : t("pws.switchToAccount")}
+              title={paused ? t("pws.accountPausedHint") : active ? t("prov.accountActive") : t("pws.switchToAccount")}
             >
-              <span className={`pwi-auth-dot ${active ? "pwi-auth-dot--ok pwi-auth-dot--active-pulse" : "pwi-auth-dot--off"}`} aria-hidden="true" />
+              <span className={`pwi-auth-dot ${live ? "pwi-auth-dot--ok pwi-auth-dot--active-pulse" : "pwi-auth-dot--off"}`} aria-hidden="true" />
               <span className="pwi-dense-title">{primaryTitle}</span>
               {planBadge}
+              {stateBadges}
               <span className="pwi-dense-click-target-fill" aria-hidden="true" />
             </button>
             <button
@@ -218,6 +256,7 @@ export default function ProviderAccountCard({
           </div>
 
           <div className="pwi-dense-actions">
+            {pauseButton("btn-xs")}
             {showReauth && onReauth && (
               <button type="button" className="btn btn-primary btn-xs" onClick={() => onReauth(account)}>
                 {t("pws.reauthenticate")}
@@ -260,6 +299,7 @@ export default function ProviderAccountCard({
           </div>
         </div>
 
+        {quotaControls}
         {/* Compact Bar Columns: Clean Gemini/Claude headers & round % */}
         <div className="pwi-dense-bars-grid">
           {showReauth && (
@@ -356,24 +396,26 @@ export default function ProviderAccountCard({
 
   // Cards view
   return (
-    <div className={`pwi-account-card${active ? " pwi-account-card--active pwi-auth-acct--active" : ""}${analyzed.fullyExhausted ? " pwi-account-card--exhausted" : ""}`}>
+    <div className={`pwi-account-card${live ? " pwi-account-card--active pwi-auth-acct--active" : ""}${analyzed.fullyExhausted ? " pwi-account-card--exhausted" : ""}`}>
       <div className="pwi-card-header">
         <div className="pwi-card-id-row">
           <button
             type="button"
             className="pwi-card-select-trigger"
-            disabled={disabled || active}
+            disabled={disabled || active || paused}
             onClick={() => onSwitch(account)}
-            title={active ? t("prov.accountActive") : t("pws.switchToAccount")}
+            title={paused ? t("pws.accountPausedHint") : active ? t("prov.accountActive") : t("pws.switchToAccount")}
           >
-            <span className={`pwi-auth-dot ${active ? "pwi-auth-dot--ok pwi-auth-dot--active-pulse" : "pwi-auth-dot--off"}`} aria-hidden="true" />
+            <span className={`pwi-auth-dot ${live ? "pwi-auth-dot--ok pwi-auth-dot--active-pulse" : "pwi-auth-dot--off"}`} aria-hidden="true" />
             <div className="pwi-card-title-block">
               <div className="pwi-card-title-line">
                 <span className="pwi-card-title">{primaryTitle}</span>
                 {planBadge}
+                {stateBadges}
                 {switching && <span className="badge badge-muted">{t("pws.accountSwitching")}</span>}
               </div>
               <span className="pwi-card-sub">{secondarySub}</span>
+              {paused && <span className="pwi-card-sub">{t("pws.accountPausedHint")}</span>}
             </div>
           </button>
           <button
@@ -389,6 +431,7 @@ export default function ProviderAccountCard({
         </div>
 
         <div className="pwi-card-controls">
+          {pauseButton("btn-sm")}
           {showReauth && onReauth && (
             <button type="button" className="btn btn-primary btn-sm" onClick={() => onReauth(account)}>
               {t("pws.reauthenticate")}
@@ -434,8 +477,7 @@ export default function ProviderAccountCard({
         </div>
       </div>
 
-
-
+      {quotaControls}
       {/* 2-Column Quotas for Gemini and Claude */}
       <div className="pwi-card-quotas-grid">
         {isAntigravity && (
