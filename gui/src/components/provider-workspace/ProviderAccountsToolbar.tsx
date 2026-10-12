@@ -853,13 +853,12 @@ export default function ProviderAccountsToolbar({
               {onTogglePoolEnabled && (
                 <button
                   type="button"
-                  className={`toggle ${poolEnabled ? "on" : ""}`}
-                  style={{ width: "32px", height: "18px" }}
+                  className={`toggle pwi-pool-toggle ${poolEnabled ? "on" : ""}`}
                   onClick={onTogglePoolEnabled}
                   title={poolEnabled ? t("anthropicPool.on") : t("anthropicPool.off")}
                   aria-pressed={poolEnabled}
                 >
-                  <span className="toggle-knob" style={{ width: "12px", height: "12px", top: "2px", left: poolEnabled ? "16px" : "2px" }} />
+                  <span className="toggle-knob" />
                 </button>
               )}
               {poolEnabled && onSelectPoolStrategy && (

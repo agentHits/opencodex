@@ -159,12 +159,9 @@ export default function ProviderAccountCard({
     }
   };
 
-  const stateBadges = (
-    <>
-      {skipReasonKey && <span className="badge badge-amber">{t(skipReasonKey)}</span>}
-      {paused && <span className="badge badge-muted" title={t("pws.accountPausedHint")}>{t("codexAuth.paused")}</span>}
-    </>
-  );
+  const skipBadge = skipReasonKey && <span className="badge badge-amber">{t(skipReasonKey)}</span>;
+  const pausedBadge = paused && <span className="badge badge-muted" title={t("pws.accountPausedHint")}>{t("codexAuth.paused")}</span>;
+  const stateBadges = <>{skipBadge}{pausedBadge}</>;
   const pauseButton = (size: "btn-xs" | "btn-sm") => typeof account.paused === "boolean" && onPause ? (
     <button
       type="button"
@@ -414,11 +411,10 @@ export default function ProviderAccountCard({
               <div className="pwi-card-title-line">
                 <span className="pwi-card-title">{primaryTitle}</span>
                 {planBadge}
-                {stateBadges}
+                {skipBadge}
                 {switching && <span className="badge badge-muted">{t("pws.accountSwitching")}</span>}
               </div>
               <span className="pwi-card-sub">{secondarySub}</span>
-              {paused && <span className="pwi-card-sub">{t("pws.accountPausedHint")}</span>}
             </div>
           </button>
           <button
@@ -480,6 +476,13 @@ export default function ProviderAccountCard({
         </div>
       </div>
 
+      {/* Its own row: beside the title it truncated both the account name and the reason. */}
+      {paused && (
+        <div className="pwi-card-paused-note">
+          {pausedBadge}
+          <span>{t("pws.accountPausedHint")}</span>
+        </div>
+      )}
       {quotaControls}
       {/* 2-Column Quotas for Gemini and Claude */}
       <div className="pwi-card-quotas-grid">
