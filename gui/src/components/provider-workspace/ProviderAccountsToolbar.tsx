@@ -16,6 +16,10 @@ import type {
   AccountViewModeKey,
   AnalyzedAccountQuota,
 } from "./account-quota-analysis";
+import type { Page } from "../../app-routing";
+
+/** The estimate's source link is a hash route to the Logs page, not an in-page anchor. */
+const LOGS_PAGE: Page = "logs";
 
 export interface ProviderAccountsToolbarProps {
   apiBase?: string;
@@ -395,7 +399,7 @@ export default function ProviderAccountsToolbar({
           <div className="pwi-tokens-header-bar">
             <span className="pwi-stat-lbl">{t("pws.tokensEstimateTitle")}</span>
             <a
-              href="#logs"
+              href={`#${LOGS_PAGE}`}
               className="pwi-stat-hint-link"
               title={t("pws.tokensCalibratedTooltip")}
             >

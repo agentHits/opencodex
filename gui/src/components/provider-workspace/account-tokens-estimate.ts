@@ -321,28 +321,31 @@ export function calculatePoolTokensEstimate(
   for (const analyzed of analyzedList) {
     const label = analyzed.account.logLabel || computeOAuthAccountLogLabel(analyzed.account.id, providerName);
     if (!label) continue;
+    const gemini5h = analyzed.gemini5h?.percent;
+    const claude5h = analyzed.claude5h?.percent;
+    const generic5h = analyzed.generic5h?.percent;
 
-    if (analyzed.gemini5h && analyzed.gemini5h.percent > 0 && analyzed.gemini5h.percent < 99.5) {
+    if (gemini5h !== undefined && gemini5h > 0 && gemini5h < 99.5) {
       const tok = tokens5hByLabelAndFamily.get(label + ":gemini") ?? 0;
       if (tok > 0) {
         gemUsedTokens5h += tok;
-        gemUsedPercent5h += analyzed.gemini5h.percent;
+        gemUsedPercent5h += gemini5h;
       }
     }
 
-    if (analyzed.claude5h && analyzed.claude5h.percent > 0 && analyzed.claude5h.percent < 99.5) {
+    if (claude5h !== undefined && claude5h > 0 && claude5h < 99.5) {
       const tok = tokens5hByLabelAndFamily.get(label + ":claude") ?? 0;
       if (tok > 0) {
         claUsedTokens5h += tok;
-        claUsedPercent5h += analyzed.claude5h.percent;
+        claUsedPercent5h += claude5h;
       }
     }
 
-    if (analyzed.generic5h && analyzed.generic5h.percent > 0 && analyzed.generic5h.percent < 99.5) {
+    if (generic5h !== undefined && generic5h > 0 && generic5h < 99.5) {
       const tok = tokens5hByLabelAndFamily.get(label + ":generic") ?? 0;
       if (tok > 0) {
         genericUsedTokens5h += tok;
-        genericUsedPercent5h += analyzed.generic5h.percent;
+        genericUsedPercent5h += generic5h;
       }
     }
   }
@@ -408,46 +411,49 @@ export function calculatePoolTokensEstimate(
     const acc = analyzed.account;
     if (acc.health?.status === "reauth_required") continue;
     if (acc.quotaUnavailable || !acc.quota) continue;
+    const gemini5h = analyzed.gemini5h?.percent;
+    const claude5h = analyzed.claude5h?.percent;
+    const generic5h = analyzed.generic5h?.percent;
 
     if (showModelFamilies || isAntigravity) {
       // Gemini 5h
-      if (analyzed.gemini5h && !analyzed.geminiExhausted && analyzed.gemini5h.percent < 99.5) {
-        const free = Math.max(0, 100 - analyzed.gemini5h.percent);
+      if (gemini5h !== undefined && !analyzed.geminiExhausted && gemini5h < 99.5) {
+        const free = Math.max(0, 100 - gemini5h);
         gemini5hRem += gemini5hCapacity * (free / 100);
       }
       // Gemini Weekly
       if (analyzed.geminiWeekly && analyzed.geminiWeekly.percent < 99.5) {
         const free = Math.max(0, 100 - analyzed.geminiWeekly.percent);
         geminiWeeklyRem += geminiWeeklyCapacity * (free / 100);
-      } else if (analyzed.gemini5h && !analyzed.geminiExhausted) {
-        const impliedUsed = Math.min(99, analyzed.gemini5h.percent * 0.35);
+      } else if (gemini5h !== undefined && !analyzed.geminiExhausted) {
+        const impliedUsed = Math.min(99, gemini5h * 0.35);
         geminiWeeklyRem += geminiWeeklyCapacity * (Math.max(0, 100 - impliedUsed) / 100);
       }
 
       // Claude 5h
-      if (analyzed.claude5h && !analyzed.claudeExhausted && analyzed.claude5h.percent < 99.5) {
-        const free = Math.max(0, 100 - analyzed.claude5h.percent);
+      if (claude5h !== undefined && !analyzed.claudeExhausted && claude5h < 99.5) {
+        const free = Math.max(0, 100 - claude5h);
         claude5hRem += claude5hCapacity * (free / 100);
       }
       // Claude Weekly
       if (analyzed.claudeWeekly && analyzed.claudeWeekly.percent < 99.5) {
         const free = Math.max(0, 100 - analyzed.claudeWeekly.percent);
         claudeWeeklyRem += claudeWeeklyCapacity * (free / 100);
-      } else if (analyzed.claude5h && !analyzed.claudeExhausted) {
-        const impliedUsed = Math.min(99, analyzed.claude5h.percent * 0.35);
+      } else if (claude5h !== undefined && !analyzed.claudeExhausted) {
+        const impliedUsed = Math.min(99, claude5h * 0.35);
         claudeWeeklyRem += claudeWeeklyCapacity * (Math.max(0, 100 - impliedUsed) / 100);
       }
     } else {
       // Generic OAuth provider (Anthropic, OpenAI, etc.)
-      if (analyzed.generic5h && analyzed.generic5h.percent < 99.5) {
-        const free = Math.max(0, 100 - analyzed.generic5h.percent);
+      if (generic5h !== undefined && generic5h < 99.5) {
+        const free = Math.max(0, 100 - generic5h);
         generic5hRem += generic5hCapacity * (free / 100);
       }
       if (analyzed.genericWeekly && analyzed.genericWeekly.percent < 99.5) {
         const free = Math.max(0, 100 - analyzed.genericWeekly.percent);
         genericWeeklyRem += genericWeeklyCapacity * (free / 100);
-      } else if (analyzed.generic5h && analyzed.generic5h.percent < 99.5) {
-        const impliedUsed = Math.min(99, analyzed.generic5h.percent * 0.35);
+      } else if (generic5h !== undefined && generic5h < 99.5) {
+        const impliedUsed = Math.min(99, generic5h * 0.35);
         genericWeeklyRem += genericWeeklyCapacity * (Math.max(0, 100 - impliedUsed) / 100);
       }
     }
@@ -493,7 +499,7 @@ export function usePoolTokensEstimate({
   const [lastFetchedAt, setLastFetchedAt] = useState<number>(() => 0);
 
   useEffect(() => {
-    let unmounted = false;
+    let cancelled = false;
     const controller = new AbortController();
     const loadLogs = async () => {
       // A hidden tab needs no fresh estimate; the next visible load refreshes.
@@ -503,10 +509,10 @@ export function usePoolTokensEstimate({
         const res = await fetch(url, { signal: controller.signal });
         if (!res.ok) return;
         const data = await res.json() as { logs?: MinimalLogEntry[] };
-        if (!unmounted && Array.isArray(data.logs)) {
-          setLogs(data.logs);
-          setLastFetchedAt(Date.now());
-        }
+        if (cancelled) return;
+        if (!Array.isArray(data.logs)) return;
+        setLogs(data.logs);
+        setLastFetchedAt(Date.now());
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         // Soft fallback to baseline
@@ -521,7 +527,7 @@ export function usePoolTokensEstimate({
     }, 45_000);
 
     return () => {
-      unmounted = true;
+      cancelled = true;
       controller.abort();
       window.clearInterval(timer);
     };

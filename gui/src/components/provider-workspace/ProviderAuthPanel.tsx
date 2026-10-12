@@ -59,6 +59,25 @@ const EMPTY_API_KEYS: ApiKeyRow[] = [];
  * the badge must agree: a row fetched here and hidden there is a billing RPC
  * spent on a 401.
  */
+interface GenericPoolState {
+  scope: string;
+  enabled: boolean;
+  strategy: AccountPoolStrategy;
+  inert: boolean;
+  /** A stored strategy this dashboard does not model (Kiro's CLI-only least-loaded). */
+  unmodeledStrategy: string | null;
+}
+
+function poolStateFrom(scope: string, res: PoolSettings): GenericPoolState {
+  return {
+    scope,
+    enabled: res.enabled === true || res.enabledEffective === true,
+    strategy: res.strategy,
+    inert: res.inert,
+    unmodeledStrategy: res.storedStrategy !== null && res.storedStrategy !== res.strategy ? res.storedStrategy : null,
+  };
+}
+
 function accountShowsReauth(account: OAuthAccountRow): boolean {
   return Boolean(account.needsReauth) || oauthHealthShowsReauth(account.health?.status);
 }
@@ -273,18 +292,7 @@ export default function ProviderAuthPanel({
   // Pool settings belong to the provider and server they were read for. The panel is not
   // remounted per provider, so a value from another scope is hidden during render: it is
   // never shown, and the toggle can never persist it, under the provider now on screen.
-  const [genericPoolState, setGenericPool] = useState<{
-    scope: string; enabled: boolean; strategy: AccountPoolStrategy; inert: boolean;
-    /** A stored strategy this dashboard does not model (Kiro's CLI-only least-loaded). */
-    unmodeledStrategy: string | null;
-  } | null>(null);
-  const poolStateFrom = (scope: string, res: PoolSettings) => ({
-    scope,
-    enabled: res.enabled === true || res.enabledEffective === true,
-    strategy: res.strategy,
-    inert: res.inert,
-    unmodeledStrategy: res.storedStrategy !== null && res.storedStrategy !== res.strategy ? res.storedStrategy : null,
-  });
+  const [genericPoolState, setGenericPool] = useState<GenericPoolState | null>(null);
   const genericPool = genericPoolState?.scope === grantScope ? genericPoolState : null;
 
   const [poolSaveError, setPoolSaveError] = useState<string | null>(null);
